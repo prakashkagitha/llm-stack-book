@@ -24,159 +24,186 @@ whole plan.
 Training loops fail in boring, expensive ways: a crash three hours before the end with no
 checkpoint, a silent NaN nobody notices until the next morning, a batch-size bug that quietly
 halves the effective learning rate, an out-of-memory error at step 12,000 because the *one* tensor
-you never budgeted for grew with the batch. The job of this chapter is to make each of those
+you never budgeted for grew with the batch, a forgotten keyword argument that lets the model attend
+across document boundaries for 17 billion tokens. The job of this chapter is to make each of those
 failure modes structurally impossible, not just "usually fine."
 
 Here is the data flow we are wiring together — the shape every subsection below fills in:
 
 ```text
- PackedMemmapDataset (Ch 14.2)          Stack100M (Ch 14.4)
- .bin shards + position_ids  ────────►  30 pre-norm blocks (bf16 autocast)
-        │                                        │
-        │ {input_ids, position_ids, targets}     ▼  final RMSNorm -> hidden (B,T,512)
-        │                                 chunked linear-CE head:
-        │                                 loss = CE + z_w·logsumexp²   (fp32, chunked)
-        │                                        │
-        │                                        ▼ backward (autocast region)
-        │                                 accumulate grads over 8 micro-batches
-        │                                        │
-        │                                        ▼
-        │                             clip_grad_norm_(all params, 1.0) ──► finite?
-        │                                        │              │no
-        │                                        │yes           └─► skip step, log, continue
-        │                                        ▼
-        │                muon.step(); adamw.step()  ← lr = wsd_lr(step) (Ch 14.6)
-        │                qk_clip_(model, recorded attention logits)  ← MuonClip
-        │                                        │
-        │                                        ▼
-        │                     every N steps: eval on held-out shard,
-        │                     sample generation, checkpoint (model+opts+step+rng)
-        ▼                                        │
-  step timer + data_wait  ─────────────────────► MFU, HFU, tokens/s
+ PackedMemmapDataset (Ch 14.2)               Stack100M (Ch 14.4)
+ uint16 .bin shards  ───────────────────►  30 pre-norm blocks (bf16 autocast)
+        │                                            │  seq_ids -> no cross-doc mask
+        │ {input_ids, position_ids,                  │  position_ids -> RoPE index
+        │  seq_ids, targets}                         ▼  final RMSNorm -> hidden (B,T,512)
+        │                                    fused_ce_z_loss (loss_chunk=8192):
+        │                                    loss = CE + z_coef·logsumexp²  (fp32, chunked)
+        │                                            │
+        │                                            ▼ backward (autocast region)
+        │                                    accumulate grads over 8 micro-batches
+        │                                            │
+        │                                            ▼
+        │                          clip_grad_norm_(all params, 1.0) ──► finite?
+        │                                            │            │no
+        │                                            │yes         └─► skip step, log, continue
+        │                                            ▼
+        │                    muon.step(); adamw.step()  ← lr = wsd_lr(step) (Ch 14.6)
+        │                    every 200 steps: probe forward -> qk_clip_(model, record, τ=30)
+        │                                            │
+        │                                            ▼
+        │                         every N steps: eval on held-out shard,
+        │                         sample generation, checkpoint (model+opts+step+rng)
+        ▼                                            │
+  step timer + data_wait  ─────────────────────────► MFU, HFU, tokens/s
 ```
 
 Everything downstream of the model and data already exists by the time this chapter starts; our job
 is the loop, not the components. The interfaces below are the *canonical* ones fixed by the earlier
 capstone chapters — you will not find their bodies here, only the contracts this chapter's code
-relies on:
+relies on. Read them carefully: three of the four bugs that make a loop *silently* wrong rather than
+loudly broken are contract violations at exactly these boundaries.
 
 ```python
-# stacklm/model.py   (Ch. 14.4 — architecture: RMSNorm, RoPE+NoPE, GQA, QK-norm, SwiGLU, tied emb)
+# stacklm/config.py   (Ch. 14.4 / PLAN.md §1 — the frozen architecture)
+@dataclass
 class StackConfig:
-    vocab_size: int = 32768
-    d_model: int = 512
-    n_layers: int = 30
+    vocab_size: int = 32768       # byte-level BPE (Ch. 14.3)
+    d_model: int = 512            # narrow: the "thin" in deep-and-thin
+    n_layers: int = 30            # deep
     n_heads: int = 8
-    n_kv_heads: int = 2       # GQA, 4:1 ratio
+    n_kv_heads: int = 2           # GQA, 4:1
     head_dim: int = 64
-    intermediate: int = 1408  # SwiGLU
+    intermediate: int = 1408      # SwiGLU
     max_seq_len: int = 2048
     rope_theta: float = 10000.0
     tie_embeddings: bool = True
+    qk_norm: bool = True          # RMSNorm on Q,K -- decides which QK-clip path runs
+    nope_every: int = 4           # every 4th layer skips RoPE (SmolLM3-style)
     norm_eps: float = 1e-5
-    logit_soft_cap: float = 0.0   # optional Gemma-2-style cap; 0 = off
-    loss_chunk_size: int = 4096   # NEW (this chapter): tokens per chunk in the loss head
+    z_loss_coef: float = 1e-4     # PaLM-style logsumexp penalty
+    logit_soft_cap: float = 0.0   # optional Gemma-2 tanh cap; 0 = off
+    loss_chunk: int = 0           # >0 = chunked fused lm_head+CE. This chapter sets 8192.
 
+# stacklm/model/transformer.py   (Ch. 14.4 — RMSNorm, RoPE+NoPE, GQA, QK-norm, SwiGLU, tied emb)
 class Stack100M(torch.nn.Module):
-    lm_head: torch.nn.Linear          # weight tied to tok_emb.weight
+    cfg: StackConfig
+    lm_head: torch.nn.Linear      # weight tied to tok_emb.weight
     def forward(self,
-                idx: "LongTensor[B, T]",
-                targets: "LongTensor[B, T] | None" = None,
-                position_ids: "LongTensor[B, T] | None" = None,
-                record_attn_logits: "FloatTensor[n_layers, n_heads] | None" = None,
-                z_loss_weight: float = 0.0
+                idx:          "LongTensor[B, T]",
+                targets:      "LongTensor[B, T] | None" = None,
+                position_ids: "LongTensor[B, T] | None" = None,   # RoPE index, per token
+                seq_ids:      "LongTensor[B, T] | None" = None,   # document id, per token
+                kv_cache=None, start_pos: int = 0, logits_to_keep: int = 0,
+                record: "dict[int, FloatTensor[n_heads]] | None" = None,
                 ) -> "tuple[FloatTensor[B, T, V] | None, FloatTensor[] | None]": ...
+    def generate(self, idx, max_new_tokens=64, temperature=0.8, top_p=0.95,
+                 top_k=0, eos_id=None, use_cache=True) -> "LongTensor[B, T']": ...
     def num_params(self, non_embedding: bool = False) -> int: ...
 
-# stacklm/data.py   (Ch. 14.2 — streaming, dedup, packing, document-aware masking)
+# stacklm/data/dataset.py   (Ch. 14.2 — streaming, dedup, packing, document-aware masking)
 class PackedMemmapDataset(torch.utils.data.Dataset):
-    """Map-style. __getitem__(i) -> {"input_ids", "position_ids", "targets"},
-    each a LongTensor of length seq_len. `position_ids == 0` marks a document
-    start; the model reconstructs the intra-document causal mask from it."""
-    def __len__(self) -> int: ...
-    def __getitem__(self, i: int) -> dict: ...
+    """Map-style. __getitem__(i) -> FOUR LongTensors of length seq_len - 1:
+    input_ids, position_ids, seq_ids, targets.  `position_ids` restarts at 0
+    inside each document; `seq_ids` is that document's index in the window. Both
+    are derived on the fly from `input_ids == bos_id`, where `bos_id` comes from
+    the shard directory's manifest.json (or is passed explicitly)."""
+    def __init__(self, shard_dir: str, bos_id: int | None = None): ...
 
-# stacklm/optim.py   (Ch. 14.6 — Muon+AdamW hybrid, WSD schedule, MuonClip/QK-clip)
-def build_optimizers(model, muon_lr=0.02, adamw_lr=3e-3,
+# stacklm/optim/   (Ch. 14.6 — Muon+AdamW hybrid, WSD schedule, MuonClip/QK-clip)
+def build_optimizers(model, muon_lr=6e-3, adamw_lr=3e-3,
                      weight_decay=0.1, betas=(0.9, 0.95)) -> "tuple[Muon, torch.optim.AdamW]": ...
 def wsd_lr(step: int, *, peak_lr: float, warmup_steps: int, total_steps: int,
-           decay_frac: float = 0.2, final_frac: float = 0.0) -> float: ...
-def qk_clip_(model, max_logits_per_head: "FloatTensor[n_layers, n_heads]", tau: float = 100.0) -> None: ...
+           decay_steps: int | None = None, decay_frac: float = 0.2,
+           final_frac: float = 0.0) -> float: ...
+def qk_clip_(model, max_logits: "dict[int, FloatTensor[n_heads]]",
+             tau: float = 30.0) -> int: ...          # returns #layers that fired
 
-# stacklm/tokenizer.py   (Ch. 14.3 — byte-level BPE, vocab_size=32768)
-class Tokenizer:
-    bos_id: int; eos_id: int; pad_id: int
+# stacklm/tokenizer/bpe.py   (Ch. 14.3 — byte-level BPE, vocab_size = 32768)
+class StackTokenizer:
+    bos_id: int   # 32759   the nine specials ALWAYS occupy the final nine ids,
+    eos_id: int   # 32760   so pad_id is 32761, not some small number
+    pad_id: int   # 32761
+    @classmethod
+    def load(cls, path: str) -> "StackTokenizer": ...
     def encode(self, text: str) -> list[int]: ...
     def decode(self, ids: list[int]) -> str: ...
 ```
 
-!!! note "Aside: the three amendments this chapter makes to earlier code"
+!!! warning "Common pitfall: the three keyword arguments that fail silently"
 
-    A running job is where contracts get tested, and three of them need a small, explicit fix. All
-    three are carried forward by every later capstone chapter.
+    Every one of these produces a run that trains, logs a falling loss, and is wrong.
 
-    1. **`StackConfig.loss_chunk_size`, and a chunked loss head.** Ch. 14.4's `forward` materializes
-       the full `(B, T, V)` logit tensor and then two fp32 copies of it. At the batch sizes this
-       chapter actually runs, that is the single largest allocation in the entire job — larger than
-       every transformer-block activation combined. The next section replaces it.
-    2. **`position_ids` on `forward`.** Ch. 14.2 stores document boundaries *as* position resets, so
-       the loop must pass `position_ids` through for the model to rebuild the intra-document causal
-       mask (`build_intra_doc_causal_mask`). Ch. 14.4's abbreviated snippet omitted the argument.
-    3. **Padding maps to `-100`.** Ch. 14.2's packer pads the final window of each shard with
-       `tokenizer.pad_id`. The loss must ignore those positions, so the collate function rewrites
-       `pad_id` targets to `-100` — the `ignore_index` Ch. 14.4's cross-entropy already uses.
+    1. **Dropping `seq_ids`.** `Stack100M._build_mask` builds the no-cross-document mask from
+       `seq_ids`, *not* from `position_ids`. Pass `seq_ids=None` and the model takes its
+       plain-causal fast path, so every packed window lets token 1900 of document C attend to
+       document A — for the entire 17-billion-token run. PLAN.md §2 mandates document isolation
+       precisely because this leaks statistics across unrelated texts. It is invisible in the loss
+       curve (it *lowers* training loss slightly, by leaking context), so assert it at startup.
+    2. **Dropping `position_ids`.** Then RoPE indexes `arange(T)` and every document after the
+       first in a window is told it starts at position 700, not 0.
+    3. **Guessing `pad_id`.** Ch. 14.2's packer pads only the final window of each shard, with
+       `tokenizer.pad_id = 32761`. If you hard-code a small "reserved special" id instead, the
+       collate function rewrites a *common BPE merge token* to `-100` and deletes a slice of your
+       supervision signal, while masking no actual pad. Derive `pad_id` from the tokenizer object;
+       never type the integer.
 
-    One more bookkeeping note: `PackedMemmapDataset` shifts a stored 2048-token window by one to
-    make `(input_ids, targets)`, so each sample supervises 2047 positions, not 2048. Every token
-    count below rounds that to 2048; the 0.05% difference does not move any conclusion. If you want
-    the accounting to be exact, widen the packer's window to 2049 tokens.
+!!! note "Aside: the one amendment this chapter makes to earlier code"
+
+    Almost everything this loop needs already exists. Ch. 14.4 ships `fused_ce_z_loss` behind
+    `StackConfig.loss_chunk`, threads `position_ids`/`seq_ids`/`record` through `forward`, and
+    provides a KV-cached `generate`; Ch. 14.6 ships `build_optimizers`, `wsd_lr`, and `qk_clip_`.
+    The single genuine addition is at the *data* boundary: **padding must map to `-100`.** The
+    dataset hands back raw token ids, so the collate function rewrites `pad_id` targets to `-100`,
+    the `ignore_index` that `fused_ce_z_loss` already honours. That is amendment enough; everything
+    else in this chapter is composition.
+
+    One bookkeeping note: `PackedMemmapDataset` shifts a stored 2048-token window by one to make
+    `(input_ids, targets)`, so each sample supervises 2047 positions, not 2048. Every token count
+    below rounds that to 2048; the 0.05% difference does not move any conclusion. If you want the
+    accounting exact, widen the packer's window to 2049 tokens.
 
 ### The `TrainConfig`
 
 One dataclass fixes every run-mechanics number so the script is fully reproducible from a single
 object (which we also checkpoint, so a resumed run cannot silently drift from its original
-configuration):
+configuration). Note what it does *not* contain: the architecture. `StackConfig`'s defaults already
+*are* PLAN.md §1's frozen numbers, so we embed the object rather than restating its fields — one
+source of truth, one fewer surface for two chapters to disagree on.
 
 ```python
 # stacklm/train_config.py
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from stacklm.config import StackConfig
+
 
 @dataclass
 class TrainConfig:
-    # --- model: fixed by capstone/PLAN.md §1, do not change per-run ---
-    vocab_size: int = 32768
-    d_model: int = 512
-    n_layers: int = 30
-    n_heads: int = 8
-    n_kv_heads: int = 2
-    head_dim: int = 64
-    intermediate: int = 1408
-    max_seq_len: int = 2048
-    rope_theta: float = 10000.0
-    tie_embeddings: bool = True
-    z_loss_weight: float = 1e-4    # PaLM-style logsumexp penalty (Chowdhery et al., 2022)
-    loss_chunk_size: int = 4096    # tokens per chunk in the fused/chunked CE head
+    # --- architecture: PLAN.md §1, frozen. Only `loss_chunk` differs from the
+    #     model chapter's default (which is 0, so its tests can inspect logits).
+    model: StackConfig = field(default_factory=lambda: StackConfig(loss_chunk=8192))
 
-    # --- data ---
+    # --- data: `data/packed/{train,val}` are the two subdirectories Ch. 14.2's
+    #     build_corpus(out_dir="data/packed", ...) writes, each with a manifest.json
     shard_dir: str = "data/packed/train"
     val_shard_dir: str = "data/packed/val"
-    pad_id: int = 258              # from the Ch. 14.3 tokenizer's reserved specials
-    seq_len: int = 2048
+    tokenizer_path: str = "tokenizer/stack100m-32768.json"
     micro_batch_size: int = 32     # sequences per forward/backward pass
     grad_accum_steps: int = 8      # 32 * 2048 * 8 = 524,288 tokens/optimizer-step ≈ 0.5M
     num_workers: int = 4
 
-    # --- optimizer & schedule: fixed by Ch. 14.6 ---
-    muon_peak_lr: float = 0.02     # 2-D hidden matrices (RMS-matched Newton-Schulz update)
-    adamw_peak_lr: float = 3e-3    # tied embedding + 1-D norm/QK-norm gains
+    # --- optimizer & schedule: Ch. 14.6's frozen table, verbatim ---
+    muon_peak_lr: float = 6e-3     # 2-D hidden matrices (RMS-matched Newton-Schulz update)
+    adamw_peak_lr: float = 3e-3    # = muon/2: tied embedding + 1-D norm/QK-norm gains
     weight_decay: float = 0.1
     betas: tuple = (0.9, 0.95)
     grad_clip: float = 1.0
-    qk_clip_tau: float = 100.0     # MuonClip threshold on attention logits
-    warmup_steps: int = 2_000      # ≈1B tokens, ~5% of the run (Ch. 14.6)
-    total_steps: int = 38_147      # ceil(20e9 tokens / 524,288 tokens/step) — the FULL budget
-    decay_frac: float = 0.10       # final 10% of total_steps = the WSD decay leg
-    stop_at_step: int = 34_332     # THIS chapter stops here: 18B tokens, LR still at plateau
+    qk_clip_tau: float = 30.0      # MuonClip threshold; 30 because QK-norm is ON
+    qk_clip_every: int = 200       # logit drift is slow; measuring is not free
+    qk_probe_seqs: int = 4         # sequences in the fixed QK-clip probe batch
+    warmup_steps: int = 500
+    total_steps: int = 38_147      # ceil(20e9 / 524,288) — the FULL budget, shapes the curve
+    decay_steps: int = 6_000       # the WSD decay leg = Ch. 14.8's mid-training window
+    stop_at_step: int = 32_147     # THIS chapter stops here: 16.9B tokens, LR still at plateau
 
     # --- run mechanics ---
     device: str = "cuda"
@@ -191,34 +218,43 @@ class TrainConfig:
     max_consecutive_skips: int = 20   # abort if the grad norm is non-finite this many times
     ckpt_dir: str = "checkpoints/stack-100m"
     seed: int = 1337
+
+    @property
+    def seq_len(self) -> int:
+        return self.model.max_seq_len          # 2048 (see the 2047 note above)
 ```
 
-Four numbers deserve a note.
+Four things deserve a note.
 
 **`grad_accum_steps`.** `micro_batch_size × seq_len × grad_accum_steps = 32 × 2048 × 8 = 524{,}288`,
-which lands almost exactly on the PLAN's target effective batch of ≈0.5M tokens. This is the number
-every later section's arithmetic uses.
+which lands exactly on Ch. 14.6's target effective batch of ≈0.5M tokens. This is the number every
+later section's arithmetic uses.
 
-**`total_steps = 38{,}147`** comes from the capstone's ~20B-token budget (Ch. 14.5's fitted scaling
-law extrapolated to this size, deliberately over-trained past the ~2B-token Chinchilla-optimal
-point for [Stack-100M](../14-capstone/05-mini-scaling-laws.html)):
-$20\times10^9 / 524{,}288 \approx 38{,}147$ steps. It defines the *shape* of the WSD curve.
-
-**`stop_at_step = 34{,}332` is not a typo.** WSD's decay leg is where
+**The three step counts.** `total_steps = 38{,}147` comes from the capstone's ~20B-token budget
+($20\times10^9 / 524{,}288$), which Ch. 14.5's fitted scaling law chose by deliberately
+over-training past the ~2B-token Chinchilla-optimal point for
+[Stack-100M](../14-capstone/05-mini-scaling-laws.html). It defines the *shape* of the WSD curve:
+500 warmup / 31,647 stable / 6,000 decay, exactly Ch. 14.6's frozen split. **`stop_at_step =
+32{,}147` is not a typo:** it is $38{,}147 - 6{,}000$. WSD's decay leg is where
 [mid-training](../14-capstone/08-mid-training.html) anneals the model onto a higher-quality data
-mix, so this chapter runs only warmup + stable and hands over a checkpoint whose learning rate is
-still at its plateau. With `decay_frac = 0.10`, the decay is the final
-$0.10 \times 38{,}147 \approx 3{,}815$ steps ($\approx 2.0$B tokens, which is exactly the budget
-Ch. 14.8 spends across its three sub-phases), so this chapter runs
-$38{,}147 - 3{,}815 = 34{,}332$ steps $\approx 18.0$B tokens. Saving a *pre-decay* checkpoint is a
-deliberate design decision, not an accident: resuming from a fully-decayed checkpoint would force an
-LR re-warm and cost you loss you then have to claw back (Ibrahim et al., 2024; see Ch. 14.8).
+mix, so this chapter runs only warmup + stable — 16.85B tokens — and hands over a checkpoint whose
+learning rate is still at its plateau, leaving 3.15B tokens of decay for Ch. 14.8. Saving a
+*pre-decay* checkpoint is a deliberate design decision, not an accident: resuming from a
+fully-decayed checkpoint would force an LR re-warm and cost you loss you then have to claw back
+(Ibrahim et al., 2024; see Ch. 14.8).
 
-**Two peak learning rates, one curve.** Ch. 14.6 routes 2-D hidden matrices to Muon at
-`lr ≈ 0.02` and the tied embedding plus every 1-D gain to AdamW at `lr ≈ 3e-3`. Those absolute
-values differ by an order of magnitude because Muon's RMS-matched orthogonalized update lives on a
-different scale; what they share is the *shape* of the WSD schedule. The loop below preserves the
-ratio by storing each group's base LR once and multiplying by a single scalar.
+**Two peak learning rates, one curve.** Ch. 14.6 routes 2-D hidden matrices to Muon and the tied
+embedding plus every 1-D gain to AdamW. The two peaks are `6e-3` and `3e-3` — a **2:1 ratio, not an
+order of magnitude**. That is the whole payoff of Muon's RMS-matching scale $0.2\sqrt{\max(m,n)}$:
+it puts the orthogonalized update in the same decade as AdamW's, so you tune one number and derive
+the other. (The factor of two is not RMS-related; it is insurance on the row-sparse embedding
+gradient.) What the two groups *share* is the shape of the WSD schedule, and the loop below
+preserves the ratio by storing each group's base LR once and multiplying by a single scalar.
+
+**`loss_chunk = 8192`.** Ch. 14.4 ships the chunked fused loss head but leaves it off
+(`loss_chunk = 0`) so that chapter's tests can inspect the logit tensor. Pretraining turns it on.
+The next two sections explain why that single integer is the difference between a micro-batch of 8
+and a micro-batch of 32.
 
 ## Precision, Batching, and the Effective Batch Size
 
@@ -256,30 +292,48 @@ autocast_ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 
 An 80GB A100 could fit a much larger micro-batch than 32 sequences of length 2048 for a 101M model,
 but the *effective* batch size — the number of tokens averaged into one optimizer step — is what
-the schedule and optimizer in Ch. 14.6 were tuned around (≈0.5M tokens, in the same family as
-recent small-model recipes). We reach that effective batch by accumulating gradients over
-`grad_accum_steps` micro-batches before every optimizer step:
+the schedule and optimizer in Ch. 14.6 were tuned around (≈0.5M tokens, near the critical batch size
+for a model this size). We reach that effective batch by accumulating gradients over
+`grad_accum_steps` micro-batches before every optimizer step. This is the only place in the chapter
+where the forward/backward pass is written out, and `train.py` below calls it rather than inlining
+a second copy:
 
 ```python
-def accumulate(model, optimizers, micro_batches, cfg, max_logits):
-    """One optimizer step's worth of forward/backward: grad_accum_steps
-    micro-batches, gradients averaged. Returns the mean loss as a *device*
-    tensor (no .item() inside the loop -- see the note below)."""
+# stacklm/train_utils.py
+import time
+import torch
+
+BATCH_KEYS = ("input_ids", "targets", "position_ids", "seq_ids")
+
+
+def accumulate(model, optimizers, train_iter, cfg):
+    """One optimizer step's worth of forward/backward: cfg.grad_accum_steps
+    micro-batches, gradients averaged.
+
+    Returns (mean loss as a *device* tensor, seconds blocked on the loader). The
+    micro-batch fetch is timed here, inside the step, on purpose -- see the MFU
+    section: a loop that prefetches before starting the clock reports pure compute
+    time and hides loader stalls completely."""
     for opt in optimizers:
         opt.zero_grad(set_to_none=True)     # zero ONCE per optimizer step, not per micro-batch
     loss_sum = torch.zeros((), device=cfg.device)
-    for batch in micro_batches:             # len(micro_batches) == cfg.grad_accum_steps
-        x   = batch["input_ids"].to(cfg.device, non_blocking=True)
-        y   = batch["targets"].to(cfg.device, non_blocking=True)
-        pos = batch["position_ids"].to(cfg.device, non_blocking=True)
-        with autocast_ctx:
-            _, loss = model(x, targets=y, position_ids=pos,
-                            record_attn_logits=max_logits,       # for MuonClip, Ch. 14.6
-                            z_loss_weight=cfg.z_loss_weight)
-            loss = loss / cfg.grad_accum_steps                   # scale BEFORE backward
+    data_wait = 0.0
+
+    for _ in range(cfg.grad_accum_steps):
+        t_fetch = time.perf_counter()
+        batch = next(train_iter)            # blocks here if the loader is behind
+        data_wait += time.perf_counter() - t_fetch
+        x, y, pos, seq = (batch[k].to(cfg.device, non_blocking=True) for k in BATCH_KEYS)
+
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            # seq_ids is what makes the mask block-diagonal. Omit it and you train
+            # with cross-document attention and never find out.
+            _, loss = model(x, targets=y, position_ids=pos, seq_ids=seq)
+            loss = loss / cfg.grad_accum_steps          # scale BEFORE backward
         loss.backward()
         loss_sum += loss.detach()           # stays on-device; no host sync per micro-batch
-    return loss_sum                          # already averaged over the effective batch
+
+    return loss_sum, data_wait              # loss already averaged over the effective batch
 ```
 
 Note the `/ cfg.grad_accum_steps` scaling *inside* the loop, before `.backward()` — because
@@ -299,8 +353,7 @@ nothing and is one of the cheapest throughput wins in the whole loop.
     tiny 65k-token steps at 1/8th the intended effective batch size" — the loss curve still goes
     down, so it is easy to miss, but the run no longer matches the WSD schedule or the Muon
     hyperparameters tuned in Ch. 14.6, and throughput/MFU numbers become meaningless because the
-    accounting no longer matches reality. Zero once, accumulate `N` times, then step — always
-    assert `len(micro_batches) == cfg.grad_accum_steps` if you refactor this loop. This is not a
+    accounting no longer matches reality. Zero once, accumulate `N` times, then step. This is not a
     hypothetical: Unsloth's widely-reproduced 2024 write-up documents the mirror-image bug (a
     missing `1/N`) shipping in production trainers with a measurable loss-curve gap.
 
@@ -310,125 +363,114 @@ Ask a practitioner which tensor dominates memory when training a 100M model and 
 hear "the activations." For Stack-100M that answer is wrong, and it is wrong in a way that is
 specific to the **deep-and-thin** shape PLAN.md §1 mandates: `d_model = 512` with `vocab_size =
 32768` means the output projection is 64× wider than the residual stream, so the logits tensor
-dwarfs everything the transformer trunk holds.
+dwarfs everything the transformer trunk holds. This is why `StackConfig.loss_chunk` exists, and this
+section is the arithmetic that justifies turning it on.
 
 Do the arithmetic on one micro-batch of $B \times T = 32 \times 2048 = 65{,}536$ tokens with
-$V = 32{,}768$:
+$V = 32{,}768$, for the *unchunked* path (`loss_chunk = 0`):
 
 | Tensor | dtype | bytes | size |
 |---|---|---|---|
 | logits `(B·T, V)` | bf16 | 2 | $65{,}536 \times 32{,}768 \times 2 = 4.29$ GB |
 | fp32 upcast of the logits for cross-entropy | fp32 | 4 | 8.59 GB |
 | `log_softmax` output, saved for backward | fp32 | 4 | 8.59 GB |
-| a *second* fp32 copy for the separate z-loss `logsumexp` | fp32 | 4 | 8.59 GB |
+| a *second* fp32 copy if the z-loss recomputes `logsumexp` | fp32 | 4 | 8.59 GB |
 | **loss head, peak** | | | **≈ 30 GB** |
 
-Compare that to the entire 30-block trunk, which we will cost out at 15–25 GB below. The loss head
-is the largest allocation in the job by a comfortable margin, and it scales with $B \cdot T \cdot V$
-— so every attempt to raise the micro-batch for throughput runs into it first. Worse, activation
+Compare that to the entire 30-block trunk, which we cost out at 15–25 GB below. The loss head is
+the largest allocation in the job by a comfortable margin, and it scales with $B \cdot T \cdot V$ —
+so every attempt to raise the micro-batch for throughput runs into it first. Worse, activation
 checkpointing does **nothing** about it: the head sits outside the blocks.
 
-Ch. 14.4's code makes it as bad as it can be, with two independent full-precision materializations:
+Ch. 14.4's unchunked branch is written the standard way, and is therefore as bad as it can be:
 
 ```python
-# Ch. 14.4 as written -- correct, and catastrophically memory-hungry at B*T = 65,536.
-logits = self.lm_head(x)                                     # (B, T, V) bf16   4.3 GB
-ce = F.cross_entropy(logits.float().view(-1, logits.size(-1)),  # fp32 copy    8.6 GB
-                     targets.view(-1), ignore_index=-100)       # + log_softmax 8.6 GB
-logz = torch.logsumexp(logits.float(), dim=-1)                  # 2nd fp32 copy 8.6 GB
-z_loss = self.cfg.z_loss_coef * (logz ** 2).mean()
+# Stack100M.forward, the loss_chunk == 0 branch -- correct, and memory-hungry at B*T = 65,536.
+logits = self._cap(self.lm_head(x))                            # (B, T, V) bf16   4.3 GB
+lf = logits.float()                                            # fp32 copy        8.6 GB
+ce = F.cross_entropy(lf.view(-1, lf.size(-1)),                 # + log_softmax    8.6 GB
+                     targets.reshape(-1), ignore_index=-100)
+logz = torch.logsumexp(lf, dim=-1)                             # z-loss reuses lf, but
+loss = ce + self.cfg.z_loss_coef * (logz ** 2).mean()          # a naive version would copy again
 ```
-
-Note in passing that the explicit `.float()` is redundant under autocast: `F.cross_entropy` is on
-PyTorch's autocast **fp32 cast-policy** list, so it upcasts internally whether you ask or not. The
-explicit cast does not add safety; it just adds a transient copy.
 
 ### Chunked linear cross-entropy: never materialize `(B·T, V)`
 
 The fix is the standard 2026 one: fuse the `lm_head` matmul and the loss into a single operation
-that processes the tokens in chunks, so only `chunk_size × V` logits exist at any moment, and
-recompute those logits during backward rather than storing them. Here is a dependency-free
-implementation you can drop into `Stack100M.forward`:
+that processes tokens in chunks, so only `chunk × V` logits exist at any moment, and recompute
+those logits during backward rather than storing them. This is the body of the `fused_ce_z_loss`
+Ch. 14.4 ships:
 
 ```python
-# stacklm/model/loss_head.py  (amendment #1 to Ch. 14.4)
+# stacklm/model/loss.py   (Ch. 14.4; enabled by StackConfig.loss_chunk > 0)
 import torch
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
 
-def _chunk_loss(h, weight, t, z_weight, soft_cap):
-    """Loss *summed* over one chunk of tokens. Logits live only inside this
-    function, so `checkpoint` frees them after the forward and rebuilds them
-    one chunk at a time during backward."""
-    logits = F.linear(h, weight).float()                 # (C, V) fp32 -- transient
-    if soft_cap > 0:                                     # optional Gemma-2-style cap
-        logits = soft_cap * torch.tanh(logits / soft_cap)
-    lse = torch.logsumexp(logits, dim=-1)                # (C,)
-    valid = t != -100
-    safe_t = t.masked_fill(~valid, 0)                    # gather needs an in-range index
-    tgt_logit = logits.gather(1, safe_t[:, None]).squeeze(1)
-    nll = lse - tgt_logit                                # = cross-entropy, per token
-    per_token = nll + z_weight * lse.pow(2)              # PaLM z-loss, same logsumexp
-    return torch.where(valid, per_token, torch.zeros_like(per_token)).sum()
+def _chunk_ce(h, w, t, cap: float):
+    """One chunk -> (sum CE, sum lse^2, n_valid). Logits live only inside this
+    function, so `checkpoint` frees them after the forward and rebuilds them one
+    chunk at a time during backward."""
+    logits = F.linear(h, w).float()                  # (C, V) fp32 -- transient
+    if cap > 0:                                      # SAME soft cap as the inference path
+        logits = cap * torch.tanh(logits / cap)
+    lse = torch.logsumexp(logits, dim=-1)            # (C,) -- reused by BOTH losses
+    valid = (t != -100)
+    tgt = t.clamp_min(0).unsqueeze(-1)               # gather needs an in-range index
+    ce = lse - logits.gather(-1, tgt).squeeze(-1)    # CE = logsumexp - logit[target]
+    return (ce * valid).sum(), (lse.pow(2) * valid).sum(), valid.sum()
 
 
-def chunked_lm_loss(hidden, weight, targets, *, z_weight=1e-4,
-                    chunk_size=4096, soft_cap=0.0):
-    """Mean loss over all non-ignored positions, computed chunk-by-chunk.
-
-    Peak logit memory is chunk_size*V instead of B*T*V. Gradients w.r.t. both
-    `hidden` and the (tied) `weight` accumulate correctly across chunks because
-    autograd sums the contributions of every checkpointed call.
-    """
-    hidden = hidden.reshape(-1, hidden.size(-1))         # (B*T, d)
-    targets = targets.reshape(-1)                        # (B*T,)
-    n_valid = (targets != -100).sum().clamp(min=1)
-    total = hidden.new_zeros((), dtype=torch.float32)
-    for i in range(0, hidden.size(0), chunk_size):
-        total = total + checkpoint(
-            _chunk_loss,
-            hidden[i:i + chunk_size], weight, targets[i:i + chunk_size],
-            z_weight, soft_cap,
-            use_reentrant=False,                          # required: autocast/compile-friendly
-        )
-    return total / n_valid
+def fused_ce_z_loss(hidden, weight, targets, z_coef: float,
+                    chunk: int = 8192, soft_cap: float = 0.0):
+    """Returns (cross_entropy, z_loss), each a mean over VALID positions.
+    Numerically equal to the unchunked path; peak logit memory is chunk*V and no
+    longer grows with batch size. Gradients w.r.t. both `hidden` and the (tied)
+    `weight` accumulate correctly because autograd sums every checkpointed call."""
+    h = hidden.reshape(-1, hidden.shape[-1])         # (B*T, d)
+    t = targets.reshape(-1)                          # (B*T,)
+    ce = h.new_zeros((), dtype=torch.float32)
+    z = h.new_zeros((), dtype=torch.float32)
+    n = torch.zeros((), dtype=torch.long, device=h.device)
+    for i in range(0, h.shape[0], chunk):
+        a, b, c = checkpoint(_chunk_ce, h[i:i + chunk], weight, t[i:i + chunk],
+                             soft_cap, use_reentrant=False)   # non-reentrant: compile-safe
+        ce, z, n = ce + a, z + b, n + c
+    n = n.clamp_min(1)
+    return ce / n, z_coef * (z / n)
 ```
 
-and the corresponding two-line change in the model:
+which `Stack100M.forward` selects with two lines:
 
 ```python
-# inside Stack100M.forward, replacing the logits/CE/z-loss block
-x = self.final_norm(x)                                   # (B, T, d)
-if targets is not None and self.cfg.loss_chunk_size:
-    loss = chunked_lm_loss(x, self.lm_head.weight, targets,
-                           z_weight=z_loss_weight,
-                           chunk_size=self.cfg.loss_chunk_size,
-                           soft_cap=self.cfg.logit_soft_cap)
-    return None, loss          # training path never needs the full logit tensor
-logits = self.lm_head(x if targets is not None else x[:, -1:, :])
-return logits, None            # eval/sampling path, where B*T is tiny
+if targets is not None and self.cfg.loss_chunk > 0:
+    ce, zl = fused_ce_z_loss(x, self.lm_head.weight, targets, self.cfg.z_loss_coef,
+                             chunk=self.cfg.loss_chunk, soft_cap=self.cfg.logit_soft_cap)
+    return None, ce + zl        # training path never materializes the logit tensor
 ```
 
 Three things to understand about why this works.
 
-**Memory.** With `chunk_size = 4096` and $V = 32{,}768$, one chunk's fp32 logits are
-$4096 \times 32768 \times 4 = 537$ MB. During the forward pass `checkpoint` discards them
+**Memory.** With `loss_chunk = 8192` and $V = 32{,}768$, one chunk's fp32 logits are
+$8192 \times 32768 \times 4 = 1.07$ GB. During the forward pass `checkpoint` discards them
 immediately; during backward exactly one chunk is rebuilt at a time, so peak head memory is roughly
-the logits plus their gradient, on the order of **1 GB** — a ~30× reduction from the 30 GB above.
+the logits plus their gradient — about **2.1 GB**, a ~14× reduction, and *independent of
+`micro_batch_size`*, which is the property that makes larger micro-batches possible at all. Halving
+to `loss_chunk = 4096` halves that again (≈1.1 GB) at the cost of twice as many kernel launches;
+8192 is Ch. 14.4's shipped default and the value we use.
 
 **Compute.** The price is recomputing the `lm_head` matmul in backward:
 $2 \cdot B \cdot T \cdot d \cdot V = 2 \times 65{,}536 \times 512 \times 32{,}768 \approx 2.20$
-TFLOP per micro-batch, against a total step cost of
+TFLOP per micro-batch, against a step cost of
 $6ND = 6 \times 101.4\times10^6 \times 65{,}536 \approx 39.9$ TFLOP. That is **≈5.5% extra FLOPs**
-— cheap for a 30× memory cut, and cheaper still if you use a fused kernel that avoids the recompute
-entirely (below).
+— cheap for a 14–30× memory cut, and cheaper still with a fused kernel that avoids the recompute
+entirely (below). The percentage does not depend on `chunk`.
 
-**Numerics.** The z-loss now reuses the *same* `logsumexp` the cross-entropy already needs, instead
-of recomputing it from a second fp32 copy. That is not just a memory win: it guarantees the two
-terms see identical logits, which the two-pass version only does by construction. Note one
-deliberate behavioural change — the z-loss is now averaged over *valid* (non-ignored) positions
-rather than over all positions, which is the more defensible normalization anyway.
+**Numerics.** The z-loss reuses the *same* `logsumexp` the cross-entropy already needs. That is not
+just a memory win: it guarantees the two terms see identical logits. Note one deliberate behavioural
+difference from a naive implementation — both terms are averaged over *valid* (non-ignored)
+positions rather than over all positions, which is the more defensible normalization anyway.
 
 !!! tip "Practitioner tip: use the fused kernel in production"
 
@@ -449,43 +491,38 @@ rather than over all positions, which is the more defensible normalization anywa
     All of them exist because of the arithmetic in the table above: at large vocabularies the loss
     head, not attention, is what caps your batch size.
 
-!!! example "Worked example: the corrected memory budget"
+!!! example "Worked example: the whole memory budget, one micro-batch"
 
-    One micro-batch of $B \times T = 32 \times 2048 = 65{,}536$ tokens, bf16 activations, 30 blocks,
-    with [FlashAttention](../04-kernels-efficiency/03-flash-attention-2-3.html)-backed SDPA (no
+    $B \times T = 32 \times 2048 = 65{,}536$ tokens, bf16 activations, 30 blocks, with
+    [FlashAttention](../04-kernels-efficiency/03-flash-attention-2-3.html)-backed SDPA (no
     materialized $T \times T$ score matrix).
 
     **Weights, gradients, optimizer state** (these do *not* scale with batch):
     fp32 master weights $101.4\times10^6 \times 4 \approx 0.41$ GB; fp32 gradients another
-    0.41 GB; Muon's single momentum buffer over the ~84.6M 2-D block parameters $\approx 0.34$ GB;
+    0.41 GB; Muon's single momentum buffer over the ~84.5M 2-D block parameters $\approx 0.34$ GB;
     AdamW's $m$ and $v$ over the remaining ~16.8M embedding/norm parameters $\approx 0.13$ GB.
     **Total ≈ 1.3 GB** — genuinely negligible, which is the whole point of a 100M model.
 
-    **Block activations saved for backward** (eager mode):
+    **Block activations saved for backward** (eager mode): the residual-stream input at each of the
+    30 blocks is $65{,}536 \times 512 \times 2\text{ B} \times 30 \approx 2.0$ GB; the SwiGLU
+    sublayer saves its 1408-wide intermediates (gate pre-activation, up projection, and their
+    product are all needed for the backward of `down(silu(gate)·up)`), so budget
+    $2\text{–}3 \times 65{,}536 \times 1408 \times 2\text{ B} \times 30 \approx 11\text{–}17$ GB;
+    attention Q/K/V/O projections, QK-norm, and RoPE outputs add a few GB more. Call the trunk
+    **15–25 GB**; `torch.compile`'s fusion recomputes some elementwise intermediates and typically
+    lands nearer the low end.
 
-    - residual-stream input at each of the 30 blocks: $65{,}536 \times 512 \times 2\text{ B}
-      \times 30 \approx 2.0\text{ GB}$;
-    - the SwiGLU sublayer saves its 1408-wide intermediates — the gate pre-activation, the up
-      projection, and their product are all needed for the backward of `down(silu(gate)·up)` — so
-      budget $2\text{–}3 \times 65{,}536 \times 1408 \times 2\text{ B} \times 30 \approx
-      11\text{–}17\text{ GB}$;
-    - attention Q/K/V/O projections, QK-norm, and RoPE outputs add a few GB more.
+    **Loss head:** ≈30 GB at `loss_chunk = 0`, ≈2.1 GB at `loss_chunk = 8192`.
 
-    Call the trunk **15–25 GB** in eager mode; `torch.compile`'s fusion recomputes some of the
-    elementwise intermediates and typically lands nearer the low end.
+    **Verdict.** Unchunked, peak is roughly $1.3 + 20 + 30 \approx 50$ GB. It *fits* on an 80 GB
+    A100 — so "the flagship tier needs no activation checkpointing" stays true — but with far less
+    headroom than an activations-only estimate suggests, and it is why raising `micro_batch_size` to
+    64 OOMs. Chunked, peak is roughly $1.3 + 20 + 2 \approx 23$ GB and a micro-batch of 64 becomes
+    comfortable. On the 24 GB 4090 tier the difference is decisive rather than convenient: at
+    `micro_batch_size = 8` the unchunked head alone costs
+    $16{,}384 \times 32{,}768 \times 14\text{ B} \approx 7.5$ GB — a third of the card.
 
-    **Loss head:** ≈30 GB as written in Ch. 14.4, or ≈1 GB with `chunked_lm_loss`.
-
-    **Verdict.** Before the fix, peak is roughly $1.3 + 20 + 30 \approx 50$ GB. It *fits* on an
-    80 GB A100 — so the chapter's original conclusion ("the flagship tier needs no activation
-    checkpointing") was right — but with far less headroom than the naive activations-only estimate
-    suggests, and it is why raising `micro_batch_size` to 64 OOMs. After the fix, peak is roughly
-    **$1.3 + 20 + 1 \approx 22$ GB**, and a micro-batch of 64 becomes comfortable. On the 24 GB
-    4090 tier the difference is decisive rather than merely convenient: at `micro_batch_size = 8`
-    the unfixed head alone costs $16{,}384 \times 32{,}768 \times 14\text{ B} \approx 7.5$ GB — a
-    third of the card — versus ~1 GB chunked.
-
-    Always confirm this on your own hardware rather than trusting the table:
+    Always confirm on your own hardware rather than trusting the table:
     `torch.cuda.max_memory_allocated() / 2**30` after a few steps, and
     `torch.cuda.reset_peak_memory_stats()` to re-arm it.
 
@@ -515,7 +552,8 @@ and 1-D parameters have no meaningful spectral structure to orthogonalize. Becau
 covers, how one schedule drives two different base learning rates, and the order of `step()` calls.
 
 ```python
-from stacklm.optim import wsd_lr, qk_clip_
+from stacklm.optim import wsd_lr
+
 
 def all_params_of(optimizers):
     """Flat list of every trainable tensor across both optimizers -- the set the
@@ -524,17 +562,17 @@ def all_params_of(optimizers):
 
 
 def attach_base_lrs(optimizers):
-    """Record each group's peak LR once, at build time. Muon runs ~0.02 and AdamW
-    ~3e-3 (Ch. 14.6); only the *shape* of the WSD curve is shared, not the value."""
+    """Record each group's peak LR once, at build time: Muon 6e-3, AdamW 3e-3
+    (Ch. 14.6). Only the *shape* of the WSD curve is shared, not the value."""
     for opt in optimizers:
         for g in opt.param_groups:
             g.setdefault("base_lr", g["lr"])
 
 
 def set_lr(optimizers, step, cfg):
-    """Apply this step's WSD multiplier to both optimizers, preserving their ratio."""
+    """Apply this step's WSD multiplier to both optimizers, preserving the 2:1 ratio."""
     mult = wsd_lr(step, peak_lr=1.0, warmup_steps=cfg.warmup_steps,
-                  total_steps=cfg.total_steps, decay_frac=cfg.decay_frac)
+                  total_steps=cfg.total_steps, decay_steps=cfg.decay_steps)
     for opt in optimizers:
         for g in opt.param_groups:
             g["lr"] = g["base_lr"] * mult
@@ -542,81 +580,122 @@ def set_lr(optimizers, step, cfg):
 ```
 
 Calling `wsd_lr` with `peak_lr=1.0` turns it into a pure multiplier in $[0, 1]$ — warmup ramps it
-linearly from $1/T_w$ to 1, the stable phase holds it at 1, and the decay leg brings it to 0. That
-single scalar then scales Muon's 0.02 and AdamW's 3e-3 identically. The alternative — calling
-`wsd_lr` twice with two different `peak_lr` values, as Ch. 14.6 sketches — is equivalent; the
-multiplier form just makes it impossible for the two curves to drift out of phase.
+linearly from $1/500$ to 1 over the first 500 steps, the stable phase holds it at 1, and the decay
+leg would bring it to 0. That single scalar scales Muon's `6e-3` and AdamW's `3e-3` identically. Two
+consequences worth stating: passing `decay_steps=6_000` explicitly (rather than a `decay_frac`) is
+what makes the decay leg *absolute*, so it stays 6,000 steps even if you re-budget `total_steps`;
+and because this chapter stops at 32,147 — the first decay step — `mult` is exactly 1.0 for every
+step from 500 to 32,146. This run never enters the decay branch at all. Ch. 14.8 does.
 
 Crucially, `clip_grad_norm_` is computed **once, jointly, over every parameter** — Muon-bound and
 AdamW-bound alike — because the point of global-norm clipping is to catch a *model-wide* gradient
 explosion (a bad batch, a numerical instability in one deep layer propagating backward) regardless
 of which optimizer will consume which slice of it; clipping each group separately would let one
-group's blow-up hide behind the other's normal-sized gradients.
+group's blow-up hide behind the other's normal-sized gradients. `clip_grad_norm_` returns the
+*pre-clip* norm, which is worth logging: a sudden multi-sigma jump in `grad_norm` — clipped away or
+not — is often the earliest warning of an instability, well before it shows up in the loss (see
+[Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)).
+
+### MuonClip on a probe batch, every 200 steps
+
+Ch. 14.6's `qk_clip_` reads a **`dict[int, Tensor(n_heads)]`** — layer index to that layer's per-head
+maximum pre-softmax attention logit — and rescales whatever parameter actually controls the logit
+scale for any layer that exceeded $\tau$. Under Stack-100M's QK-norm that parameter is the learned
+`q_norm`/`k_norm` gain, not $W_Q/W_K$ (RMSNorm is scale-invariant, so rescaling the projections is
+provably a no-op); Ch. 14.6 derives this, and it is why $\tau = 30$ rather than Kimi K2's 100.
+
+Three implementation decisions follow, and all three differ from the naive "record every forward,
+clip every step" reading:
+
+```python
+from stacklm.optim import qk_clip_
+
+
+@torch.no_grad()
+def maybe_qk_clip(raw_model, probe, cfg, step):
+    """MuonClip on a schedule. Returns the number of layers that fired, or None
+    when this step is not a measurement step."""
+    if not cfg.qk_clip_every or step % cfg.qk_clip_every:
+        return None
+    record: "dict[int, torch.Tensor]" = {}          # a DICT, keyed by layer index
+    raw_model(probe["input_ids"], position_ids=probe["position_ids"],
+              seq_ids=probe["seq_ids"], record=record,
+              logits_to_keep=1)     # record is filled in the blocks; skip the lm_head
+    return qk_clip_(raw_model, record, tau=cfg.qk_clip_tau)
+```
+
+**Why a probe forward rather than the training forward.** `qk_clip_` must see the weights the
+optimizers just produced, so the reading has to come from a *post-step* forward. Harvesting it from
+the eight micro-batches of the step that just ended would give you pre-step weights, and — because
+`Attention.forward` *assigns* into `record` rather than max-reducing — only the last micro-batch's
+value at that. One extra forward pass on a small batch is both correct and cheap.
+
+**Why a fixed probe batch.** We draw the probe once, from the validation loader, and reuse it. That
+keeps the training stream untouched (so the "data position = `step × samples_per_step`" arithmetic
+in the resume section stays exact) and makes the recorded $S_{\max}$ series comparable step to step
+— a rising trend on *fixed* inputs is unambiguously the model drifting, not the data changing.
+
+**Why every 200 steps.** Attention-logit drift is slow: the gains move by one decayed learning rate
+per step. Measuring 38,147 times to catch a phenomenon that evolves over thousands of steps is pure
+overhead, so Ch. 14.6 gates it behind `qk_clip_every = 200` (~160 measurements across this run). By
+default `Attention` records the **Cauchy–Schwarz bound**
+$\max_i\lVert q_i\rVert \cdot \max_j\lVert k_j\rVert / \sqrt{d_h}$ rather than the exact max, which
+is $O(BHTd_h)$ and keeps the fused SDPA path; setting `attn.record_exact = True` gives the exact
+per-head max at the cost of a $(B,H,T,T)$ tensor and eager attention.
+
+Two more small things. Run the probe on `raw_model`, not the `torch.compile`d wrapper: writing into
+a Python dict from inside a compiled forward is a graph break at best and a silently-baked-out
+no-op at worst. And log the return value — `qk_clip_` reports how many layers fired, and a trigger
+rate that *rises* late in training is the cleanest early signal that the learning rate is too high.
 
 ```python
 # --- inside the main loop, once per optimizer step ---
-lr_mult   = set_lr(optimizers, step, cfg)
-loss      = accumulate(model, optimizers, micro_batches, cfg, max_logits)
-grad_norm = torch.nn.utils.clip_grad_norm_(all_params, cfg.grad_clip)   # PRE-clip norm
+lr_mult              = set_lr(optimizers, step, cfg)
+loss_sum, data_wait  = accumulate(model, optimizers, train_iter, cfg)
+grad_norm            = torch.nn.utils.clip_grad_norm_(params, cfg.grad_clip)   # PRE-clip norm
 for opt in optimizers:
-    opt.step()                                # Muon (Newton-Schulz), then fused AdamW
-qk_clip_(raw_model, max_logits, tau=cfg.qk_clip_tau)   # MuonClip: AFTER the step
-max_logits.zero_()                            # reset the per-head running max
+    opt.step()                                       # Muon (Newton-Schulz), then fused AdamW
+qk_fired = maybe_qk_clip(raw_model, probe, cfg, step)   # MuonClip: AFTER the step, on a schedule
 ```
 
-`clip_grad_norm_` returns the *pre-clip* norm, which is worth logging: a sudden multi-sigma jump in
-`grad_norm` — clipped away or not — is often the earliest warning of an instability, well before it
-shows up in the loss (see
-[Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)).
-
-**MuonClip runs after the step, not inside it.** Ch. 14.6's `qk_clip_` reads a
-`(n_layers, n_heads)` tensor of the maximum pre-softmax attention logits recorded during *this*
-step's forward passes, and rescales the Q/K projection weights of any head whose logits exceeded
-$\tau$. That ordering matters: it must see the weights Muon just produced, and it must be given a
-fresh reading each step, hence the `zero_()`. Do not confuse it with the global grad-norm clip —
-they act on different objects (weights vs. gradients) at different times, and they are
-complementary, not redundant.
+Do not confuse MuonClip with the global grad-norm clip: they act on different objects (weights vs.
+gradients) at different times, and they are complementary, not redundant.
 
 ## Memory: Activations, Attention Masks, and Checkpointing
 
 {{fig:training-memory-budget}}
 
-With the loss head fixed, activations are back to being the batch-scaling term. Two levers control
+With the loss head chunked, activations are back to being the batch-scaling term. Two levers control
 them: how much of the block you recompute, and whether your attention mask lets you use a fused
 kernel at all.
 
 ### The document mask decides which attention kernel you get
 
-Ch. 14.2 packs multiple documents into each 2048-token window and resets `position_ids` at every
-document start, so `build_intra_doc_causal_mask(position_ids)` can reconstruct an exact
-$(B, 1, T, T)$ boolean mask that blocks cross-document attention. That mask is correct and it is a
-throughput trap: passing an explicit dense `attn_mask` to
-`torch.nn.functional.scaled_dot_product_attention` **disqualifies the FlashAttention backend**,
-which supports only `is_causal=True` or no mask. SDPA silently falls back to the
-memory-efficient or math backend, materializes more, and your MFU drops by a large factor with no
-error message.
-
-There are two good 2026 answers, and neither requires giving up document isolation.
+`Stack100M._build_mask` turns `seq_ids` into an exact $(B, 1, T, T)$ boolean mask that blocks
+cross-document attention. That mask is correct, and it is a throughput trap: passing an explicit
+dense `attn_mask` to `torch.nn.functional.scaled_dot_product_attention` **disqualifies the
+FlashAttention backend**, which supports only `is_causal=True` or no mask. SDPA silently falls back
+to the memory-efficient or math backend, materializes more, and your MFU drops by a large factor
+with no error message. Ch. 14.4 ships the dense mask because it is correct, dependency-free, and
+composes with the KV cache; here is how you buy the FLOPs back.
 
 ```python
 # Option A -- FlexAttention (PyTorch >= 2.5): a compiled, block-sparse mask.
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention
 
-def make_doc_block_mask(position_ids, n_heads):
-    """position_ids == 0 marks a document start (Ch. 14.2), so a running sum of
-    those flags is a document id -- exactly the signal the mask needs."""
-    doc_id = (position_ids == 0).cumsum(dim=-1)              # (B, T)
-
+def make_doc_block_mask(seq_ids):
+    """`seq_ids[b, i]` is the document index of token i (Ch. 14.2) -- exactly the
+    signal the mask needs, no cumsum required."""
     def doc_causal(b, h, q_idx, kv_idx):
-        return (q_idx >= kv_idx) & (doc_id[b, q_idx] == doc_id[b, kv_idx])
+        return (q_idx >= kv_idx) & (seq_ids[b, q_idx] == seq_ids[b, kv_idx])
 
-    B, T = position_ids.shape
+    B, T = seq_ids.shape
     # BlockMask stores which 128x128 blocks are entirely masked, so the kernel
     # *skips* them: packing many short documents gets cheaper, not more expensive.
     return create_block_mask(doc_causal, B=B, H=None, Q_LEN=T, KV_LEN=T,
-                             device=position_ids.device)
+                             device=seq_ids.device)
 
-# in the attention module:  out = flex_attention(q, k, v, block_mask=block_mask)
+# in the attention module:  out = flex_attention(q, k, v, block_mask=bm, enable_gqa=True)
 ```
 
 ```python
@@ -629,12 +708,12 @@ out = flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
 
 FlexAttention is the lower-friction choice inside a PyTorch-native loop: `create_block_mask` should
 itself be `torch.compile`d and its result cached per micro-batch (it costs a few hundred
-microseconds, which is nothing against a 2-second step), and block-sparse skipping actually
-*recovers* most of the FLOPs that document masking removes. The varlen path is what
-Megatron-LM-style stacks use and is the fastest option if you are already unpadding. Either way,
-the rule to internalize is: **an explicit boolean mask is the slow path**; express your mask as
-structure the kernel understands. See
-[FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html) for why.
+microseconds, nothing against a 2-second step), and block-sparse skipping actually *recovers* most
+of the FLOPs that document masking removes. The varlen path is what Megatron-LM-style stacks use and
+is fastest if you are already unpadding. Either way, the rule to internalize is: **an explicit
+boolean mask is the slow path**; express your mask as structure the kernel understands. See
+[FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html) for why, and Ch. 14.4
+for the full `score_mod`/`enable_gqa` treatment.
 
 ### Activation checkpointing, correctly described
 
@@ -642,7 +721,7 @@ structure the kernel understands. See
 storing every intermediate a block computes, we store only the block's *input* and recompute the
 block's forward pass during backward. See
 [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html)
-for the full memory/compute trade-off and for the offloading levers we do not need at this scale.
+for the full trade-off and the offloading levers we do not need at this scale.
 
 It is worth being precise about what that saves, because the usual one-liner ("cuts activation
 memory by a factor of `n_layers`") is wrong. Full-block checkpointing **keeps** the 30
@@ -684,17 +763,17 @@ def enable_activation_checkpointing(model) -> None:
 Two refinements matter at 2026 practice level. First, PyTorch ships this as a library function —
 `torch.distributed.algorithms._checkpoint.checkpoint_wrapper.apply_activation_checkpointing` — which
 you should prefer to a hand-rolled wrapper once you move to FSDP, because it composes with sharding.
-Second, all-or-nothing checkpointing is not the frontier practice: **selective** recompute
-(Korthikanti et al., 2022) recomputes only the cheap-to-recompute, expensive-to-store sublayers —
-here, the SwiGLU intermediates — while keeping the results of the expensive matmuls. PyTorch exposes
-this as *selective activation checkpointing* via `torch.utils.checkpoint`'s
+Second, all-or-nothing checkpointing is not frontier practice: **selective** recompute (Korthikanti
+et al., 2022) recomputes only the cheap-to-recompute, expensive-to-store sublayers — here, the
+SwiGLU intermediates — while keeping the results of the expensive matmuls. PyTorch exposes this as
+*selective activation checkpointing* via `torch.utils.checkpoint`'s
 `create_selective_checkpoint_contexts` and a per-op `CheckpointPolicy`, and torchtitan uses it as its
 default for exactly this reason. For Stack-100M the naive version is fine; for anything larger, the
 selective version is close to free.
 
 For the A100 flagship tier we leave checkpointing **off** by default — the extra ~33% compute
 directly costs GPU-hours we would rather spend on tokens — and reserve it for the 24GB/16GB tiers,
-where, note, fixing the loss head buys more memory than checkpointing does.
+where, note, `loss_chunk` buys more memory than checkpointing does.
 
 ## Crash-Safety: Checkpoints, Resume, and NaN Guards
 
@@ -759,7 +838,7 @@ def save_checkpoint(path, model, optimizers, *, step, tokens_seen=0,
     Ch. 14.6; `extra` carries anything a later stage needs (Ch. 14.8 passes
     `data_seed=`)."""
     if is_dataclass(config):
-        config = asdict(config)
+        config = asdict(config)          # nested StackConfig flattens too
     ckpt = {
         "model": _unwrap(model).state_dict(),
         "optimizers": [opt.state_dict() for opt in optimizers],
@@ -787,7 +866,7 @@ def load_checkpoint(path, model, optimizers, map_location="cuda") -> dict:
 
 def save_rolling(model, optimizers, cfg, *, step, tokens_seen, keep_last=5):
     """Step-stamped checkpoint + prune. Also refreshes `latest.pt` so the resume
-    path is a single well-known filename."""
+    path is a single well-known filename. WRITE first, PRUNE last."""
     path = f"{cfg.ckpt_dir}/step_{step:07d}.pt"
     save_checkpoint(path, model, optimizers, step=step,
                     tokens_seen=tokens_seen, config=cfg)
@@ -819,17 +898,13 @@ parallel across ranks and supports asynchronous saves that overlap with compute 
 a checkpoint is 200 GB rather than 1 GB. torchtitan uses it by default. At Stack-100M's size
 `torch.save` is entirely adequate; know that DCP is where you go next.
 
-### How big is a checkpoint, and how many do you keep?
-
-The fp32 model state dict is $101.4\times10^6 \times 4\text{ bytes} \approx 406$ MB. Muon stores a
-single momentum buffer per 2-D parameter it owns (the ~84.6M block-weight parameters),
-$\approx 338$ MB; AdamW stores two buffers ($m$, $v$) for the remaining ~16.8M embedding/norm
-parameters, $\approx 134$ MB. Total optimizer state is on the order of 470 MB, and a full
-checkpoint lands **on the order of 0.9 GB**. Keeping the last 5 plus `final.pt` costs under 6 GB —
-trivial next to even the 24 GB tier's VRAM, let alone disk. There is no reason to overwrite a single
-`latest.pt` in place, and one strong reason not to: if the most recent checkpoint was written
-*during* a loss spike, or after a NaN got into the weights, an in-place scheme has destroyed the
-only good state you had.
+The fp32 model state dict is $101.4\times10^6 \times 4\text{ B} \approx 406$ MB; Muon's single
+momentum buffer over the ~84.5M 2-D block parameters is $\approx 338$ MB; AdamW's $m$ and $v$ over
+the remaining ~16.8M parameters are $\approx 134$ MB. A full checkpoint lands **on the order of
+0.9 GB**, so the last 5 plus `ckpt_stable.pt` cost under 6 GB — trivial. There is no reason to
+overwrite a single `latest.pt` in place, and one strong reason not to: if the most recent checkpoint
+was written *during* a loss spike, or after a NaN got into the weights, an in-place scheme has
+destroyed the only good state you had.
 
 ### Resuming the data stream without a stateful loader
 
@@ -842,7 +917,7 @@ order a deterministic function of a seed, and derive the position from `step`.
 # stacklm/train_data.py
 import torch
 from torch.utils.data import DataLoader, Sampler, default_collate
-from stacklm.data import PackedMemmapDataset
+from stacklm.data.dataset import PackedMemmapDataset
 
 
 class ResumableShuffleSampler(Sampler):
@@ -867,16 +942,22 @@ class ResumableShuffleSampler(Sampler):
 
 
 def make_collate(pad_id: int):
-    """Ch. 14.2 pads the tail window with pad_id; the loss must ignore it."""
+    """Ch. 14.2's packer pads the final window of each shard with `pad_id`; the
+    loss must ignore those positions. `pad_id` is passed in from the tokenizer
+    object -- NEVER hard-coded, because Ch. 14.3 puts the nine specials in the
+    final nine ids (pad_id = 32761) and a wrong constant would mask out a common
+    BPE merge token instead, silently deleting supervision."""
     def collate(samples):
-        batch = default_collate(samples)
+        batch = default_collate(samples)          # keeps all four keys, incl. seq_ids
         batch["targets"] = batch["targets"].masked_fill(batch["targets"] == pad_id, -100)
         return batch
     return collate
 
 
-def build_loader(shard_dir, cfg, *, start_sample=0, shuffle=True):
-    ds = PackedMemmapDataset(shard_dir)
+def build_loader(shard_dir, cfg, tok, *, start_sample=0, shuffle=True):
+    # bos_id also lives in the shard dir's manifest.json; passing it explicitly
+    # makes the loader work even against a shard set whose manifest went missing.
+    ds = PackedMemmapDataset(shard_dir, bos_id=tok.bos_id)
     sampler = (ResumableShuffleSampler(len(ds), cfg.seed, start_sample)
                if shuffle else None)
     return DataLoader(
@@ -889,15 +970,16 @@ def build_loader(shard_dir, cfg, *, start_sample=0, shuffle=True):
         drop_last=True,
         persistent_workers=cfg.num_workers > 0,
         prefetch_factor=4 if cfg.num_workers > 0 else None,
-        collate_fn=make_collate(cfg.pad_id),
+        collate_fn=make_collate(tok.pad_id),
     )
 ```
 
 and on resume:
 
 ```python
-samples_per_step = cfg.micro_batch_size * cfg.grad_accum_steps
-train_loader = build_loader(cfg.shard_dir, cfg, start_sample=step * samples_per_step)
+samples_per_step = cfg.micro_batch_size * cfg.grad_accum_steps      # 256
+train_loader = build_loader(cfg.shard_dir, cfg, tok,
+                            start_sample=step * samples_per_step)
 ```
 
 !!! warning "Common pitfall: reading the data cursor out of the loader"
@@ -908,7 +990,8 @@ train_loader = build_loader(cfg.shard_dir, cfg, start_sample=step * samples_per_
     process has already handed out up to `num_workers × prefetch_factor` batches that the training
     loop has not consumed. A cursor read from the sampler therefore over-reports, and every resume
     silently skips a few thousand samples. Deriving the position from `step` is exact by
-    construction.
+    construction — which is also why the QK-clip probe above draws from the *val* loader: an extra
+    `next(train_iter)` every 200 steps would put the two out of sync by ~160 micro-batches.
 
     **Iterable datasets duplicate.** If you replace the map-style dataset with a streaming
     `IterableDataset` — a natural instinct for a shard-based corpus — each of the `num_workers`
@@ -929,15 +1012,14 @@ Muon momentum buffer, and the next scheduled checkpoint overwrites your good sta
 one. The whole run is then unrecoverable and the loss log looks fine right up to the point where it
 becomes `nan`.
 
-The guard is three lines:
+The guard is a handful of lines:
 
 ```python
-grad_norm = torch.nn.utils.clip_grad_norm_(all_params, cfg.grad_clip)
+grad_norm = torch.nn.utils.clip_grad_norm_(params, cfg.grad_clip)
 
 if torch.isfinite(grad_norm):
     for opt in optimizers:
         opt.step()
-    qk_clip_(raw_model, max_logits, tau=cfg.qk_clip_tau)
     consecutive_skips = 0
 else:
     # Discard this step entirely: the parameters and optimizer state are untouched.
@@ -958,8 +1040,7 @@ and the correct response is the standard loss-spike recipe from
 [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html):
 stop, roll back to a step checkpoint from before the spike (which is why we keep five), skip the
 data window that produced it by advancing `start_sample` past it, and resume. That recipe only works
-if rolling checkpoints exist — which is exactly why `save_rolling` above never overwrites its own
-history.
+if rolling checkpoints exist — which is exactly why `save_rolling` never overwrites its own history.
 
 Note that `if torch.isfinite(grad_norm)` reads a CUDA scalar on the host and therefore synchronizes.
 That costs one sync per optimizer step, which the timing code below performs anyway. It is not a
@@ -986,38 +1067,14 @@ window — it reads 100% just as happily whether you are running at 90% of peak 
 Utilization (MFU)**: the FLOPs the *model math* requires, divided by the accelerator's peak
 FLOPs/s, popularized as a training-efficiency metric by Chowdhery et al. (PaLM, 2022).
 
-### Timing the whole step, including the data wait
-
-```python
-def timed_step(model, optimizers, train_iter, cfg, max_logits):
-    """Times the ENTIRE optimizer step -- including the micro-batch fetches --
-    and separately reports how much of it was spent waiting on data."""
-    torch.cuda.synchronize()
-    t0 = time.perf_counter()
-    data_wait = 0.0
-
-    for opt in optimizers:
-        opt.zero_grad(set_to_none=True)
-    loss_sum = torch.zeros((), device=cfg.device)
-    for _ in range(cfg.grad_accum_steps):
-        t_fetch = time.perf_counter()
-        batch = next(train_iter)                 # blocks here if the loader is behind
-        data_wait += time.perf_counter() - t_fetch
-        ...                                       # (the body of `accumulate`, above)
-
-    grad_norm = torch.nn.utils.clip_grad_norm_(all_params, cfg.grad_clip)
-    ...                                           # finite check + opt.step() + qk_clip_
-    torch.cuda.synchronize()
-    return loss_sum, grad_norm, time.perf_counter() - t0, data_wait
-```
-
-Two things about this shape. First, `torch.cuda.synchronize()` before and after the timed region is
-mandatory: CUDA kernel launches are asynchronous, so an un-synchronized wall clock mostly measures
-how fast the CPU can enqueue work, not how fast the GPU executes it. Second — and this is the part
-that is easy to get wrong — the micro-batch fetches must be **inside** the timed region. A loop that
-prefetches all eight micro-batches before starting the clock reports pure compute time and hides
-loader stalls completely, which makes the MFU number useless for exactly the diagnosis MFU is best
-at. Logging `data_wait` alongside `dt` turns "MFU is low" into "MFU is low *and* 40% of the step is
+Two things about how the loop measures it. First, `torch.cuda.synchronize()` before and after the
+timed region is mandatory: CUDA kernel launches are asynchronous, so an un-synchronized wall clock
+mostly measures how fast the CPU can enqueue work, not how fast the GPU executes it. Second — and
+this is the part that is easy to get wrong — the micro-batch fetches must be **inside** the timed
+region, which is why `accumulate` above times them and returns `data_wait`. A loop that prefetches
+all eight micro-batches before starting the clock reports pure compute time and hides loader stalls
+completely, making the MFU number useless for exactly the diagnosis MFU is best at. Logging
+`data_wait` alongside `dt` turns "MFU is low" into "MFU is low *and* 40% of the step is
 `next(train_iter)`", which is an actionable statement. When `data_wait` is non-trivial, raise
 `num_workers` and `prefetch_factor`, or move packing work offline into the shard build.
 
@@ -1028,8 +1085,8 @@ The standard estimate is **6ND**, used throughout
 [Ch. 14.5](../14-capstone/05-mini-scaling-laws.html): one forward-plus-backward pass costs
 approximately 6 FLOPs per parameter per token (Kaplan et al., 2020) — 2 for the forward matmuls, 4
 for the backward's two matmuls per weight. It is a good approximation when the model's FLOPs are
-dominated by weight matmuls. Attention's score and value-aggregation matmuls, though, involve no weights at all: their
-cost scales with sequence length, and 6ND misses them entirely.
+dominated by weight matmuls. Attention's score and value-aggregation matmuls, though, involve no
+weights at all: their cost scales with sequence length, and 6ND misses them entirely.
 
 For a decoder-only transformer the fuller model-FLOPs-per-token count is
 
@@ -1044,37 +1101,58 @@ The ratio of the two terms is roughly $T / (6 \cdot d_{\text{model}})$ — negli
 short-context model, and *not* negligible for Stack-100M, which PLAN.md §1 deliberately makes
 **deep and thin**.
 
+```python
+# stacklm/train_utils.py
+A100_BF16_PEAK    = 312e12   # A100 80GB SXM, bf16 dense (no structured sparsity)
+RTX4090_BF16_PEAK = 165e12   # RTX 4090, bf16/fp16 tensor core with fp32 accumulate, dense
+T4_FP16_PEAK      =  65e12   # Turing T4 -- fp16 only; no bf16 tensor cores
+
+
+def flops_per_token(n_params, n_layers, seq_len, d_model, causal=True):
+    """6ND plus the attention score/value matmuls the 6ND rule omits."""
+    attn = 6 * n_layers * seq_len * d_model
+    return 6 * n_params + (attn if causal else 2 * attn)
+
+
+def utilization(n_params, tokens_per_sec, cfg, peak_flops=A100_BF16_PEAK,
+                recompute_factor=1.0):
+    """Returns (mfu, hfu). `recompute_factor` is 1.0 with no activation
+    checkpointing and ~4/3 with full-block checkpointing."""
+    m = cfg.model
+    f = flops_per_token(n_params, m.n_layers, m.max_seq_len, m.d_model)
+    mfu = f * tokens_per_sec / peak_flops
+    return mfu, mfu * recompute_factor
+```
+
 !!! example "Worked example: from step time to GPU-hours, both FLOP conventions"
 
     Suppose we measure `dt = 2.3 s` for one full optimizer step (8 accumulated micro-batches of
-    32×2048 tokens, plus the clip, both optimizer steps, and QK-clip), on a `torch.compile`d loop
-    with FlashAttention-backed SDPA.
+    32×2048 tokens, plus the clip and both optimizer steps), on a `torch.compile`d loop with
+    FlashAttention-backed SDPA.
 
     **Tokens/sec:** $524{,}288 / 2.3 \approx 227{,}951$ tokens/s.
 
-    **FLOPs per token, 6ND only:**
-    $6 \times 101.4\times10^6 \approx 608.4$ MFLOP/token.
+    **FLOPs per token, 6ND only:** $6 \times 101.4\times10^6 \approx 608.4$ MFLOP/token.
     Achieved: $608.4\times10^6 \times 227{,}951 \approx 1.387\times10^{14} = 138.7$ TFLOP/s.
     **MFU $= 138.7 / 312 \approx 44.5\%$** on an A100 80GB SXM (bf16 dense peak, no structured
     sparsity).
 
-    **The attention correction:**
-    $6 \times 30 \times 2048 \times 512 \approx 188.7$ MFLOP/token — a **31%** addition that 6ND
-    silently drops. Total $\approx 797.1$ MFLOP/token, achieved $\approx 181.7$ TFLOP/s,
-    **MFU $\approx 58.2\%$**.
+    **The attention correction:** $6 \times 30 \times 2048 \times 512 \approx 188.7$ MFLOP/token —
+    a **31%** addition that 6ND silently drops. Total $\approx 797.1$ MFLOP/token, achieved
+    $\approx 181.7$ TFLOP/s, **MFU $\approx 58.2\%$**.
 
     **Projected wall-clock.** Utilization changes; wall-clock does not, because it comes from
-    tokens/s:
+    tokens/s. This chapter's 32,147 steps are
+    $32{,}147 \times 524{,}288 \approx 16.85\times10^9$ tokens:
     $$
-    \frac{18\times10^9 \text{ tokens}}{227{,}951\text{ tokens/s}} \approx 78{,}964\text{ s}
-    \approx 21.9 \text{ GPU-hours for this chapter's 34,332 steps,}
+    \frac{16.85\times10^9}{227{,}951} \approx 73{,}940\text{ s} \approx 20.5 \text{ GPU-hours},
     $$
-    plus roughly 2.4 more GPU-hours for Ch. 14.8's 3,815 decay steps: **≈24.4 GPU-hours for the
-    full 20B-token budget**. At roughly USD 1.50/GPU-hour that is about USD 37, in the same ballpark
-    as the plan's ~USD 40–100 figure and at the upper end of its 15–25 GPU-hour envelope. Reaching
-    the *lower* end means pushing tokens/s up via a larger micro-batch (which the chunked loss head
-    now permits), `torch.compile`, and fused kernels — all "on the order of," never a guaranteed
-    benchmark.
+    plus roughly 3.8 more GPU-hours for Ch. 14.8's 6,000 decay steps ($\approx 3.15\times10^9$
+    tokens): **≈24.4 GPU-hours for the full 20B-token budget**. At roughly USD 1.50/GPU-hour that is
+    about USD 37, inside the plan's ~USD 25–50 figure and mid-band of its 22–29 GPU-hour
+    envelope. Reaching the *lower* end means pushing tokens/s up via a larger micro-batch (which
+    `loss_chunk` now permits), `torch.compile`, and fused kernels — all "on the order of," never a
+    guaranteed benchmark.
 
     **The lesson for reporting.** 44.5% and 58.2% describe the same run. Always state which FLOP
     convention you used; comparing your 6ND-only number against someone else's
@@ -1097,28 +1175,6 @@ conflict: it is telling you the silicon is well-fed and one third of its work is
 to buy memory. Report MFU when you are asking "how efficiently am I turning dollars into a model,"
 and HFU when you are asking "how efficiently am I driving the tensor cores."
 
-```python
-# stacklm/train_utils.py
-A100_BF16_PEAK   = 312e12    # A100 80GB SXM, bf16 dense (no structured sparsity)
-RTX4090_BF16_PEAK = 165e12   # RTX 4090, bf16/fp16 tensor core with fp32 accumulate, dense
-T4_FP16_PEAK      =  65e12   # Turing T4 -- fp16 only; no bf16 tensor cores
-
-
-def flops_per_token(n_params, n_layers, seq_len, d_model, causal=True):
-    """6ND plus the attention score/value matmuls the 6ND rule omits."""
-    attn = 6 * n_layers * seq_len * d_model
-    return 6 * n_params + (attn if causal else 2 * attn)
-
-
-def utilization(n_params, tokens_per_sec, cfg, peak_flops=A100_BF16_PEAK,
-                recompute_factor=1.0):
-    """Returns (mfu, hfu). `recompute_factor` is 1.0 with no activation
-    checkpointing and ~4/3 with full-block checkpointing."""
-    f = flops_per_token(n_params, cfg.n_layers, cfg.seq_len, cfg.d_model)
-    mfu = f * tokens_per_sec / peak_flops
-    return mfu, mfu * recompute_factor
-```
-
 ### When the numbers disagree with you, profile
 
 MFU tells you *that* something is wrong; it does not tell you *what*. The PyTorch profiler does, and
@@ -1140,76 +1196,78 @@ Open the trace in TensorBoard or `chrome://tracing` and look for three signature
 CUDA stream (you are launch-bound or loader-bound), a wall of tiny elementwise kernels
 (`torch.compile` is not fusing — check for graph breaks with `TORCH_LOGS=graph_breaks`, and see
 [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)
-for what the compiler is and is not able to do here), or an
-attention kernel named something other than the flash variant (your document mask fell off the fast
-path, see above). NVIDIA Nsight Systems (`nsys profile`) gives the same picture with more hardware
-counters.
+for what the compiler is and is not able to do here), or an attention kernel named something other
+than the flash variant (your document mask fell off the fast path, see above). NVIDIA Nsight Systems
+(`nsys profile`) gives the same picture with more hardware counters.
 
 ## Evaluation, Sampling, and Logging During the Run
 
-Every `cfg.eval_every` steps we measure held-out loss on a val shard the model has never trained on
-(the split created in [the data-pipeline chapter](../14-capstone/02-data-pipeline.html)), and every
-`cfg.sample_every` steps we generate a short free-running sample so a human can sanity-check
-qualitative progress that a loss number alone can miss (repetition loops, garbled tokenization,
-degenerate outputs).
+Every `cfg.eval_every` steps we measure held-out loss on the val shards the model has never trained
+on (the document-hash split created in
+[the data-pipeline chapter](../14-capstone/02-data-pipeline.html)), and every `cfg.sample_every`
+steps we generate a short free-running sample so a human can sanity-check qualitative progress that
+a loss number alone can miss (repetition loops, garbled tokenization, degenerate outputs).
 
 ```python
-import math
+import contextlib, math
 import torch
 
 
+@contextlib.contextmanager
+def z_loss_off(raw_model):
+    """Report *pure* cross-entropy at eval time. The z-loss is a training
+    regularizer, not part of the quantity we compare across steps or against
+    other models -- folding it into a reported val loss makes your perplexity
+    incomparable to everyone else's. `fused_ce_z_loss` multiplies the z-term by
+    `z_coef`, so zeroing the coefficient removes it exactly, on both the chunked
+    and the unchunked path."""
+    old = raw_model.cfg.z_loss_coef
+    raw_model.cfg.z_loss_coef = 0.0
+    try:
+        yield
+    finally:
+        raw_model.cfg.z_loss_coef = old
+
+
 @torch.no_grad()
-def evaluate(model, val_loader, cfg):
+def evaluate(raw_model, val_loader, cfg):
     """Held-out loss on a FIXED prefix of the val stream.
 
     Building the iterator fresh from a non-shuffled loader means every call sees
     the *same* eval_iters batches, so the val curve moves only because the model
     moved. (Never use itertools.cycle for this: it caches every batch it has
-    yielded, so cycling a shard-backed loader slowly consumes all your RAM.)"""
-    model.eval()
+    yielded, so cycling a shard-backed loader slowly consumes all your RAM.)
+
+    We evaluate through `raw_model`, not the compiled wrapper: toggling
+    `cfg.z_loss_coef` is a Python-float change that would fail a Dynamo guard and
+    trigger a recompile on every eval. Fifty eager batches every 500 steps is
+    well under 1% of the run."""
+    raw_model.eval()
     total, n = 0.0, 0
-    for i, batch in enumerate(val_loader):
-        if i >= cfg.eval_iters:
-            break
-        x   = batch["input_ids"].to(cfg.device, non_blocking=True)
-        y   = batch["targets"].to(cfg.device, non_blocking=True)
-        pos = batch["position_ids"].to(cfg.device, non_blocking=True)
-        with autocast_ctx:
-            _, loss = model(x, targets=y, position_ids=pos, z_loss_weight=0.0)
-        total += loss.item(); n += 1
-    model.train()
+    with z_loss_off(raw_model):
+        for i, batch in enumerate(val_loader):
+            if i >= cfg.eval_iters:
+                break
+            x, y, pos, seq = (batch[k].to(cfg.device, non_blocking=True)
+                              for k in ("input_ids", "targets", "position_ids", "seq_ids"))
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                _, loss = raw_model(x, targets=y, position_ids=pos, seq_ids=seq)
+            total += loss.item(); n += 1
+    raw_model.train()
     mean = total / max(n, 1)
     return mean, math.exp(mean)      # (nats/token, perplexity)
-```
 
-Note `z_loss_weight=0.0` at eval time: the z-loss is a training regularizer, not part of the
-quantity we want to compare across steps or against other models. Reporting a val loss with the
-z-loss folded in makes your perplexity incomparable to everyone else's.
 
-```python
 @torch.no_grad()
-def generate_sample(model, tokenizer, prompt, cfg, max_new_tokens=64,
-                    temperature=0.8, top_p=0.95):
-    """Naive autoregressive sampling, no KV cache -- fine for a periodic sanity
-    check during training; production serving uses the KV-cache machinery in
-    The Anatomy of LLM Inference: Prefill, Decode & The KV Cache."""
-    model.eval()
-    ids = torch.tensor([tokenizer.encode(prompt)], device=cfg.device)
-    for _ in range(max_new_tokens):
-        with autocast_ctx:
-            logits, _ = model(ids[:, -cfg.max_seq_len:])   # (B, 1, V): decode path
-        logits = logits[:, -1, :].float() / max(temperature, 1e-5)
-        probs = torch.softmax(logits, dim=-1)
-        sorted_probs, sorted_idx = torch.sort(probs, descending=True, dim=-1)
-        cum = sorted_probs.cumsum(-1)
-        # Keep the smallest prefix whose mass exceeds top_p (always >= 1 token).
-        keep = cum - sorted_probs < top_p
-        filtered = torch.where(keep, sorted_probs, torch.zeros_like(sorted_probs))
-        choice = torch.multinomial(filtered / filtered.sum(-1, keepdim=True), 1)
-        next_id = sorted_idx.gather(-1, choice)
-        ids = torch.cat([ids, next_id], dim=-1)
-    model.train()
-    return tokenizer.decode(ids[0].tolist())
+def sample_text(raw_model, tok, prompt, cfg, max_new_tokens=64):
+    """Ch. 14.4's `generate` already does KV-cached, O(T) decoding with top-p
+    sampling -- there is no reason to hand-roll a second sampler here. Prefix the
+    prompt with <|bos|> so the model sees the same document-start marker the
+    packer wrote into every training window."""
+    ids = torch.tensor([[tok.bos_id, *tok.encode(prompt)]], device=cfg.device)
+    out = raw_model.generate(ids, max_new_tokens=max_new_tokens,
+                             temperature=0.8, top_p=0.95, eos_id=tok.eos_id)
+    return tok.decode(out[0].tolist())
 
 
 def log_metrics(cfg, log_path, **record):
@@ -1224,11 +1282,11 @@ def log_metrics(cfg, log_path, **record):
         f.write(json.dumps(record) + "\n")
     if record["step"] % cfg.log_every == 0:
         vl = f"  val {record['val_loss']:.3f}" if record.get("val_loss") is not None else ""
+        qk = f"  qk {record['qk_fired']}" if record.get("qk_fired") is not None else ""
         print(f"step {record['step']:>6}/{cfg.stop_at_step}  loss {record['loss']:.3f}{vl}  "
-              f"lr×{record['lr_mult']:.3f}  |g| {record['grad_norm']:.2f}  "
+              f"lr×{record['lr_mult']:.3f}  |g| {record['grad_norm']:.2f}{qk}  "
               f"tok/s {record['tokens_per_sec']:,.0f}  mfu {record['mfu']*100:.1f}%  "
-              f"data_wait {record['data_wait']*1e3:.0f}ms  "
-              f"mem {record['peak_gb']:.1f}GB")
+              f"data_wait {record['data_wait']*1e3:.0f}ms  mem {record['peak_gb']:.1f}GB")
 ```
 
 ### Expected loss curve magnitudes
@@ -1236,10 +1294,10 @@ def log_metrics(cfg, log_path, **record):
 At initialization, cross-entropy over a fresh 32,768-token vocabulary starts at essentially
 $\ln(32{,}768) \approx 10.4$ nats/token — the model is guessing uniformly. Warmup and the first few
 hundred steps drop this quickly, since the easiest signal (token frequency statistics) is learned
-almost immediately; by the end of warmup, loss is typically already down to something on the order
-of low-to-mid single digits of nats/token. Through the long **stable** phase, loss decreases slowly
-and fairly smoothly — this is the bulk of the 34,332 steps this chapter runs, and the
-log-loss-vs-log-tokens curve should look close to a straight line, the empirical signature the
+almost immediately; by the end of the 500-step warmup, loss is typically already down to something
+on the order of low-to-mid single digits of nats/token. Through the long **stable** phase, loss
+decreases slowly and fairly smoothly — this is the bulk of the 32,147 steps this chapter runs, and
+the log-loss-vs-log-tokens curve should look close to a straight line, the empirical signature the
 scaling law in Ch. 14.5 was fit from. This chapter therefore *ends* on a plateau, with train loss in
 the ballpark of the low 3s nats/token and no dramatic final drop — that drop belongs to the decay
 phase, which [mid-training](../14-capstone/08-mid-training.html) runs on the higher-quality mix, and
@@ -1252,7 +1310,9 @@ precise value depends on your data mix, dedup quality, and tokenizer.
 
 ## The Complete Training Script
 
-Putting every piece above together into one runnable entry point:
+Putting every piece above together into one runnable entry point. Note that it *calls* the helpers
+defined earlier rather than re-inlining them — there is exactly one copy of the forward/backward
+body in this chapter, and it is `accumulate`.
 
 ```python
 # stacklm/train.py
@@ -1265,16 +1325,16 @@ Usage:  python -m stacklm.train --config configs/a100.yaml
 import os, time
 import torch
 
-from stacklm.model import Stack100M, StackConfig
-from stacklm.optim import build_optimizers, wsd_lr, qk_clip_
-from stacklm.tokenizer import Tokenizer
+from stacklm.model import Stack100M
+from stacklm.optim import build_optimizers
+from stacklm.tokenizer import StackTokenizer
 from stacklm.train_config import TrainConfig
 from stacklm.train_data import build_loader
-from stacklm.checkpoint import load_checkpoint, save_checkpoint, save_rolling, _unwrap
-from stacklm.train_utils import (evaluate, generate_sample, log_metrics,
-                                 enable_activation_checkpointing,
-                                 utilization, all_params_of,
-                                 attach_base_lrs, set_lr, A100_BF16_PEAK)
+from stacklm.checkpoint import load_checkpoint, save_checkpoint, save_rolling
+from stacklm.train_utils import (accumulate, evaluate, sample_text, log_metrics,
+                                 enable_activation_checkpointing, maybe_qk_clip,
+                                 utilization, all_params_of, attach_base_lrs,
+                                 set_lr, A100_BF16_PEAK, BATCH_KEYS)
 
 
 def main(cfg: TrainConfig):
@@ -1283,14 +1343,11 @@ def main(cfg: TrainConfig):
     torch.backends.cudnn.benchmark = True            # fixed shapes every step
     torch.set_float32_matmul_precision("high")       # TF32 for the remaining fp32 math
 
-    # ---- model -------------------------------------------------------------
-    model_cfg = StackConfig(
-        vocab_size=cfg.vocab_size, d_model=cfg.d_model, n_layers=cfg.n_layers,
-        n_heads=cfg.n_heads, n_kv_heads=cfg.n_kv_heads, head_dim=cfg.head_dim,
-        intermediate=cfg.intermediate, max_seq_len=cfg.max_seq_len,
-        rope_theta=cfg.rope_theta, tie_embeddings=cfg.tie_embeddings,
-        loss_chunk_size=cfg.loss_chunk_size)
-    model = Stack100M(model_cfg).to(cfg.device)      # fp32 masters; bf16 only in autocast
+    tok = StackTokenizer.load(cfg.tokenizer_path)
+    assert tok.pad_id == 32761, "Ch. 14.3 puts the nine specials in the FINAL nine ids"
+
+    # ---- model (fp32 masters; bf16 only inside autocast) ---------------------
+    model = Stack100M(cfg.model).to(cfg.device)
     n_params = model.num_params()
     if cfg.activation_checkpointing:
         enable_activation_checkpointing(model)
@@ -1317,14 +1374,23 @@ def main(cfg: TrainConfig):
         model = torch.compile(model)   # TorchDynamo + TorchInductor; see Ch. 4.9
 
     # ---- data --------------------------------------------------------------
-    samples_per_step = cfg.micro_batch_size * cfg.grad_accum_steps
-    train_loader = build_loader(cfg.shard_dir, cfg, start_sample=step * samples_per_step)
-    val_loader   = build_loader(cfg.val_shard_dir, cfg, shuffle=False)
-    train_iter   = iter(train_loader)
-    tokenizer    = Tokenizer.load("tokenizer/stack100m.bpe")
+    samples_per_step = cfg.micro_batch_size * cfg.grad_accum_steps      # 256
+    train_loader = build_loader(cfg.shard_dir, cfg, tok,
+                                start_sample=step * samples_per_step)
+    val_loader = build_loader(cfg.val_shard_dir, cfg, tok, shuffle=False)
+    train_iter = iter(train_loader)
 
-    autocast_ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
-    max_logits = torch.zeros(cfg.n_layers, cfg.n_heads, device=cfg.device)  # for MuonClip
+    # The single most valuable assertion in the file: without seq_ids the model
+    # takes its plain-causal fast path and attends ACROSS documents for the whole
+    # run, which lowers the loss slightly and is otherwise invisible.
+    assert set(BATCH_KEYS) <= set(train_loader.dataset[0]), \
+        "dataset must supply seq_ids (Ch. 14.2) or document masking is silently off"
+
+    # Fixed probe batch for MuonClip: drawn from val, so the training stream --
+    # and therefore the step -> start_sample resume arithmetic -- is untouched.
+    probe = {k: v[:cfg.qk_probe_seqs].to(cfg.device)
+             for k, v in next(iter(val_loader)).items()}
+
     recompute_factor = 4 / 3 if cfg.activation_checkpointing else 1.0
     consecutive_skips = 0
 
@@ -1332,32 +1398,13 @@ def main(cfg: TrainConfig):
     while step < cfg.stop_at_step:
         lr_mult = set_lr(optimizers, step, cfg)
 
-        torch.cuda.synchronize(); t0 = time.perf_counter(); data_wait = 0.0
-        for opt in optimizers:
-            opt.zero_grad(set_to_none=True)
-        loss_sum = torch.zeros((), device=cfg.device)
-
-        for _ in range(cfg.grad_accum_steps):
-            t_fetch = time.perf_counter()
-            batch = next(train_iter)                 # inside the timer, on purpose
-            data_wait += time.perf_counter() - t_fetch
-            x   = batch["input_ids"].to(cfg.device, non_blocking=True)
-            y   = batch["targets"].to(cfg.device, non_blocking=True)
-            pos = batch["position_ids"].to(cfg.device, non_blocking=True)
-            with autocast_ctx:
-                _, loss = model(x, targets=y, position_ids=pos,
-                                record_attn_logits=max_logits,
-                                z_loss_weight=cfg.z_loss_weight)
-                loss = loss / cfg.grad_accum_steps    # scale BEFORE backward
-            loss.backward()
-            loss_sum += loss.detach()                 # no host sync per micro-batch
-
+        torch.cuda.synchronize(); t0 = time.perf_counter()
+        loss_sum, data_wait = accumulate(model, optimizers, train_iter, cfg)
         grad_norm = torch.nn.utils.clip_grad_norm_(params, cfg.grad_clip)
 
         if torch.isfinite(grad_norm):
             for opt in optimizers:
                 opt.step()
-            qk_clip_(_unwrap(model), max_logits, tau=cfg.qk_clip_tau)  # MuonClip, post-step
             consecutive_skips = 0
         else:
             for opt in optimizers:
@@ -1368,7 +1415,8 @@ def main(cfg: TrainConfig):
             if consecutive_skips >= cfg.max_consecutive_skips:
                 raise RuntimeError("too many consecutive non-finite steps; "
                                    "roll back to an earlier step_*.pt")
-        max_logits.zero_()
+
+        qk_fired = maybe_qk_clip(raw_model, probe, cfg, step)   # MuonClip, post-step
         torch.cuda.synchronize(); dt = time.perf_counter() - t0
 
         # ---- metrics --------------------------------------------------------
@@ -1381,16 +1429,17 @@ def main(cfg: TrainConfig):
 
         val_loss = None
         if step % cfg.eval_every == 0:
-            val_loss, val_ppl = evaluate(model, val_loader, cfg)
+            val_loss, val_ppl = evaluate(raw_model, val_loader, cfg)
         if step % cfg.sample_every == 0:
             print(f"  sample @ {step}: "
-                  f"{generate_sample(model, tokenizer, 'The history of', cfg)[:200]!r}")
+                  f"{sample_text(raw_model, tok, 'The history of', cfg)[:200]!r}")
 
         log_metrics(cfg, f"{cfg.ckpt_dir}/log.jsonl",
                     step=step, loss=loss_sum.item(), lr_mult=lr_mult,
                     grad_norm=grad_norm.item(), tokens_seen=tokens_seen,
                     tokens_per_sec=tokens_per_sec, dt=dt, data_wait=data_wait,
-                    mfu=mfu, hfu=hfu, val_loss=val_loss, skipped=skipped_total,
+                    mfu=mfu, hfu=hfu, val_loss=val_loss, qk_fired=qk_fired,
+                    skipped=skipped_total,
                     peak_gb=torch.cuda.max_memory_allocated() / 2**30)
 
         if step % cfg.ckpt_every == 0 and step > 0:
@@ -1404,7 +1453,7 @@ def main(cfg: TrainConfig):
                     data_seed=cfg.seed)
     print(f"stable phase done: {step} steps, {tokens_seen:,} tokens, "
           f"{skipped_total} skipped. LR still at plateau -> ckpt_stable.pt "
-          f"(Ch. 14.8 runs the WSD decay leg from here).")
+          f"(Ch. 14.8 runs the 6,000-step WSD decay leg from here).")
 
 
 if __name__ == "__main__":
@@ -1427,6 +1476,7 @@ why it exists:
 | accumulation, clipping, AMP, device placement | HuggingFace `accelerate`, `transformers.Trainer`, PyTorch Lightning |
 | resumable data ordering | `torchdata.stateful_dataloader.StatefulDataLoader` (pytorch/data) |
 | chunked linear cross-entropy | Liger-Kernel `LigerFusedLinearCrossEntropy`; Apple `cut-cross-entropy`; torchtune chunked-output loss |
+| WSD schedule | `transformers.get_wsd_schedule`; torchtitan's warmup/stable/decay phase config |
 | document-aware attention masks | `torch.nn.attention.flex_attention`; `flash_attn_varlen_func` (Dao-AILab) |
 | activation checkpointing | `apply_activation_checkpointing`; selective AC via `create_selective_checkpoint_contexts` |
 | checkpoint + resume at scale | `torch.distributed.checkpoint` (DCP), sharded and async |
@@ -1482,9 +1532,10 @@ for i in range(cfg.grad_accum_steps):
 launched with `torchrun --nproc_per_node=8 -m stacklm.train`. Eight GPUs at near-linear scaling
 turns a ~24-GPU-hour single-A100 run into roughly ~3 wall-clock hours on 8 — the *cost* in GPU-hours
 is unchanged, only the wall clock improves, which is the entire point of DDP: it does not reduce
-total compute or per-GPU memory pressure. Two things must change in the surrounding code, and both
-are easy to forget: the data stream must be sharded by rank (above), and only rank 0 should write
-checkpoints and logs.
+total compute or per-GPU memory pressure. Three things must change in the surrounding code, and all
+three are easy to forget: the data stream must be sharded by rank (above), only rank 0 should write
+checkpoints and logs, and `qk_clip_` must run on every rank with the *same* probe batch (it is an
+in-place parameter edit, so ranks that skip it immediately diverge from ranks that do not).
 
 **FSDP when the model no longer fits.**
 [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html) covers Fully Sharded
@@ -1513,7 +1564,7 @@ The same `train.py` and `TrainConfig` serve all three compute tiers documented i
 
 | Tier | GPU | VRAM | bf16 dense peak | precision | micro-batch × seq | grad accum | eff. batch | act. ckpt | est. wall-clock | est. cost |
 |---|---|---|---|---|---|---|---|---|---|---|
-| **Flagship** | 1×A100 80GB SXM | 80GB | 312 TFLOP/s | bf16 autocast, no scaler | 32 × 2048 | 8 | ≈524k | off | ~15–25 GPU-hr | ~USD 40–100 |
+| **Flagship** | 1×A100 80GB SXM | 80GB | 312 TFLOP/s | bf16 autocast, no scaler | 32 × 2048 | 8 | ≈524k | off | ~22–29 GPU-hr | ~USD 25–50 |
 | **Consumer** | RTX 4090 | 24GB | ~165 TFLOP/s | bf16 autocast, no scaler | 8 × 2048 | 32 | ≈524k | optional | ~2–4× the A100 wall-clock | ~USD 0 (owned; electricity) |
 | **Free on-ramp** | Colab T4 | 16GB | none (fp16: ~65 TFLOP/s) | fp16 + `GradScaler` | scaled-down model, seq 1024 | tune to fit | reduced target | on | hours, a subset run | USD 0 |
 
@@ -1523,15 +1574,15 @@ denominator of your MFU calculation, not as achievable throughput.
 ### RTX 4090: same recipe, smaller micro-batch
 
 A 4090's 24GB has to hold fp32 master weights (~406 MB), gradients (~406 MB), Muon+AdamW state
-(~470 MB), activations, and the loss head. With the chunked loss head from earlier in this chapter,
-`micro_batch_size = 8` costs roughly 4 GB of block activations plus ~1 GB for the head plus ~1.3 GB
-of persistent state — comfortably inside 24 GB *without* activation checkpointing, which is why the
-table marks it optional rather than required. That is a direct consequence of fixing the loss head:
-before the fix, the head alone was 7.5 GB at this micro-batch and checkpointing was mandatory. If you
-have headroom, raise `micro_batch_size` to 16 and drop `grad_accum_steps` to 16 — same 524,288-token
-effective batch, fewer kernel launches, better MFU. If you OOM, the safe fallback is 8 × 32 with
-checkpointing on. The ~2–4× wall-clock versus the A100 comes from the 4090's lower dense bf16
-tensor-core throughput and the extra accumulation steps; nothing else in `train.py` changes.
+(~470 MB), activations, and the loss head. With `loss_chunk = 8192`, `micro_batch_size = 8` costs
+roughly 4 GB of block activations plus ~2 GB for the head plus ~1.3 GB of persistent state —
+comfortably inside 24 GB *without* activation checkpointing, which is why the table marks it
+optional rather than required. That is a direct consequence of the chunked head: at `loss_chunk = 0`
+the head alone was 7.5 GB at this micro-batch and checkpointing was mandatory. If you have headroom,
+raise `micro_batch_size` to 16 and drop `grad_accum_steps` to 16 — same 524,288-token effective
+batch, fewer kernel launches, better MFU. If you OOM, the safe fallback is 8 × 32 with checkpointing
+on, or `loss_chunk = 4096`. The ~2–4× wall-clock versus the A100 comes from the 4090's lower dense
+bf16 tensor-core throughput and the extra accumulation steps; nothing else in `train.py` changes.
 
 !!! note "Colab's T4 has no bf16 tensor cores"
 
@@ -1567,10 +1618,11 @@ tensor-core throughput and the extra accumulation steps; nothing else in `train.
     because one graph break inside the block loop turns 30 fused blocks into hundreds of tiny
     kernels; (2) is the attention path actually hitting FlashAttention — passing an explicit dense
     boolean document mask to SDPA silently drops you to the math backend, which is the single most
-    common cause of this exact symptom in a document-packed pretraining loop; (3) is the micro-batch
-    too small to saturate the SMs; (4) is the loader starving the GPU — log `data_wait` next to
-    `dt`, because a stall shows up as high util between bursts of idle waiting, not as low util.
-    Confirm with `torch.profiler` rather than guessing. Two framing points worth stating
+    common cause of this exact symptom in a document-packed pretraining loop, and the fix is
+    FlexAttention's `BlockMask` or varlen `cu_seqlens` rather than removing the mask; (3) is the
+    micro-batch too small to saturate the SMs; (4) is the loader starving the GPU — log `data_wait`
+    next to `dt`, because a stall shows up as high util between bursts of idle waiting, not as low
+    util. Confirm with `torch.profiler` rather than guessing. Two framing points worth stating
     unprompted: MFU is convention-dependent (6ND-only vs. including the attention score/value
     matmuls, a ~31% difference for a deep-thin model at seq_len 2048), and MFU is not HFU — with
     activation checkpointing on, a third of the hardware's work is recompute that MFU deliberately
@@ -1587,33 +1639,38 @@ tensor-core throughput and the extra accumulation steps; nothing else in `train.
     if the z-loss recomputes `logsumexp` separately — about 30 GB total, which dwarfs the trunk.
     Activation checkpointing does not help because the head is outside the blocks. The fix is a
     chunked or fused linear-cross-entropy that never materializes the full logit tensor:
-    Liger-Kernel's `LigerFusedLinearCrossEntropy`, Apple's cut-cross-entropy, or a hand-rolled
-    chunk-plus-`torch.utils.checkpoint` loop that costs about 5% extra FLOPs and cuts head memory
-    roughly 30×.
+    Liger-Kernel's `LigerFusedLinearCrossEntropy`, Apple's cut-cross-entropy, or the
+    chunk-plus-`torch.utils.checkpoint` loop in `fused_ce_z_loss`, which costs about 5% extra FLOPs
+    and makes peak head memory a function of `chunk`, not of batch size.
 
 ## Key Takeaways
 
 !!! key "Key Takeaways"
 
-    - A single A100 is sufficient for the entire Stack-100M pretraining run (~15–25 GPU-hours,
-      ~USD 40–100 illustrative); DDP and FSDP are optional speed-ups, never requirements, at this
+    - A single A100 is sufficient for the entire Stack-100M pretraining run (~22–29 GPU-hours,
+      ~USD 25–50 illustrative); DDP and FSDP are optional speed-ups, never requirements, at this
       model size.
     - **At large vocabularies the loss head, not attention, caps your batch size.** At
       `B·T = 65,536` and `V = 32,768` the logits plus their fp32 copies are ~30 GB — more than the
-      whole 30-block trunk — and activation checkpointing does nothing about it. Use a chunked or
-      fused linear cross-entropy (Liger-Kernel, cut-cross-entropy, or the ~20-line chunked version
-      here): ~30× less memory for ~5% more FLOPs.
-    - **bf16 autocast needs no loss scaler**, unlike fp16 — bf16 shares fp32's 8-bit exponent range,
-      so there is no overflow to guard against with dynamic loss scaling.
-    - **Effective batch = micro_batch × seq_len × grad_accum.** Zero gradients once per optimizer
-      step, scale the loss by `1/grad_accum` before `.backward()`, and never call `.item()` inside
-      the accumulation loop.
+      whole 30-block trunk — and activation checkpointing does nothing about it. `loss_chunk > 0`
+      makes peak head memory a function of the chunk, not the batch: ~2.1 GB at 8192, for ~5% more
+      FLOPs. Liger-Kernel and cut-cross-entropy are the fused production versions.
+    - **Thread `seq_ids` and `position_ids` through every forward call.** Without `seq_ids` the model
+      falls back to a plain causal mask and attends across document boundaries for the whole run —
+      a bug that *lowers* training loss and is invisible in the curve. Assert it at startup, and
+      derive `pad_id` from the tokenizer object rather than typing a constant.
+    - **Effective batch = micro_batch × seq_len × grad_accum**, and **bf16 autocast needs no loss
+      scaler** (bf16 shares fp32's 8-bit exponent, so there is no overflow to guard against). Zero
+      gradients once per optimizer step, scale the loss by `1/grad_accum` before `.backward()`, and
+      never call `.item()` inside the accumulation loop.
     - **An explicit boolean attention mask is the slow path.** Express document isolation as
       structure the kernel understands — FlexAttention's `BlockMask` or varlen FlashAttention with
       `cu_seqlens` — or SDPA silently falls off the fused kernel and your MFU collapses.
     - Clip the **global** gradient norm across *both* optimizers before stepping, then **check it is
       finite**: skip the step if it is not, abort after a run of skips, and keep rolling
-      step-stamped checkpoints so a poisoned `latest.pt` is never the only state you have.
+      step-stamped checkpoints so a poisoned `latest.pt` is never the only state you have. Run
+      **MuonClip after the step, on a fixed probe batch, every 200 steps** (τ = 30 under QK-norm) —
+      not on every training forward, where it would read pre-step weights.
     - Checkpoints must save **model + both optimizers + step + data position + RNG**, written
       atomically, with RNG stored as tensors and plain containers so PyTorch ≥2.6's default
       `weights_only=True` load still works. Derive the data position from `step`, not from the
@@ -1621,15 +1678,13 @@ tensor-core throughput and the extra accumulation steps; nothing else in `train.
     - **MFU = model FLOPs ÷ peak FLOPs/s** is the metric that matters, and `nvidia-smi` GPU-Util can
       read near 100% while MFU sits far below it. State your FLOP convention: 6ND alone understates
       Stack-100M by ~31% because it omits attention's score/value matmuls. MFU ≠ HFU: with
-      full-block checkpointing HFU ≈ 1.33 × MFU.
-    - Activation checkpointing keeps the *block-boundary* activations and recomputes what is
-      *inside* each block — roughly a 3–8× cut on block activations for ~33% more FLOPs, not an
-      `n_layers`-fold cut. Selective recompute (Korthikanti et al., 2022) is the better default at
-      scale.
-    - This chapter deliberately **stops before the decay**: `ckpt_stable.pt` is handed to
-      mid-training with the LR still at plateau, so WSD's high-value decay leg is spent on premium
-      data. Expect final train loss on the order of **2.8–3.2 nats/token** only *after* Ch. 14.8 —
-      never treat that, or any illustrative number here, as a benchmark to hit exactly.
+      full-block checkpointing HFU ≈ 1.33 × MFU. Activation checkpointing keeps the
+      *block-boundary* activations and recomputes what is *inside* each block — a 3–8× cut for ~33%
+      more FLOPs, not an `n_layers`-fold cut.
+    - This chapter deliberately **stops at step 32,147, before the decay**: `ckpt_stable.pt` is
+      handed to mid-training with the LR still at plateau, so WSD's high-value 6,000-step decay leg
+      is spent on premium data. Expect final train loss on the order of **2.8–3.2 nats/token** only
+      *after* Ch. 14.8 — never treat that, or any illustrative number here, as a benchmark to hit.
 
 !!! sota "State of the Art & Resources (2026)"
     Single-GPU training loops like this one now borrow directly from the open speedrunning
@@ -1644,7 +1699,7 @@ tensor-core throughput and the extra accumulation steps; nothing else in `train.
     **Recent advances (2023–2026)**
 
     - [Jordan, *Muon: An optimizer for hidden layers in neural networks* (2024)](https://kellerjordan.github.io/posts/muon/) — the Newton-Schulz-orthogonalized momentum optimizer this loop applies to 2-D hidden weights.
-    - [Wijmans et al., *Cut Your Losses in Large-Vocabulary Language Models* (2024)](https://github.com/apple/ml-cross-entropy) — computes cross-entropy without ever materializing the global logit matrix; the memory problem this chapter's chunked head solves by hand.
+    - [Wijmans et al., *Cut Your Losses in Large-Vocabulary Language Models* (2024)](https://github.com/apple/ml-cross-entropy) — computes cross-entropy without ever materializing the global logit matrix; the memory problem `fused_ce_z_loss` solves by hand.
     - [Hsu et al., *Liger Kernel: Efficient Triton Kernels for LLM Training* (2024)](https://github.com/linkedin/Liger-Kernel) — production Triton kernels including the fused linear cross-entropy used across the open fine-tuning stack.
     - [PyTorch team, *FlexAttention: The Flexibility of PyTorch with the Performance of FlashAttention* (2024)](https://pytorch.org/blog/flexattention/) — compiled, block-sparse attention masks; the modern way to express document-aware masking without leaving the fast kernel.
     - [Unsloth, *Bugs in LLM Training – Gradient Accumulation Fix* (2024)](https://unsloth.ai/blog/gradient) — a real, widely-reproduced instance of exactly the accumulation-scaling pitfall this chapter warns about, with measured loss-curve impact.
@@ -1691,106 +1746,95 @@ does bf16 give up in exchange, and why does the chapter argue that trade-off is 
     `inf`, either of which corrupts the update. `GradScaler` multiplies the loss by a large scale
     factor before `.backward()` so that small gradients are pushed up into fp16's representable
     range, then unscales the gradients before the optimizer step, dynamically backing the scale
-    factor off whenever an `inf`/`nan` is detected. It is exactly the machinery the chapter
-    describes as "the classic source of `loss is nan`, script has silently rescaled to zero and
-    stalled."
+    factor off whenever an `inf`/`nan` is detected.
 
     **(b) Why bf16 removes the need.** bf16 keeps fp32's full **8-bit exponent** (same dynamic range
     as fp32) and trims only the mantissa to 7 bits. Because the exponent range is identical to fp32,
     there is no realistic overflow/underflow risk on activations or gradients, so there is nothing
-    for dynamic loss scaling to guard against — you can call `.backward()` and `optimizer.step()`
-    directly.
+    for dynamic loss scaling to guard against.
 
-    **The trade-off.** bf16 gives up mantissa precision: 7 explicit mantissa bits vs fp16's 10, so
-    each individual value is represented more coarsely. The chapter accepts this because (i) the
-    model's *master* parameters are kept in fp32 and gradients accumulate in fp32, so tiny per-step
-    updates at small learning rates are not rounded away; autocast uses bf16 only inside the
-    forward/loss region; and (ii) the loss itself is computed in fp32 — inside `chunked_lm_loss`,
-    `F.linear(h, weight).float()` upcasts each chunk before the `logsumexp`, protecting the
-    numerically sensitive step. Range matters more than the last few mantissa bits for training
-    stability, which is precisely what bf16 optimizes for.
+    **The trade-off.** bf16 gives up mantissa precision: 7 explicit mantissa bits vs fp16's 10. The
+    chapter accepts this because (i) the model's *master* parameters are kept in fp32 and gradients
+    accumulate in fp32, so tiny per-step updates at small learning rates are not rounded away; and
+    (ii) the loss itself is computed in fp32 — inside `fused_ce_z_loss`, `F.linear(h, w).float()`
+    upcasts each chunk before the `logsumexp`, protecting the numerically sensitive step. Range
+    matters more than the last few mantissa bits for training stability, which is precisely what
+    bf16 optimizes for.
 
     **One extra wrinkle on the T4 path.** With a `GradScaler` in the loop, `clip_grad_norm_` must be
     preceded by `scaler.unscale_(opt)` — otherwise you clip the *scaled* gradient and the effective
     clip threshold becomes the scale factor times what you asked for, which drifts every time the
     scaler adjusts.
 
-**2.** In the accumulation loop, the per-micro-batch loss is divided by `cfg.grad_accum_steps`
-*before* `.backward()`. Suppose a teammate deletes that division (leaving everything else, including
-the single `zero_grad` per optimizer step, correct). With the chapter's config
-(`grad_accum_steps = 8`), what happens to the gradient that reaches `optimizer.step()`, and what is
-the practical effect on the run? Contrast this with the *other* pitfall the chapter warns about —
-calling `zero_grad()` inside the accumulation loop.
+**2.** In `accumulate`, the per-micro-batch loss is divided by `cfg.grad_accum_steps` *before*
+`.backward()`. Suppose a teammate deletes that division (leaving everything else, including the
+single `zero_grad` per optimizer step, correct). With the chapter's config (`grad_accum_steps = 8`),
+what happens to the gradient that reaches `optimizer.step()`, and what is the practical effect on
+the run? Contrast this with the *other* pitfall the chapter warns about — calling `zero_grad()`
+inside the accumulation loop.
 
 ??? note "Solution"
     **Effect of dropping `/ grad_accum_steps`.** Gradients from successive `.backward()` calls are
-    *summed* into `.grad` (that is why we zero only once per optimizer step). With the division in
-    place, each micro-batch contributes $\frac{1}{8}$ of its gradient, so the accumulated gradient
-    equals the **mean** gradient over the full 524,288-token batch — exactly what a single giant
-    batch would produce. Delete the division and the accumulated gradient is the **sum** of 8
-    micro-batch gradients, i.e. $8\times$ too large, so the update is effectively at $8\times$ the
-    intended learning rate.
+    *summed* into `.grad`. With the division in place the accumulated gradient is the **mean** over
+    the full 524,288-token batch — exactly what a single giant batch would produce. Delete it and
+    the accumulated gradient is the **sum** of 8 micro-batch gradients, i.e. $8\times$ too large, so
+    the update is effectively at $8\times$ the intended learning rate.
 
     **Practical effect.** The run no longer matches the Muon/WSD hyperparameters tuned in Ch. 14.6.
     Global grad-norm clipping to $c=1.0$ partly masks it — the clip rescales the inflated norm back
-    toward 1 — but the *direction* is preserved and the effective step size is distorted whenever
-    the norm is below the clip threshold, so early and late training (small gradients) are most
-    affected. Expect instability or a mis-scaled loss curve. This is precisely the bug Unsloth
-    documented shipping in production trainers.
+    toward 1 — but the effective step size is distorted whenever the norm is *below* the clip
+    threshold, so early and late training (small gradients) are most affected. This is precisely the
+    bug Unsloth documented shipping in production trainers.
 
-    **Contrast with the `zero_grad`-inside-the-loop pitfall.** That bug goes the *opposite*
-    direction: zeroing on every micro-batch throws away the previous 7 gradients, so
-    `optimizer.step()` sees only the *last* micro-batch — one independent 65,536-token step at
-    $\frac{1}{8}$ the intended effective batch, not the 524,288-token step you designed. Both bugs
-    leave the loss curve going down (so both are easy to miss), but one inflates the effective LR by
-    $8\times$ while the other shrinks the effective batch by $8\times$. The rule "zero once,
-    accumulate $N$, scale by $1/N$ before backward, then step" is what makes the accumulated
-    gradient equal the true batch mean.
+    **Contrast.** Zeroing inside the loop goes the *opposite* direction: it throws away the previous
+    7 gradients, so `optimizer.step()` sees only the last micro-batch — one 65,536-token step at
+    $\frac{1}{8}$ the intended effective batch. Both leave the loss curve going down, but one
+    inflates the effective LR by $8\times$ and the other shrinks the effective batch by $8\times$.
 
 **3.** You are configuring a scaled-down on-ramp tier with a smaller model. You choose
 `micro_batch_size = 4` and `seq_len = 1024`, and you want a **reduced** effective batch of exactly
 262,144 tokens per optimizer step with a total token budget of $2\times10^9$ tokens. Compute (a) the
-`grad_accum_steps` you must set, and (b) `total_steps`. Then (c), keeping `decay_frac = 0.10`,
-compute the `stop_at_step` at which this tier's pretraining run should hand off to mid-training.
+`grad_accum_steps` you must set, (b) `total_steps`, and (c) — keeping the flagship's *decay
+fraction* $6{,}000/38{,}147$ — the `decay_steps` and the `stop_at_step` at which this tier's
+pretraining run should hand off to mid-training.
 
 ??? note "Solution"
-    **(a) `grad_accum_steps`.** Effective batch
-    $= \texttt{micro\_batch\_size} \times \texttt{seq\_len} \times \texttt{grad\_accum\_steps}$, so
+    **(a) `grad_accum_steps`.**
     $$
     \texttt{grad\_accum\_steps} = \frac{262{,}144}{4 \times 1024}
     = \frac{262{,}144}{4{,}096} = 64.
     $$
-    Check: $4 \times 1024 \times 64 = 262{,}144$ tokens/step — exactly the target.
 
-    **(b) `total_steps`.** Take the ceiling of budget over tokens-per-step:
+    **(b) `total_steps`.**
     $$
     \texttt{total\_steps} = \left\lceil \frac{2\times10^9}{262{,}144} \right\rceil
     = \lceil 7629.39\ldots \rceil = 7630.
     $$
 
-    **(c) `stop_at_step`.** The decay leg is $\lfloor 0.10 \times 7630 \rfloor = 763$ steps, so
-    pretraining stops at $7630 - 763 = 6867$ steps ($\approx 1.80\times10^9$ tokens) and
-    mid-training spends the remaining 763 steps ($\approx 0.2\times10^9$ tokens) on the annealed
-    mix. (For comparison, the flagship values are the same computation with a 524,288-token batch
-    and a 20B-token budget: 38,147 total, 3,815 decay, 34,332 here.)
+    **(c) Decay and hand-off.** The flagship decay fraction is
+    $6{,}000/38{,}147 \approx 0.15729$, so
+    $$
+    \texttt{decay\_steps} = \operatorname{round}(0.15729 \times 7630) = 1{,}200,
+    \qquad \texttt{stop\_at\_step} = 7630 - 1200 = 6{,}430.
+    $$
+    Pretraining therefore covers $6{,}430 \times 262{,}144 \approx 1.69\times10^9$ tokens and
+    mid-training spends the remaining 1,200 steps ($\approx 0.31\times10^9$ tokens) on the annealed
+    mix. Pass `decay_steps=1_200` to `wsd_lr` directly rather than a fraction — the absolute
+    argument wins, and it keeps the leg fixed if you later re-budget `total_steps`.
 
-**4.** During a flagship A100 run you measure a full-optimizer-step time of `dt = 1.8 s` (8
-accumulated micro-batches plus clip, both optimizer steps, and QK-clip). Using the chapter's
-constants ($N \approx 101.4\times10^6$, effective batch 524,288 tokens, A100 bf16 dense peak
-$312\text{ TFLOP/s}$), compute (a) tokens/sec, (b) MFU under the 6ND convention, (c) MFU including
-the causal attention term, and (d) the projected wall-clock GPU-hours for the full
+**4.** During a flagship A100 run you measure a full-optimizer-step time of `dt = 1.8 s`. Using the
+chapter's constants ($N \approx 101.4\times10^6$, effective batch 524,288 tokens, A100 bf16 dense
+peak $312\text{ TFLOP/s}$), compute (a) tokens/sec, (b) MFU under the 6ND convention, (c) MFU
+including the causal attention term, and (d) the projected wall-clock GPU-hours for the full
 $20\times10^9$-token budget. Which of these four numbers changes if you switch on activation
 checkpointing?
 
 ??? note "Solution"
-    **(a) Tokens/sec.**
-    $$
-    \frac{524{,}288}{1.8} \approx 291{,}271 \text{ tokens/s}.
-    $$
+    **(a) Tokens/sec.** $524{,}288 / 1.8 \approx 291{,}271$ tokens/s.
 
-    **(b) MFU, 6ND only.** $6N = 6 \times 101.4\times10^6 \approx 608.4$ MFLOP/token, so
+    **(b) MFU, 6ND only.** $6N \approx 608.4$ MFLOP/token, so
     $$
-    608.4\times10^6 \times 291{,}271 \approx 1.772\times10^{14} = 177.2\text{ TFLOP/s},
+    608.4\times10^6 \times 291{,}271 \approx 177.2\text{ TFLOP/s},
     \qquad \text{MFU} = \frac{177.2}{312} \approx 56.8\%.
     $$
 
@@ -1798,27 +1842,27 @@ checkpointing?
     $6 \cdot L \cdot T \cdot d_{\text{model}} = 6 \times 30 \times 2048 \times 512 \approx 188.7$
     MFLOP/token, giving $797.1$ MFLOP/token total:
     $$
-    797.1\times10^6 \times 291{,}271 \approx 2.322\times10^{14} = 232.2\text{ TFLOP/s},
-    \qquad \text{MFU} \approx \frac{232.2}{312} \approx 74.4\%.
+    797.1\times10^6 \times 291{,}271 \approx 232.2\text{ TFLOP/s},
+    \qquad \text{MFU} \approx 74.4\%.
     $$
-    That is high enough to be a warning sign rather than a boast: at this point you should
-    double-check the measured `dt` (is the data fetch inside the timer? did you synchronize?) before
-    reporting it, because ~74% of an A100's dense bf16 peak on a 100M model would be exceptional.
+    That is high enough to be a warning sign rather than a boast: double-check the measured `dt`
+    (is the data fetch inside the timer? did you synchronize?) before reporting it.
 
     **(d) Projected GPU-hours.**
     $$
     \frac{20\times10^9}{291{,}271} \approx 68{,}665\text{ s} \approx 19.1 \text{ GPU-hours},
     $$
-    at the lower end of the ~15–25 GPU-hour envelope — consistent with a faster step time than the
-    worked example's 2.3 s.
+    of which this chapter's 32,147 steps are
+    $16.85\times10^9 / 291{,}271 \approx 16.1$ GPU-hours and Ch. 14.8's decay leg the remaining
+    ~3.0 — just under the 22–29 GPU-hour envelope, consistent with a faster step time than
+    the worked example's 2.3 s.
 
     **What activation checkpointing changes.** It cannot change (b) or (c) *as definitions*, because
     MFU counts only model FLOPs and recompute is not model FLOPs. What it changes is `dt`: the extra
     forward pass makes each step ~33% slower, so tokens/sec falls, and MFU and GPU-hours both get
-    worse proportionally. The number that stays flat is **HFU**, which credits the recompute —
-    approximately $1.33 \times$ the new MFU, i.e. roughly the old MFU. That is the whole reason both
-    metrics exist: checkpointing buys memory and costs money, and only HFU shows you that the
-    silicon stayed busy while it happened.
+    worse proportionally. The number that stays roughly flat is **HFU**, which credits the recompute
+    — approximately $1.33 \times$ the new MFU, i.e. roughly the old MFU. That is the whole reason
+    both metrics exist.
 
 **5.** The chapter argues for keeping several rolling checkpoints rather than overwriting a single
 `latest.pt`, and pairs that with a non-finite-gradient guard. Suppose a run hits a genuine loss
@@ -1832,23 +1876,23 @@ procedure using only the primitives defined in this chapter, and say why each st
     [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
     Recovery:
 
-    1. **Stop the run.** Every additional step is applying updates derived from a diverged state and
-       is also advancing `latest.pt` toward overwriting your good history.
+    1. **Stop the run.** Every additional step applies updates derived from a diverged state and is
+       also advancing `latest.pt` toward overwriting your good history.
     2. **Pick a checkpoint from before the spike.** With `ckpt_every = 1000` and `keep_last = 5`,
        `step_0021000.pt` is on disk and predates the step-21,400 spike; the five-deep window is what
        makes this possible at all. Confirm from `log.jsonl` that `grad_norm` was in its normal band
        at that step.
     3. **Skip the offending data window.** The data order is a deterministic function of
        `(seed, start_sample)`, so the batches around step 21,400 will be replayed identically on
-       resume, and the spike will very likely recur. Restart with `start_sample` advanced past the
-       window — e.g. resume at step 21,000 but build the loader with
-       `start_sample = 21_600 * samples_per_step` — or change `cfg.seed`, which reshuffles the order
-       entirely. The former is surgical; the latter is a bigger hammer that also invalidates exact
-       reproducibility from the original seed.
+       resume and the spike will very likely recur. Restart from step 21,000 but build the loader
+       with `start_sample = 21_600 * samples_per_step`, or change `cfg.seed`, which reshuffles
+       entirely. The former is surgical; the latter also invalidates exact reproducibility from the
+       original seed.
     4. **Optionally lower the ceiling.** If spikes recur at different data offsets, the problem is
-       the recipe, not the data: tighten `grad_clip` (1.0 → 0.5), lower `qk_clip_tau` so MuonClip
-       engages earlier, or check that the z-loss is actually on — an unbounded `logsumexp` is a
-       classic spike source and is precisely what `z_loss_weight = 1e-4` exists to suppress.
+       the recipe, not the data: tighten `grad_clip` (1.0 → 0.5), lower `qk_clip_tau` (30 → 20) or
+       `qk_clip_every` (200 → 50) so MuonClip engages earlier and more often, or check `qk_fired` in
+       the log — a trigger rate that was climbing before the spike is the signature of an
+       attention-logit blow-up, and Ch. 14.6's answer is to halve the peak LR.
     5. **Add a soft guard for next time.** Track a running median of `grad_norm` and skip steps
        whose pre-clip norm exceeds, say, 10× it, logging every skip. This catches finite-but-absurd
        gradients that `torch.isfinite` cannot:
@@ -1865,61 +1909,46 @@ procedure using only the primitives defined in this chapter, and say why each st
            continue
        ```
 
-**6.** Implement `save_rolling_checkpoint(...)` that writes a step-stamped checkpoint (reusing the
-chapter's `save_checkpoint`), then prunes so that only the `keep_last` most recent step checkpoints
-survive. Preserve the chapter's atomicity guarantee, do not let the prune delete `final.pt` or
-`ckpt_stable.pt`, and explain what would go wrong if you pruned *before* writing the new checkpoint.
+**6.** Audit `save_rolling` above. (a) Why must the prune run *after* the write, not before?
+(b) Why does the glob pattern make `ckpt_stable.pt` and `final.pt` safe without any special-casing,
+and what breaks if you widen it to `*.pt`? (c) Why is the step stamp zero-padded to seven digits?
+(d) The function is called with `keep_last=cfg.keep_last_ckpts`. What happens if someone sets that
+to `0`, and how would you make the function refuse rather than misbehave?
 
 ??? note "Solution"
-    Reuse `save_checkpoint` (which already writes to a `.tmp` file and `os.replace`s it atomically),
-    add a zero-padded step stamp so lexical sort equals chronological sort, then delete all but the
-    newest `keep_last`. Globbing only `step_*.pt` naturally excludes `final.pt`, `ckpt_stable.pt`,
-    and `latest.pt` from the prune.
-
-    ```python
-    import os, glob
-
-    def save_rolling_checkpoint(model, optimizers, cfg, *, step, tokens_seen,
-                                keep_last=5):
-        # 1. WRITE FIRST. The new checkpoint is complete and fsync'd-by-rename
-        #    before anything old is removed.
-        path = f"{cfg.ckpt_dir}/step_{step:07d}.pt"
-        save_checkpoint(path, model, optimizers, step=step,
-                        tokens_seen=tokens_seen, config=cfg)
-
-        # 2. Refresh the well-known resume filename (also atomic).
-        save_checkpoint(f"{cfg.ckpt_dir}/latest.pt", model, optimizers, step=step,
-                        tokens_seen=tokens_seen, config=cfg)
-
-        # 3. PRUNE LAST. Pattern matches only step_*.pt, so final.pt /
-        #    ckpt_stable.pt / latest.pt are never candidates.
-        for old in sorted(glob.glob(f"{cfg.ckpt_dir}/step_*.pt"))[:-keep_last]:
-            os.remove(old)
-        return path
-    ```
-
-    **Why order matters.** If you pruned first, there would be a window — the several seconds
+    **(a) Write-then-prune.** If you pruned first there would be a window — the several seconds
     `torch.save` takes on a ~0.9 GB checkpoint — in which you hold `keep_last - 1` old checkpoints
     and zero new ones. A crash inside that window (the preemption case this whole scheme exists for)
-    leaves you one checkpoint poorer than you designed, and doing it every `ckpt_every` steps
-    eventually walks the window down to nothing. Write-then-prune means the invariant "at least
-    `keep_last` complete checkpoints exist on disk" holds at every instant.
+    leaves you one checkpoint poorer than designed, and repeating it every `ckpt_every` steps walks
+    the window down to nothing. Write-then-prune makes "at least `keep_last` complete checkpoints
+    exist on disk" true at every instant, and `os.replace` makes each of those checkpoints complete.
 
-    **Other correctness notes.** `ckpts[:-keep_last]` is empty while fewer than `keep_last`
-    checkpoints exist, so nothing is deleted early in the run. The seven-digit pad makes lexical
-    sort agree with numeric order up to 9,999,999 steps — well past the 34,332 this run needs. With
-    `keep_last = 5` plus `ckpt_stable.pt`, total checkpoint disk is ~5.4 GB at ~0.9 GB each.
+    **(b) The glob.** `step_*.pt` matches only the rolling series, so `latest.pt`, `ckpt_stable.pt`,
+    and `final.pt` are never candidates for deletion — the naming convention *is* the protection.
+    Widen it to `*.pt` and the very first prune deletes the hand-off checkpoint that Ch. 14.8's
+    `mid_train` is waiting for, plus the `latest.pt` your own resume path reads.
+
+    **(c) The pad.** `sorted()` on filenames is lexical, and lexical order agrees with numeric order
+    only when every stamp has the same width. `step_9999.pt` sorts *after* `step_10000.pt` unpadded;
+    seven digits keeps them aligned past 9,999,999 steps, comfortably beyond this run's 32,147.
+
+    **(d) `keep_last = 0`.** `lst[:-0]` is `lst[:0]`, i.e. the empty list — so nothing is pruned and
+    checkpoints accumulate forever, the exact opposite of what was asked. (It is the same reason
+    `lst[:-keep_last]` is correctly empty while fewer than `keep_last` checkpoints exist.) Guard it:
+    `assert keep_last >= 1, "keep_last must be >= 1"`. With `keep_last = 5` plus `ckpt_stable.pt`,
+    total checkpoint disk is ~5.4 GB at ~0.9 GB each — cheap insurance against a poisoned
+    `latest.pt`.
 
 **7.** Memory accounting (arithmetic). For Stack-100M ($V = 32{,}768$, $d_{\text{model}} = 512$,
 $n_{\text{layers}} = 30$) compute, for a micro-batch of $B = 32$ sequences of $T = 2048$: (a) the
-peak bytes held by the naive loss head (bf16 logits + fp32 upcast + fp32 `log_softmax` output + a
-second fp32 copy for a separately-computed z-loss); (b) the peak logit bytes with
-`chunked_lm_loss(chunk_size=4096)`; (c) the extra FLOPs the chunked version costs, as a percentage
-of the step's $6ND$; and (d) the largest `micro_batch_size` whose naive loss head alone would still
-fit in a 24 GB RTX 4090.
+peak bytes held by the unchunked loss head (bf16 logits + fp32 upcast + fp32 `log_softmax` output +
+a second fp32 copy for a separately-computed z-loss); (b) the peak logit bytes with
+`loss_chunk = 8192`; (c) the extra FLOPs the chunked version costs, as a percentage of the step's
+$6ND$; and (d) the largest `micro_batch_size` whose unchunked loss head alone would still fit in a
+24 GB RTX 4090.
 
 ??? note "Solution"
-    **(a) Naive head.** $B \cdot T = 65{,}536$ tokens. Per token the head holds
+    **(a) Unchunked head.** $B \cdot T = 65{,}536$ tokens. Per token the head holds
     $V \times (2 + 4 + 4 + 4) = 32{,}768 \times 14 = 458{,}752$ bytes:
     $$
     65{,}536 \times 458{,}752 \approx 3.01\times10^{10}\text{ B} \approx 30.1\text{ GB}.
@@ -1928,36 +1957,35 @@ fit in a 24 GB RTX 4090.
     **(b) Chunked head.** Only one chunk's logits are live. In backward, that chunk's fp32 logits
     and their gradient coexist:
     $$
-    4096 \times 32{,}768 \times 4\text{ B} = 5.37\times10^8 \approx 0.54\text{ GB (each)},
+    8192 \times 32{,}768 \times 4\text{ B} = 1.07\times10^9 \approx 1.07\text{ GB (each)},
     $$
-    so roughly **1.1 GB** peak — a ~28× reduction. Note it is independent of `micro_batch_size`,
-    which is the property that makes larger micro-batches possible at all.
+    so roughly **2.1 GB** peak — a ~14× reduction, and *independent of `micro_batch_size`*, which is
+    the property that makes larger micro-batches possible at all. `loss_chunk = 4096` halves it
+    again to ~1.1 GB.
 
     **(c) Extra FLOPs.** The recomputed `lm_head` forward matmul is
     $2 \cdot B \cdot T \cdot d \cdot V = 2 \times 65{,}536 \times 512 \times 32{,}768
     \approx 2.20\times10^{12}$ FLOP. The step's model FLOPs are
-    $6ND = 6 \times 101.4\times10^6 \times 65{,}536 \approx 3.99\times10^{13}$ FLOP. Ratio:
-    $$
-    \frac{2.20\times10^{12}}{3.99\times10^{13}} \approx 5.5\%.
-    $$
+    $6ND = 6 \times 101.4\times10^6 \times 65{,}536 \approx 3.99\times10^{13}$ FLOP. Ratio
+    $\approx 5.5\%$ — and note it does not depend on `chunk`, because every token's logits are
+    recomputed exactly once either way.
 
-    **(d) 4090 ceiling for the naive head.** Ignoring everything else (weights, optimizer state, and
-    block activations, which together need several more GB), the head alone fills 24 GB at
+    **(d) 4090 ceiling for the unchunked head.** Ignoring everything else (weights, optimizer state,
+    and block activations, which together need several more GB), the head alone fills 24 GB at
     $$
     B \cdot T = \frac{24 \times 2^{30}}{458{,}752} \approx 56{,}174 \text{ tokens}
     \;\Rightarrow\; B \approx 27.
     $$
-    Since the rest of the job needs roughly 5–6 GB, the realistic naive ceiling is around
-    $B \approx 8\text{–}10$ — which is exactly why the pre-fix 4090 config used
-    `micro_batch_size = 8` and mandatory activation checkpointing, and why the chunked head removes
-    that constraint entirely.
+    Since the rest of the job needs roughly 5–6 GB, the realistic unchunked ceiling is around
+    $B \approx 8\text{–}10$ — which is exactly why the 4090 tier used `micro_batch_size = 8` and
+    mandatory activation checkpointing before `loss_chunk` existed.
 
 **8.** Scale-out (implementation). The DDP snippet wraps only the *last* micro-batch in the
 accumulation window in a synchronizing context and the earlier ones in `model.no_sync()`. Rewrite
-the flagship accumulation loop into a `ddp_train_step` that (i) skips the gradient all-reduce on
-every micro-batch except the last, and (ii) still produces the correct **mean** gradient over the
-effective batch. Then explain why `no_sync()` changes wall-clock but not the resulting gradient, and
-name the two *other* things that must change in the surrounding script when you go from 1 GPU to 8.
+`accumulate` into a `ddp_train_step` that (i) skips the gradient all-reduce on every micro-batch
+except the last, and (ii) still produces the correct **mean** gradient over the effective batch.
+Then explain why `no_sync()` changes wall-clock but not the resulting gradient, and name the two
+*other* things that must change in the surrounding script when you go from 1 GPU to 8.
 
 ??? note "Solution"
     DDP triggers a gradient all-reduce as each `.backward()` completes. During accumulation we only
@@ -1969,26 +1997,24 @@ name the two *other* things that must change in the surrounding script when you 
     ```python
     import contextlib
     import torch
+    from stacklm.train_utils import BATCH_KEYS
 
-    def ddp_train_step(model, optimizers, micro_batches, cfg, max_logits):
+    def ddp_train_step(model, optimizers, train_iter, cfg):
         """One optimizer step under DDP: all-reduce gradients exactly once,
         after the final accumulated micro-batch, and still average correctly."""
-        assert len(micro_batches) == cfg.grad_accum_steps
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
         loss_sum = torch.zeros((), device=cfg.device)
-        last = len(micro_batches) - 1
-        for i, batch in enumerate(micro_batches):
-            x   = batch["input_ids"].to(cfg.device, non_blocking=True)
-            y   = batch["targets"].to(cfg.device, non_blocking=True)
-            pos = batch["position_ids"].to(cfg.device, non_blocking=True)
+        last = cfg.grad_accum_steps - 1
+        for i in range(cfg.grad_accum_steps):
+            batch = next(train_iter)
+            x, y, pos, seq = (batch[k].to(cfg.device, non_blocking=True)
+                              for k in BATCH_KEYS)
             # Suppress the DDP all-reduce on every micro-batch except the last.
             sync_ctx = contextlib.nullcontext() if i == last else model.no_sync()
             with sync_ctx:
                 with torch.autocast("cuda", dtype=torch.bfloat16):
-                    _, loss = model(x, targets=y, position_ids=pos,
-                                    record_attn_logits=max_logits,
-                                    z_loss_weight=cfg.z_loss_weight)
+                    _, loss = model(x, targets=y, position_ids=pos, seq_ids=seq)
                     loss = loss / cfg.grad_accum_steps
                 loss.backward()
             loss_sum += loss.detach()
@@ -1999,8 +2025,7 @@ name the two *other* things that must change in the surrounding script when you 
     `grad_accum_steps - 1` backward passes only defers *communication*; the local `.grad` buffers
     still accumulate every micro-batch's contribution. Because gradients add linearly and all-reduce
     (sum/mean) is linear, reducing once over the summed local gradients is mathematically identical
-    to reducing after each micro-batch — you just do it once instead of `grad_accum_steps` times,
-    saving `grad_accum_steps - 1` collectives per optimizer step.
+    to reducing after each micro-batch — you just do it once instead of `grad_accum_steps` times.
 
     **The two other required changes.** (1) **Shard the data stream by rank.** Every rank must read
     disjoint samples, or you train on each token `world_size` times and the "effective batch" is a
@@ -2008,6 +2033,53 @@ name the two *other* things that must change in the surrounding script when you 
     either divide `grad_accum_steps` by `world_size` or accept an 8× larger effective batch (which
     would then need its own LR retune). (2) **Rank-0-only I/O.** Only rank 0 should write
     checkpoints, append to `log.jsonl`, and print — otherwise eight processes race on the same
-    `.tmp` file and `os.replace` no longer guarantees you a coherent checkpoint. Add a
-    `dist.barrier()` after saving so no rank races ahead of a checkpoint the others have not
-    finished writing.
+    `.tmp` file and `os.replace` no longer guarantees a coherent checkpoint. Add a `dist.barrier()`
+    after saving. (A third, easy to miss: `qk_clip_` mutates parameters in place, so it must run on
+    *every* rank with the same probe batch, or the replicas silently diverge.)
+
+**9.** A colleague copies your loop into a new project but calls the model as
+`model(x, targets=y, position_ids=pos)` — dropping `seq_ids`. The run completes; training loss is
+about 0.05 nats *lower* than yours at the same step, and held-out perplexity on their own val split
+also looks slightly better. (a) What is actually happening inside `Stack100M.forward`? (b) Why does
+the loss go *down* rather than up? (c) Why is their val number not a valid rebuttal? (d) Write the
+cheapest test that would have caught this in CI.
+
+??? note "Solution"
+    **(a)** With `seq_ids=None`, `T == kv_len` and `start_pos == 0`, so `_build_mask` returns `None`
+    — the plain-causal fast path. SDPA runs with `is_causal=True` and every token attends to every
+    earlier token *in the packed window*, across document boundaries. `position_ids` does not save
+    them: it only indexes the RoPE tables, it does not build the mask.
+
+    **(b)** Cross-document context is *extra information*, and a language model will happily use it.
+    Tokens near the end of a window get to condition on hundreds of tokens of unrelated text, which
+    on average makes the next token slightly easier to predict (shared topic drift, repeated
+    boilerplate, and — after dedup imperfections — occasionally near-duplicate content). So the
+    metric improves while the model learns a conditioning distribution that will never occur at
+    inference time, where prompts do not come pre-pended with a random unrelated document.
+
+    **(c)** Their val loader packs documents the same way, so the val split has the same leak. The
+    metric is measured under the same broken conditioning, which makes the comparison
+    self-consistent and meaningless. A held-out number only certifies what it measures; here it
+    measures a train/serve mismatch rather than detecting it.
+
+    **(d)** Assert the mask matters, on toy shapes, in a couple of milliseconds — no training
+    required:
+
+    ```python
+    def test_document_mask_is_actually_applied():
+        cfg = toy_config(); m = Stack100M(cfg).eval()
+        x = torch.randint(0, cfg.vocab_size, (1, 16))
+        seq = torch.tensor([[0]*8 + [1]*8])            # two documents in one window
+        with torch.no_grad():
+            masked, _ = m(x, seq_ids=seq)
+            unmasked, _ = m(x)
+            # Perturbing document 0 must NOT change document 1's outputs...
+            x2 = x.clone(); x2[0, :8] = torch.randint(0, cfg.vocab_size, (8,))
+            masked2, _ = m(x2, seq_ids=seq)
+        assert torch.allclose(masked[:, 8:], masked2[:, 8:], atol=1e-5)   # isolated
+        assert not torch.allclose(masked, unmasked, atol=1e-5)            # mask did something
+    ```
+
+    The first assertion is the real specification — *document 1's logits are independent of
+    document 0's tokens* — and it fails loudly the moment `seq_ids` stops being threaded through.
+    The second guards against a mask that is silently all-True.

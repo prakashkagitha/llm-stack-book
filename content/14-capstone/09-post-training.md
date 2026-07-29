@@ -14,23 +14,23 @@ This chapter builds directly on the deeper book. If you have not read them, keep
 
 !!! note "Where this chapter's code lives"
 
-    Every code block below is labelled with its file in the capstone package: `capstone/stacklm/post/chat.py`, `post/sft.py`, `post/dpo.py`, `post/grpo.py`. The shipped modules carry CI-scale defaults (tiny blocks, a handful of steps, CPU-safe) so the book's smoke test can run the whole pipeline hermetically; the blocks here show the *full-run* versions, with the flagship hyperparameters. Where a block adds something the shipped module does not yet have (the preference-data pipeline, DAPO-style dynamic sampling), the header says so — append it to the named file and it will import cleanly. Model calls follow the package contract: `Stack100M.forward` **always returns `(logits, loss)`**, so every call site unpacks two values.
+    Every code block below is labelled with its file in the capstone package: `capstone/stacklm/post/chat.py`, `post/sft.py`, `post/dpo.py`, `post/grpo.py`. The blocks are the *shipped* functions, and the divergences are exactly three, all named here so you never have to wonder: (1) the **numeric defaults in the signatures** are the flagship full-run values, while the book's hermetic smoke test calls the same functions with tiny blocks, a handful of steps, and `device="cpu"`; (2) the blocks spell out `torch.autocast(device_type=..., dtype=torch.bfloat16)` where the module calls the package helper `stacklm.train.loop.autocast_ctx(device)`, which is the same thing plus a CPU no-op; (3) `sft_train` here adds the warmup-then-decay `LambdaLR` a real run wants and a three-step CI run does not. Every other line is the line that runs. Model calls follow the package contract: `Stack100M.forward` **always returns `(logits, loss)`**, so every call site unpacks two values.
 
 ## Where post-training fits, and what it costs at 100M
 
-The cost asymmetry between the three stages is the whole reason the recipe looks the way it does. Let us anchor the numbers.
+The cost asymmetry between the three stages is the whole reason the recipe looks the way it does — so let us *derive* it rather than assert it, reusing the $6ND$ accounting and MFU machinery from Chapter 14.7. Fix $N = 1.01\times10^{8}$ parameters and an A100-80GB at 312 bf16 TFLOP/s peak. Assume ~35% MFU on the dense training passes ($\approx 1.1\times10^{14}$ FLOP/s effective) and a deliberately pessimistic ~10% on cacheless autoregressive generation ($\approx 3.1\times10^{13}$ FLOP/s), since decoding at batch 8 is memory-bound.
 
-Pretraining Stack-100M costs on the order of 15–25 A100-hours (~USD 40–100). Against that, post-training is nearly free:
+| Stage | Volume (flagship) | Compute, derived | A100-hr | What it changes |
+|---|---|---|---|---|
+| SFT | 100k conversations × ~500 tok × 3 epochs = $1.5\times10^{8}$ tok | $6ND = 9.1\times10^{16}$ | ~0.25 | Format, turn-taking, instruction-following instinct |
+| DPO | 20k pairs × 2 responses × ~300 tok = $1.2\times10^{7}$ tok | $6ND$ (policy) $+\,2ND$ (ref) $\approx 1.0\times10^{16}$ | <0.05 | Relative quality; reduces obvious failure modes |
+| GRPO (narrow) | 200 iters × 16 prompts × $G{=}8$ × 64 new tok = 25.6k rollouts | gen $2.1\times10^{16}$ + train $4\times10^{15}$ | ~0.2–0.5 | One *verifiable* skill, sharpened past base zero-shot |
 
-| Stage | Data volume | Compute | What it changes |
-|---|---|---|---|
-| SFT | ~10k–100k conversations, 1–3 epochs | ~0.5–2 A100-hr | Format, turn-taking, instruction-following instinct |
-| DPO | ~5k–50k preference pairs, 1–2 epochs | ~0.5–2 A100-hr | Relative quality; reduces obvious failure modes |
-| GRPO (narrow) | ~1k–10k prompts × G samples | ~2–6 A100-hr | One *verifiable* skill, sharpened past base zero-shot |
+The two non-obvious rows are worth spelling out. **DPO** does four forwards and one backward per pair, but only the two policy passes carry gradient, so it is $6ND$ on the policy's $1.2\times10^{7}$ response-plus-prompt tokens plus $2ND$ of frozen-reference forward — and the reference term disappears entirely once you cache it (below). **GRPO's** bill is dominated by *generation*, not by gradients: without a KV cache, emitting token $t$ of a completion costs a full forward over the $T_p + t$ tokens before it, so one 64-token completion after a ~30-token prompt costs $2N\sum_{t=1}^{64}(30+t) = 2N \times 4000 \approx 8\times10^{11}$ FLOPs. Times 25,600 rollouts, that is $2.1\times10^{16}$ FLOPs — five times the $\approx 4\times10^{15}$ the gradient steps themselves consume.
 
-Two structural facts drive this. First, post-training touches a *tiny* number of tokens compared to the 20B of pretraining — a few tens of millions at most — so it is a rounding error on the compute bill. Second, the *effective learning rate* is small: we are nudging a converged model, not shaping it from scratch, so a handful of passes suffices and a large LR will simply destroy the pretrained knowledge (catastrophic forgetting). This is why we do full-parameter fine-tuning here rather than LoRA — at 100M the model is small enough that full fine-tuning fits comfortably on the A100, and there is no serving-multiplexing reason to keep adapters separate. (LoRA and QLoRA, covered in [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html), matter when the base is 7B+ or when you serve many task-specialized variants; neither applies to us.)
+So the whole ladder is **under one A100-hour**, a few percent surcharge on the 22–29 A100-hr (~USD 25–50) pretraining run. Two caveats keep that honest. First, at 100M these are *FLOP floors*: with 30 thin layers and 64 sequential decode steps, wall-clock is kernel-launch-bound, and your measured GRPO time will comfortably exceed the FLOP-implied 0.2 hr. Second, GRPO is the only stage whose cost scales with *generation* rather than with a static corpus. Push the rollout budget to a production shape — 1000 iterations × 64 prompts, a 20× increase — and GRPO alone becomes $\approx 5\times10^{17}$ FLOPs, on the order of 4–8 A100-hr, and it dominates the bill outright. At 1B+ this inverts completely: rollouts swamp everything, and you need a real inference engine (vLLM/SGLang) colocated with the trainer plus a weight-sync path, which is exactly the machinery that [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html) and [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html) exist to explain.
 
-Note that only the GRPO row scales with *generation*, not just with data. SFT and DPO consume a static corpus; GRPO must sample $G$ completions per prompt with the model in the loop, which is why its cost is the largest of the three despite touching the fewest gradient steps. At 100M, generation is cheap enough to do naively inside the training process. At 1B+ this inverts — rollouts dominate, and you need a real inference engine (vLLM/SGLang) colocated with the trainer plus a weight-sync path, which is exactly the machinery that [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html) and [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html) exist to explain.
+The other structural fact is that the *effective learning rate* is small: we are nudging a converged model, not shaping it from scratch, so a handful of passes suffices and a large LR will simply destroy the pretrained knowledge (catastrophic forgetting). This is why we do full-parameter fine-tuning here rather than LoRA — at 100M the model fits comfortably on the A100, and there is no serving-multiplexing reason to keep adapters separate. (LoRA and QLoRA, covered in [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html), matter when the base is 7B+ or when you serve many task-specialized variants; neither applies to us.)
 
 The classical alternative to DPO+GRPO is the full **PPO-RLHF pipeline** — train a reward model on preferences, then run PPO with a policy, a frozen reference, *and* a value-network critic (see [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html) and [Policy Gradients & PPO for Language Models](../05-posttraining-alignment/06-ppo-for-llms.html)). At 100M this is technically possible but strategically wrong: the reward model would be *another* ~100M network to train and tune, the critic *another* one, and the whole online feedback loop is the most fragile machinery in ML. DPO deletes the reward model and the rollouts; GRPO deletes the critic. What remains is exactly what our budget can afford and our task actually needs.
 
@@ -306,12 +306,12 @@ SFT teaches the model to imitate *one* good answer. But "good" is relative: for 
 
 The tempting shortcut is to download **UltraFeedback** (Cui et al., 2023) — prompts with GPT-4-scored completions from a pool of models — and train on it directly. At 7B that works. At 100M it is close to counterproductive, and understanding *why* is the most important thing in this section.
 
-UltraFeedback's chosen responses were written by 7B–70B models. Stack-100M assigns them log-probabilities in the neighborhood of $-$hundreds of nats: they are, from its perspective, essentially impossible strings. The DPO gradient (derived below) is proportional to $\sigma(-\text{margin})$ times the difference of the two responses' score functions, and when *both* responses are far off-policy the update that most easily lowers the loss is to push the rejected sequence's probability down hard — dragging the chosen one down with it, because they share vocabulary, style, and length statistics the model has no way to separate. This is exactly the "both chosen and rejected log-probs fall" failure the chapter warns about, and with fully off-policy pairs at 100M it is not a risk, it is the *expected* outcome. The Tülu 3 report's headline post-training finding points the same way: the quality of preference optimization is dominated by whether the preference data is **on-policy** — generated by the very model you are about to train.
+UltraFeedback's chosen responses were written by 7B–70B models. Stack-100M assigns them log-probabilities in the neighborhood of $-$hundreds of nats: they are, from its perspective, essentially impossible strings. The DPO gradient (derived below) is proportional to $\sigma(-\text{margin})$ times the difference of the two responses' score functions, and when *both* responses are far off-policy the update that most easily lowers the loss is to push the rejected sequence's probability down hard — dragging the chosen one down with it, because they share vocabulary, style, and length statistics the model has no way to separate. The result is both `chosen_r` and `rejected_r` marching downward while the loss falls and accuracy looks fine; Exercise 2 works the arithmetic. With fully off-policy pairs at 100M this is not a risk, it is the *expected* outcome. The Tülu 3 report's headline post-training finding points the same way: the quality of preference optimization is dominated by whether the preference data is **on-policy** — generated by the very model you are about to train.
 
 So we invert the usual advice. **Default path: mine your own pairs from the SFT model.** Sample $k$ completions per prompt at temperature 1.0, score them, keep the best and the worst. Every pair is then a string the policy actually produces, the log-ratios start near zero, and the update is a genuine re-ranking of the model's own distribution rather than a doomed push toward a foreign one.
 
 ```python
-# capstone/stacklm/post/dpo.py  (new in this chapter — append to the shipped module)
+# capstone/stacklm/post/dpo.py
 import torch
 from stacklm.post.chat import Turn, render_conversation, SPECIAL
 from stacklm.post.grpo import sample_group, exact_match_reward
@@ -322,22 +322,37 @@ def _strip_stop(text):
         text = text.split(stop)[0]
     return text.strip()
 
+def arithmetic_score(text, gold):
+    """
+    A verifiable score_fn. Returns (primary, tiebreak):
+
+      primary  -- a DISCRETE quality level: 1.5 exact match, 0.5 parseable but
+                  wrong, 0.0 unparseable. This is the ONLY component the
+                  degeneracy filter looks at.
+      tiebreak -- -len(text): orders samples that TIE on `primary`, so among
+                  equally-correct answers the shorter one wins.
+    """
+    r, pred = exact_match_reward(text, gold)
+    return r + (0.5 if pred is not None else 0.0), -len(text)
+
 @torch.no_grad()
 def mine_onpolicy_pairs(model, tok, prompts, score_fn, *, k=4, max_new=96,
                         temperature=1.0, device="cuda"):
     """
     Generate k completions per prompt from the CURRENT SFT policy, score them,
-    and keep (prompt, best, worst) whenever the scores actually differ.
+    and keep (prompt, best, worst) whenever the PRIMARY scores actually differ.
 
     prompts  : iterable of (prompt_text, meta) — `meta` is whatever score_fn needs
                (a gold answer for arithmetic; None for open-ended prompts).
-    score_fn : (completion_text, meta) -> float, higher is better. Cheap options:
-               exact-match for verifiable prompts, a format/length heuristic for
-               chat prompts, or a larger open model used as a judge (Ch. 5.11).
+    score_fn : (completion_text, meta) -> (primary, tiebreak), higher is better.
+               Cheap options for `primary`: exact-match for verifiable prompts,
+               a discrete format rubric for chat prompts, or a larger open model
+               used as a judge (Ch. 5.11).
 
-    A prompt whose k samples all score the same is DROPPED — the same degeneracy
-    that makes a GRPO group contribute no gradient makes a preference pair carry
-    no information. Expect to discard a large fraction; that is normal and cheap.
+    A prompt whose k samples all land at the same PRIMARY level is DROPPED: it
+    carries no preference information, exactly as a zero-variance GRPO group
+    carries no gradient. Early in a run you will discard most prompts; that is
+    normal and it is the cheapest part of the pipeline.
     """
     model.eval()
     pairs = []
@@ -349,21 +364,19 @@ def mine_onpolicy_pairs(model, tok, prompts, score_fn, *, k=4, max_new=96,
                                         temperature=temperature, device=device)
         texts = [_strip_stop(tok.decode(seqs[i, Tp:].tolist())) for i in range(k)]
         scores = [score_fn(t, meta) for t in texts]
-        hi = max(range(k), key=lambda i: scores[i])
-        lo = min(range(k), key=lambda i: scores[i])
-        if scores[hi] - scores[lo] < 1e-6 or not texts[hi] or not texts[lo]:
-            continue                                     # no signal in this prompt
+        primary = [s[0] for s in scores]
+        if max(primary) - min(primary) < 1e-6:
+            continue                                   # no signal in this prompt
+        hi = max(range(k), key=lambda i: scores[i])    # lexicographic: primary,
+        lo = min(range(k), key=lambda i: scores[i])    # then the length tiebreak
+        if not texts[hi] or not texts[lo]:
+            continue
         pairs.append({"prompt": prompt_text,
                       "chosen": texts[hi], "rejected": texts[lo]})
     return pairs
-
-def arithmetic_score(text, gold):
-    """A verifiable score_fn: exact match dominates, well-formedness breaks ties."""
-    r, pred = exact_match_reward(text, gold)
-    return r + (0.1 if pred is not None else 0.0) - 0.001 * len(text)
 ```
 
-The last term of `arithmetic_score` — a tiny length penalty — is not decoration; it is the antidote to the length bias we analyze at the end of this section. When the judge is a heuristic you control, put the anti-verbosity pressure *into the scoring function*, where it is explicit and tunable.
+The two-component return value is the whole point of `arithmetic_score`, and the lesson generalizes far past this chapter: **a continuous shaping term in a scoring function silently disables any epsilon-based degeneracy filter.** Fold a `- 0.001 * len(text)` penalty directly into the score and no two samples ever tie, so `max - min < 1e-6` never fires, every prompt is kept — and at cold start, when *zero* completions are correct, you have quietly trained DPO on nothing but "shorter is better," which is precisely the length bias we analyze two sections down. Keep the verifiable signal discrete and let continuous terms break ties only.
 
 **UltraFeedback still has a role**, as a *supplementary* source: its prompts are far more diverse than anything you will write, and diversity of $x$ is exactly what mining needs. The high-value pattern is to take UltraFeedback's *prompts*, throw away its completions, and generate your own — the same trick Tülu 3's preference pipeline uses at scale. If you nevertheless want to train on its native pairs (worth doing once, to see the failure mode with your own eyes), here is the loader:
 
@@ -403,7 +416,7 @@ Read it as: push the winner's log-probability *up relative to the reference* and
 Pairs are variable-length and come in two per example, so packing (which worked for SFT) is the wrong tool: we need the chosen and rejected sequences of a pair to stay aligned in the batch. We right-pad instead.
 
 ```python
-# capstone/stacklm/post/dpo.py  (new in this chapter — append to the shipped module)
+# capstone/stacklm/post/dpo.py  (continued)
 import torch
 from torch.utils.data import Dataset
 from stacklm.post.chat import Turn, render_conversation
@@ -449,7 +462,7 @@ def collate_preferences(items, pad_id):
     batched *generation*: it shifts every real token's RoPE position.)
     """
     out = {}
-    for key, prefix in (("chosen", "chosen"), ("rejected", "rejected")):
+    for key in ("chosen", "rejected"):
         seqs = [it[key] for it in items]
         T = max(len(ids) for ids, _ in seqs)
         ids_b = torch.full((len(seqs), T), pad_id, dtype=torch.long)
@@ -457,8 +470,8 @@ def collate_preferences(items, pad_id):
         for r, (ids, mask) in enumerate(seqs):
             ids_b[r, :len(ids)] = torch.tensor(ids, dtype=torch.long)
             msk_b[r, :len(mask)] = torch.tensor(mask, dtype=torch.float)
-        out[f"{prefix}_ids"] = ids_b
-        out[f"{prefix}_mask"] = msk_b
+        out[f"{key}_ids"] = ids_b
+        out[f"{key}_mask"] = msk_b
     return out
 
 # Usage:
@@ -475,7 +488,7 @@ One constraint: `max_len` must stay $\le$ `model.cfg.max_seq_len`, since the RoP
 The one quantity we need is the summed log-probability that a policy assigns to a response's tokens, given the prompt — the sequence log-likelihood, masked to the response.
 
 ```python
-# capstone/stacklm/post/dpo.py
+# capstone/stacklm/post/dpo.py  (continued)
 import torch, torch.nn.functional as F
 
 def sequence_logprob(model, input_ids, loss_mask, seg=None):
@@ -521,12 +534,14 @@ def dpo_loss(policy, ref, batch, beta=0.1, device="cuda"):
 
     loss = -F.logsigmoid(logits).mean()
 
-    # Diagnostics that actually tell you if DPO is working:
+    # Diagnostics that actually tell you if DPO is working. Report the two
+    # rewards SEPARATELY: the margin alone cannot distinguish "winner up" from
+    # "both down, loser faster".
     with torch.no_grad():
         acc = (logits > 0).float().mean()                    # implicit reward accuracy
         chosen_reward   = beta * chosen_logratio.mean()      # should trend UP
         rejected_reward = beta * rejected_logratio.mean()    # should trend DOWN
-        margin = (chosen_reward - rejected_reward)
+        margin = chosen_reward - rejected_reward
     return loss, {"acc": acc.item(), "chosen_r": chosen_reward.item(),
                   "rejected_r": rejected_reward.item(), "margin": margin.item()}
 ```
@@ -572,7 +587,7 @@ Note the contrast with SFT: here `loss / grad_accum` *is* correct, because `dpo_
 
 ### Length bias, and the variant zoo
 
-Look again at `sequence_logprob`: it returns a raw **sum** of token log-probabilities. Every token contributes a negative number, so *longer responses have systematically lower sequence log-probability*, and the DPO margin conflates "better" with "shorter." Which way this biases the model depends on your data. With UltraFeedback, whose chosen responses are systematically *longer* than its rejected ones, the objective must fight the length term to satisfy the preference — and the easiest way to raise $\log\pi_\theta(y_w)$ across a long sequence is to raise the probability of generic filler, which is one mechanism behind DPO's well-known **verbosity drift**. With on-policy pairs mined at fixed `max_new`, lengths are much better matched and the bias is milder — another reason on-policy is the default here.
+Look again at `sequence_logprob`: it returns a raw **sum** of token log-probabilities. Every token contributes a negative number, so *longer responses have systematically lower sequence log-probability*, and the DPO margin conflates "better" with "shorter." Which way this biases the model depends on your data. With UltraFeedback, whose chosen responses are systematically *longer* than its rejected ones, the objective must fight the length term to satisfy the preference — and the easiest way to raise $\log\pi_\theta(y_w)$ across a long sequence is to raise the probability of generic filler, which is one mechanism behind DPO's well-known **verbosity drift**. With pairs mined at fixed `max_new`, lengths are much better matched and the bias is milder.
 
 The remedies, in increasing order of departure from vanilla DPO:
 
@@ -587,11 +602,9 @@ All four are implemented in TRL (`DPOTrainer` with `loss_type` variants, plus de
 
     Take $\beta = 0.1$ and a single pair. Suppose the frozen reference assigns the winner and loser these response log-likelihoods: $\log\pi_{\text{ref}}(y_w)=-30.0$, $\log\pi_{\text{ref}}(y_l)=-28.0$ (the reference actually finds the *loser* slightly more likely — a case DPO should fix). Early in training the policy still matches the reference, so both log-ratios are ~0, the margin $\beta(0-0)=0$, and $\sigma(0)=0.5$: the loss is $-\log 0.5 = 0.693$ nats and implicit-reward accuracy is a coin flip.
 
-    Now suppose after some steps the policy has moved to $\log\pi_\theta(y_w)=-27.0$ (winner up by 3 nats) and $\log\pi_\theta(y_l)=-29.0$ (loser down by 1 nat). The log-ratios are $+3.0$ and $-1.0$; the margin is $\beta(3.0-(-1.0)) = 0.1\times 4.0 = 0.40$. The loss drops to $-\log\sigma(0.40) = -\log(0.599) = 0.512$ nats and accuracy for this pair is 1 (margin $>0$).
+    Now suppose after some steps the policy has moved to $\log\pi_\theta(y_w)=-27.0$ (winner up by 3 nats) and $\log\pi_\theta(y_l)=-29.0$ (loser down by 1 nat). The log-ratios are $+3.0$ and $-1.0$; the margin is $\beta(3.0-(-1.0)) = 0.1\times 4.0 = 0.40$. With $\sigma(0.40) = 0.5987$ the loss drops to $-\log(0.5987) = 0.513$ nats and accuracy for this pair is 1.
 
-    The lesson in the magnitudes: because $\beta=0.1$, even a *4-nat* separation in log-likelihood produces only a **0.4-logit** margin, i.e. a gentle $\sigma(0.4)\approx 0.60$ preference probability. DPO deliberately moves the policy in small steps. If you crank $\beta$ up to make the margin bigger, you also tighten the implicit KL leash and the policy barely moves at all; the sweet spot near $0.1$ is what keeps chosen-reward rising *without* both rewards collapsing.
-
-    Now contrast the off-policy case. Suppose $y_w$ and $y_l$ came from a 70B model, so $\log\pi_{\text{ref}}(y_w)=-310$ and $\log\pi_{\text{ref}}(y_l)=-290$ (both astronomically unlikely, and the *loser* — shorter — is the more likely of the two under the reference). The pair asks the policy to close a 20-nat gap in the wrong direction across ~150 tokens the model has essentially never produced. The gradient available to do that is dominated by suppressing shared high-frequency tokens, and the measured outcome is both `chosen_r` and `rejected_r` marching downward together. That is why the diagnostics in `dpo_loss` report the two rewards *separately* rather than only the margin.
+    The lesson in the magnitudes: because $\beta=0.1$, even a *4-nat* separation in log-likelihood produces only a **0.4-logit** margin, i.e. a gentle $\sigma(0.4)\approx 0.60$ preference probability. DPO deliberately moves the policy in small steps. If you crank $\beta$ up to make the margin bigger, you also tighten the implicit KL leash and the policy barely moves at all; the sweet spot near $0.1$ is what keeps `chosen_r` rising *without* both rewards collapsing — the off-policy failure Exercise 2(c) works out numerically.
 
 The honest read on DPO at 100M: it reliably removes *obvious* failure modes present in the base/SFT model (rambling, ignoring the format, repeating the prompt) when the preference pairs target those failures and come from the model itself. It does **not** install new reasoning. If your rejected/chosen pairs differ mainly in a capability the base model lacks — say, correct multi-step arithmetic — DPO will happily raise the log-probability of the "chosen" correct answer *relative to* the reference, but the model still cannot *produce* correct arithmetic on a new problem, because the log-ratio objective only reshapes the distribution over responses it can already generate. For a *capability* gain we need a signal tied to *correctness on new inputs*. That is RLVR.
 
@@ -599,7 +612,7 @@ The honest read on DPO at 100M: it reliably removes *obvious* failure modes pres
 
 Reinforcement learning with **verifiable rewards** (RLVR) replaces the learned, hackable reward model with a *program* that checks correctness. On a math problem, the checker parses the model's final answer and compares it to the ground truth: reward 1 if exactly right, 0 otherwise. There is nothing to reward-hack (short of the model finding the checker's bugs), the signal is always available, and — the key point for us — it rewards *being correct on inputs the model has not memorized*, which is exactly the capability signal DPO could not provide. See [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html) for the general recipe and [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html) for how real verifiers are built and sandboxed.
 
-The catch, and the reason this section is titled "narrow," is the **cold-start problem**. RL can only reinforce behavior the model *sometimes* produces. If Stack-100M gets a task right 0% of the time, every sample earns reward 0, every advantage is 0, and the gradient is exactly zero — RL has nothing to climb. RLVR works when the base+SFT model already succeeds *occasionally* (say 10–40% of the time) so that the reward signal has variance to exploit. At 100M this restricts us to genuinely narrow, in-distribution tasks. We pick **integer arithmetic and one-step word problems** — a task Stack-100M, after math-heavy mid-training (Ch. 14.8), solves often enough to bootstrap.
+The catch, and the reason this section is titled "narrow," is the **cold-start problem**. RL can only reinforce behavior the model *sometimes* produces. If Stack-100M gets a task right 0% of the time, every sample earns reward 0, every advantage is 0, and the gradient is exactly zero. RLVR works when the base+SFT model already succeeds *occasionally* (say 10–40% of the time) so that the reward signal has variance to exploit. At 100M this restricts us to genuinely narrow, in-distribution tasks. We pick **integer arithmetic and one-step word problems** — a task Stack-100M, after math-heavy mid-training (Ch. 14.8), solves often enough to bootstrap.
 
 ### The task and the verifier
 
@@ -650,10 +663,10 @@ $$
 and — because RLVR gives every token in a response the same terminal reward — this scalar $\hat A_i$ is broadcast to *every token* of response $i$. GRPO then optimizes the PPO-style clipped surrogate so we can safely take a few gradient steps on the same batch of rollouts, plus an optional KL penalty to a frozen reference:
 
 $$
-\mathcal{L}_{\text{GRPO}} = -\,\mathbb{E}\!\left[\frac{1}{\sum_i |o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}\min\!\big(\rho_{i,t}\hat A_i,\ \operatorname{clip}(\rho_{i,t}, 1-\epsilon, 1+\epsilon)\hat A_i\big)\right] + \beta_{\text{KL}}\,\mathbb{D}_{\text{KL}}\!\big(\pi_\theta\,\|\,\pi_{\text{ref}}\big),
+\mathcal{L}_{\text{GRPO}} = -\,\mathbb{E}\!\left[\frac{1}{\sum_i |o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}\min\!\big(\rho_{i,t}\hat A_i,\ \operatorname{clip}(\rho_{i,t}, 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}})\hat A_i\big)\right] + \beta_{\text{KL}}\,\mathbb{D}_{\text{KL}}\!\big(\pi_\theta\,\|\,\pi_{\text{ref}}\big),
 $$
 
-where $\rho_{i,t} = \dfrac{\pi_\theta(o_{i,t}\mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,<t})}$ is the per-token importance ratio between the current policy and the policy that generated the rollouts. When $\hat A_i>0$ (this sample beat its group) the objective pushes $\rho$ up (make these tokens more likely); when $\hat A_i<0$ it pushes them down; the clip prevents any single update from moving too far. Notice a group where *all* rewards are equal has zero std and thus zero advantage — those prompts contribute no gradient, which is both a feature (no noise) and the cold-start trap (too-hard or too-easy prompts are wasted).
+where $\rho_{i,t} = \dfrac{\pi_\theta(o_{i,t}\mid q, o_{i,<t})}{\pi_{\theta_{\text{old}}}(o_{i,t}\mid q, o_{i,<t})}$ is the per-token importance ratio between the current policy and the policy that generated the rollouts. When $\hat A_i>0$ (this sample beat its group) the objective pushes $\rho$ up (make these tokens more likely); when $\hat A_i<0$ it pushes them down; the clip prevents any single update from moving too far. **The structural fact that governs everything downstream: a group in which all rewards are equal has zero std, hence zero advantage on every token, hence contributes exactly zero gradient.** That is a feature when the group is uninformative and a trap when it is the norm — which is the cold-start problem, quantified in Exercise 5 and fixed by dynamic sampling below.
 
 Compare the *baseline* choice with **RLOO** (Ahmadian et al., 2024), which uses the leave-one-out mean $\frac{1}{G-1}\sum_{j\ne i} R_j$ instead of the group mean and does *not* divide by the std. RLOO's advantage is an unbiased policy-gradient estimator; GRPO's std division is not, which is precisely the issue Dr. GRPO raises below. At $G=8$ the practical difference is small; at $G=4$ or less, RLOO's bias-free baseline is the safer choice.
 
@@ -698,11 +711,13 @@ def sample_group(model, tok, prompt_ids, G, max_new=64, temperature=1.0, device=
         if done.all(): break
     gen_mask = torch.zeros_like(x, dtype=torch.float)
     gen_mask[:, Tp:] = 1.0                                    # completion tokens
-    # zero the mask past each row's first stop token so padding earns no loss
+    # Zero the mask past each row's FIRST stop token: the stop itself is
+    # supervised (we want the model to emit it); everything after is eos padding
+    # and must earn neither advantage nor KL penalty.
     for i in range(G):
         row = x[i, Tp:]
         stop = ((row == end_id) | (row == eos_id)).nonzero()
-        if len(stop): gen_mask[i, Tp + stop[0].item() + 1:] = 0.0
+        if len(stop): gen_mask[i, Tp + int(stop[0].item()) + 1:] = 0.0
     return x, gen_mask, Tp
 
 def token_logprobs(model, seqs):
@@ -715,7 +730,7 @@ def token_logprobs(model, seqs):
 def grpo_train(sft_model, tok, *, iterations=200, group_size=8, prompts_per_iter=16,
                inner_epochs=2, lr=1e-6, clip_eps_low=0.2, clip_eps_high=0.28,
                kl_beta=0.02, temperature=1.0, max_new=64, device="cuda", seed=0,
-               reward_fn=exact_match_reward, log_every=10):
+               log_every=10, reward_fn=exact_match_reward):
     """
     Minimal single-GPU GRPO on integer arithmetic with exact-match reward.
     Each iteration: (1) sample rollouts with the *current* policy (theta_old),
@@ -729,7 +744,7 @@ def grpo_train(sft_model, tok, *, iterations=200, group_size=8, prompts_per_iter
     ref = copy.deepcopy(policy).to(device).eval()             # frozen KL anchor
     for p in ref.parameters(): p.requires_grad_(False)
     opt = build_optimizer(policy, lr=lr, weight_decay=0.0, betas=(0.9, 0.95))
-    accs, losses = [], []
+    accs, losses, degen = [], [], []
 
     for it in range(iterations):
         # ---- 1 & 2: rollout + reward, accumulated across several prompts ----
@@ -752,7 +767,7 @@ def grpo_train(sft_model, tok, *, iterations=200, group_size=8, prompts_per_iter
                 rewards[i] = r
             n_correct += int((rewards >= 1.0).sum().item()); n_total += group_size
             if rewards.max() == rewards.min():
-                n_degenerate += 1        # zero std -> zero advantage -> no gradient
+                n_degenerate += 1                    # zero std -> no gradient
             # ---- 3: group-relative standardized advantage ----
             adv = (rewards - rewards.mean()) / (rewards.std() + 1e-6)   # (G,)
             # cache old (theta_old) token log-probs for the importance ratio
@@ -763,7 +778,7 @@ def grpo_train(sft_model, tok, *, iterations=200, group_size=8, prompts_per_iter
 
         # ---- 4: clipped-surrogate updates (a few inner epochs on the rollouts) ----
         policy.train()
-        last_loss, clip_frac, nll = 0.0, 0.0, 0.0
+        last_loss, clip_frac, logp_tok = 0.0, 0.0, 0.0
         for _ in range(inner_epochs):
             for seqs, gmask, adv, old_lp in zip(batch_seqs, batch_gmask,
                                                 batch_adv, batch_oldlp):
@@ -789,21 +804,23 @@ def grpo_train(sft_model, tok, *, iterations=200, group_size=8, prompts_per_iter
                     # token-level normalization over the GENERATED tokens (DAPO)
                     loss = (per_tok * m).sum() / m.sum().clamp(min=1)
                     with torch.no_grad():        # health metrics, see the table below
+                        denom = m.sum().clamp(min=1).item()
                         clip_frac = (((ratio > 1 + clip_eps_high) |
-                                      (ratio < 1 - clip_eps_low)) * m).sum().item() \
-                                    / m.sum().clamp(min=1).item()
-                        nll = -(new_lp * m).sum().item() / m.sum().clamp(min=1).item()
+                                      (ratio < 1 - clip_eps_low)).float()
+                                     * m).sum().item() / denom
+                        logp_tok = (new_lp * m).sum().item() / denom
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
                 opt.step()
                 last_loss = loss.item()
         acc = n_correct / max(1, n_total)
-        accs.append(acc); losses.append(last_loss)
+        accs.append(acc); losses.append(last_loss); degen.append(n_degenerate)
         if log_every and it % log_every == 0:
             print(f"grpo it{it} acc {acc:.3f} loss {last_loss:.4f} "
                   f"degen {n_degenerate}/{prompts_per_iter} "
-                  f"clip {clip_frac:.3f} logp/tok {-nll:.3f}")
-    return policy, {"acc_history": accs, "loss_history": losses}
+                  f"clip {clip_frac:.3f} logp/tok {logp_tok:.3f}")
+    return policy, {"acc_history": accs, "loss_history": losses,
+                    "degenerate_history": degen}
 ```
 
 A few implementation notes that matter for correctness.
@@ -814,7 +831,7 @@ A few implementation notes that matter for correctness.
 
 **Which normalizer is whose.** This is worth getting exactly right, because the two named corrections are routinely conflated. **Dr. GRPO** (Liu et al., 2025) makes *two* changes to the original GRPO objective: (i) it **removes the division by the group reward std** in the advantage, and (ii) it replaces the per-sequence $1/|o_i|$ normalizer with a **constant** normalizer. The code above applies *neither* of those literally. It divides by $\sum_i |o_i|$ — the total number of generated tokens in the group — which is the **token-level policy-gradient loss** introduced by **DAPO** (Yu et al., 2025), and it **keeps** the std normalization.
 
-Why keep the std? Dividing by the group std reweights prompts by difficulty: a prompt where 1 of 8 samples is correct gets $\hat A \approx +2.6$ on the winner, while a prompt where 4 of 8 are correct gets $\hat A = +1.0$. Dr. GRPO is right that this is a bias — it is not the policy gradient of any objective — but in practice it acts as a free difficulty curriculum, amplifying exactly the hard-but-not-impossible prompts that carry the most information. At 100M, where the accuracy band is narrow anyway, we keep it and note the ablation is one line:
+Why keep the std? Dividing by the group std reweights prompts by difficulty: a prompt where 1 of 8 samples is correct gets $\hat A \approx +2.6$ on the winner, while a prompt where 3 of 8 are correct gets $+1.29$ (worked out below). Dr. GRPO is right that this is a bias — it is not the policy gradient of any objective — but in practice it acts as a free difficulty curriculum, amplifying exactly the hard-but-not-impossible prompts that carry the most information. At 100M, where the accuracy band is narrow anyway, we keep it and note the ablation is one line:
 
 ```python
 adv = rewards - rewards.mean()                 # Dr. GRPO: no std division
@@ -822,28 +839,28 @@ adv = rewards - rewards.mean()                 # Dr. GRPO: no std division
 
 Try both. TRL exposes the same switch (`GRPOConfig(scale_rewards=...)`, and a `loss_type` selecting the sequence-level, token-level, or constant normalizer — names track the current TRL release).
 
-**Generation cost.** Generation here recomputes the full forward each step with no KV cache — fine for a 100M model and 64-token completions, but the first thing you would replace with a real rollout engine at any larger scale.
+**Generation cost.** Generation here recomputes the full forward each step with no KV cache — fine for a 100M model and 64-token completions, and, as the cost derivation showed, still 80% of the stage's FLOPs. It is the first thing you would replace with a real rollout engine at any larger scale.
 
 ### The 2026 patch set: dynamic sampling, and what to do about wasted groups
 
-Exercise 5 below works out the arithmetic that motivates this section: with $G=8$ and a per-sample success rate $p=0.05$, **two-thirds of your groups are all-wrong**, produce zero advantage, and burn their entire rollout budget for nothing. Early in an RLVR run — precisely when the model is weakest and you most need signal — this is the dominant cost.
+Exercise 5 works out the arithmetic: with $G=8$ and a per-sample success rate $p=0.05$, **two-thirds of your groups are all-wrong** and burn their entire rollout budget for a zero gradient. Early in an RLVR run — precisely when the model is weakest and you most need signal — this is the dominant cost.
 
 **DAPO's dynamic sampling** (Yu et al., 2025) is the standard fix, and it is embarrassingly simple: *oversample prompts and throw away every degenerate group*, continuing until you have filled a batch with groups whose accuracy is strictly between 0 and 1. You pay more generation to get a batch in which every example contributes gradient, and — this is the part that surprises people — total wall-clock to a given accuracy typically *improves*, because gradient steps stop being diluted by zeros. DAPO pairs it with three other changes, of which we already adopted one: **clip-higher** (decouple $\epsilon_{\text{low}}$ from a larger $\epsilon_{\text{high}}$, so the update has room to raise the probability of rare-but-correct tokens — the reported setting is roughly 0.2/0.28), **token-level policy-gradient loss** (our normalizer), and **overlong reward shaping** (a soft penalty as completions approach the length cap, instead of a hard zero that injects reward noise).
 
 ```python
-# capstone/stacklm/post/grpo.py  (new in this chapter — append to the shipped module)
+# capstone/stacklm/post/grpo.py  (continued)
 @torch.no_grad()
 def collect_nondegenerate_groups(policy, tok, rng, *, target_groups, group_size,
                                  reward_fn=exact_match_reward, max_new=64,
                                  temperature=1.0, oversample=3.0, device="cuda"):
     """
     DAPO-style dynamic sampling: keep drawing prompts and DISCARD every group
-    whose samples all score the same (accuracy 0 or 1), until we have
-    `target_groups` groups that actually carry gradient.
+    whose samples all score the same, until we have `target_groups` groups that
+    actually carry gradient.
 
     Returns (groups, tries) where each group is (seqs, gmask, rewards, Tp).
     `tries / len(groups)` is the single most informative RLVR health metric: it
-    is 1.0 in the sweet spot and blows up as the task drifts out of reach.
+    is ~1.0 in the sweet spot and blows up as the task drifts out of reach.
     Budget-capped by `oversample` so a hopeless task fails fast instead of hanging.
     """
     kept, tries, budget = [], 0, int(target_groups * oversample)
@@ -879,14 +896,11 @@ for seqs, gmask, rewards, Tp in groups:
         old_lp = token_logprobs(policy, seqs)
     batch_seqs.append(seqs); batch_gmask.append(gmask)
     batch_adv.append(adv);   batch_oldlp.append(old_lp)
-# NOTE: `n_correct / n_total` is now conditioned on non-degenerate groups and is
-# NO LONGER an unbiased estimate of accuracy. Track true accuracy on a fixed
-# held-out prompt set instead — this is a real reporting trap.
 ```
 
-That last comment is not a footnote. Dynamic sampling changes the meaning of your training-accuracy curve: it is now computed over a *filtered* population that excludes both the all-wrong and the all-right prompts, so it is biased toward 50% and will look flat while the model genuinely improves. Evaluate on a fixed held-out set (Ch. 14.11) and treat the training curve purely as a health signal.
+That change has a reporting consequence that is not a footnote: `n_correct / n_total` is now conditioned on a *filtered* population that excludes both the all-wrong and the all-right prompts, so it is biased toward 50% and will look flat while the model genuinely improves. Evaluate on a fixed held-out prompt set (Ch. 14.11) and treat the training curve purely as a health signal.
 
-Two further 2026 developments are worth knowing even though we do not need them at 100M. **GSPO** (Group Sequence Policy Optimization; Zheng et al., Qwen team, 2025) replaces the per-token importance ratio with a **length-normalized sequence-level** ratio, $\rho_i = \big(\pi_\theta(o_i\mid q)/\pi_{\theta_{\text{old}}}(o_i\mid q)\big)^{1/|o_i|}$, and clips at the sequence level. The motivation is that per-token ratios accumulate variance over long rollouts and interact badly with MoE routing changes between the rollout and training policies; at 64-token completions on a dense 100M model, neither problem bites. And **entropy collapse** — the policy's per-token entropy sliding toward zero over an RLVR run, after which every sample in a group is identical, every group is degenerate, and learning stops dead — is the failure mode most likely to end your run. The `logp/tok` metric printed by the loop above is your early warning; the remedies are the ones already in the loop (keep the KL leash on, keep `temperature` at 1.0, do not over-train) plus, at larger scale, explicit entropy regularization. See [Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html).
+Two further 2026 developments are worth knowing even though we do not need them at 100M. **GSPO** (Group Sequence Policy Optimization; Zheng et al., Qwen team, 2025) replaces the per-token importance ratio with a **length-normalized sequence-level** ratio, $\rho_i = \big(\pi_\theta(o_i\mid q)/\pi_{\theta_{\text{old}}}(o_i\mid q)\big)^{1/|o_i|}$, and clips at the sequence level. The motivation is that per-token ratios accumulate variance over long rollouts and interact badly with MoE routing changes between the rollout and training policies; at 64-token completions on a dense 100M model, neither problem bites. And **entropy collapse** — the policy's per-token entropy sliding toward zero over an RLVR run, after which every sample in a group is identical and learning stops dead — is the failure mode most likely to end your run. The `logp/tok` metric printed by the loop above is your early warning; the remedies are the ones already in the loop (keep the KL leash on, keep `temperature` at 1.0, do not over-train) plus, at larger scale, explicit entropy regularization. See [Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html).
 
 | Metric | Healthy | What it means when it is not |
 |---|---|---|
@@ -908,11 +922,11 @@ Two further 2026 developments are worth knowing even though we do not need them 
     - correct samples: $\hat A = (1 - 0.375)/0.484 = +1.29$
     - incorrect samples: $\hat A = (0 - 0.375)/0.484 = -0.775$
 
-    Every token of a *correct* completion gets advantage $+1.29$ (make these tokens more likely); every token of a *wrong* completion gets $-0.775$ (make them less likely). Because there are more wrong samples, each correct one is pushed up harder than each wrong one is pushed down — the group balances itself, and the advantages sum to zero.
+    Every token of a *correct* completion gets advantage $+1.29$ (make these tokens more likely); every token of a *wrong* completion gets $-0.775$. Because there are more wrong samples, each correct one is pushed up harder than each wrong one is pushed down — the group balances itself, and $3(+1.29) + 5(-0.775) = 0$.
 
     Now compare a *harder* prompt in the same batch, where only 1 of 8 samples is correct. Then $\bar R = 0.125$, population std $=\sqrt{0.125\times0.875}=0.331$, and the single winner gets $\hat A = (1-0.125)/0.331 = +2.65$ — more than double the $+1.29$ a winner earns on the easier prompt. That is the difficulty reweighting the std division buys (and that Dr. GRPO removes): hard-but-solvable prompts shout louder. Under Dr. GRPO's unnormalized advantage the two winners would get $1-0.125 = +0.875$ and $1-0.375 = +0.625$ — the hard prompt is still favored, but by a factor of $1.4$ instead of $2.05$. The *ordering* survives either way; the *amplification* is what the std division adds, and whether that amplification is a helpful curriculum or an unprincipled bias is the whole disagreement.
 
-    Finally the two degenerate cases: if all 8 were wrong, $\bar R=0$, std $=0$, every $\hat A = 0/\varepsilon = 0$ and the prompt contributes **no gradient** (too hard — the cold-start trap). If all 8 were right, same thing (nothing left to learn). Only groups with *mixed* outcomes teach anything — which is precisely why the base model must already be partially competent for RLVR to lift it, and why dynamic sampling refuses to spend a gradient step on the others.
+    Finally the two degenerate cases: all 8 wrong gives $\bar R=0$, std $=0$, every $\hat A = 0$; all 8 right gives the same. Only groups with *mixed* outcomes teach anything — which is precisely why the base model must already be partially competent for RLVR to lift it.
 
 ### What we honestly observe
 
@@ -999,13 +1013,13 @@ When do you graduate past TRL? Roughly, when rollouts stop fitting in the traini
 | Async / decentralized RL | **PrimeIntellect/prime-rl** | See [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html) |
 | Reward/verifier definitions | **math-verify**, **verifiers** | Robust answer checking and packaged RLVR environments |
 
-At 100M, all of this is overkill — one process, one GPU, `model.generate()` inline. That is a *feature* of working small: you can see the whole loop.
+At 100M, all of this is overkill — one process, one GPU, generation inline. That is a *feature* of working small: you can see the whole loop.
 
 ## What post-training does and does not buy at 100M
 
 It is worth stating the scope plainly, because the temptation with a shiny chat model is to over-claim.
 
-**What post-training buys.** A base model that continues text becomes a model that *takes turns, follows instructions, stays in format, and stops*. That is entirely a post-training gift and it is transformational for *usability*: Stack-100M goes from "autocomplete" to "assistant-shaped." DPO — on *on-policy* pairs — sands off obvious quality failures. And RLVR genuinely lifts a *narrow, verifiable* skill above the base model's zero-shot rate: the one place at this scale where RL adds capability rather than just reshaping behavior.
+**What post-training buys.** A base model that continues text becomes a model that *takes turns, follows instructions, stays in format, and stops*. That is entirely a post-training gift and it is transformational for *usability*: Stack-100M goes from "autocomplete" to "assistant-shaped." DPO sands off obvious quality failures. And RLVR genuinely lifts a *narrow, verifiable* skill above the base model's zero-shot rate: the one place at this scale where RL adds capability rather than just reshaping behavior.
 
 **What it does not buy.** Post-training cannot install knowledge or reasoning the base model has no substrate for. A 100M model has, very roughly, on the order of a few tens of millions of "facts" worth of capacity; no amount of SFT or DPO conjures broad world knowledge, reliable multi-step reasoning, or robust instruction-following on out-of-distribution prompts. The failure modes are characteristic: confident wrong answers, brittleness to phrasings unlike the SFT set, and collapse the moment a task leaves the narrow band RLVR was trained on. This is *expected*, not a defect of our recipe — it is the reason the capstone's north star (Ch. 14.10) is a *narrow, scaffolded, tool-using* agent rather than a general chatbot. Post-training is what makes the narrow tool *usable*; the scale is what keeps it narrow.
 
@@ -1023,13 +1037,13 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
 
 !!! key "Key Takeaways"
 
-    - Post-training on Stack-100M is three cheap stages — SFT, then DPO, then narrow GRPO — each under a couple of A100-hours, a rounding error against the ~USD 40–100 pretraining bill. Only GRPO scales with *generation*, which is why it is the most expensive of the three despite the fewest steps.
+    - Post-training on Stack-100M is three cheap stages — SFT, then DPO, then narrow GRPO — totalling **under one A100-hour** by a $6ND$ derivation, a few percent surcharge on the ~USD 25–50 pretraining bill. Only GRPO scales with *generation*; push the rollout budget to production shape and it alone becomes 4–8 A100-hr and dominates.
     - **SFT** installs the chat template using the reserved special tokens (`<|system|>/<|user|>/<|assistant|>/<|end|>`), packs conversations with document-aware masking, and supervises **only assistant tokens (including the closing `<|end|>`, so the model learns to stop)** at a small LR. Under assistant-only masking you must normalize the loss by the *accumulation window's* supervised-token count, not per microbatch — the grad-accum bug that shipped everywhere in 2024.
-    - **DPO** optimizes a single logistic loss on preference *pairs* against a frozen SFT reference — no reward model, no rollouts, and the partition term cancels. At 100M the pairs must be **on-policy** (mined from your own SFT model's samples); UltraFeedback's 70B-authored responses are so far off-policy that the expected outcome is both chosen and rejected log-probs falling together.
+    - **DPO** optimizes a single logistic loss on preference *pairs* against a frozen SFT reference — no reward model, no rollouts, and the partition term cancels. At 100M the pairs must be **on-policy** (mined from your own SFT model's samples); UltraFeedback's 70B-authored responses are so far off-policy that the expected outcome is both chosen and rejected log-probs falling together, so always log the two rewards separately.
+    - Keep the *verifiable* part of any mining score **discrete**: a continuous shaping term (a length penalty, say) never ties, silently disabling the epsilon-based degeneracy filter and training DPO on "shorter is better."
     - Summed sequence log-probs are **length-biased**; length-normalized DPO, SimPO, ORPO (one-stage, reference-free), and KTO (unpaired feedback) are the named fixes, all available in TRL.
     - **GRPO/RLVR** replaces the reward model with a *program* (exact-match on `####` answers) and the critic with a *group baseline*: standardize rewards within a group of $G$ samples, broadcast the advantage to every token, and update with a clipped surrogate plus a k3-estimated KL leash. Dr. GRPO removes the std division *and* the per-sequence normalizer; the token-level normalizer we use is DAPO's — do not conflate them.
-    - RLVR only climbs when groups have **mixed outcomes**. At $p=0.05$ and $G=8$, two-thirds of groups are degenerate; **DAPO's dynamic sampling** (oversample, discard accuracy-0 and accuracy-1 groups) is the standard fix — but it biases the training-accuracy curve, so evaluate on a held-out set.
-    - Watch entropy: RLVR spends diversity to buy accuracy, and entropy collapse ends the run. Track degenerate-group fraction, clip fraction, mean log-prob per token, parse-failure rate, and KL-to-reference.
+    - RLVR only climbs when groups have **mixed outcomes**. At $p=0.05$ and $G=8$, two-thirds of groups are degenerate; **DAPO's dynamic sampling** is the standard fix — but it biases the training-accuracy curve, so evaluate on a held-out set. Track degenerate-group fraction, clip fraction, mean log-prob per token, parse-failure rate, and KL-to-reference; RLVR spends diversity to buy accuracy, and entropy collapse ends the run.
     - The ladder is load-bearing and ordered: SFT gives format *and* lifts $p$ into the RLVR-viable band; skip a rung and the next one has nothing to work with — the same SFT → preference → verifiable-RL order as Tülu 3, scaled to one GPU. Beyond one GPU the same three stages are TRL, then open-instruct or verl.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -1092,9 +1106,9 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
 **1.** In `render_conversation`, the closing `<|end|>` of an *assistant* turn is emitted with `supervised=True`, but the `<|assistant|>` role marker is emitted with `supervised=False`. Explain, in behavioral terms, what would go wrong at inference time if you flipped *each* of these two choices: (a) masking the assistant `<|end|>`, and (b) supervising the `<|assistant|>` marker. (c) Separately: `emit()` calls `tok.encode(text, add_special_tokens=False)`. What attack does that one keyword argument prevent?
 
 ??? note "Solution"
-    Both of the first two choices are about *which* tokens receive gradient, and each controls a distinct behavior the chapter identifies.
+    Both of the first two choices are about *which* tokens receive gradient, and each controls a distinct behavior.
 
-    (a) **Masking the assistant `<|end|>`** removes the only gradient that teaches the model to *stop*. The closing `<|end|>` is the token that terminates the assistant turn; if the model never receives loss on producing it, it is never trained to emit it after finishing an answer. At inference the server decodes until it sees `<|end|>` (or `<|eos|>`), so a model that never learned to emit that token "runs past the end of its answer into hallucinated user turns" — the *never shuts up* failure.
+    (a) **Masking the assistant `<|end|>`** removes the only gradient that teaches the model to *stop*. The closing `<|end|>` is the token that terminates the assistant turn; if the model never receives loss on producing it, it is never trained to emit it after finishing an answer. At inference the server decodes until it sees `<|end|>` (or `<|eos|>`), so a model that never learned to emit that token runs past the end of its answer into hallucinated user turns — the *never shuts up* failure.
 
     (b) **Supervising the `<|assistant|>` marker** teaches the model to *emit the role marker itself*. But the harness is responsible for emitting `<|assistant|>` to cue generation; the model's job is to learn what comes *after* it. If we put gradient on the marker, the model learns to spontaneously produce `<|assistant|>` mid-turn, corrupting the turn structure the template exists to enforce.
 
@@ -1102,24 +1116,24 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
 
     (c) With `add_special_tokens=False`, the encoder does *not* treat reserved special-token strings as atomic; a user who types the literal characters `<|end|><|assistant|>` gets ordinary byte-level BPE tokens for `<`, `|`, `end`, … and never the control ids. That blocks **role-marker injection**: without it, a user could close their own turn and open a fake assistant turn inside their message, making the model treat attacker-authored text as if it were its own prior output (or as a system instruction). This is the concrete payoff of reserving special tokens as atomic ids at tokenizer-training time rather than pattern-matching them in text — the trust boundary lives in the tokenizer, where it can be enforced, not in a regex.
 
-**2.** DPO with $\beta = 0.1$ on a single preference pair. The frozen reference assigns response log-likelihoods $\log\pi_{\text{ref}}(y_w) = -26.0$ and $\log\pi_{\text{ref}}(y_l) = -28.0$. After some training the policy assigns $\log\pi_\theta(y_w) = -25.0$ and $\log\pi_\theta(y_l) = -31.0$.
+**2.** DPO with $\beta = 0.1$ on a single preference pair. The frozen reference assigns response log-likelihoods $\log\pi_{\text{ref}}(y_w) = -26.0$ and $\log\pi_{\text{ref}}(y_l) = -28.0$. After some training the policy assigns $\log\pi_\theta(y_w) = -24.0$ and $\log\pi_\theta(y_l) = -33.0$.
 (a) Compute the winner and loser log-ratios, the DPO margin, and the loss $-\log\sigma(\text{margin})$.
-(b) Compute the implicit `chosen_reward` and `rejected_reward` diagnostics ($\beta \times$ log-ratio). Is the implicit-reward accuracy 0 or 1 for this pair?
-(c) Now suppose instead the policy had drifted to $\log\pi_\theta(y_w) = -35.0$ and $\log\pi_\theta(y_l) = -40.0$. Recompute the margin and both rewards. What failure mode does this illustrate, and which of the chapter's data-sourcing recommendations most directly prevents it?
+(b) Compute the implicit `chosen_r` and `rejected_r` diagnostics ($\beta \times$ log-ratio). Is the implicit-reward accuracy 0 or 1 for this pair?
+(c) Now suppose instead the policy had drifted to $\log\pi_\theta(y_w) = -35.0$ and $\log\pi_\theta(y_l) = -42.0$. Recompute the margin, the loss, and both rewards. What failure mode does this illustrate, and which of the chapter's data-sourcing recommendations most directly prevents it?
 
 ??? note "Solution"
     (a) Log-ratios are $\log\frac{\pi_\theta}{\pi_{\text{ref}}}$ for each response:
 
-    - winner: $-25.0 - (-26.0) = +1.0$
-    - loser: $-31.0 - (-28.0) = -3.0$
+    - winner: $-24.0 - (-26.0) = +2.0$
+    - loser: $-33.0 - (-28.0) = -5.0$
 
-    Margin $= \beta(\text{winner} - \text{loser}) = 0.1 \times (1.0 - (-3.0)) = 0.1 \times 4.0 = 0.40$.
+    Margin $= \beta(\text{winner} - \text{loser}) = 0.1 \times (2.0 - (-5.0)) = 0.1 \times 7.0 = 0.70$.
 
-    Loss $= -\log\sigma(0.40)$. With $\sigma(0.40) = 1/(1 + e^{-0.40}) = 1/(1 + 0.6703) = 0.5987$, the loss is $-\log(0.5987) = 0.513$ nats.
+    Loss $= -\log\sigma(0.70)$. With $\sigma(0.70) = 1/(1 + e^{-0.70}) = 1/(1 + 0.4966) = 0.6682$, the loss is $-\log(0.6682) = 0.403$ nats.
 
-    (b) `chosen_reward` $= \beta \times (+1.0) = +0.10$; `rejected_reward` $= \beta \times (-3.0) = -0.30$. The chosen reward is up and the rejected reward is down — exactly the healthy trend. Since the margin $0.40 > 0$, the implicit-reward accuracy for this pair is $1$.
+    (b) `chosen_r` $= \beta \times (+2.0) = +0.20$; `rejected_r` $= \beta \times (-5.0) = -0.50$. The chosen reward is up and the rejected reward is down — exactly the healthy trend. Since the margin $0.70 > 0$, the implicit-reward accuracy for this pair is $1$.
 
-    (c) New log-ratios: winner $-35.0 - (-26.0) = -9.0$; loser $-40.0 - (-28.0) = -12.0$. Margin $= 0.1 \times (-9.0 - (-12.0)) = 0.1 \times 3.0 = 0.30 > 0$, so the *loss still decreases* and accuracy is still $1$. But now `chosen_reward` $= 0.1 \times (-9.0) = -0.90$ and `rejected_reward` $= 0.1 \times (-12.0) = -1.20$: **both rewards have fallen**. The logistic loss only cares about the *difference*, so it is perfectly happy to push the winner's absolute log-probability down as long as it pushes the loser's down faster. The model is degrading while loss and accuracy look fine.
+    (c) New log-ratios: winner $-35.0 - (-26.0) = -9.0$; loser $-42.0 - (-28.0) = -14.0$. Margin $= 0.1 \times (-9.0 - (-14.0)) = 0.1 \times 5.0 = 0.50$, so $\sigma(0.50) = 0.6225$ and the loss is $-\log(0.6225) = 0.474$ nats — *lower* than the 0.693 of an untrained pair, and accuracy is still $1$. But now `chosen_r` $= 0.1 \times (-9.0) = -0.90$ and `rejected_r` $= 0.1 \times (-14.0) = -1.40$: **both rewards have fallen**. The logistic loss only cares about the *difference*, so it is perfectly happy to push the winner's absolute log-probability down as long as it pushes the loser's down faster. The model is degrading while loss and accuracy look fine — which is exactly why `dpo_loss` returns the two rewards separately rather than only the margin.
 
     The most direct prevention is **on-policy pair mining**. This failure is driven by pairs the policy assigns near-zero probability to: with both responses far off the model's distribution, the cheapest way to open a margin is to suppress shared structure, dragging the winner down too. Pairs sampled from the model itself start with log-ratios near zero and stay in a region where raising $\log\pi_\theta(y_w)$ is actually achievable. (A tiny LR and $\beta\approx0.1$ slow the damage; on-policy data removes the pressure.)
 
@@ -1132,21 +1146,21 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
 ??? note "Solution"
     (a) Mean $\bar R = 2/5 = 0.40$. Population variance $= \bar R(1 - \bar R) = 0.40 \times 0.60 = 0.24$ (valid because the rewards are 0/1), so population std $= \sqrt{0.24} = 0.4899$.
 
-    - correct sample: $\hat A = (1 - 0.40)/0.4899 = 0.60/0.4899 = +1.225$
-    - incorrect sample: $\hat A = (0 - 0.40)/0.4899 = -0.40/0.4899 = -0.8165$
+    - correct sample: $\hat A = (1 - 0.40)/0.4899 = +1.225$
+    - incorrect sample: $\hat A = (0 - 0.40)/0.4899 = -0.8165$
 
-    Sum: $2(+1.225) + 3(-0.8165) = 2.449 - 2.449 = 0$. Advantages sum to zero, as standardization guarantees.
+    Sum: $2(+1.225) + 3(-0.8165) = 2.449 - 2.449 = 0$, as standardization guarantees.
 
-    (b) Bessel-corrected variance $= \frac{1}{G-1}\sum (R_i - \bar R)^2 = \frac{1}{4}\big[2(0.6)^2 + 3(0.4)^2\big] = \frac{1}{4}(0.72 + 0.48) = \frac{1.20}{4} = 0.30$, so std $= \sqrt{0.30} = 0.5477$.
+    (b) Bessel-corrected variance $= \frac{1}{G-1}\sum (R_i - \bar R)^2 = \frac{1}{4}\big[2(0.6)^2 + 3(0.4)^2\big] = \frac{1}{4}(0.72 + 0.48) = 0.30$, so std $= \sqrt{0.30} = 0.5477$.
 
     - correct: $\hat A = 0.60/0.5477 = +1.095$
     - incorrect: $\hat A = -0.40/0.5477 = -0.730$
 
     Same signs and ranking; only the magnitude shifts.
 
-    (c) With $R = [1,1,1,1,1]$: $\bar R = 1$, std $= 0$. Every advantage is $(1 - 1)/(0 + \varepsilon) = 0$. Every token gets advantage $0$, so the surrogate is zero and this prompt contributes **no gradient**. This is the all-correct degenerate case (mirror image of all-wrong): with no reward variance in the group there is nothing to reinforce or suppress. Only *mixed* groups teach anything — and DAPO's dynamic sampling exists precisely so you never pay for a rollout like this one.
+    (c) With $R = [1,1,1,1,1]$: $\bar R = 1$, std $= 0$. Every advantage is $(1 - 1)/(0 + \varepsilon) = 0$, so the surrogate is zero and this prompt contributes **no gradient** — the all-correct degenerate case, mirror image of all-wrong. DAPO's dynamic sampling exists precisely so you never pay for a rollout like this one.
 
-    (d) **Dr. GRPO**: $\hat A = 1 - 0.4 = +0.60$ for a correct sample, $0 - 0.4 = -0.40$ for an incorrect one. **RLOO**: for a correct sample the leave-one-out mean over the other four is $1/4 = 0.25$, so $\hat A = 1 - 0.25 = +0.75$; for an incorrect sample the leave-one-out mean is $2/4 = 0.50$, so $\hat A = 0 - 0.50 = -0.50$. All three schemes give correct samples a positive advantage of larger magnitude than the incorrect samples' negative one — the ratio is $1.225/0.8165 = 1.5$ for GRPO, $0.60/0.40 = 1.5$ for Dr. GRPO, $0.75/0.50 = 1.5$ for RLOO. The asymmetry is identical (it is just $(1-\bar R)/\bar R$); what differs is the *scale*, and therefore how this prompt is weighted against other prompts in the same batch. Only GRPO's std division makes that scale depend on the prompt's difficulty — which is the bias Dr. GRPO objects to and the curriculum effect practitioners often keep.
+    (d) **Dr. GRPO**: $\hat A = 1 - 0.4 = +0.60$ for a correct sample, $-0.40$ for an incorrect one. **RLOO**: for a correct sample the leave-one-out mean over the other four is $1/4 = 0.25$, so $\hat A = +0.75$; for an incorrect sample the leave-one-out mean is $2/4 = 0.50$, so $\hat A = -0.50$. All three give correct samples a positive advantage of larger magnitude than the incorrect samples' negative one, and by the *same* factor: $1.225/0.8165 = 0.60/0.40 = 0.75/0.50 = 1.5$. The asymmetry is identical — it is just $(1-\bar R)/\bar R$ — so the answer to "which is most asymmetric" is *none of them*. What differs is the **scale**, and therefore how this prompt is weighted against other prompts in the same batch; only GRPO's std division makes that scale depend on the prompt's difficulty.
 
 **4.** The chapter's "one free lunch" tip says to cache the reference log-probs once, since $\pi_{\text{ref}}$ is frozen and the preference set is static. Implement a `precompute_ref_logprobs` pass and a cache-consuming `dpo_loss_cached`, consistent with `stacklm/post/dpo.py`. State the one constraint the data loader must satisfy for the cache to be valid, and say how many *policy* forward passes per step this saves.
 
@@ -1191,7 +1205,7 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
         return -F.logsigmoid(logits).mean()
     ```
 
-    **Constraint:** the cache is indexed by pair position, so the loader must present pairs in a *fixed, reproducible order* — i.e. **no shuffling** (this is why the `PreferenceDataset` usage snippet passes `shuffle=False`) — or, equivalently, key the cache by a stable pair id and look up by that id each step. If the loader shuffles between the precompute pass and training, `ref_ch[k]` no longer corresponds to the $k$-th pair the training loop sees, and every log-ratio is silently mismatched. A second, easily-missed constraint: **padding must be deterministic too**. `collate_preferences` pads to the *batch* maximum, so re-batching with a different `batch_size` changes each sequence's padded length; the masked sum is unaffected, but any code that keys the cache by shape will break.
+    **Constraint:** the cache is indexed by pair position, so the loader must present pairs in a *fixed, reproducible order* — i.e. **no shuffling** (this is why the `PreferenceDataset` usage snippet passes `shuffle=False`) — or, equivalently, key the cache by a stable pair id and look up by that id each step. If the loader shuffles between the precompute pass and training, `ref_ch[k]` no longer corresponds to the $k$-th pair the training loop sees, and every log-ratio is silently mismatched. A second, easily-missed constraint: **padding must be deterministic too**. `collate_preferences` pads to the *batch* maximum, so re-batching with a different `batch_size` changes each sequence's padded length; the masked sum is unaffected (causal attention plus a zero loss-mask makes right-padding a no-op — worth verifying empirically once), but any code that keys the cache by shape will break.
 
     **Savings:** the original `dpo_loss` does four forwards per step (policy chosen, policy rejected, ref chosen, ref rejected). Caching removes the two reference forwards, leaving **two policy forwards per step** — the reference passes are amortized into a single pre-pass — and frees ~100M parameters of VRAM once `ref` is deleted. TRL's `DPOConfig(precompute_ref_log_probs=True)` implements exactly this.
 
@@ -1211,7 +1225,7 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
     - $p = 0.30$: $(0.70)^8 + (0.30)^8 = 0.05765 + 0.0000656 \approx 0.0577$, i.e. about **5.8%** of groups are degenerate.
     - $p = 0.05$: $(0.95)^8 + (0.05)^8 = 0.6634 + (\sim\!4\times10^{-11}) \approx 0.663$, i.e. about **66%** of groups are degenerate.
 
-    (c) At the sweet-spot rate $p = 0.30$, only ~6% of prompts give zero gradient, so ~94% of the compute spent on rollouts actually produces a learning signal. At the cold-start rate $p = 0.05$, two-thirds of all groups are all-wrong, so two-thirds of the rollouts are wasted and the effective learning signal is throttled to a trickle; as $p \to 0$ the wasted fraction $\to 1$ and the gradient vanishes entirely. This is why the SFT warm-start is non-optional: SFT (plus math-heavy mid-training and a few thousand `####` format exemplars) lifts the base model's success rate from near-zero into the 10–40% band where groups are *mixed* often enough that the reward signal has variance to exploit. RL can only reinforce behavior the model already sometimes produces; SFT is what puts $p$ into the range where "sometimes" is frequent enough to bootstrap.
+    (c) At the sweet-spot rate $p = 0.30$, only ~6% of prompts give zero gradient, so ~94% of the compute spent on rollouts actually produces a learning signal. At the cold-start rate $p = 0.05$, two-thirds of all groups are all-wrong, so two-thirds of the rollouts are wasted and the effective learning signal is throttled to a trickle; as $p \to 0$ the wasted fraction $\to 1$ and the gradient vanishes entirely. This is why the SFT warm-start is non-optional: SFT (plus math-heavy mid-training and a few thousand `####` format exemplars) lifts the base model's success rate from near-zero into the 10–40% band where groups are *mixed* often enough that the reward signal has variance to exploit.
 
     (d) Each prompt is non-degenerate independently with probability $q = 1 - P_{\text{degenerate}}$, so the number of prompts needed to collect $N$ of them is negative-binomial with expectation
 
@@ -1220,7 +1234,7 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
     - $p = 0.30$: $q = 0.942$, so $\mathbb{E} = 16/0.942 = 17.0$ prompts — a 6% surcharge, essentially free.
     - $p = 0.05$: $q = 0.337$, so $\mathbb{E} = 16/0.337 = 47.5$ prompts — a **3× surcharge** in generation compute.
 
-    Two readings. First, dynamic sampling is *cheap exactly where you do not need it and expensive exactly where you do* — but the expensive case is the one where the alternative (plain GRPO) is taking two-thirds of its gradient steps on zeros, so you are paying generation to buy real gradient rather than paying it for nothing. Second, this is precisely why `collect_nondegenerate_groups` caps the budget at `oversample=3.0`: at $p=0.05$ the expected cost is right at the cap, so the run completes but the returned `tries/len(kept)` ratio screams that the task is out of reach. If you hit the cap, the answer is not a bigger budget; it is more SFT, easier prompts, or a curriculum (see [RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html)).
+    Two readings. First, dynamic sampling is *cheap exactly where you do not need it and expensive exactly where you do* — but the expensive case is the one where the alternative (plain GRPO) is taking two-thirds of its gradient steps on zeros, so you are paying generation to buy real gradient rather than paying it for nothing. Second, this is precisely why `collect_nondegenerate_groups` caps the budget at `oversample=3.0`: at $p=0.05$ the expected cost of $47.5$ prompts sits right at the $16\times3=48$ cap, so the run completes but the returned `tries/len(kept)` ratio screams that the task is out of reach. If you hit the cap, the answer is not a bigger budget; it is more SFT, easier prompts, or a curriculum (see [RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html)).
 
 **6.** The chapter warns that "format drift and reward hacking creep in" and suggests a small format penalty on top of the exact-match reward. Write a custom `reward_fn` for `grpo_train` that (i) keeps exact-match correctness as the dominant term and (ii) mildly penalizes emitting the wrong number of `####` markers (zero, or more than one). Explain why the *magnitude* of the shaping term must stay small relative to the correctness reward, and why within-group standardization limits how much a constant format bonus can distort learning.
 
@@ -1254,7 +1268,7 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
 
     **Why standardization limits the damage.** The advantage is the reward *standardized within the group*, $\hat A_i = (R_i - \bar R)/(\text{std} + \varepsilon)$. Any component of the reward that is *constant across the group* — e.g. if all $G$ samples already emit exactly one marker, every sample gets the same $+0.1$ — shifts the mean by that same amount and *cancels* in $R_i - \bar R$, contributing nothing to the advantage. The format term therefore only produces gradient when samples in the group *differ* in their format, which is exactly the drift we want to correct. Combined with the KL leash to the SFT reference ($\text{kl\_beta} \approx 0.02$–$0.05$), this keeps the shaping honest.
 
-    **One caveat the standardization argument hides.** Shaping *does* change which groups are degenerate. A group where all 8 samples are wrong has zero variance under `exact_match_reward` and is discarded by dynamic sampling; under a shaped reward, if some of those 8 got the format right and some did not, the group now has variance and will be kept — spending a gradient step teaching format rather than arithmetic. Early in a run that is exactly what you want. Late in a run it is wasted compute, which is why shaping weights are usually annealed toward zero as the parse-failure rate drops.
+    **One caveat the standardization argument hides.** Shaping *does* change which groups are degenerate — and this is the same trap as the continuous length term in `arithmetic_score`. A group where all 8 samples are wrong has zero variance under `exact_match_reward` and is discarded by dynamic sampling; under a shaped reward, if some of those 8 got the format right and some did not, the group now has variance and will be kept — spending a gradient step teaching format rather than arithmetic. Early in a run that is exactly what you want. Late in a run it is wasted compute, which is why shaping weights are usually annealed toward zero as the parse-failure rate drops. The general rule: any term you add to a reward or score also silently edits your degeneracy filter, so decide deliberately whether it should.
 
 **7.** The SFT loop accumulates `reduction="sum"` losses and divides the *gradients* by the window's supervised-token count, rather than the more familiar `loss / grad_accum`. Consider an accumulation window of `grad_accum=2` microbatches, where microbatch A has 900 supervised tokens with mean per-token loss 2.0, and microbatch B has 100 supervised tokens with mean per-token loss 4.0.
 (a) What per-token loss does the correct (window-normalized) objective report, and what does the naive `mean/grad_accum` scheme effectively report?
@@ -1264,7 +1278,7 @@ The strategic reading, and the reason this ordering (SFT → DPO → narrow GRPO
 ??? note "Solution"
     (a) The correct objective is the sum over all supervised tokens divided by their count:
 
-    $$\frac{900\times 2.0 + 100\times 4.0}{900 + 100} = \frac{1800 + 400}{1000} = \frac{2200}{1000} = 2.20 \text{ nats/token}.$$
+    $$\frac{900\times 2.0 + 100\times 4.0}{900 + 100} = \frac{1800 + 400}{1000} = 2.20 \text{ nats/token}.$$
 
     The naive scheme averages the two microbatch *means* with equal weight: $(2.0 + 4.0)/2 = 3.00$ nats/token. It reports a number that is 36% too high, and — far worse — the *gradient* it produces is the equally-weighted average of the two microbatch mean-gradients rather than the token-weighted one.
 

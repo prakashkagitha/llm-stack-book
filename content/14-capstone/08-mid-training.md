@@ -26,19 +26,19 @@ That timing is a gift. If the last few percent of tokens matter most, then the *
 
 !!! note "Aside: mid-training vs. continual pretraining"
 
-    These overlap but are not identical. **Continual pretraining** (Ch. 3.16) usually means adapting an *already-finished, fully-decayed* model to a new domain, and its central headache is catastrophic forgetting under LR re-warming. **Mid-training** is planned *before* the model is finished: we never fully decayed, so we resume from a high-LR checkpoint and there is nothing to "re-warm" and little to forget. The Ibrahim et al. (2024) observation — that re-warming and re-decaying a fully-decayed checkpoint costs you loss you have to claw back — is exactly why we saved `ckpt_stable.pt` *pre-decay* and resume from it with the LR still at its plateau.
+    These overlap but are not identical. **Continual pretraining** (Ch. 3.16) usually means adapting an *already-finished, fully-decayed* model to a new domain, and its central headache is catastrophic forgetting under LR re-warming. **Mid-training** is planned *before* the model is finished: we never fully decayed, so we resume from a high-LR checkpoint and there is nothing to "re-warm" and little to forget. The Ibrahim et al. (2024) observation — that re-warming and re-decaying a fully-decayed checkpoint costs you loss you have to claw back — is exactly why we saved `ckpt_stable.pt` *pre-decay* and resume from it with the LR still at its plateau. Exercise 1 works the case where you *cannot* do that because you inherited someone else's finished checkpoint.
 
 ### The mid-training budget
 
-We slice a ~2B-token window off the ~20B-token budget for all three moves combined — about **10%** of total tokens. A representative split (illustrative; tune per [Chapter 14.5](../14-capstone/05-mini-scaling-laws.html)):
+We slice a ~2B-token window off the ~20B-token budget for all three moves combined — about **10%** of total tokens, and exactly the `decay_frac = 0.10` leg that Ch. 14.7's `StackConfig` reserved (3,815 of 38,147 steps). A representative split (illustrative; tune per [Chapter 14.5](../14-capstone/05-mini-scaling-laws.html)):
 
-| Sub-phase | Tokens | `seq_len` | Purpose |
-|---|---|---|---|
-| A. Anneal (premium mix) | ~1.2B | 2048 | quality jump, LR peak → ~23% of peak |
-| B. Long-context extend | ~0.6B | 8192 | RoPE rescale, ~23% → ~5% of peak |
-| C. Capability injection | ~0.2B | 8192 | concentrated math/code at the LR floor |
+| Sub-phase | Tokens | Steps @ 524,288 tok | `seq_len` | Purpose |
+|---|---|---|---|---|
+| A. Anneal (premium mix) | ~1.2B | 2,288 | 2048 | quality jump, LR peak → ~23% of peak |
+| B. Long-context extend | ~0.6B | 1,144 | 8192 | RoPE rescale, ~23% → ~5% of peak |
+| C. Capability injection | ~0.2B | 381 | 8192 | concentrated math/code at the LR floor |
 
-The LR decays *monotonically across all three* sub-phases — mid-training is one continuous WSD decay, just with the data mix and sequence length changing underneath it. (The exact boundary multipliers, 0.2253 and 0.0513, fall out of the $1-\sqrt{t}$ shape; Exercise 3 derives them.)
+That is **3,813** optimizer steps, which is Ch. 14.7's 3,815-step decay leg up to floor division. The LR decays *monotonically across all three* sub-phases — mid-training is one continuous WSD decay, just with the data mix and sequence length changing underneath it. (The exact boundary multipliers, 0.2253 and 0.0513, fall out of the $1-\sqrt{t}$ shape; Exercise 3 derives them.)
 
 {{fig:midtrain-continuous-decay-spine}}
 
@@ -112,7 +112,8 @@ def build_mixture_loader(mix: dict, seq_len: int, micro_bs: int, *,
 
     Each yielded dict has `input_ids`, `position_ids`, `seq_ids`, `targets`
     (shapes (micro_bs, seq_len - 1)) -- exactly what `Stack100M.forward` and the
-    document-aware mask consume.
+    document-aware mask consume. All four are threaded into the model: dropping
+    `position_ids` is a silent bug (see the training loop below).
     """
     datasets, weights = [], []
     for name, w in mix.items():
@@ -140,15 +141,15 @@ def build_mixture_loader(mix: dict, seq_len: int, micro_bs: int, *,
     return infinite()
 ```
 
-!!! tip "Practitioner tip: the same mixture, three ways"
+!!! tip "Practitioner tip: the same mixture, three ways — and one word on resumption"
 
     Three real tools express "sample sources with these probabilities," and which one you want depends on where your data lives.
 
-    - **Local packed shards (what we do):** `ConcatDataset` + `WeightedRandomSampler`, as above. Exact, resumable via the sampler's generator state, zero network.
+    - **Local packed shards (what we do):** `ConcatDataset` + `WeightedRandomSampler`, as above. Exact, zero network, and it composes with the Ch. 14.2 memmap reader unchanged.
     - **Streaming from the Hub:** `datasets.interleave_datasets([ds_a, ds_b, ...], probabilities=[0.4, 0.3, ...], stopping_strategy="all_exhausted")` from HuggingFace `datasets` — the right choice when you are still iterating on the mix and do not want to re-pack shards for every experiment.
     - **Production pretraining frameworks:** [`allenai/OLMo-core`](https://github.com/allenai/OLMo-core), [`huggingface/nanotron`](https://github.com/huggingface/nanotron), and [`pytorch/torchtitan`](https://github.com/pytorch/torchtitan) all take a declarative source-weight config and handle the mixture, resumption, and sharding for you. Read OLMo-core's anneal configs in particular — they are the closest public analogue of this chapter.
 
-    Whichever you use, **write the realized mixture to the run manifest** (Ch. 14.12): "which weights did this checkpoint actually see" is the first question you will ask when a mid-training run underperforms.
+    **Resumption is not free.** A plain `DataLoader` cannot be restarted mid-epoch: seeding the sampler's generator reproduces the *sequence* of draws but not your position in it, so a crash-and-resume silently replays data. Ch. 14.7's checkpoints store a data cursor for exactly this reason. The maintained answer in PyTorch is [`torchdata`](https://github.com/pytorch/data)'s `StatefulDataLoader`, a drop-in `DataLoader` replacement exposing `state_dict()` / `load_state_dict()` that you save alongside the model. Whichever you use, **write the realized mixture to the run manifest** (Ch. 14.12): "which weights did this checkpoint actually see" is the first question you will ask when a mid-training run underperforms.
 
 ### Resuming the WSD decay from the stable checkpoint
 
@@ -198,7 +199,9 @@ Notice the shape: half the LR is gone by the 25% mark and the last three-quarter
 
 !!! warning "Common pitfall: one multiplier, two peak learning rates"
 
-    Stack-100M trains with a **hybrid optimizer** (Ch. 14.6): Muon on the 2-D hidden matrices, AdamW on the tied embedding, RMSNorm gains, and 1-D params. `build_optimizers(model, muon_lr=0.02, adamw_lr=3e-3)` gives the two groups *different* peaks — Muon's update is orthogonalized and spectrally normalized, so its natural LR is an order of magnitude larger than AdamW's. Mid-training must therefore scale **each group by the same multiplier**, never set both groups to one shared LR:
+    Stack-100M trains with a **hybrid optimizer** (Ch. 14.6): Muon on the 2-D hidden matrices, AdamW on the tied embedding, RMSNorm gains, and 1-D params. `build_optimizers(model, muon_lr=6e-3, adamw_lr=3e-3)` gives the two groups different peaks — but deliberately *not* different orders of magnitude. That is the entire point of Muon's RMS matching (the $0.2\sqrt{\max(m,n)}$ update scaling derived in Ch. 14.6): it puts the orthogonalized Newton–Schulz update on the same scale as an Adam update, so both groups live in one decade and you tune *one* number. The 2:1 factor is not an RMS artifact at all — it exists because the AdamW group is dominated by the **row-sparse tied embedding**, where a rare token's row takes a full-magnitude step from the handful of batches that contain it, and a gentler step there is cheap insurance.
+
+    Mid-training must therefore scale **each group by the same multiplier**, never set both groups to one shared LR:
 
     ```python
     mult = wsd_decay_multiplier(mid_step, total_decay_steps)
@@ -207,7 +210,7 @@ Notice the shape: half the LR is gone by the 25% mark and the last three-quarter
             g["lr"] = peak * mult
     ```
 
-    Collapsing them to a single value (say, running Muon at AdamW's `3e-3`) drops the Muon group to roughly one-seventh of the LR the stable phase ran at, and you will see exactly the symptom this chapter tells you to look for: the WSD "elbow" never appears, because the decay silently started from a cliff instead of a plateau. Safest of all: do not hard-code the peaks at all — read them back out of `ckpt_stable.pt`, which stores the training config (Ch. 14.7). The checkpoint is ground truth; a number typed on this page is not.
+    Collapsing to a single value is a silent regression in whichever direction you collapse it: run both at `3e-3` and the Muon group takes half the step the stable phase ran at, so the decay begins from below the plateau and the WSD "elbow" never appears; run both at `6e-3` and you double the step on exactly the row-sparse group you slowed down on purpose. Neither crashes. Both quietly cost you the anneal. Safest of all: do not hard-code the peaks — read them back out of `ckpt_stable.pt`, which stores the training config (Ch. 14.7). The checkpoint is ground truth; a number typed on this page is not.
 
 ### Why 1−sqrt, and how to watch the anneal working
 
@@ -241,17 +244,15 @@ A larger base makes every $\theta_k$ *smaller*, so each dimension rotates more s
 
     Stack-100M: head dimension $d = 64$, pretrain length $L_{\text{old}} = 2048$, target $L_{\text{new}} = 8192$, original base $\theta = 10000$.
 
-    Scale factor: $s = 8192 / 2048 = 4$.
-
-    Exponent: $d/(d-2) = 64/62 = 1.0323$.
+    Scale factor: $s = 8192 / 2048 = 4$. Exponent: $d/(d-2) = 64/62 = 1.0323$.
 
     $$
-    \theta' = 10000 \cdot 4^{1.0323} = 10000 \cdot e^{1.0323 \cdot \ln 4} = 10000 \cdot e^{1.431} \approx 10000 \cdot 4.18 \approx \mathbf{41{,}800}.
+    \theta' = 10000 \cdot 4^{1.0323} = 10000 \cdot e^{1.0323 \cdot \ln 4} = 10000 \cdot e^{1.431} \approx 10000 \cdot 4.183 \approx \mathbf{41{,}830}.
     $$
 
-    So we bump the RoPE base from $10000$ to about $41{,}800$ (round to $42000$). Check the slowest pair, $k = 31$, whose exponent is $2k/d = 62/64$: originally $\theta_{31} = 10000^{-62/64} \approx 1.33\times10^{-4}$ rad/token, wavelength $2\pi/\theta_{31} \approx 47{,}000$ tokens. After rescaling, $\theta'_{31} = 41800^{-62/64} \approx 3.3\times10^{-5}$ rad/token, wavelength $\approx 188{,}000$ tokens — the slow dimension now turns ~4× more slowly, so the phase at position 8192 ($8192 \cdot \theta'_{31} \approx 0.27$ rad) matches the phase the model learned at position ~2000 ($2048 \cdot \theta_{31} \approx 0.27$ rad). The fastest pair ($k=0$, $\theta_0 = \theta^0 = 1$) is exactly unchanged by any base change: local resolution is preserved.
+    So we bump the RoPE base from $10000$ to about $41{,}830$ (round to $42000$). Check the slowest pair, $k = 31$, whose exponent is $2k/d = 62/64$: originally $\theta_{31} = 10000^{-62/64} \approx 1.334\times10^{-4}$ rad/token, wavelength $2\pi/\theta_{31} \approx 47{,}100$ tokens. After rescaling, $\theta'_{31} = 41830^{-62/64} \approx 3.336\times10^{-5}$ rad/token, wavelength $\approx 188{,}400$ tokens — the slow dimension now turns ~4× more slowly, so the phase at position 8192 ($8192 \cdot \theta'_{31} \approx 0.273$ rad) matches the phase the model learned at position 2048 ($2048 \cdot \theta_{31} \approx 0.273$ rad). The fastest pair ($k=0$, $\theta_0 = \theta^0 = 1$) is exactly unchanged by any base change: local resolution is preserved.
 
-Here is the rescale, wired to rebuild the model's RoPE cache in place. `Stack100M` holds **one** pair of `rope_cos` / `rope_sin` buffers and passes them into every block's `Attention.forward(x, cos, sin, ...)`, so there is a single cache to rebuild — `rebuild_rope` does it and updates `cfg` in the same breath, which is what makes the new geometry land in every subsequent checkpoint. Because Stack-100M uses **NoPE on every 4th layer** (SmolLM3, HuggingFace 2025; Kazemnejad et al., 2023), those layers ignore `cos`/`sin` entirely and are untouched by rescaling — they already generalize across length by construction, which is precisely why we included them.
+Here is the rescale, wired to rebuild the model's RoPE cache in place. `Stack100M` holds **one** pair of `rope_cos` / `rope_sin` buffers and indexes them by the batch's `position_ids` before passing `cos`/`sin` into every block, so there is a single cache to rebuild — `rebuild_rope` does it and updates `cfg` in the same breath, which is what makes the new geometry land in every subsequent checkpoint. Because Stack-100M uses **NoPE on every 4th layer** (SmolLM3, HuggingFace 2025; Kazemnejad et al., 2023), those layers ignore `cos`/`sin` entirely and are untouched by rescaling — they already generalize across length by construction, which is precisely why we included them.
 
 ```python
 # capstone/stacklm/model/rope.py  (Ch. 14.4 — signatures reproduced for reference)
@@ -336,12 +337,12 @@ Run once, between sub-phase A and sub-phase B:
 """
 import argparse
 from collections import defaultdict
-from pathlib import Path
 
 import numpy as np
 
-from stacklm.data import DataMixEntry, build_shards, stream_source    # Ch. 14.2
-from stacklm.tokenizer import StackTokenizer                          # Ch. 14.3
+from stacklm.data import (DataMixEntry, PackedMemmapDataset, build_shards,
+                          stream_source)                       # Ch. 14.2
+from stacklm.tokenizer import StackTokenizer                   # Ch. 14.3
 
 MIN_DOC_TOKENS = 4096          # half the target window; see the assertion below
 
@@ -374,10 +375,33 @@ def repo_level_documents(files, sep: str = "\n\n# ==== file: {path} ====\n\n"):
         yield {"text": body, "source": "starcoder_repo", "repo": repo}
 
 
+def verify_positions(shard_dir: str, seq_len: int, floor: int = 4096,
+                     n_sample: int = 512, seed: int = 0):
+    """The check that decides whether sub-phase B is real or theatre.
+
+    Ch. 14.2 does NOT store position ids on disk (`store_positions=False` is the
+    default; they are recomputed from `input_ids == bos_id` by
+    `segments_from_bos`), so we read them back through the dataset that the
+    trainer itself will use -- which also proves the shards are readable and
+    packed at the right length. Sampling a few hundred rows is enough: we only
+    need ONE window whose document reaches past `floor`.
+    """
+    ds = PackedMemmapDataset(shard_dir)
+    assert ds.seq_len == seq_len, f"{shard_dir} packed at {ds.seq_len}, not {seq_len}"
+    rng = np.random.default_rng(seed)
+    rows = rng.choice(len(ds), size=min(n_sample, len(ds)), replace=False)
+    hi = max(int(ds[int(i)]["position_ids"].max()) for i in rows)
+    print(f"  max position id in {shard_dir}: {hi} (window {seq_len})")
+    assert hi > floor, (
+        f"{shard_dir} contains no document longer than {floor} tokens: RoPE "
+        f"rescaling would train on positions the data never reaches.")
+
+
 # The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records (name, hf_path,
-# weight, domain). The first three are genuinely long; the last two are
-# length-FILTERED slices of the pretrain sources. `weight` is the sub-phase-B
-# mixture weight consumed later by `build_mixture_loader`.
+# weight, domain). The first three are genuinely long; the fourth is a
+# length-FILTERED slice of a pretrain source; the last is the deliberately SHORT
+# anti-drift anchor. `weight` is the sub-phase-B mixture weight consumed later
+# by `build_mixture_loader`.
 LONG_SOURCES = [
     (DataMixEntry("starcoder_repo",   "bigcode/starcoderdata",     0.35, "code"),  True),
     (DataMixEntry("books_pg19",       "deepmind/pg19",             0.25, "web"),   False),
@@ -387,10 +411,10 @@ LONG_SOURCES = [
 ]
 
 
-def main(out_root: str, seq_len: int):
-    tok = StackTokenizer.load("artifacts/tokenizer.json")     # Ch. 14.3, vocab 32768
+def main(out_root: str, seq_len: int, tokenizer_path: str):
+    tok = StackTokenizer.load(tokenizer_path)             # Ch. 14.3, vocab 32768
     for entry, repo_level in LONG_SOURCES:
-        raw = stream_source(entry)                            # Ch. 14.2 streaming reader
+        raw = stream_source(entry)                        # Ch. 14.2 streaming reader
         docs = repo_level_documents(raw) if repo_level else raw
         if entry.name != "cosmopedia_v2":     # the short-form anchor stays unfiltered
             docs = length_filtered(docs, tok)
@@ -402,25 +426,16 @@ def main(out_root: str, seq_len: int):
         print(f"{entry.name}: {n} shard(s) -> {out}")
 
 
-def verify_positions(shard_dir: str, seq_len: int, floor: int = 4096):
-    """The one-line check that decides whether sub-phase B is real or theatre."""
-    hi = 0
-    for p in sorted(Path(shard_dir).glob("shard_*.pos.bin")):
-        hi = max(hi, int(np.memmap(p, dtype=np.uint16, mode="r").max()))
-    print(f"  max position id in {shard_dir}: {hi} (window {seq_len})")
-    assert hi > floor, (
-        f"{shard_dir} contains no document longer than {floor} tokens: RoPE "
-        f"rescaling would train on positions the data never reaches.")
-
-
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="data/mid")
     ap.add_argument("--seq-len", type=int, default=8192)
-    main(ap.parse_args().out, ap.parse_args().seq_len)
+    ap.add_argument("--tokenizer", default="artifacts/tokenizer.json")
+    a = ap.parse_args()
+    main(a.out, a.seq_len, a.tokenizer)
 ```
 
-`uint16` still suffices: the largest position id is `8191 < 65535`, so the on-disk format from Ch. 14.2 is unchanged.
+Nothing about the on-disk format changes: the shards stay `uint16` (the largest position id, 8191, is well under 65535) and stay position-free, because `segments_from_bos` reconstructs both `seq_ids` and `position_ids` from the tokens themselves. That is *why* `verify_positions` goes through `PackedMemmapDataset` rather than globbing for a `.pos.bin` file that the default writer never produces.
 
 With those shards in hand, sub-phase B's mixture is honest about which sources are long:
 
@@ -432,7 +447,7 @@ With those shards in hand, sub-phase B's mixture is honest about which sources a
 | `fineweb_edu_long` (filtered ≥ 4096 tokens) | 15% | yes, by construction of the filter |
 | `cosmopedia_v2` (short-form, unfiltered) | 10% | **no** — deliberately short |
 
-That last row is not an oversight. Training *only* on long documents is a known way to degrade short-context quality, and both Llama 3's long-context stage (Grattafiori et al., 2024) and ProLong (Gao et al., Princeton, 2024) explicitly keep short-form data mixed in while upsampling long documents. The 10% Cosmopedia slice is the anchor that keeps the model from drifting off the distribution sub-phase A just spent 1.2B tokens sharpening. If you read one paper alongside this section, make it ProLong: it is the closest open, reproducible reference for exactly this step — data recipe, length schedule, and evaluation.
+That last row is not an oversight. Training *only* on long documents is a known way to degrade short-context quality, and both Llama 3's long-context stage (Grattafiori et al., 2024) and ProLong (Gao et al., Princeton, 2024) explicitly keep short-form data mixed in while upsampling long documents. The 10% Cosmopedia slice is the anchor that keeps the model from drifting off the distribution sub-phase A just spent 1.2B tokens sharpening. If you read one paper alongside this section, make it ProLong: it is the closest open, reproducible reference for exactly this step — data recipe, length schedule, and evaluation. Exercise 2 works out how many *epochs* each of these five sources actually sees, which is the number that decides whether your long-context stage is memorizing Gutenberg.
 
 !!! note "Aside: what if you genuinely have no long documents?"
 
@@ -445,23 +460,28 @@ That last row is not an oversight. Training *only* on long documents is a known 
 
 ### Masking at 8192: FlexAttention and varlen kernels
 
-Now the systems half. Stack-100M implements document-aware attention by materializing a boolean mask:
+Now the systems half. Stack-100M implements document-aware attention by materializing a boolean mask. Here is the Ch. 14.4 builder, reduced to the training path (its full form also handles the rectangular KV-cache case at decode time):
 
 ```python
-# capstone/stacklm/model/transformer.py  (Ch. 14.4 — the PRETRAIN-scale path)
-def _attn_mask(self, seq_ids, T, device):
-    if seq_ids is None:
-        return None
-    causal = torch.tril(torch.ones(T, T, dtype=torch.bool, device=device))
-    same = seq_ids[:, :, None] == seq_ids[:, None, :]      # (B, T, T)
-    return (causal[None] & same).unsqueeze(1)              # (B, 1, T, T)
+# capstone/stacklm/model/transformer.py  (Ch. 14.4 — training path of `_build_mask`)
+def _build_mask(self, seq_ids, T, kv_len, start_pos, device):
+    """Bool mask (B, 1, T, kv_len); True = attend. None = plain-causal fast path."""
+    if seq_ids is None and kv_len == T and start_pos == 0:
+        return None                                     # SDPA's is_causal=True
+    q_pos = torch.arange(start_pos, start_pos + T, device=device)
+    kv_pos = torch.arange(kv_len, device=device)
+    m = (q_pos[:, None] >= kv_pos[None, :])[None, None]          # (1, 1, T, kv_len)
+    if seq_ids is not None:                                       # no cross-document
+        same = seq_ids[:, -T:, None] == seq_ids[:, None, :kv_len] # (B, T, kv_len)
+        m = m & same[:, None]
+    return m
 ```
 
 At `micro_bs = 32`, `T = 2048` that mask is $32 \times 2048^2 = 1.34\times10^8$ bools = **134 MB** — annoying but survivable. At `micro_bs = 8`, `T = 8192` it is $8 \times 8192^2 = 5.37\times10^8$ bools = **537 MB**, allocated fresh on *every* forward, and it must persist through the backward pass. Worse, passing any dense `attn_mask` to `F.scaled_dot_product_attention` **disqualifies the FlashAttention backend** — PyTorch falls back to the memory-efficient or math kernel, so you simultaneously lose the speed and lose the "never materializes the $T \times T$ score matrix" property that made 8192 affordable in the first place. Chapter 14.2 flagged this as a promise to cash later; here is where it comes due.
 
 There are two production answers in 2026, and you should know both.
 
-**Option 1 — FlexAttention (PyTorch-native).** `torch.nn.attention.flex_attention` (PyTorch 2.5+) lets you express the mask as a *predicate* on indices, `mask_mod(b, h, q_idx, kv_idx) -> bool`, and compiles it into a fused, block-sparse Triton kernel. `create_block_mask` evaluates the predicate once per $128 \times 128$ block and stores only which blocks are non-empty — so memory goes from $O(T^2)$ to $O((T/128)^2)$, and *fully masked blocks are never computed at all*. Document masking is the canonical example, and it makes short documents **faster**, not slower.
+**Option 1 — FlexAttention (PyTorch-native).** `torch.nn.attention.flex_attention` (PyTorch 2.5+) lets you express the mask as a *predicate* on indices, `mask_mod(b, h, q_idx, kv_idx) -> bool`, and compiles it into a fused, block-sparse Triton kernel. `create_block_mask` evaluates the predicate once per $128 \times 128$ block and stores only which blocks are non-empty — so memory goes from $O(T^2)$ to $O((T/128)^2)$, and *fully masked blocks are never computed at all*. Document masking is the canonical example, and it makes short documents **faster**, not slower. (The module also ships `and_masks` / `or_masks` combinators, so you can build the causal predicate and the same-document predicate separately and compose them; we inline both for clarity.)
 
 ```python
 # capstone/stacklm/model/doc_attention.py
@@ -527,8 +547,8 @@ Which to pick? **FlexAttention**, for this capstone: it is PyTorch-native (no ex
 
     Attention memory and compute are quadratic in sequence length. Going 2048 → 8192 is 4× longer, so the score matrix is **16×** larger. Three things must line up before you launch:
 
-    - **Micro-batch.** Cut it ~4× (32 → 8) and raise gradient accumulation to hold the ~0.5M-token global batch fixed (Ch. 14.6). Exercise 5 works the arithmetic.
-    - **Mask.** Use `FlexAttention` (or varlen), never a dense `(B, 1, T, T)` bool — 537 MB per micro-batch *and* a silent fallback off the [FlashAttention](../04-kernels-efficiency/02-flash-attention-1.html) backend.
+    - **Micro-batch.** Cut it 4× (32 → 8) and raise gradient accumulation to hold the 524,288-token global batch fixed (Ch. 14.6). Exercise 5 works the arithmetic.
+    - **Mask.** Use `FlexAttention` (or varlen), never a dense `(B, 1, T, T)` bool — it is both a half-gigabyte allocation and a silent fallback off the [FlashAttention](../04-kernels-efficiency/02-flash-attention-1.html) backend.
     - **Activations.** GQA with 2 KV heads (Ch. 14.4) already shrinks the KV cache 4×; add [activation checkpointing](../04-kernels-efficiency/10-memory-efficient-training.html) on the 30 blocks if you are still tight.
 
     Do the arithmetic *before* you launch, not after the OOM. And note what is *not* needed at this scale: sequence/context parallelism. Ring Attention (Liu et al., 2023), DeepSpeed-Ulysses (Jacobs et al., 2023), and Megatron-LM's context parallelism exist for the regime where a single sequence's activations do not fit on one device — 8192 tokens at `d_model=512` is nowhere near that. Know they exist; do not reach for them here.
@@ -539,7 +559,7 @@ Which to pick? **FlexAttention**, for this capstone: it is PyTorch-native (no ex
 
 Perplexity averaged over a sequence can *fall* even when the model still cannot use position 8000 — a couple of well-predicted local tokens hide a broken tail. Two cheap probes catch this.
 
-First, **loss-versus-position**: bin the per-token loss by its position within the 8192-window and plot the curve. A healthy extension shows loss that keeps *decreasing* (or at worst flattening) as position grows — the model is using more context to predict better. A curve that *rises* past ~2048 means the rescale-plus-training has not taken and the far positions are still noise. Crucially, run this on the **long-document subset only**: on document-masked packed windows full of short documents, position within the window is not position within the document, and the curve tells you nothing.
+First, **loss-versus-position**: bin the per-token loss by its position within the 8192-window and plot the curve. A healthy extension shows loss that keeps *decreasing* (or at worst flattening) as position grows — the model is using more context to predict better. A curve that *rises* past ~2048 means the rescale-plus-training has not taken and the far positions are still noise. Crucially, run this on the **long-document subset only**: on document-masked packed windows full of short documents, position within the window is not position within the document, and the curve tells you nothing. Exercise 6 implements the binning.
 
 Second, a tiny **needle-in-a-haystack** check: plant a short unique fact ("the passcode is 4713") at a random depth in a long filler document and ask the model, via next-token prediction, to complete "the passcode is". If it recovers the needle only when it sits in the first 2048 tokens, you have geometry without capability — train sub-phase B longer or on longer documents.
 
@@ -564,7 +584,9 @@ Capability injection reuses the exact same loop and schedule — it is simply su
 
 ### Why this ordering
 
-The three moves are sequenced deliberately, and the order is not arbitrary. Annealing runs *first*, at 2048, because the general quality jump wants the highest LR of the decay leg and the largest, most diverse token budget — you consolidate broad representations before you specialize. Long-context extension runs *second* because it is a targeted change to a subsystem (the positional geometry) that benefits from a settled model: rescaling RoPE on a mid-anneal checkpoint whose attention patterns have already sharpened means the few hundred million long-context tokens teach the heads to *use* the new range rather than fighting a still-shifting representation. Capability injection runs *last*, at the LR floor, because it is the narrowest and most over-fitting-prone mix; keeping it in the low-LR tail limits how far it can pull the model off the general manifold while still committing arithmetic and code structure. Reverse any two of these and you either waste the high-plasticity window on narrow data or extend context on a model that is still moving. A useful mental model: **broad → long → narrow**, riding one decreasing learning rate down.
+The three moves are sequenced deliberately, and the order is not arbitrary. Annealing runs *first*, at 2048, because the general quality jump wants the highest LR of the decay leg and the largest, most diverse token budget — you consolidate broad representations before you specialize. Long-context extension runs *second* because it is a targeted change to a subsystem (the positional geometry) that benefits from a settled model: rescaling RoPE on a mid-anneal checkpoint whose attention patterns have already sharpened means the few hundred million long-context tokens teach the heads to *use* the new range rather than fighting a still-shifting representation. Capability injection runs *last*, at the LR floor, because it is the narrowest and most over-fitting-prone mix; keeping it in the low-LR tail limits how far it can pull the model off the general manifold while still committing arithmetic and code structure.
+
+Reverse any two of these and you pay for it. Putting the narrow math/code mix first would spend the highest-LR, highest-plasticity window dragging the model off the general manifold, and the later broad phase would have to undo that at a *lower* LR where it has less leverage. A useful mental model: **broad → long → narrow**, riding one decreasing learning rate down.
 
 ## The Mid-Training Loop: One Continuous Decay
 
@@ -600,14 +622,14 @@ def steps_for(sub: SubPhase, global_batch_tokens: int) -> int:
 
 
 def run_mid_training(model, phases, loader_fn, *, device="cpu",
-                     global_batch_tokens=512_000, micro_batch_tokens=65_536,
-                     muon_lr=0.02, adamw_lr=3e-3, grad_clip=1.0,
+                     global_batch_tokens=524_288, micro_batch_tokens=65_536,
+                     muon_lr=6e-3, adamw_lr=3e-3, grad_clip=1.0,
                      optimizers=None, use_seq_ids=True, log_every=50, seed=1234,
                      checkpoint_fn=None):
     """Walk `phases` back to back under ONE WSD decay leg.
 
     `loader_fn(sub, micro_batch_size)` returns an *infinite* iterator of batch
-    dicts (`input_ids`, `targets`, `seq_ids`) at `sub.seq_len`.
+    dicts (`input_ids`, `position_ids`, `seq_ids`, `targets`) at `sub.seq_len`.
     Pass `optimizers=[muon, adamw]` to CONTINUE the stable phase's optimizer state
     (Muon momentum, AdamW moments) restored from `ckpt_stable.pt`.
     """
@@ -651,6 +673,7 @@ def run_mid_training(model, phases, loader_fn, *, device="cpu",
                     # z-loss is inside the model (cfg.z_loss_coef, Ch. 14.4) and
                     # stays on through the low-LR tail: it keeps logits scaled.
                     _, loss = model(batch["input_ids"], targets=batch["targets"],
+                                    position_ids=batch["position_ids"],
                                     seq_ids=batch["seq_ids"] if use_seq_ids else None)
                     loss = loss / accum
                 loss.backward()
@@ -693,10 +716,14 @@ from stacklm.mid import SubPhase, run_mid_training
 from stacklm.mid.mixture import (build_mixture_loader, ANNEAL_MIX,
                                  LONGCTX_MIX, CAPABILITY_MIX)
 
-GLOBAL_BATCH_TOKENS = 512_000    # ~0.5M-token batch, same as pretrain (Ch. 14.6)
+# 32 x 2048 x 8 accumulation steps = 524,288 tokens/step, identical to the
+# pretraining loop's effective batch (Ch. 14.6/14.7). A POWER OF TWO on purpose:
+# it divides exactly by every (micro_bs, seq_len) pair we will run, so the
+# realized batch equals the nominal one at 2048 and at 8192 alike.
+GLOBAL_BATCH_TOKENS = 524_288
 MICRO_BATCH_TOKENS  = 65_536     # 32 x 2048 at pretrain length; 8 x 8192 when long
-MUON_PEAK_LR        = 0.02       # Muon group's stable-phase peak (Ch. 14.6)
-ADAMW_PEAK_LR       = 3e-3       # AdamW group's stable-phase peak (Ch. 14.6)
+MUON_PEAK_LR        = 6e-3       # Muon group's stable-phase peak (Ch. 14.6)
+ADAMW_PEAK_LR       = 3e-3       # AdamW group's peak = muon_lr / 2 (Ch. 14.6)
 
 # The three moves of mid-training, in order. Token budgets are illustrative
 # (~2B total = ~10% of the 20B pretrain budget); tune per Ch. 14.5.
@@ -716,7 +743,7 @@ def main(stable_ckpt: str, out_dir: str, device: str):
     step, extra = load_checkpoint(stable_ckpt, model, optimizers,
                                   map_location=device)
     # `extra` is the payload Ch. 14.7 stores alongside the tensors: tokens_seen,
-    # the PackedDataset cursor, and the training config. Trust it over this file.
+    # the data cursor, and the training config. Trust it over this file.
     muon_peak = extra.get("muon_lr", MUON_PEAK_LR)
     adamw_peak = extra.get("adamw_lr", ADAMW_PEAK_LR)
     print(f"resumed {stable_ckpt} @ global step {step} "
@@ -764,11 +791,12 @@ if __name__ == "__main__":
 A few design points worth flagging:
 
 - **One decay across three phases.** `total_decay_steps` spans all sub-phases and `mid_step` runs continuously, so the LR falls smoothly from peak to floor *through* the sequence-length change and the mixture changes. We do not reset the schedule at each boundary — that would create three little decay cliffs instead of one clean anneal. This is the single most important line in the file.
-- **Two peaks, one multiplier.** `peaks[id(opt)] * mult` scales Muon and AdamW by the same schedule while preserving the order-of-magnitude gap between their natural learning rates.
+- **Two peaks, one multiplier.** `peaks[id(opt)] * mult` scales Muon and AdamW by the same schedule while preserving the 2:1 ratio Ch. 14.6 fixed between them.
+- **`position_ids` are threaded alongside `seq_ids`.** Omit them and `Stack100M.forward` falls back to `torch.arange(T)` — contiguous positions that do *not* reset per document. That silently changes the geometry from what pretraining used, and it invalidates the entire "largest position id = longest document" argument above, because RoPE would then see 0..8191 in every window regardless of what the documents look like. The packer emits `position_ids`; use them.
+- **`seq_ids` too.** Document-aware masking is not optional and does not lapse at mid-training; it is exactly as load-bearing at 8192 as at 2048 — more so, because a packed 8192-window holds four times as many unrelated documents.
 - **We resume the optimizer state, not just the weights.** Muon's momentum buffers and AdamW's moments carry over from the stable phase — which is why `optimizers` is built *before* `load_checkpoint` and passed *into* `run_mid_training` rather than being rebuilt inside it. Throwing that state away injects a transient the fresh decay does not need. This is the concrete payoff of saving `ckpt_stable.pt` *with* optimizer state in Ch. 14.7.
-- **Micro-batch shrinks, global batch holds.** At 2048, `micro_bs = 32` and `accum = 250 // 32 = 7`; at 8192, `micro_bs = 8` and `accum = 62 // 8 = 7`. Both yield ~0.46M tokens per optimizer step, so the LR/batch relationship (Ch. 3.10) is unchanged across the sequence-length jump.
+- **Micro-batch shrinks, global batch holds.** At 2048, `micro_bs = 32` and `accum = 256 // 32 = 8`; at 8192, `micro_bs = 8` and `accum = 64 // 8 = 8`. Both yield exactly 524,288 tokens per optimizer step, so the LR/batch relationship (Ch. 3.10) is unchanged across the sequence-length jump.
 - **z-loss stays on.** The small `logsumexp` penalty lives inside `Stack100M.forward` via `cfg.z_loss_coef` (Ch. 14.4); it keeps logits well-scaled through the low-LR tail, and there is nothing to re-enable.
-- **`seq_ids` are threaded through every forward.** Document-aware masking is not optional and does not lapse at mid-training; it is exactly as load-bearing at 8192 as at 2048 — more so, because a packed 8192-window holds four times as many unrelated documents.
 
 ### What CI actually covers
 
@@ -789,32 +817,34 @@ What CI does **not** cover, and cannot: the real 8192 shapes, the FlexAttention 
     \text{FLOPs/token}_{\text{attn}} \approx 6 \cdot n_{\text{layers}} \cdot d_{\text{model}} \cdot T
     $$
 
-    for a *causal* kernel (the $12\,n_L d T$ dense-attention figure, halved because FlashAttention skips the masked upper triangle). With $N = 101.4\text{M}$, the dense term is $6N = 6.08\times10^{8}$ FLOPs/token, and:
+    for a *causal* kernel (the $12\,n_L d T$ dense-attention figure, halved because FlashAttention skips the masked upper triangle) — the same convention Ch. 14.7 measures MFU with. With $N = 101.4\text{M}$, the dense term is $6N = 6.084\times10^{8}$ FLOPs/token, and:
 
     | | $T$ | attn FLOPs/token | total FLOPs/token | attn share |
     |---|---|---|---|---|
-    | pretrain / sub-phase A | 2048 | $1.89\times10^{8}$ | $7.97\times10^{8}$ | 24% |
-    | sub-phases B, C | 8192 | $7.55\times10^{8}$ | $1.36\times10^{9}$ | **55%** |
+    | pretrain / sub-phase A | 2048 | $1.887\times10^{8}$ | $7.971\times10^{8}$ | 24% |
+    | sub-phases B, C | 8192 | $7.550\times10^{8}$ | $1.363\times10^{9}$ | **55%** |
 
-    At 8192, attention is *more than half* of all training FLOPs, and the 6ND estimate is off by 2.2×. Now the bill, at ~40% MFU on the flagship 1×A100 (80GB) — bf16 peak 312 TFLOP/s, so ~125 TFLOP/s achieved:
-
-    $$
-    C_A = 7.97\times10^{8} \times 1.2\times10^{9} = 9.57\times10^{17},\quad
-    C_B = 1.36\times10^{9} \times 6\times10^{8} = 8.18\times10^{17},
-    $$
+    At 8192, attention is *more than half* of all training FLOPs. Now the bill. Ch. 14.7 measured this exact loop on the flagship 1×A100 (80GB) at **58.2% MFU under this same attention-inclusive convention — $1.817\times10^{14}$ FLOP/s achieved** (bf16 dense peak 312 TFLOP/s), and we reuse that measured rate rather than inventing a new one:
 
     $$
-    C_C = 1.36\times10^{9} \times 2\times10^{8} = 2.73\times10^{17}
+    C_A = 7.971\times10^{8} \times 1.200\times10^{9} = 9.56\times10^{17},\quad
+    C_B = 1.363\times10^{9} \times 6.00\times10^{8} = 8.18\times10^{17},
+    $$
+
+    $$
+    C_C = 1.363\times10^{9} \times 2.00\times10^{8} = 2.72\times10^{17}
     \;\Longrightarrow\; C_{\text{total}} \approx 2.05\times10^{18}\ \text{FLOPs}.
     $$
 
     $$
-    t = \frac{2.05\times10^{18}}{1.25\times10^{14}} \approx 1.64\times10^{4}\ \text{s} \approx \mathbf{4.6\ GPU\text{-}hours}.
+    t = \frac{2.05\times10^{18}}{1.817\times10^{14}} \approx 1.13\times10^{4}\ \text{s} \approx \mathbf{3.1\ GPU\text{-}hours}.
     $$
 
-    At ~USD 1–2/GPU-hr that is roughly **USD 5–9**. The 6ND-only estimate would have predicted 2.7 GPU-hours — a **1.7× miss**, and the single easiest place in this project to blow a compute forecast. Two honest caveats in *both* directions: document-block-diagonal masking makes the attention term *smaller* than the table says whenever the packed window holds short documents (FlexAttention skips fully-masked blocks entirely), while an MFU below 40% — likely at 8192 before you tune the micro-batch — makes the wall-clock larger. Budget ~5 GPU-hours and measure.
+    At ~USD 1–2/GPU-hr that is roughly **USD 3–6**. Budgeting with 6ND alone would have given $6.084\times10^{8}\times2.0\times10^{9} = 1.22\times10^{18}$ FLOPs → **1.9 GPU-hours**, a **1.7× miss** and the single easiest place in this project to blow a compute forecast.
 
-    Even at the corrected number this is a small slice of the ~15–25 GPU-hour, ~USD 40–100 total project budget, and for it you get the sharpest single quality jump in the run (the decay-phase drop), a 4× context window, and a math/code floor. It remains the best marginal return on compute anywhere in the pipeline — which is exactly why mid-training is worth its own chapter.
+    Two honest caveats, in opposite directions. Document-block-diagonal masking makes the attention term *smaller* than the table says whenever the packed window holds short documents, since FlexAttention never computes fully-masked blocks — that discount is real for sub-phase A and, by construction, nearly absent for B and C, whose documents fill the window (Exercise 7(c)). Against that, two mechanisms cost wall-clock at 8192 that the FLOP count does not see: rebuilding the `BlockMask` once per micro-batch, and the one Dynamo recompile at the A→B boundary. What does *not* hurt is the shape change itself — `micro_bs × seq_len` is held at 65,536, so the GEMMs keep the same $(65{,}536 \times d)$ shape and the attention kernel's arithmetic intensity actually *improves* with longer sequences. Budget ~3 GPU-hours and measure.
+
+    **Reconciling with Ch. 14.7.** That chapter's cost table prices the 3,815-step decay leg at ~2.4 GPU-hours by extrapolating the *2048-token* step rate across all of it. Sub-phases B and C run at 8192, where FLOPs/token is 1.7× higher, so ~3.1 GPU-hours (~USD 6–9) is the honest line item — a small slice that keeps the whole project inside its canonical **≈35 GPU-hour, ~USD 90–100** envelope, itemized in Ch. 14.12. For that slice you get the sharpest single quality jump in the run, a 4× context window, and a math/code floor: the best marginal return on compute anywhere in the pipeline, which is exactly why mid-training is worth its own chapter.
 
 You should expect the held-out loss to fall visibly across sub-phase A — on the order of a couple tenths of a nat below where the stable phase plateaued — with most of the drop concentrated in the low-LR tail. Long-context sub-phase B will *raise* the average loss slightly (8192-token prediction on books and whole repositories is genuinely harder than 2048-token snippets, and the mix itself changed), which is expected and correct, not a regression; the loss-versus-position curve is the metric that shows the extension worked even as the scalar average ticks up. Capability sub-phase C nudges arithmetic and code perplexity down at the cost of a hair of general-web perplexity — the trade we are deliberately making. Report these as *illustrative* movements; never quote a fabricated benchmark. The honest evaluation lives in [Chapter 14.11](../14-capstone/11-evaluation-and-serving.html).
 
@@ -826,22 +856,22 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 
     **Q:** You extend a model from 2K to 8K by rescaling the RoPE base and continuing training. The loss goes down, but a needle-in-a-haystack probe still fails past 2K. Name the two most likely causes and how you would confirm each in under ten minutes.
 
-    **A:** *(1) The data never reaches those positions.* If packing resets position ids per document and every document is short, the largest position id in the shards may still be ~1–2K, so the extension is geometry with nothing to train it. Confirm by memory-mapping the `.pos.bin` shards and printing `max()` — one line, seconds — and assert it exceeds half the target window. *(2) The mask silently changed the kernel or the semantics.* Passing a dense `(B,1,T,T)` mask to `scaled_dot_product_attention` disqualifies the FlashAttention backend and costs half a gigabyte per micro-batch at 8K; conversely, dropping `seq_ids` entirely re-enables cross-document attention, so the model learns to attend across boundaries that will not exist at inference. Confirm by printing which SDPA backend ran (`torch.backends.cuda.sdp_kernel` / the profiler's kernel names) and by asserting `seq_ids` is non-`None` in the training loop. A third, cheaper thing to rule out first: that you re-applied the $s^{d/(d-2)}$ rescale to an already-rescaled base, over-stretching the ladder — check `cfg.rope_theta` in the checkpoint is ~42000, not ~175000.
+    **A:** *(1) The data never reaches those positions.* If packing resets position ids per document and every document is short, the largest position id in the shards may still be ~1–2K, so the extension is geometry with nothing to train it. Confirm by sampling a few hundred rows from the packed dataset and printing `max(position_ids)` — seconds — and assert it exceeds half the target window. The sibling bug is the *code* never reaching those positions: if the training loop forgets to pass `position_ids`, the model uses contiguous `arange` positions and the per-document reset you designed for silently does not happen. *(2) The mask changed the kernel or the semantics.* Passing a dense `(B,1,T,T)` mask to `scaled_dot_product_attention` disqualifies the FlashAttention backend and costs half a gigabyte per micro-batch at 8K; conversely, dropping `seq_ids` entirely re-enables cross-document attention, so the model learns to attend across boundaries that will not exist at inference. Confirm by printing which SDPA backend ran (`torch.nn.attention.sdpa_kernel` / the profiler's kernel names) and by asserting `seq_ids` is non-`None` in the loop. A third, cheaper thing to rule out first: that you re-applied the $s^{d/(d-2)}$ rescale to an already-rescaled base — check `cfg.rope_theta` in the checkpoint is ~42000, not ~175000.
 
 ## Key Takeaways
 
 !!! key "Key Takeaways"
 
     - **Mid-training is the phase between pretraining and post-training** (OLMo 2): still self-supervised next-token prediction, but on upgraded data, at longer context, with concentrated capabilities. It resumes from a *pre-decay* stable checkpoint — never a fully-decayed one.
-    - **The WSD decay phase is where you spend your best data.** Most committed loss reduction happens during decay, so annealing on a premium mix (more Cosmopedia, math, code, instruction-flavored text) buys a large quality jump for ~10% of the token budget.
-    - **Run one continuous decay across all sub-phases, scaling each optimizer group by the same multiplier.** Muon (0.02) and AdamW (3e-3) have different peaks; apply `wsd_decay_multiplier` to each, and never reset the schedule at a sub-phase boundary or you create decay cliffs.
+    - **The WSD decay phase is where you spend your best data.** Most committed loss reduction happens during decay, so annealing on a premium mix (more Cosmopedia, math, code, instruction-flavored text) buys a large quality jump for ~10% of the token budget — here, 3,813 steps at a 524,288-token batch.
+    - **Run one continuous decay across all sub-phases, scaling each optimizer group by the same multiplier.** Muon (`6e-3`) and AdamW (`3e-3`) have different peaks — one decade apart, not one order of magnitude, because RMS matching already put them on the same scale. Apply `wsd_decay_multiplier` to each, and never reset the schedule at a sub-phase boundary or you create decay cliffs.
     - **Long-context extension is three changes, not one.** Rescale the RoPE base with the NTK rule $\theta' = \theta\, s^{d/(d-2)}$ (10000 → ~42000 for 2048→8192, $d{=}64$); **repack shards at 8192 from genuinely long documents**; and **swap the dense mask for FlexAttention or varlen FlashAttention**. Skip any one and the sub-phase is theatre.
-    - **Check the data before you launch.** With per-document position resets, the largest position the model ever sees is the longest *document*. `assert max(position_ids) > 4096` on the sub-phase-B shards is the cheapest bug-catch in the chapter.
-    - **Long documents must be sourced, not assumed.** Repo-level StarCoder concatenation, PG-19 books, and arXiv from proof-pile-2 supply real length; keep ~10% short-form data mixed in (ProLong, Llama 3) so short-context quality does not drift.
+    - **Check the data — and the loop — before you launch.** With per-document position resets, the largest position the model ever sees is the longest *document*, so assert `max(position_ids) > 4096` on the sub-phase-B shards. Then make sure the training loop actually *passes* `position_ids`, or the model quietly uses contiguous `arange` and the whole argument collapses.
+    - **Long documents must be sourced, not assumed.** Repo-level StarCoder concatenation, PG-19 books, and arXiv from proof-pile-2 supply real length; keep ~10% short-form data mixed in (ProLong, Llama 3) so short-context quality does not drift — and check the per-source epoch count before you upsample a small corpus into memorization.
     - **Validate with loss-versus-position and a needle probe**, on the long-document subset. A falling scalar perplexity can hide a broken tail; RULER and HELMET are the real benchmarks but will read near floor at 100M.
-    - **Count the attention FLOPs.** For a deep-and-thin model at 8192, attention is ~55% of training FLOPs; 6ND alone under-predicts mid-training by ~1.7×. Budget ~4.6 GPU-hours (~USD 5–9), not ~2.7.
+    - **Count the attention FLOPs.** For a deep-and-thin model at 8192, attention is ~55% of training FLOPs; 6ND alone under-predicts mid-training by ~1.7×. Budget ~3.1 GPU-hours (~USD 3–6) at Ch. 14.7's measured 58.2% MFU, not ~1.9.
     - **Capability injection is honest, not magic.** Concentrated math/code at the LR floor gives a 100M model an arithmetic-and-structure floor for the downstream narrow agent — it points existing capacity at the target; it cannot create capacity that is not there.
-    - **Resume optimizer state, keep z-loss, thread `seq_ids`, checkpoint every boundary.** Mid-training adds orchestration, not model code; reuse `Stack100M`, the Muon+AdamW hybrid, and the Ch. 14.7 checkpoint helpers unchanged.
+    - **Resume optimizer state, keep z-loss, thread `position_ids` and `seq_ids`, checkpoint every boundary.** Mid-training adds orchestration, not model code; reuse `Stack100M`, the Muon+AdamW hybrid, and the Ch. 14.7 checkpoint helpers unchanged.
 
 !!! sota "State of the Art & Resources (2026)"
     WSD-style annealing and RoPE-rescale-plus-continue-train are now the default recipe for squeezing a quality jump and a long-context window out of a small model's last few percent of tokens — the open reports below (MiniCPM, OLMo 2, SmolLM3, ProLong) all converge on the same broad-then-narrow, short-then-long shape this chapter walks through. The systems half has converged too: block-sparse document masking via FlexAttention or varlen FlashAttention is now the standard way to train on packed long sequences.
@@ -856,7 +886,7 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 
     - [Peng et al., *YaRN: Efficient Context Window Extension of Large Language Models* (2023)](https://arxiv.org/abs/2309.00071) — per-wavelength NTK-by-parts scaling plus attention-temperature correction; the fuller cousin of the base rescale used here, and the `rope_scaling` type you get in `transformers`.
     - [Hu et al., *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (2024)](https://arxiv.org/abs/2404.06395) — introduces the WSD schedule and the 1−sqrt decay shape this chapter's `wsd_decay_multiplier` implements.
-    - [Ibrahim et al., *Simple and Scalable Strategies to Continually Pre-train Large Language Models* (2024)](https://arxiv.org/abs/2403.08763) — quantifies the LR re-warm/re-decay tax that motivates resuming from a *pre-decay* checkpoint rather than a finished one.
+    - [Ibrahim et al., *Simple and Scalable Strategies to Continually Pre-train Large Language Models* (2024)](https://arxiv.org/abs/2403.08763) — quantifies the LR re-warm/re-decay tax, and the replay fraction that mitigates it, that motivate resuming from a *pre-decay* checkpoint rather than a finished one.
     - [Gao et al., *How to Train Long-Context Language Models (Effectively)* (Princeton NLP / ProLong, 2024)](https://arxiv.org/abs/2410.02660) — the closest open reference for sub-phase B: a reproducible long-context continued-training recipe built on code repositories and books, with short data retained to protect short-context quality.
     - [Hsieh et al., *RULER: What's the Real Context Size of Your Long-Context Language Models?* (NVIDIA, 2024)](https://arxiv.org/abs/2404.06654) and [Yen et al., *HELMET: How to Evaluate Long-Context Language Models Effectively and Thoroughly* (Princeton, 2024)](https://arxiv.org/abs/2410.02694) — the two benchmarks that replaced ad-hoc needle-in-a-haystack for real long-context evaluation.
     - [OLMo 2 Team, *2 OLMo 2 Furious* (Allen Institute for AI, 2024–2025)](https://arxiv.org/abs/2501.00656) — the fully open report that named and detailed the mid-training stage as a distinct phase between pretraining and post-training.
@@ -871,6 +901,7 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
     - [OpenBMB/MiniCPM](https://github.com/OpenBMB/MiniCPM) — reference implementation and checkpoints from the team that popularized WSD annealing at small scale.
     - [huggingface/smollm](https://github.com/huggingface/smollm) — training configs and data recipes for the SmolLM/SmolLM3 family, a concrete public example of NoPE + YaRN + decay-phase capability injection.
     - [huggingface/datatrove](https://github.com/huggingface/datatrove) — the filtering/dedup pipeline framework to use for the length filter and repo-level grouping at 20B-token scale.
+    - [pytorch/data](https://github.com/pytorch/data) — `StatefulDataLoader`, the drop-in `DataLoader` replacement that makes a mixture loader genuinely resumable mid-epoch.
 
     **Go deeper**
 
@@ -887,7 +918,7 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 - Peng et al., *YaRN: Efficient Context Window Extension of Large Language Models* (2023): per-wavelength RoPE scaling and the attention-temperature correction.
 - Su et al., *RoFormer: Enhanced Transformer with Rotary Position Embedding* (2021): the original RoPE.
 - Chen et al., *Extending Context Window of Large Language Models via Positional Interpolation* (2023): position interpolation, the baseline NTK/YaRN build on.
-- Ibrahim et al., *Simple and Scalable Strategies to Continually Pre-train Large Language Models* (2024): LR re-warming/re-decaying and the cost of resuming a decayed checkpoint.
+- Ibrahim et al., *Simple and Scalable Strategies to Continually Pre-train Large Language Models* (2024): LR re-warming/re-decaying, replay, and the cost of resuming a decayed checkpoint.
 - Lozhkov et al., *StarCoder 2 and The Stack v2* (BigCode, 2024) and Guo et al., *DeepSeek-Coder* (2024): repo-level code pretraining, the source of sub-phase B's longest documents.
 - Rae et al., *Compressive Transformers for Long-Range Sequence Modelling* (2019): introduces PG-19, the book-length benchmark corpus.
 - Hsieh et al., *RULER* (NVIDIA, 2024) and Yen et al., *HELMET* (Princeton, 2024): modern long-context evaluation beyond needle-in-a-haystack.
@@ -896,66 +927,76 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 
 ## Exercises
 
-**1.** In Chapter 14.7 we deliberately saved `ckpt_stable.pt` *before* decaying the learning rate, and mid-training resumes from that pre-decay checkpoint with the LR still at its plateau. Explain why resuming from a *fully-decayed* checkpoint instead would be worse, and connect your answer to the distinction between mid-training and continual pretraining.
+**1.** You do **not** get to resume from a pre-decay checkpoint: you inherit a fully-decayed, publicly released ~100M base model and are asked to anneal it on your premium mix for ~1B tokens. Design the learning-rate schedule you would use (peak, warmup, shape, floor), name one data-mixture change you would make that this chapter's sub-phase A does not need, and state what the whole thing costs you relative to the pre-decay path — citing the result that quantifies it.
 
 ??? note "Solution"
-    A WSD schedule holds the LR at its peak through the long stable phase, then decays it sharply over a short final window; most of the *committed* loss reduction happens in that decay window. If we had already decayed the LR to (near) zero, the model would be *finished*: to keep training it we would have to **re-warm** the LR back up and then **re-decay** it. Ibrahim et al. (2024) show that re-warming and re-decaying a fully-decayed checkpoint costs you loss you then have to claw back — the model gets bumped off the low-loss basin it settled into and has to re-descend.
+    **Schedule.** The checkpoint sits at LR ≈ 0 in a low-loss basin, so you must **re-warm** before you can decay again. Do not re-warm to the original peak: that maximizes the transient. Warm linearly to roughly 10–30% of the model's original peak LR over a short window (a few hundred steps, ~1% of your 1B-token budget), hold briefly if at all, then run the same `1-sqrt` decay to a floor of ~0. The intuition is that you want just enough plasticity to absorb the new mix and not enough to blow the model out of its basin.
 
-    By saving `ckpt_stable.pt` *pre-decay*, there is nothing to re-warm (the LR is already at its plateau) and little to forget, so mid-training is just the natural continuation of one WSD decay leg — the premium data gets fed into exactly the high-value decay window the schedule was designed around.
+    **Mixture change.** Add **replay**: a single-digit percentage of data drawn from (a proxy for) the *original* pretraining distribution, mixed through the whole anneal. Sub-phase A does not need this — it is still inside the original run, and the stable phase's distribution is the one it just came from — but a fully-decayed model being pushed onto a new mix will forget, and replay is the cheapest known mitigation.
 
-    This is precisely what separates **mid-training** from **continual pretraining** (Ch. 3.16). Continual pretraining adapts an *already-finished, fully-decayed* model to a new domain, and its central headache *is* the re-warming/catastrophic-forgetting problem. Mid-training is planned *before* the model is finished: we never fully decayed, so we resume from the high-LR plateau and pay none of that re-warming tax.
+    **The cost.** Ibrahim et al. (2024) study exactly this loop (re-warm → re-decay, with and without replay) and show that re-warming produces an initial *loss spike*: you spend a chunk of your budget climbing back to where you started before you gain anything, and without replay you also lose ground on the original distribution. So expect a strictly worse loss-per-token than the pre-decay path, and expect your held-out curve to get worse before it gets better. That is the whole argument for the design decision in Ch. 14.7: paying nothing is better than paying a re-warm tax, and it costs only the discipline to save `ckpt_stable.pt` before decaying. What you are doing here is not mid-training; it is **continual pretraining** (Ch. 3.16), with continual pretraining's characteristic problems.
 
-**2.** The chapter sequences the three moves as **broad -> long -> narrow**: anneal (general premium mix @2048) first, long-context extension second, capability injection (concentrated math/code) last, all riding one decreasing LR. Give the reason each move sits where it does, and name one concrete failure you would expect if you swapped the order to **narrow -> long -> broad**.
+**2.** Sub-phase B draws 0.6B tokens from `LONGCTX_MIX`. Suppose your repack pass produced these shard sizes, in 8192-token sequences: `starcoder_repo` 40,000; `books_pg19` 9,000; `arxiv_proofpile2` 12,000; `fineweb_edu_long` 6,000; `cosmopedia_v2` 200,000. (a) Compute the tokens drawn from each source and the number of **epochs** each sees. (b) Which source is repeated most, what does that risk at the LR floor, and name two fixes that do not require sourcing new data.
 
 ??? note "Solution"
-    - **Anneal first** because the general quality jump wants the *highest* LR of the decay leg (the model still has enough plasticity to re-organize broad representations) and the *largest, most diverse* token budget. You consolidate broad representations before specializing.
-    - **Long-context extension second** because it is a targeted change to one subsystem (the RoPE positional geometry) that benefits from a *settled* model. Rescaling RoPE on a mid-anneal checkpoint whose attention patterns have already sharpened means the long-context tokens teach the heads to *use* the new range rather than fighting a still-shifting representation.
-    - **Capability injection last**, at the LR floor, because it is the narrowest and most over-fitting-prone mix; keeping it in the low-LR tail limits how far it can pull the model off the general manifold while still committing arithmetic/code structure.
+    **(a)** Tokens drawn = weight × 0.6B. Tokens available = sequences × 8192. Epochs = drawn / available.
 
-    Swapping to **narrow -> broad** would put the concentrated math/code mix into the *highest-LR, high-plasticity* window. With the LR near peak, that narrow mix would pull the model hard off the general manifold and hurt breadth/diversity — you would waste the most valuable, most plastic part of the decay leg on a narrow specialization, and then the later broad phase would have to partially undo it at a *lower* LR where it has less leverage to recover. You would end up with worse general fluency and a weaker (not stronger) net capability floor.
+    | Source | Weight | Tokens drawn | Tokens available | Epochs |
+    |---|---|---|---|---|
+    | `starcoder_repo` | 0.35 | $2.10\times10^{8}$ | $40{,}000\times8192 = 3.28\times10^{8}$ | **0.64** |
+    | `books_pg19` | 0.25 | $1.50\times10^{8}$ | $9{,}000\times8192 = 7.37\times10^{7}$ | **2.03** |
+    | `arxiv_proofpile2` | 0.15 | $9.00\times10^{7}$ | $12{,}000\times8192 = 9.83\times10^{7}$ | **0.92** |
+    | `fineweb_edu_long` | 0.15 | $9.00\times10^{7}$ | $6{,}000\times8192 = 4.92\times10^{7}$ | **1.83** |
+    | `cosmopedia_v2` | 0.10 | $6.00\times10^{7}$ | $200{,}000\times8192 = 1.64\times10^{9}$ | **0.04** |
 
-**3.** Use the illustrative budgets from the chapter: sub-phase A = 1.2B tokens, B = 0.6B, C = 0.2B, with `GLOBAL_BATCH_TOKENS = 512_000`. The LR decays as one continuous `1-sqrt` WSD leg across all three phases (`final_frac = 0`), with `MUON_PEAK_LR = 0.02` and `ADAMW_PEAK_LR = 3e-3` (Ch. 14.6). Compute (a) `total_decay_steps`, and (b) the learning rate of *each optimizer group* at the A->B boundary and at the B->C boundary. Work the arithmetic to final numbers.
+    **(b)** `books_pg19` is repeated most (~2.0 epochs), with `fineweb_edu_long` close behind (~1.8). Repetition is not automatically fatal — a couple of epochs on clean data is routine — but sub-phase B runs in the **low-LR tail**, which is precisely the regime that *commits* what it sees. Two epochs of a small, stylistically homogeneous corpus at the LR floor is how you get verbatim memorization of Project Gutenberg text and a model whose long-context behavior is subtly nineteenth-century.
+
+    Two fixes without new data: (1) **re-weight** — shift weight from `books_pg19` toward `starcoder_repo`, the only source with epochs well under 1, until every source is at or below ~1 epoch; the mixture is a free knob and the repack is unchanged. (2) **Cap epochs per source and renormalize** — set a per-source token cap of `1.0 × available` and redistribute the surplus weight proportionally over sources with headroom; OLMo-core's data mixer expresses exactly this as a config field. A third, orthogonal move is to re-run near-duplicate detection (Ch. 14.2) *within* the long sources, since repo-level concatenation and Gutenberg both contain heavy internal boilerplate.
+
+**3.** Use the budgets from the chapter: sub-phase A = 1.2B tokens, B = 0.6B, C = 0.2B, with `GLOBAL_BATCH_TOKENS = 524_288`. The LR decays as one continuous `1-sqrt` WSD leg across all three phases (`final_frac = 0`), with `MUON_PEAK_LR = 6e-3` and `ADAMW_PEAK_LR = 3e-3` (Ch. 14.6). Compute (a) `total_decay_steps`, and (b) the learning rate of *each optimizer group* at the A→B boundary and at the B→C boundary.
 
 ??? note "Solution"
     **(a) Steps per sub-phase** (floor division `tokens // GLOBAL_BATCH_TOKENS`, as in `steps_for`):
 
     $$
-    \text{A} = \left\lfloor \tfrac{1.2\times10^9}{512000} \right\rfloor = \lfloor 2343.75 \rfloor = 2343,\quad
-    \text{B} = \lfloor 1171.875 \rfloor = 1171,\quad
-    \text{C} = \lfloor 390.625 \rfloor = 390.
+    \text{A} = \left\lfloor \tfrac{1.2\times10^9}{524288} \right\rfloor = \lfloor 2288.8 \rfloor = 2288,\quad
+    \text{B} = \lfloor 1144.4 \rfloor = 1144,\quad
+    \text{C} = \lfloor 381.5 \rfloor = 381.
     $$
 
     $$
-    \text{total\_decay\_steps} = 2343 + 1171 + 390 = \mathbf{3904}.
+    \text{total\_decay\_steps} = 2288 + 1144 + 381 = \mathbf{3813},
     $$
+
+    which is Ch. 14.7's 3,815-step decay leg to within floor division — the handoff is consistent.
 
     **(b)** The multiplier is $1 - \sqrt{t}$ with $t = \text{mid\_step}/\text{total\_decay\_steps}$, and each group's LR is *its own* peak times that one multiplier.
 
-    A->B boundary: `mid_step` = 2343.
+    A→B boundary, `mid_step` = 2288:
 
     $$
-    t = \tfrac{2343}{3904} = 0.6002,\quad \text{mult} = 1-\sqrt{0.6002} = 1 - 0.7747 = 0.2253.
-    $$
-
-    $$
-    \text{LR}_{\text{Muon}} = 0.02 \times 0.2253 \approx \mathbf{4.51\times10^{-3}},\qquad
-    \text{LR}_{\text{AdamW}} = 3\times10^{-3} \times 0.2253 \approx \mathbf{6.76\times10^{-4}}.
-    $$
-
-    B->C boundary: `mid_step` = 2343 + 1171 = 3514.
-
-    $$
-    t = \tfrac{3514}{3904} = 0.9001,\quad \text{mult} = 1-\sqrt{0.9001} = 1 - 0.9487 = 0.0513.
+    t = \tfrac{2288}{3813} = 0.6001,\quad \text{mult} = 1-\sqrt{0.6001} = 1 - 0.7746 = 0.2254.
     $$
 
     $$
-    \text{LR}_{\text{Muon}} = 0.02 \times 0.0513 \approx \mathbf{1.03\times10^{-3}},\qquad
+    \text{LR}_{\text{Muon}} = 6\times10^{-3} \times 0.2254 \approx \mathbf{1.35\times10^{-3}},\qquad
+    \text{LR}_{\text{AdamW}} = 3\times10^{-3} \times 0.2254 \approx \mathbf{6.76\times10^{-4}}.
+    $$
+
+    B→C boundary, `mid_step` = 2288 + 1144 = 3432:
+
+    $$
+    t = \tfrac{3432}{3813} = 0.9001,\quad \text{mult} = 1-\sqrt{0.9001} = 1 - 0.9487 = 0.0513.
+    $$
+
+    $$
+    \text{LR}_{\text{Muon}} = 6\times10^{-3} \times 0.0513 \approx \mathbf{3.08\times10^{-4}},\qquad
     \text{LR}_{\text{AdamW}} = 3\times10^{-3} \times 0.0513 \approx \mathbf{1.54\times10^{-4}}.
     $$
 
-    So long-context extension (B) runs at roughly 23% of peak and capability injection (C) starts at roughly 5% of peak — exactly the "narrow, over-fitting-prone mix at the LR floor" the chapter describes. Note that the *ratio* between the two groups (0.02 / 3e-3 ≈ 6.7×) is preserved at every step, which is the whole point of scaling by a shared multiplier rather than assigning a shared LR.
+    So long-context extension (B) runs at ~23% of peak and capability injection (C) starts at ~5% of peak — the "narrow, over-fitting-prone mix at the LR floor" the chapter describes. The 2:1 ratio between the groups is preserved at every step, which is the point of scaling by a shared multiplier rather than assigning a shared LR.
 
-**4.** Suppose a *different* model, Stack-Big, has head dimension $d = 128$, was pretrained at $L_{\text{old}} = 2048$ with RoPE base $\theta = 10000$, and you want to extend it to $L_{\text{new}} = 16384$. (a) Compute the NTK-rescaled base $\theta'$. (b) The fastest frequency pair ($k=0$) is supposed to be left essentially untouched — show that it is *exactly* unchanged by any base rescale, and say in one sentence why that matters.
+**4.** A *different* model, Stack-Big, has head dimension $d = 128$, was pretrained at $L_{\text{old}} = 2048$ with RoPE base $\theta = 10000$, and you want to extend it to $L_{\text{new}} = 16384$. (a) Compute the NTK-rescaled base $\theta'$. (b) The fastest frequency pair ($k=0$) is supposed to be left essentially untouched — show that it is *exactly* unchanged by any base rescale, and say in one sentence why that matters.
 
 ??? note "Solution"
     **(a)** Scale factor $s = L_{\text{new}}/L_{\text{old}} = 16384/2048 = 8$. Exponent $d/(d-2) = 128/126 = 1.01587$.
@@ -970,7 +1011,7 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
     = 10000 \cdot e^{2.1125} = 10000 \cdot 8.269 \approx \mathbf{82{,}700}.
     $$
 
-    So bump the base from $10000$ to about $82{,}700$ (an 8x context needs a bigger stretch than Stack-100M's 4x, which only reached ~42000).
+    So bump the base from $10000$ to about $82{,}700$ (an 8× context needs a bigger stretch than Stack-100M's 4×, which only reached ~42000).
 
     **(b)** The per-pair frequency is $\theta_k = \theta^{-2k/d}$. For $k = 0$ the exponent is $-2\cdot 0/d = 0$, so
 
@@ -980,34 +1021,20 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 
     identical for *any* base. The fastest pair rotates one radian per token regardless of rescaling. This matters because the highest-frequency pair encodes **local** relative position; leaving it untouched preserves the model's fine-grained local resolution while only the slow, long-range pairs get stretched to cover the new positions.
 
-**5.** The mid-training driver shrinks the micro-batch as the sequence length grows so the *global* batch stays fixed. Using `micro_bs = max(1, MICRO_BATCH_TOKENS // seq_len)` with `MICRO_BATCH_TOKENS = 65_536`, `seqs_per_global = 512_000 // seq_len`, and `accum = seqs_per_global // micro_bs`: (a) compute `micro_bs`, `accum`, and tokens-per-optimizer-step at `seq_len = 2048` and at `seq_len = 8192`, and confirm the global batch is preserved; (b) by what factor does the attention *score matrix* grow from 2048 to 8192, and what three mechanisms keep that from causing an OOM?
+**5.** The driver shrinks the micro-batch as the sequence grows so the *global* batch stays fixed: `micro_bs = max(1, MICRO_BATCH_TOKENS // seq_len)`, `seqs_per_global = GLOBAL_BATCH_TOKENS // seq_len`, `accum = seqs_per_global // micro_bs`, with `MICRO_BATCH_TOKENS = 65_536`. (a) Compute `micro_bs`, `accum`, and tokens-per-optimizer-step at `seq_len = 2048` and `8192` for `GLOBAL_BATCH_TOKENS = 524_288`. (b) Now redo it for the *plausible-looking* choice `GLOBAL_BATCH_TOKENS = 512_000`, and explain which downstream number this breaks worst — the optimizer's behavior, or the project's bookkeeping.
 
 ??? note "Solution"
-    **(a)** At `seq_len = 2048`:
+    **(a)** At `seq_len = 2048`: $\text{micro\_bs} = \lfloor 65536/2048 \rfloor = 32$, $\text{seqs\_per\_global} = 524288/2048 = 256$, $\text{accum} = 256/32 = 8$. Tokens/step $= 8\times32\times2048 = \mathbf{524{,}288}$.
 
-    $$
-    \text{micro\_bs} = \lfloor 65536 / 2048 \rfloor = 32,\quad
-    \text{seqs\_per\_global} = \lfloor 512000/2048 \rfloor = 250,\quad
-    \text{accum} = \lfloor 250/32 \rfloor = 7.
-    $$
+    At `seq_len = 8192`: $\text{micro\_bs} = 8$, $\text{seqs\_per\_global} = 64$, $\text{accum} = 8$. Tokens/step $= 8\times8\times8192 = \mathbf{524{,}288}$.
 
-    Tokens/step $= \text{accum}\times\text{micro\_bs}\times\text{seq\_len} = 7\times 32\times 2048 = \mathbf{458{,}752}$.
+    Both divisions are **exact**, because 524,288 = $2^{19}$ is divisible by every power-of-two `(micro_bs, seq_len)` pair. Realized batch = nominal batch, and the LR/batch relationship (Ch. 3.10) is unchanged across the sequence-length jump.
 
-    At `seq_len = 8192`:
+    **(b)** With 512,000: at 2048, $\lfloor 512000/2048 \rfloor = 250$ and $\text{accum} = \lfloor 250/32 \rfloor = 7$; at 8192, $\lfloor 512000/8192 \rfloor = 62$ and $\text{accum} = \lfloor 62/8 \rfloor = 7$. Both give $7\times32\times2048 = 7\times8\times8192 = \mathbf{458{,}752}$ tokens/step at both lengths — 10.4% below the nominal 512,000 you asked for, and exactly **12.5% below** the 524,288-token batch pretraining actually ran.
 
-    $$
-    \text{micro\_bs} = \lfloor 65536 / 8192 \rfloor = 8,\quad
-    \text{seqs\_per\_global} = \lfloor 512000/8192 \rfloor = 62,\quad
-    \text{accum} = \lfloor 62/8 \rfloor = 7.
-    $$
+    Which breaks worse? Not the optimizer. A 0.46M-token batch instead of 0.52M is a 12.5% change; under the $\eta\propto\sqrt{B}$ rule of thumb the *correct* LR moves by only ~6%, comfortably inside the noise of any peak-LR sweep. The bookkeeping is the casualty. `steps_for` derives step counts from the **nominal** batch, so sub-phase A runs $\lfloor 1.2\times10^9/512000\rfloor = 2343$ steps and actually consumes $2343\times458{,}752 = 1.075\times10^{9}$ tokens — **10% short** of the 1.2B the mixture table, the FLOP bill, and the "2B tokens = 10% of the budget" framing all assume. Every derived number in the chapter would be silently wrong by ~10%, and `total_decay_steps` would come out 3,904 instead of the 3,813 that matches Ch. 14.7's handoff. The lesson generalizes: **choose a global batch that divides exactly by `micro_bs × seq_len` at every length you will run** — in practice, a power of two — or compute step counts from the *realized* batch, never the nominal one.
 
-    Tokens/step $= 7\times 8\times 8192 = \mathbf{458{,}752}$.
-
-    Both land at ~0.46M tokens/step, so the LR/batch relationship (Ch. 3.10) is unchanged across the sequence-length jump — the micro-batch dropped 4x (32 -> 8) exactly as the sequence grew 4x.
-
-    **(b)** Attention score cost is quadratic in sequence length, so the score matrix grows by $(8192/2048)^2 = 4^2 = \mathbf{16\times}$. Three mechanisms keep it fitting: (1) the micro-batch drops 4x, so fewer sequences are resident at once (trading time for memory via grad accumulation); (2) a fused attention kernel — FlashAttention through SDPA, or FlexAttention's block-sparse Triton kernel — never materializes the full $T\times T$ score matrix, and FlexAttention additionally skips blocks that document masking has emptied; (3) GQA with 2 KV heads already shrinks the KV/activation footprint 4x. Activation checkpointing on the 30 blocks is the fourth lever if you are still tight. Note the *mask* is a separate trap: a dense `(B,1,T,T)` bool mask is 537 MB at `micro_bs=8, T=8192` and also disqualifies the FlashAttention backend — which is why the chapter replaces it with a `BlockMask`.
-
-**6.** Implement the **loss-versus-position** diagnostic the chapter recommends for validating long-context extension. Write `bin_loss_by_position(per_token_loss, num_bins)` that takes a `(B, T)` tensor of per-position next-token losses and returns the mean loss in each of `num_bins` equal-width position bins across the sequence. Then state, in one sentence each, what a *healthy* curve and a *broken* curve look like, why the scalar average perplexity can hide the breakage, and why the diagnostic must be run on the long-document subset.
+**6.** Implement the **loss-versus-position** diagnostic. Write `bin_loss_by_position(per_token_loss, num_bins)` that takes a `(B, T)` tensor of per-position next-token losses and returns the mean loss in each of `num_bins` equal-width position bins. Then say why the diagnostic must be run on the long-document subset.
 
 ??? note "Solution"
     ```python
@@ -1033,14 +1060,11 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
         return sums / counts.clamp(min=1)                          # (num_bins,)
     ```
 
-    Usage during mid-training: run the frozen validation set through the model at `seq_len = 8192`, get per-token losses with `reduction="none"`, and plot `bin_loss_by_position(losses)`.
+    Usage during mid-training: run the frozen validation set through the model at `seq_len = 8192`, get per-token losses with `reduction="none"`, and plot `bin_loss_by_position(losses)`. Healthy = flat or falling with position; broken = fine to ~2048 and rising after.
 
-    - **Healthy curve:** loss keeps *decreasing* (or at worst flattening) as position grows — the model is genuinely using more context to predict better deep in the 8192-window.
-    - **Broken curve:** loss is fine up to ~2048 and then *rises* past it — the RoPE rescale-plus-training has not taken and the far positions are still noise (train sub-phase B longer or on genuinely longer documents).
-    - **Why the scalar average hides it:** a couple of well-predicted local tokens (the early, high-frequency-pair positions the model always handled) pull the *mean* down, so overall perplexity can *fall* even while the tail is broken. Only binning by position — or the needle-in-a-haystack probe — exposes that the far positions never learned to attend.
-    - **Why the long-document subset:** with document-aware masking and per-document position resets, a token at *window* position 7000 inside a packed pile of 500-token documents has *document* position ~200 and can only attend to ~200 predecessors. Its loss says nothing about long-range ability, and mixing such windows in flattens the curve into uninformative noise. Bin only over windows drawn from documents that actually span the window — the same shards `verify_positions` asserted on.
+    **Why the long-document subset:** with document-aware masking and per-document position resets, a token at *window* position 7000 inside a packed pile of 500-token documents has *document* position ~200 and can only attend to ~200 predecessors. Its loss says nothing about long-range ability, and mixing such windows in flattens the curve into uninformative noise. Bin only over windows drawn from documents that actually span the window — the same shards `verify_positions` asserted on. (This is also why the diagnostic is worth the trouble at all: the *scalar* average perplexity is dominated by the many easy local positions and can fall while the tail is broken.)
 
-**7.** (Systems) At `micro_bs = 8`, `T = 8192`, `n_heads = 8`, compute (a) the memory of the dense `(B, 1, T, T)` boolean document mask that `Stack100M._attn_mask` builds, and (b) the number of $128\times128$ blocks a FlexAttention `BlockMask` tracks per batch element. (c) A packed 8192-window holds documents averaging 1024 tokens. Estimate the factor by which block-sparse document masking reduces attention FLOPs versus a plain causal mask, and explain why the saving is *not* free at sub-phase B specifically.
+**7.** (Systems) At `micro_bs = 8`, `T = 8192`, `n_heads = 8`, compute (a) the memory of the dense `(B, 1, T, T)` boolean document mask that `Stack100M._build_mask` produces, and (b) the number of $128\times128$ blocks a FlexAttention `BlockMask` tracks per batch element. (c) A packed 8192-window holds documents averaging 1024 tokens. Estimate the factor by which block-sparse document masking reduces attention FLOPs versus a plain causal mask, and explain why the saving is *not* free at sub-phase B specifically.
 
 ??? note "Solution"
     **(a)** $8 \times 1 \times 8192 \times 8192 = 5.369\times10^{8}$ elements. A PyTorch `bool` tensor is 1 byte per element, so **537 MB** — allocated on every forward and kept alive across the backward pass. (At `micro_bs = 32, T = 2048` the same expression gives 134 MB, which is why the problem only becomes fatal at long context.) The second cost is not memory at all: handing a dense `attn_mask` to `F.scaled_dot_product_attention` rules out the FlashAttention backend, so you also lose the fused kernel.

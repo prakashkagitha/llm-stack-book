@@ -46,7 +46,9 @@ capstone/
     ├── tokenizer/        # from-scratch byte-level BPE (pure stdlib) + specials
     ├── model/            # rmsnorm, rope(+NoPE), swiglu, attention(GQA+QK-norm),
     │                     #   block, transformer; optional mla.py, mtp.py
-    ├── data/             # synthetic corpus, pack (doc-aware), uint16 shards, memmap ds
+    ├── data/             # source registry + synthetic corpus, quality filters, exact +
+    │                     #   MinHash dedup, pack (doc-aware), uint16 shards, memmap ds,
+    │                     #   build_corpus driver (budgets/interleave/holdout/manifest)
     ├── scaling/          # fit L(N,D)=E+A/N^a+B/D^b (numpy, no scipy) + IsoFLOP
     ├── optim/            # muon (Newton-Schulz), qk_clip, schedule (WSD/cosine), build
     ├── train/            # single-GPU pretrain loop (CPU-safe bf16 guard), ckpt/resume
@@ -111,16 +113,24 @@ python3 -c "from stacklm.serve import quantize_stacklm, generate; ..."
 ```
 
 The training loops (`stacklm.train.pretrain`, `stacklm.mid.mid_train`) take a
-`PackedMemmapDataset` built by `stacklm.data.build_shards`. For a real run, replace
-the in-process `synthetic_corpus` with `stream_source(entry, offline=False)` (which
-lazily imports `datasets` and streams FineWeb-Edu / Cosmopedia / StarCoder /
-FineMath at the 70/15/10/5 mix).
+`PackedMemmapDataset` built by `stacklm.data.build_shards` (single stream) or, for a
+real corpus, by `stacklm.data.build_corpus` — which enforces the per-source token
+budgets, interleaves the four sources by weight, shuffles, splits off a held-out set,
+and writes `manifest.json`. Pass `offline=False` to stream the real datasets (lazily
+importing `datasets`); note `bigcode/starcoderdata` is gated and needs
+`huggingface_hub.login()`. Near-dedup at full 20B-token scale should be delegated to
+`capstone/scripts/dedup_datatrove.py` (HuggingFace `datatrove`) rather than the
+from-scratch `near_dedup_stream`, which is there to make MinHash legible.
+
+```bash
+python3 -m stacklm.data.build_corpus       # tiny offline demo: shards + manifest
+```
 
 ## Compute tiers
 
 | tier | GPU | pretrain wall-clock | approx cost |
 |---|---|---|---|
-| **Flagship** | 1× A100-80GB (~$1.80/hr spot) | ~22 GPU-hr (MFU ~0.45) | **~$40–$100** |
+| **Flagship** | 1× A100-80GB (~$1.80/hr spot) | ~22–29 GPU-hr (MFU 45% 6ND / 58% attn) | **~$25–$50** |
 | Consumer | RTX 4090 / 3090 (24GB) | ~2–4× A100 (more grad-accum) | ~$0 if owned |
 | Free | Colab T4 (16GB) | scaled-down on-ramp config only | $0 |
 

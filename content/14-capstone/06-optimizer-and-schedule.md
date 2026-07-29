@@ -1,6 +1,6 @@
 # 14.6 Optimizer & Schedule: Muon + MuonClip and Warmup-Stable-Decay
 
-Every choice we have made so far — the deep-and-thin `Stack-100M` architecture of [Chapter 14.4](../14-capstone/04-architecture.html), the ~20B-token over-training budget, the FineWeb-Edu/Cosmopedia data mix — only pays off if the optimizer can actually walk the loss down cleanly across **38,147 steps** without spiking, and if the learning-rate schedule leaves a hook for the mid-training annealing phase to come. This chapter fixes both, and it fixes them *numerically*: every constant here is the one that appears in `stacklm/config.py` and in the [pretraining run](../14-capstone/07-pretraining-run.html).
+Every choice we have made so far — the deep-and-thin `Stack-100M` architecture of [Chapter 14.4](../14-capstone/04-architecture.html), the ~20B-token over-training budget, the FineWeb-Edu/Cosmopedia data mix — only pays off if the optimizer can actually walk the loss down cleanly across **38,147 steps** without spiking, and if the learning-rate schedule leaves a hook for the mid-training annealing phase to come. This chapter fixes both, and it fixes them *numerically*: every constant here is the one that appears in [Chapter 14.7](../14-capstone/07-pretraining-run.html)'s `TrainConfig` and drives the shipped `capstone/stacklm` package.
 
 We adopt the optimizer stack the capstone spec pins in §5: **Muon** (Jordan et al., 2024) for the 2D hidden weight matrices, **AdamW** for embeddings, norms, and every 1D parameter, a **QK-clip** in the spirit of **MuonClip** (Kimi K2, Moonshot 2025) for attention-logit stability, and the **Warmup-Stable-Decay (WSD)** schedule (MiniCPM, Hu et al., 2024; used by DeepSeek).
 
@@ -13,10 +13,16 @@ This is the applied, capstone-specific companion to two deeper reference chapter
     build_optimizers(model, muon_lr, adamw_lr, weight_decay, betas) -> (muon, adamw)
     wsd_lr(step, *, peak_lr, warmup_steps, total_steps,
            decay_steps=None, decay_frac=0.2, final_frac=0.0) -> float
-    qk_clip_(model, max_logits: dict[int, Tensor], tau) -> int   # layers that fired
+    qk_clip_(model, max_logits, tau) -> int   # number of layers that fired
     ```
 
-    Two consequences worth stating up front, because they are easy to get wrong. **(a)** Pretraining uses *two* optimizer objects, not one; where Ch. 14.7's prose says "`optimizer.step()`", read it as a loop over the `(muon, adamw)` pair — the training loop in `stacklm/train/loop.py` literally does `for opt in optimizers: opt.step()`. **(b)** `qk_clip_` is called from the **training loop, after** the optimizer steps, on a schedule (`qk_clip_every`) — it is *not* hidden inside `Muon.step()`, because it needs a quantity harvested from the forward pass that the optimizer never sees.
+    Three consequences worth stating up front, because they are the ones people get wrong.
+
+    **(a) Two optimizer objects, not one.** Where Ch. 14.7's prose says "`optimizer.step()`", read it as a loop over the `(muon, adamw)` pair; `stacklm/train/loop.py` literally does `for opt in optimizers: opt.step()`.
+
+    **(b) Two peaks, one curve — the central invariant.** Muon and AdamW do *not* share a learning rate (0.02 vs 3e-3, ~6.7:1). They share the *shape* of the WSD curve. The safe way to enforce that is to call `wsd_lr(step, peak_lr=1.0, ...)`, which returns a pure multiplier in $[0,1]$, and scale each group's own recorded peak by it. Both `stacklm/train/loop.py::pretrain()` and Ch. 14.7's `train.py` do exactly this. Writing `for opt in optimizers: for g in opt.param_groups: g["lr"] = lr` — one scalar into both — silently discards the ratio and is the single most common Muon bug.
+
+    **(c) `qk_clip_` lives in the training loop, after the steps.** It is *not* hidden inside `Muon.step()`, because it needs a quantity harvested from the forward pass that the optimizer never sees. `max_logits` is canonically a `dict[int, Tensor(n_heads,)]`; the shipped function also accepts a dense `(n_layers, n_heads)` tensor (which is what Ch. 14.7's running-max buffer is) and converts it, because `layer_idx in tensor` is elementwise *value* membership in PyTorch, not key lookup.
 
 ## Why Muon, and Why a Hybrid
 
@@ -71,6 +77,8 @@ with the tuned coefficients $(a,b,c) = (3.4445,\,-4.7750,\,2.0315)$. This is a d
 # stacklm/optim/muon.py
 import torch
 
+_NS_COEFFS = (3.4445, -4.7750, 2.0315)          # tuned quintic coefficients
+
 @torch.no_grad()
 def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor:
     """Approximate the orthogonal (polar) factor UV^T of a 2D matrix G via a
@@ -80,10 +88,12 @@ def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor
     matmuls, so it runs fast on tensor cores. We deliberately do NOT aim for
     exact orthogonality -- 5 steps is enough to give a well-conditioned update
     direction. The reference implementation runs this in bf16; the capstone repo
-    runs it in fp32 so CPU and GPU results agree bit-for-bit in the smoke test.
+    runs it in fp32, which keeps the CPU smoke test agreeing with the GPU path to
+    fp32 tolerance (not bit-for-bit -- CPU and CUDA GEMMs reduce in different
+    orders -- but far closer than bf16 would be).
     """
     assert G.ndim == 2, "Newton-Schulz orthogonalization is only for 2D matrices"
-    a, b, c = 3.4445, -4.7750, 2.0315          # tuned quintic coefficients
+    a, b, c = _NS_COEFFS
     X = G.float()
     X = X / (X.norm() + 1e-7)                    # normalize so all sigma <= 1
     transposed = G.size(0) > G.size(1)          # keep the short side as rows
@@ -100,17 +110,25 @@ def zeropower_via_newtonschulz5(G: torch.Tensor, steps: int = 5) -> torch.Tensor
 
 Note the `transposed` trick: the Gram matrix $XX^\top$ has size $\min(m,n)^2$, so we always iterate on the smaller of the two dimensions. For a SwiGLU weight of shape `1408 × 512` that means the inner products live in $512^2$, not $1408^2$ — a real speedup. (We name the polynomial term `P`, not `b`, to avoid shadowing the coefficient; a subtle way to break this iteration is to reuse a coefficient name inside the loop.)
 
+One property of that first line matters far more than it looks, and we will cash it in twice: because $X_0 = B/\lVert B\rVert_F$, **the output is invariant to any positive rescaling of the input**. $O(cB) = O(B)$ for every $c > 0$. Muon does not care how big your gradient is, only which way it points.
+
 ### The full Muon step and RMS matching
 
 Two scale factors turn the orthogonal direction into a usable update.
 
 **First**, the orthogonalized update has a root-mean-square element magnitude of roughly $1/\sqrt{\max(m,n)}$: a semi-orthogonal $m\times n$ matrix has $\min(m,n)$ singular values equal to 1, hence Frobenius norm $\sqrt{\min(m,n)}$, spread over $mn$ entries, so RMS $=\sqrt{\min(m,n)/(mn)} = 1/\sqrt{\max(m,n)}$. That is *shape-dependent*: the same learning rate would move a `1408×512` matrix and a `128×512` matrix by different relative amounts.
 
-**Second**, to put Muon's step magnitude in the same regime as AdamW's, the Moonshot "Muon is Scalable" report (Liu et al., 2025) multiplies the Muon update by $0.2\cdot\sqrt{\max(m,n)}$, which cancels the shape dependence and brings the RMS to exactly $0.2$. Where does $0.2$ come from? Not from the idealized AdamW bound. AdamW's update is $m/(\sqrt{v}+\epsilon)$, whose *per-element* magnitude is $\approx 1$ only if $m$ and $v$ are estimated over the same window on a stationary gradient. In real LLM training the two EMAs disagree ($\beta_1 = 0.9$ vs $\beta_2 = 0.95$) and the gradient is noisy, so the **measured** update RMS across a transformer's weight matrices sits well below 1 — on the order of $0.2$–$0.4$. Moonshot picked $0.2$ to land inside that measured band. That is the honest statement; the "AdamW step has RMS 1" folklore is the theoretical ceiling, not the observed value.
+**Second**, to put Muon's step magnitude in a fixed, shape-free regime, the Moonshot "Muon is Scalable" report (Liu et al., 2025) multiplies the Muon update by $0.2\cdot\sqrt{\max(m,n)}$, which cancels the shape dependence and brings the RMS to exactly $0.2$. Where does $0.2$ come from? Not from the idealized AdamW bound. AdamW's update is $m/(\sqrt{v}+\epsilon)$, whose *per-element* magnitude is $\approx 1$ only if $m$ and $v$ are estimated over the same window on a stationary gradient. In real LLM training the two EMAs disagree ($\beta_1 = 0.9$ vs $\beta_2 = 0.95$) and the gradient is noisy, so the **measured** update RMS across a transformer's weight matrices sits well below 1 — on the order of $0.2$–$0.4$. Moonshot picked $0.2$ to land inside that measured band. That is the honest statement; the "AdamW step has RMS 1" folklore is the theoretical ceiling, not the observed value.
 
 {{fig:muon-rms-matching}}
 
-RMS matching does **not** mean one literal learning rate for both groups. It means the two groups now live in the same *order of magnitude*, so you tune one number and derive the other with a small fixed ratio instead of searching a 2D grid. The capstone uses **`muon_lr = 6e-3`** and **`adamw_lr = muon_lr / 2 = 3e-3`**. The factor of two is not RMS-related at all: it is there because the AdamW group is dominated by the tied embedding, whose gradient is row-sparse (a rare token's row gets a full-magnitude update from the handful of batches that contain it), and a slightly smaller step on that group is the cheap insurance.
+**What RMS matching does and does not buy.** It makes Muon's learning rate *shape-invariant*: one number governs all 210 matrices, from `128×512` to `512×1408`. That is the real win, and it is why you can sweep Muon's LR as a single scalar. It does **not** imply that the two optimizer groups want the same number, because the AdamW group in this hybrid is not a set of hidden matrices at all — it is the tied embedding plus every 1D gain, objects with entirely different gradient statistics. The capstone freezes
+
+$$
+\eta^{\text{Muon}}_{\max} = \mathbf{0.02}, \qquad \eta^{\text{AdamW}}_{\max} = \mathbf{3\text{e-}3},
+$$
+
+a ratio of about **6.7:1**. Treat that ratio as **empirical, not derived** — it is the band the reference recipes live in (Moonlight and `nanochat` both run Muon in the low $10^{-2}$s with a much smaller embedding LR), and it is the pair Ch. 14.7's `TrainConfig` ships. The reason the embedding wants the smaller number is concrete: its gradient is row-sparse, so a rare token's row receives a full-magnitude Adam update from the handful of batches that contain it, and a smaller step is cheap insurance against those rows thrashing. The practical point is that you tune a *line* — one LR and a fixed ratio — not a plane.
 
 ```python
 # stacklm/optim/muon.py  (continued)
@@ -121,13 +139,15 @@ class Muon(Optimizer):
     Route embeddings/norms/1D params to AdamW instead (see build_optimizers()).
 
     Args mirror the Jordan et al. reference plus the Moonshot RMS-matching scale
-    and decoupled weight decay (Liu et al., 2025)."""
+    and decoupled weight decay (Liu et al., 2025). `batched=True` switches to the
+    shape-bucketed fast path described below."""
 
-    def __init__(self, params, lr=6e-3, momentum=0.95, nesterov=True,
-                 weight_decay=0.1, ns_steps=5):
+    def __init__(self, params, lr=0.02, momentum=0.95, nesterov=True,
+                 weight_decay=0.1, ns_steps=5, batched=False):
         defaults = dict(lr=lr, momentum=momentum, nesterov=nesterov,
                         weight_decay=weight_decay, ns_steps=ns_steps)
         super().__init__(params, defaults)
+        self.batched = batched
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -135,6 +155,8 @@ class Muon(Optimizer):
         for group in self.param_groups:
             lr, mu = group["lr"], group["momentum"]
             nesterov, wd, ns = group["nesterov"], group["weight_decay"], group["ns_steps"]
+
+            live, dirs = [], []
             for p in group["params"]:
                 if p.grad is None:
                     continue
@@ -145,15 +167,24 @@ class Muon(Optimizer):
                     state["momentum_buffer"] = torch.zeros_like(g)
                 buf = state["momentum_buffer"]
                 buf.mul_(mu).add_(g)                    # B <- mu*B + g
-                # Nesterov look-ahead: use g + mu*B as the direction to orthogonalize
-                d = g.add(buf, alpha=mu) if nesterov else buf
-                o = zeropower_via_newtonschulz5(d, steps=ns).to(p.dtype)
-                # RMS-match to AdamW so the two groups share one LR scale (Moonshot 2025)
+                live.append(p)
+                # Nesterov look-ahead: orthogonalize g + mu*B, not the bare buffer.
+                dirs.append(g.add(buf, alpha=mu) if nesterov else buf)
+
+            if not live:
+                continue
+            if self.batched:
+                orths = _orthogonalize_bucketed(dirs, ns)     # one bmm per shape class
+            else:
+                orths = [zeropower_via_newtonschulz5(d, steps=ns) for d in dirs]
+
+            for p, o in zip(live, orths):
+                # RMS-match: cancel the shape dependence, land the update RMS at 0.2.
                 scale = 0.2 * max(p.size(0), p.size(1)) ** 0.5
-                # Decoupled weight decay (AdamW-style): shrink the weight itself
+                # Decoupled weight decay (AdamW-style): shrink the weight itself.
                 if wd != 0.0:
                     p.mul_(1.0 - lr * wd)
-                p.add_(o, alpha=-lr * scale)            # W <- W - lr*scale*O
+                p.add_(o.to(p.dtype), alpha=-lr * scale)   # W <- W - lr*scale*O
         return loss
 ```
 
@@ -166,35 +197,64 @@ Two design points worth pausing on. We orthogonalize the **Nesterov look-ahead**
 
 The FLOP overhead of Muon is genuinely negligible, and the worked example below computes it exactly: **~1.04 TFLOP per optimizer step against the model's ~319 TFLOP**, i.e. **0.33%**. But a FLOP count is not a wall-clock claim, and this is the single most common way Muon disappoints in practice.
 
-Count the *launches* instead. The loop above visits 210 matrices; each runs 5 iterations; each iteration issues roughly four GPU kernels (`X @ X.T`, `A @ A`, the fused `b*A + c*(A@A)` elementwise, `P @ X`), plus the momentum and weight-decay ops. That is on the order of **4,200 kernel launches per optimizer step**, on matrices whose inner dimension is 128–1408. At those sizes an A100 finishes each matmul in single-digit microseconds while a kernel launch costs several microseconds — this regime is **launch-latency bound, not FLOP bound**. Measured naively, Muon's overhead at 100M scale is typically several percent of step time, not 0.3%.
+Count the *launches* instead. The naive loop visits 210 matrices; each runs 5 iterations; each iteration issues roughly four GPU kernels (`X @ X.T`, `A @ A`, the fused `b*A + c*(A@A)` elementwise, `P @ X`), plus the momentum and weight-decay ops. That is on the order of **4,200 kernel launches per optimizer step**, on matrices whose inner dimension is 128–1408. At those sizes an A100 finishes each matmul in single-digit microseconds while a kernel launch costs several microseconds — this regime is **launch-latency bound, not FLOP bound**. Measured naively, Muon's overhead at 100M scale is typically several percent of step time, not 0.3%.
 
 Two fixes, both standard, both worth doing:
 
 1. **Compile the iteration.** Wrapping `zeropower_via_newtonschulz5` in `torch.compile` fuses the elementwise work and can capture the whole 5-step loop into a CUDA graph, collapsing most of the launch overhead ([Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)).
 2. **Batch same-shaped matrices.** After the orientation-normalizing transpose, `Stack-100M`'s 210 matrices collapse into just **three** shape classes: 60 of `512×512` (`wq`, `wo`), 60 of `128×512` (`wk`, `wv`), and 90 of `512×1408` (`w_gate`, `w_up`, and `w_down` transposed). Stack each class and run the iteration as a single `bmm` per class: **3 classes × 5 iterations × 4 kernels ≈ 60 launches**, a ~70× reduction.
 
+The second fix is the one that matters, and it is shipped — `Muon(..., batched=True)`, or `build_optimizers(..., batched_muon=True)`:
+
 ```python
-# stacklm/optim/muon.py  (optional fast path)
+# stacklm/optim/muon.py  (the batched fast path)
 @torch.no_grad()
 def zeropower_batched(G: torch.Tensor, steps: int = 5) -> torch.Tensor:
-    """Same quintic, but on a STACK of identically-shaped matrices: G is
-    (K, m, n) and we return (K, m, n). Collapses K*5*4 kernel launches into 5*4
-    batched ones. Numerically identical to looping zeropower_via_newtonschulz5.
+    """Same quintic on a STACK of identically-shaped matrices: G is (K, m, n).
+
+    Collapses K*steps*4 kernel launches into steps*4 batched ones. Algebraically
+    identical to looping zeropower_via_newtonschulz5; expect last-ulp differences,
+    because bmm and mm use different reduction orders and split-k heuristics.
     """
-    a, b, c = 3.4445, -4.7750, 2.0315
+    assert G.ndim == 3, "zeropower_batched expects a (K, m, n) stack"
+    a, b, c = _NS_COEFFS
     X = G.float()
     X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)   # per-matrix Frobenius
     transposed = X.size(-2) > X.size(-1)
     if transposed:
-        X = X.mT                                           # batched transpose
+        X = X.mT                                          # batched transpose
     for _ in range(steps):
-        A = X @ X.mT                                       # (K, r, r) via bmm
+        A = X @ X.mT                                      # (K, r, r) via bmm
         P = b * A + c * (A @ A)
         X = a * X + P @ X
     if transposed:
         X = X.mT
     return X
+
+
+@torch.no_grad()
+def _orthogonalize_bucketed(dirs, steps: int):
+    """Orthogonalize a list of 2D directions, bucketing identical shapes.
+
+    Key on the SORTED shape, so (1408, 512) and (512, 1408) land in the SAME
+    bucket after the orientation-normalizing transpose. That is what collapses
+    Stack-100M's 210 matrices into 3 classes rather than 4.
+    """
+    out = [None] * len(dirs)
+    buckets: dict[tuple, list[int]] = {}
+    for i, d in enumerate(dirs):
+        m, n = d.shape
+        buckets.setdefault((min(m, n), max(m, n)), []).append(i)
+    for idxs in buckets.values():
+        flip = [dirs[i].size(0) > dirs[i].size(1) for i in idxs]
+        stack = torch.stack([dirs[i].T if f else dirs[i] for i, f in zip(idxs, flip)])
+        O = zeropower_batched(stack, steps=steps)
+        for j, (i, f) in enumerate(zip(idxs, flip)):
+            out[i] = O[j].T if f else O[j]
+    return out
 ```
+
+The bucket key is the interesting line. Keying on the raw shape gives you four classes (`1408×512` and `512×1408` are different tensors); keying on the *sorted* shape and transposing the tall ones gives three, because the iteration is orientation-agnostic. On `Stack-100M`'s shapes the batched path agrees with the looped one to $\sim4\times10^{-7}$ absolute — pure reduction-order noise, invisible next to the $\pm20\%$ orthogonality slack we deliberately accept.
 
 !!! tip "Practitioner tip: measure `optimizer.step()`, don't trust the FLOP ratio"
     Time it, because the answer is hardware- and shape-dependent:
@@ -205,27 +265,27 @@ def zeropower_batched(G: torch.Tensor, steps: int = 5) -> torch.Tensor:
     torch.cuda.synchronize(); print("opt step ms:", 1e3 * (time.perf_counter() - t0))
     ```
 
-    Compare against the full step time. If the optimizer is more than ~2% of it, you are launch-bound: turn on `torch.compile` for the Newton–Schulz call, or switch to the batched path. Also use PyTorch's `torch._foreach_mul_` / `torch._foreach_add_` for the momentum bookkeeping — the same "one kernel for many tensors" trick that `fused=True` AdamW already applies internally.
+    Compare against the full step time. If the optimizer is more than ~2% of it, you are launch-bound: turn on `torch.compile` for the Newton–Schulz call, or flip `batched_muon=True`. Also use PyTorch's `torch._foreach_mul_` / `torch._foreach_add_` for the momentum bookkeeping — the same "one kernel for many tensors" trick that `fused=True` AdamW already applies internally.
 
 ## Setting the Peak Learning Rate (A Protocol, Not a Guess)
 
 The peak LR is the most consequential number in this chapter, and "0.02-ish, like the reference recipes" is not an answer a reproducible book is allowed to give. [Chapter 14.5](../14-capstone/05-mini-scaling-laws.html) already built a **ladder** of tiny models (`{4M, 9M, 19M, 43M}` params) under a shared recipe precisely so we can measure hyperparameters instead of guessing them. Here is the protocol, and it is cheap: the whole sweep costs well under an hour on the same A100.
 
-**Step 1 — sweep on the top ladder rung.** Take the 43M rung. Train it for 500–1000 optimizer steps at a *reduced* effective batch of one micro-batch, `32 × 2048 = 65,536` tokens/step, with the same WSD warmup shape (scale warmup proportionally, e.g. 100 steps). Sweep the Muon peak over a ×2 grid, `{1e-3, 2e-3, 4e-3, 8e-3, 1.6e-2}`, keeping `adamw_lr = muon_lr / 2` throughout so you are searching a *line*, not a plane.
+**Step 1 — sweep on the top ladder rung.** Take the 43M rung. Train it for 500–1000 optimizer steps at a *reduced* effective batch of one micro-batch, `32 × 2048 = 65,536` tokens/step, with the same WSD warmup shape (scale warmup proportionally, e.g. 250 steps). Sweep the Muon peak over a ×2 grid, `{2e-3, 4e-3, 8e-3, 1.6e-2, 3.2e-2}`, holding `adamw_lr` at the fixed ratio throughout so you are searching a *line*, not a plane.
 
-**Step 2 — read the curve, then back off one grid point.** Plot final held-out loss vs peak LR. You get a U: too low and the model is under-trained at this step count; too high and the loss either spikes or plateaus above the minimum. Pick the argmin, then step *one grid point down*. The full run is 40× longer than the probe, and the highest LR that survives 1,000 steps is not always the highest LR that survives 38,147.
+**Step 2 — read the curve, then back off one grid point.** Plot final held-out loss vs peak LR. You get a U: too low and the model is under-trained at this step count; too high (`3.2e-2` here) and the loss either spikes or plateaus above the minimum. Take the argmin — `1.6e-2` — then step *one grid point down*, to `8e-3`. The full run is ~40× longer than the probe, and the highest LR that survives 1,000 steps is not always the highest LR that survives 38,147.
 
-**Step 3 — transfer across batch size.** The probe ran at 65,536 tokens/step; the real run is 524,288, an 8× increase. Below the critical batch size, the standard rule of thumb for adaptive/normalized updates is $\eta \propto \sqrt{B}$ ([Chapter 3.10](../03-pretraining/10-lr-schedules-hparams.html)), so multiply by $\sqrt{8} \approx 2.83$. A probe optimum in the low-`1e-3`s therefore lands near **`6e-3`** at full batch — which is exactly the `peak_lr` in `StackConfig`.
+**Step 3 — transfer across batch size.** The probe ran at 65,536 tokens/step; the real run is 524,288, an 8× increase. Below the critical batch size, the standard rule of thumb for adaptive/normalized updates is $\eta \propto \sqrt{B}$ ([Chapter 3.10](../03-pretraining/10-lr-schedules-hparams.html)), so multiply by $\sqrt{8} \approx 2.83$: $8\text{e-}3 \times 2.83 = 2.26\text{e-}2$. Round down to **`0.02`** — which is exactly `TrainConfig.muon_peak_lr`, and squarely inside the band Moonlight and `nanochat` report.
 
 **Step 4 — transfer across width.** The 43M rung is narrower than `d_model = 512`. Two defensible options: (a) **muP** width scaling, which says matrix-like parameters want $\eta \propto 1/\text{fan\_in}$ ([Chapter 3.10](../03-pretraining/10-lr-schedules-hparams.html)); or (b) rely on the fact that Muon's RMS-matched update has a *fixed* per-element magnitude by construction, which makes its LR far closer to width-invariant than Adam's — this is one of Muon's practical selling points. We take (b) and then *verify* with a 200-step confirmation run at full width and full batch: if the loss curve at step 200 is not monotone-decreasing and the grad-norm log is not flat, drop the LR by 2× and repeat.
 
 !!! warning "Common pitfall: what to do when it diverges anyway"
-    You typed `6e-3` and the loss NaN'd at step 900. Work the list **in this order**, changing one thing at a time:
+    You typed `0.02` and the loss NaN'd at step 900. Work the list **in this order**, changing one thing at a time:
 
-    1. **Look at the pre-clip grad norm** (`clip_grad_norm_` returns it — log it). A multi-sigma jump *before* the loss moves is the real timestamp of the failure.
-    2. **Lengthen warmup** before lowering the peak. 500 steps is short; 1,000–2,000 costs almost nothing and fixes a large fraction of early-run divergence.
-    3. **Halve the peak LR** (`6e-3` → `3e-3`). Re-run 500 steps and compare.
-    4. **Check the QK-clip trigger log** (next section). If it is firing constantly, the instability is attention-logit growth and the LR is the cause, not the cure.
+    1. **Look at the pre-clip grad norm** (`clip_grad_norm_` returns it — log it). A multi-sigma jump *before* the loss moves is the real timestamp of the failure. This is your primary sensor, and the next section explains why it is not merely the *first* thing to check but very nearly the *only* gradient-side signal you have for the Muon group.
+    2. **Lengthen warmup** before lowering the peak. `2,000 → 4,000` steps costs ~0.5B tokens and fixes a large fraction of early-run divergence.
+    3. **Halve the peak LR** (`0.02 → 0.01`, and AdamW `3e-3 → 1.5e-3` — keep the ratio). Re-run 500 steps and compare.
+    4. **Lower `qk_clip_tau` to 30 and check the trigger log** (next section). If it fires constantly, the instability is attention-logit growth and the LR is the cause, not the cure.
     5. **Safe fallback: drop Muon entirely.** Route everything to AdamW at `peak_lr = 6e-4` — the nanoGPT-124M-calibrated value, a known-good setting for a model of this size. You lose some convergence speed and you will finish the run.
 
 ## Attention-Logit Stability: QK-Norm, QK-Clip, and Soft-Caps
@@ -349,20 +409,12 @@ if record is not None:
             record[self.layer_idx] = qn * kn * scale
 ```
 
-And the second half of the answer is **frequency**. Attention-logit drift is *slow* — the gains move by a decayed learning rate per step. There is no reason to measure it 38,147 times. The training loop gates the whole thing behind `qk_clip_every` (we use **200**, i.e. ~190 measurements over the run) and takes the reading on a single small **probe batch** with post-step weights:
+The second half of the answer is **frequency**, and the tier you pick decides it:
 
-```python
-# stacklm/train/loop.py  (excerpt: after the optimizer steps)
-qk_fired = 0
-if qk_clip_every and step % qk_clip_every == 0:
-    rec = {}
-    with torch.no_grad():
-        b = _to_device(next(it), device)      # one probe micro-batch, no grads
-        model(b["input_ids"], seq_ids=b["seq_ids"], record=rec)
-    qk_fired = qk_clip_(model, rec, tau=qk_tau)
-```
+- **Tier 1 is cheap enough to run every step.** This is what Ch. 14.7's `train.py` does: it keeps a preallocated `(n_layers, n_heads)` running-max buffer, updates it during the normal accumulation loop, calls `qk_clip_` after the optimizer steps, and zeroes it. No probe forward, no extra pass.
+- **Tier 2 must be gated.** Attention-logit drift is *slow* — the gains move by a decayed learning rate per step — so there is no reason to measure exactly 38,147 times. `stacklm/train/loop.py::pretrain()` exposes `qk_clip_every` for this; set it to **200** (~190 measurements over the run) and take the reading on a single small probe batch with post-step weights. See the canonical `optimizer_step` below.
 
-Amortized over 200 steps, even a Tier-2 exact reading costs well under 0.1% of the run. Log `qk_fired`: it is the single most informative stability signal this loop produces.
+Either way, log the return value of `qk_clip_`: it is the single most informative stability signal this loop produces.
 
 ### The clip that actually works here
 
@@ -377,16 +429,23 @@ One structural consequence you must not paper over: `Stack-100M` allocates **one
 import torch
 
 @torch.no_grad()
-def qk_clip_(model, max_logits, tau: float = 30.0) -> int:
+def qk_clip_(model, max_logits, tau: float = 100.0) -> int:
     """QK-clip (the core of MuonClip, Kimi K2 / Moonshot 2025), architecture-aware.
 
     `max_logits[layer_idx]` is an (n_heads,) tensor recorded by the attention
     module this forward pass. Returns the number of layers that fired -- log it.
 
+    A dense (n_layers, n_heads) tensor is also accepted, because Ch. 14.7's
+    train.py harvests into a preallocated running-max buffer. It is CONVERTED,
+    not indexed directly: `layer_idx in tensor` is elementwise VALUE membership
+    in PyTorch, not key lookup, and would silently do the wrong thing.
+
     The clip acts on whatever parameter actually controls the logit scale:
       * QK-norm ON  -> the RMSNorm gains (rescaling W_Q/W_K is provably a no-op).
       * QK-norm OFF -> W_Q / W_K, per Kimi K2, GQA-aware.
     """
+    if torch.is_tensor(max_logits):
+        max_logits = {i: max_logits[i] for i in range(max_logits.size(0))}
     fired = 0
     for layer_idx, block in enumerate(model.blocks):
         if layer_idx not in max_logits:
@@ -418,11 +477,13 @@ def _clip_qk_norm_gains_(attn, s_max, tau: float) -> int:
     return 1
 ```
 
-**Choosing $\tau$.** Kimi K2 used $\tau = 100$. Copying that number here would give you a **dead safety net**: under QK-norm the logits start bounded by 8, so reaching 100 requires $\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty > 12.5$ — a state so pathological the run is already lost. Pin $\tau$ relative to *your* architecture's natural scale. We use **$\tau = 30$**, roughly $4\times$ the initialization bound: comfortably above normal gain drift, far below the softmax-saturation regime, and low enough that the clip is a genuine early-warning system rather than a last rite.
+**Choosing $\tau$ — and why the shipped default is 100.** Ch. 14.7's `TrainConfig` ships `qk_clip_tau = 100.0`, Kimi's number, and that is a deliberate, defensible choice with a caveat you must understand. Under QK-norm the logits start bounded by 8, so reaching 100 requires $\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty > 12.5$ — a state so pathological the run is already lost. In other words, **at $\tau = 100$ with `qk_norm = True` the clip is an inert backstop**: it costs nothing, it will essentially never fire, and it is exactly the right value the moment you flip `qk_norm = False` (the Ch. 14.4 ablation), where there is no a-priori bound at all. That is why it is the config default: it is correct across both configurations.
+
+If you want the clip to do the *other* job — be an early-warning **sensor** rather than a last rite — pin $\tau$ to your architecture's natural scale and set `qk_clip_tau = 30`, roughly $4\times$ the initialization bound of 8. That is comfortably above normal gain drift, far below the softmax-saturation regime, and low enough that a rising trigger count tells you the LR is too high days before the loss does. The capstone's recommendation is: **ship 100, and switch to 30 the moment you are debugging.** Exercises 4 and 7 work both settings.
 
 ### If you drop QK-norm: Kimi K2's per-head, GQA-aware clip
 
-Run `Stack-100M` with `qk_norm = False` (the ablation Ch. 14.4 recommends you actually try) and $W_Q, W_K$ become the knob again. Now the original MuonClip applies — and here GQA introduces a wrinkle worth its own code path.
+Run `Stack-100M` with `qk_norm = False` and $W_Q, W_K$ become the knob again. Now the original MuonClip applies — and here GQA introduces a wrinkle worth its own code path.
 
 In `Stack-100M`, `n_heads = 8` query heads share `n_kv_heads = 2` key/value heads (a 4:1 ratio; see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html)), so four query heads read the *same* $W_K$ slice. We must scale each $W_Q$ slice **per query head**, but each shared $W_K$ slice only **once** — otherwise a KV slice read by four tripping heads gets multiplied four times over, badly over-shrinking it. Two separate loops:
 
@@ -457,7 +518,7 @@ def _clip_projections_(attn, s_max, tau: float) -> int:
     return fired
 ```
 
-The head that *set* the group maximum lands exactly at $\tau$; the other three query heads in its group get their shared key scaled by the same amount and so are pulled slightly further below $\tau$ — a conservative, safe outcome. Exercise 4 walks the arithmetic. In this configuration $\tau = 100$ is the right order of magnitude, because without QK-norm there is no a-priori bound at all.
+The head that *set* the group maximum lands exactly at $\tau$; the other three query heads in its group get their shared key scaled by the same amount and so are pulled slightly further below $\tau$ — a conservative, safe outcome. Exercise 4 walks the arithmetic. In this configuration the shipped $\tau = 100$ is a genuine, load-bearing safety net.
 
 !!! warning "Common pitfall: attribute names must match across chapters"
     `qk_clip_` reaches *into* the attention module, so it is coupled to that module's attribute names. The canonical names — the ones `capstone/stacklm/model/attention.py` defines and this chapter uses — are **`n_heads`, `n_kv_heads`, `head_dim`, `groups`, `wq`, `wk`, `q_norm`, `k_norm`**. If you transcribe an `Attention` class that abbreviates them (`d_h`, `n_kv`), the clip dies with an `AttributeError` on its first firing — which, since it fires rarely, may be thousands of steps into the run. Either keep the canonical names or add a two-line adapter. A `getattr(attn, "head_dim", None) or attn.d_h` in library code is a smell; fixing the model class is the right move.
@@ -472,7 +533,7 @@ The three levers form a clean hierarchy, and you should be able to say which is 
 |---|---|---|---|
 | **QK-norm** | forward pass, every token | always (default ON) | 128 params/layer; a norm |
 | **Soft-cap** | forward pass, every score | if you need a hard ceiling | fused via FlexAttention, else $T^2$ |
-| **QK-clip** | parameters, post-step | every `qk_clip_every` steps | one probe forward per 200 steps |
+| **QK-clip** | parameters, post-step | every step (Tier 1) or every 200 (Tier 2) | free, or one probe forward |
 
 QK-norm removes the failure mode structurally. Soft-cap bounds it analytically. QK-clip is the *monitor plus correction* — its real value at 100M scale is not that it fires, but that its trigger log tells you your LR is too high days before the loss does.
 
@@ -494,7 +555,7 @@ $$
 
 where $f$ decays from 1 to (near) 0 over the final phase. MiniCPM found a **$1-\sqrt{\cdot}$** or exponential-style decay works better than linear; we use the $1-\sqrt{\cdot}$ form. Two properties make WSD ideal for the capstone:
 
-1. **The stable phase is schedule-agnostic in length.** You hold $\eta_{\max}$ constant for as long as your token budget allows. Because there is no baked-in endpoint, you can *decide to keep going* — extend the stable phase, or branch off multiple decay runs from the same stable checkpoint to compare data mixes. This is the "continuable pretraining" property MiniCPM highlighted.
+1. **The stable phase is schedule-agnostic in length.** You hold $\eta_{\max}$ constant for as long as your token budget allows. Because there is no baked-in endpoint, you can *decide to keep going* — extend the stable phase, or branch off multiple decay runs from the same stable checkpoint to compare data mixes. This is the "continuable pretraining" property MiniCPM highlighted, and it is why Ch. 14.7 deliberately stops at step 34,332 and hands over a *pre-decay* checkpoint.
 2. **The decay phase is where the loss drops fastest — and that is precisely where we anneal on premium data.** Empirically WSD shows a characteristic sharp loss drop once decay begins. The capstone exploits this: the WSD **decay phase *is* the mid-training annealing phase** of [Chapter 14.8](../14-capstone/08-mid-training.html). We spend the constant-LR stable phase on the bulk FineWeb-Edu mix, then, as the LR decays, we shift the data toward higher-quality Cosmopedia, math, and code. Low LR + high-quality data = the model "polishes" on the best tokens without the high-LR thrash that would otherwise wash them out. Cosine cannot cleanly do this because its LR is already low through most of the middle of training.
 
 ```python
@@ -511,10 +572,11 @@ def wsd_lr(step: int, *, peak_lr: float, warmup_steps: int, total_steps: int,
     - 1 - sqrt() decay over the final phase, down to `final_frac * peak_lr`
       (we use 0.0, i.e. anneal fully to ~0).
 
-    Give EITHER `decay_steps` (absolute -- what Ch. 14.7's StackConfig passes,
-    6000) or `decay_frac` (a fraction of total_steps). `decay_steps` wins.
+    Give EITHER `decay_steps` (absolute) or `decay_frac` (a fraction of
+    total_steps -- what Ch. 14.7's TrainConfig passes, 0.10). `decay_steps` wins.
 
-    Returns the *actual* LR (not a multiplier), so you can set it directly.
+    Call it with peak_lr=1.0 to get a pure MULTIPLIER, which is how the training
+    loop drives Muon's 0.02 and AdamW's 3e-3 off one shared curve.
     """
     if decay_steps is None:
         decay_steps = int(decay_frac * total_steps)
@@ -533,21 +595,6 @@ def wsd_lr(step: int, *, peak_lr: float, warmup_steps: int, total_steps: int,
     return floor + (peak_lr - floor) * decay_mult
 ```
 
-We apply the *same* schedule shape to both optimizers, each at its own peak. The step-by-step wiring, using the frozen `StackConfig` numbers:
-
-```python
-# stacklm/train/loop.py  (once per optimizer step)
-PEAK_LR      = 6e-3       # Muon group
-WARMUP_STEPS = 500
-DECAY_STEPS  = 6_000
-TOTAL_STEPS  = 38_147     # ceil(20e9 tokens / 524,288 tokens per step)
-
-lr = wsd_lr(step, peak_lr=PEAK_LR, warmup_steps=WARMUP_STEPS,
-            total_steps=TOTAL_STEPS, decay_steps=DECAY_STEPS)
-for g in muon.param_groups:  g["lr"] = lr          # Muon peak = 6e-3
-for g in adamw.param_groups: g["lr"] = lr * 0.5    # AdamW peak = 3e-3
-```
-
 !!! note "Aside: why the decay must reach ~0"
     The loss drop in WSD's decay phase comes from the LR going genuinely small, letting the optimizer settle into a sharper minimum on the (now higher-quality) data. If you floor the LR at, say, $\eta_{\max}/10$ the way a cosine schedule often does, you leave that gain on the table. We anneal to essentially zero. The cost is that a decayed checkpoint is "spent" — you cannot productively resume high-LR training from it — which is exactly why we branch decay runs off the *stable* checkpoint, never off a decayed one.
 
@@ -563,11 +610,14 @@ Here is the routing function the training loop calls once at startup. It walks t
 import torch
 from stacklm.optim.muon import Muon
 
-def build_optimizers(model, muon_lr=6e-3, adamw_lr=3e-3,
-                     weight_decay=0.1, betas=(0.9, 0.95)):
+def build_optimizers(model, muon_lr=0.02, adamw_lr=3e-3,
+                     weight_decay=0.1, betas=(0.9, 0.95), batched_muon=False):
     """Route Stack-100M params: 2D hidden matrices -> Muon, everything else
     (tied embedding, RMSNorm/QK-norm gains, any 1D/bias) -> AdamW.
-    Returns (muon, adamw). Capstone defaults: 6e-3 and 3e-3 (a 2:1 ratio).
+    Returns (muon, adamw). Capstone peaks: 0.02 and 3e-3 (~6.7:1, empirical).
+
+    The two peaks are NOT a derivation of each other. Callers must scale both by
+    the SAME WSD multiplier, never overwrite both with one shared LR.
     """
     muon_params, adamw_params = [], []
     # The tied embedding is exposed as model.tok_emb.weight (output head shares it).
@@ -582,7 +632,7 @@ def build_optimizers(model, muon_lr=6e-3, adamw_lr=3e-3,
         else:
             adamw_params.append(p)                 # 1D norms/biases -> AdamW
     muon = Muon(muon_params, lr=muon_lr, momentum=0.95, nesterov=True,
-                weight_decay=weight_decay, ns_steps=5)
+                weight_decay=weight_decay, ns_steps=5, batched=batched_muon)
     # Weight-decay split for AdamW: decay the 2D embedding lightly, leave 1D norm
     # gains un-decayed (shrinking a RMSNorm gain toward 0 fights the network --
     # and would fight the QK-clip, which uses those same gains as its knob).
@@ -602,6 +652,8 @@ The AdamW **betas are `(0.9, 0.95)`**, the LLM-standard choice ([Chapter 3.9](..
 
 The capstone's effective batch is **524,288 tokens** — `micro_batch_size 32 × seq_len 2048 × grad_accum_steps 8`, the number PLAN §5 rounds to "~0.5M". Everything runs under **bf16 autocast** ([Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html)); bf16's wide exponent means we need **no loss scaler**, unlike fp16.
 
+This is the canonical inner step. Everything earlier in the chapter that says "the training loop does X" means this function.
+
 ```python
 # stacklm/train/loop.py  (the inner optimizer step, abbreviated)
 import torch
@@ -610,14 +662,15 @@ from stacklm.optim import build_optimizers, qk_clip_, wsd_lr
 MICRO_BSZ      = 32       # sequences per micro-step
 GRAD_ACCUM     = 8        # micro-steps per optimizer step  -> 524,288 tokens
 GRAD_CLIP      = 1.0
-QK_CLIP_EVERY  = 200      # measure + clip every 200 optimizer steps
-QK_TAU         = 30.0     # ~4x the a-priori QK-norm bound of sqrt(d_h) = 8
+QK_CLIP_EVERY  = 200      # Tier-2 gating; with Tier-1 harvesting, clip every step
 
-def optimizer_step(model, batches, muon, adamw, step, cfg):
-    lr = wsd_lr(step, peak_lr=cfg.peak_lr, warmup_steps=cfg.warmup_steps,
-                total_steps=cfg.total_steps, decay_steps=cfg.decay_steps)
-    for g in muon.param_groups:  g["lr"] = lr
-    for g in adamw.param_groups: g["lr"] = lr * 0.5
+def optimizer_step(model, batches, muon, adamw, peaks, step, cfg):
+    # ONE curve, TWO peaks: peak_lr=1.0 turns wsd_lr into a pure multiplier.
+    mult = wsd_lr(step, peak_lr=1.0, warmup_steps=cfg.warmup_steps,
+                  total_steps=cfg.total_steps, decay_frac=cfg.decay_frac)
+    for opt in (muon, adamw):
+        for g in opt.param_groups:
+            g["lr"] = peaks[id(opt)] * mult      # 0.02 * mult / 3e-3 * mult
 
     muon.zero_grad(set_to_none=True)
     adamw.zero_grad(set_to_none=True)
@@ -629,6 +682,7 @@ def optimizer_step(model, batches, muon, adamw, step, cfg):
         loss.backward()                              # accumulate grads
 
     # Clip the GLOBAL grad norm across ALL params (both optimizers) to 1.0.
+    # The RETURN VALUE is the real prize: it is the pre-clip norm. Log it.
     gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
 
     muon.step()
@@ -641,16 +695,21 @@ def optimizer_step(model, batches, muon, adamw, step, cfg):
         with torch.no_grad():
             xp, _, sp = next(batches)
             model(xp, seq_ids=sp, record=rec)        # Tier-1 cheap bound by default
-        qk_fired = qk_clip_(model, rec, tau=QK_TAU)
-    return float(loss) * GRAD_ACCUM, float(gnorm), lr, qk_fired
+        qk_fired = qk_clip_(model, rec, tau=cfg.qk_clip_tau)
+    return float(loss) * GRAD_ACCUM, float(gnorm), peaks[id(muon)] * mult, qk_fired
 ```
 
 Four details that bite people:
 
 1. **Average, don't sum.** We divide the loss by `GRAD_ACCUM` *inside* the loop so the gradient magnitude — and thus the effective LR — is independent of how many micro-steps we chose; change the accumulation count and the run behaves identically.
-2. **Clip globally.** The grad-norm clip runs over *all* parameters at once, `max_norm = 1.0`, so a spike in any one layer is tamed relative to the whole update. Clipping each optimizer's group separately would let one group's blow-up hide behind the other's normal-sized gradients.
-3. **`record` is a `dict`, not a tensor.** It maps `layer_idx -> (n_heads,)`. It is created fresh each time it is used and thrown away; there is no `.zero_()` and no persistent buffer to forget to reset.
-4. **QK-clip is periodic and post-step.** It reads weights *after* `.step()`, on a probe batch, every `QK_CLIP_EVERY` steps. Doing it every step on every micro-batch is the mistake that turns a 0.05% safety net into a 30% tax.
+
+2. **Clip globally — but know what the clip actually does to Muon.** The grad-norm clip runs over *all* parameters at once, `max_norm = 1.0`; clipping each optimizer's group separately would let one group's blow-up hide behind the other's normal-sized gradients. Here is the non-obvious part. Global clipping multiplies every gradient by one scalar $c < 1$, and `zeropower_via_newtonschulz5` begins by dividing its input by $\lVert X\rVert_F$ — so the orthogonalized direction is **exactly invariant** to that rescale. Scale all gradients by $c$ and the Muon update is unchanged (up to how $c$ perturbs the momentum EMA on subsequent steps). **Grad clipping is close to a no-op for the 210 Muon-routed matrices.** It bites the AdamW group, where the spike survives: with $\beta_2 = 0.95$, a one-step $10\times$ gradient spike raises $\sqrt{v}$ by only $\sqrt{0.95 + 0.05\cdot 100} \approx 2.4\times$, so the update still grows ~4× and clipping genuinely helps.
+
+    The consequence for what you monitor: for the Muon group, the clip is not the spike defense — the *pre-clip norm it returns* is. That log, the non-finite-gradient skip guard (Ch. 14.7), and the QK-clip trigger count are your three real sensors. This is why item 1 of the divergence checklist above is item 1.
+
+3. **`record` is a `dict`, not a tensor.** It maps `layer_idx -> (n_heads,)`. It is created fresh each time and thrown away; there is no `.zero_()` and no persistent buffer to forget to reset. (Ch. 14.7 uses the preallocated-tensor variant, which *does* need the `zero_()` — `qk_clip_` accepts both.)
+
+4. **QK-clip is post-step.** It reads weights *after* `.step()`. With Tier-1 harvesting it is cheap enough to run every step; with Tier-2 it must be gated by `qk_clip_every`. Doing Tier 2 every step on every micro-batch is the mistake that turns a 0.05% safety net into a 10%+ tax (Exercise 8).
 
 ### Why 524,288 tokens, and the critical batch size
 
@@ -666,19 +725,21 @@ $$
 
 | Knob | Value | Why |
 |---|---|---|
-| Muon peak LR | **6e-3** | swept on the 43M ladder rung, $\times\sqrt{8}$ batch transfer |
-| AdamW peak LR | **3e-3** (= peak/2) | RMS matching puts them in one decade; ÷2 for the row-sparse embedding |
+| Muon peak LR | **0.02** | argmin `1.6e-2` on the 43M ladder rung → back off to `8e-3` → $\times\sqrt{8}$ batch transfer |
+| AdamW peak LR | **3e-3** (≈ peak/6.7) | empirical ratio, not derived; smaller for the row-sparse embedding |
 | AdamW betas | (0.9, 0.95) | $\beta_2$ lowered from 0.999 for noisy LM gradients |
 | Weight decay | 0.1 | decoupled; **0.0** on all 1D gains |
-| Grad clip (global) | 1.0 | one clip over every parameter |
+| Grad clip (global) | 1.0 | one clip over every parameter (near-no-op for Muon; log the pre-clip norm) |
 | Momentum (Muon) | 0.95, Nesterov | orthogonalize the look-ahead direction |
 | Newton–Schulz steps | 5 | enough to condition the direction; not exact |
 | Precision | bf16 autocast | wide exponent ⇒ no loss scaler |
 | Effective batch | 524,288 tokens | 32 × 2048 × 8; near critical batch for 100M |
 | Total steps | 38,147 | $\lceil 20\text{e}9 / 524{,}288 \rceil$ |
-| Warmup / stable / decay | 500 / 31,647 / 6,000 | decay = the mid-training window |
-| QK-clip $\tau$ | **30** (QK-norm on) | ~4× the a-priori bound $\sqrt{d_h}=8$; use 100 only without QK-norm |
-| `qk_clip_every` | 200 | logit drift is slow; measuring is not free |
+| `warmup_steps` | 2,000 | ≈1.05B tokens, 5.2% of the run |
+| `decay_frac` | 0.10 | ≈3,815 steps ≈ 2.0B tokens = the mid-training window |
+| Warmup / stable / decay | 2,000 / 32,332 / 3,815 | Ch. 14.7 stops at 34,332 and hands over a pre-decay checkpoint |
+| `qk_clip_tau` | **100** shipped; **30** to debug | 100 is inert under QK-norm and correct without it; 30 (≈4× the $\sqrt{d_h}=8$ bound) makes the clip a sensor |
+| `qk_clip_every` | 1 (Tier 1) / 200 (Tier 2) | logit drift is slow; exact measurement is not free |
 
 ## Worked Example: Step Budget, Overhead, and a Newton–Schulz Trace
 
@@ -690,9 +751,9 @@ $$
     T = \left\lceil \frac{20\times10^{9}}{524{,}288} \right\rceil = 38{,}147 \text{ optimizer steps.}
     $$
 
-    **Phase split.** $T_w = 500$ (warmup, ~262M tokens, 1.3% of the run), decay $= 6{,}000$ steps (~3.15B tokens), stable $= 38{,}147 - 500 - 6{,}000 = 31{,}647$ steps (~16.6B tokens on the bulk mix). The **6,000-step decay phase is the mid-training window** where we anneal on premium data ([Chapter 14.8](../14-capstone/08-mid-training.html)).
+    **Phase split.** $T_w = 2{,}000$ (warmup, $1.05$B tokens, 5.2% of the run); decay $= 0.10 \times 38{,}147 \approx 3{,}815$ steps ($2.00$B tokens); stable $= 38{,}147 - 2{,}000 - 3{,}815 = 32{,}332$ steps ($16.95$B tokens on the bulk mix). The **3,815-step decay phase is the mid-training window** where we anneal on premium data ([Chapter 14.8](../14-capstone/08-mid-training.html)) — which is why Ch. 14.7 runs only to step 34,332.
 
-    **Muon LR trace.** At step 250 (mid-warmup): $6\text{e-}3 \times 251/500 \approx 3.0\text{e-}3$. Through the stable phase: $6\text{e-}3$ flat. Halfway through decay ($\text{progress}=0.5$): $1-\sqrt{0.5}=0.293$, so $\eta = 6\text{e-}3\times0.293 \approx 1.8\text{e-}3$. At progress $0.9$: $1-\sqrt{0.9}=0.051$, $\eta\approx 3.1\text{e-}4$. The LR falls off fast early in decay — matching the "sharp loss drop" WSD is known for. The AdamW group tracks the same curve at half the magnitude.
+    **LR trace.** At step 1,000 (mid-warmup) the multiplier is $1000/2000 = 0.5$: Muon $1.0\text{e-}2$, AdamW $1.5\text{e-}3$. Through the stable phase, multiplier 1: $2.0\text{e-}2$ and $3.0\text{e-}3$. Halfway through decay ($\text{progress}=0.5$): $1-\sqrt{0.5}=0.293$, so $2.0\text{e-}2\times0.293 \approx 5.9\text{e-}3$ and $8.8\text{e-}4$. At progress $0.9$: $1-\sqrt{0.9}=0.051$, giving $1.0\text{e-}3$ and $1.5\text{e-}4$. The LR falls off fast early in decay — matching the "sharp loss drop" WSD is known for. **Both groups ride the same multiplier; only the peaks differ.**
 
     **Newton–Schulz FLOPs, exactly.** For $X$ of shape $(r, c)$ with $r=\min(m,n)$, one iteration costs $2r^2c$ (for $XX^\top$) $+\;2r^3$ (for $A^2$) $+\;2r^2c$ (for $PX$). Over 5 iterations:
 
@@ -707,12 +768,12 @@ $$
 
     **But the launch count.** $210 \text{ matrices} \times 5 \text{ iters} \times 4 \text{ kernels} \approx 4{,}200$ launches per step. Batched by the three shape classes: $3 \times 5 \times 4 = 60$. That is the difference between "0.33% as predicted" and "several percent, why is Muon slow."
 
-    **QK-clip amortized cost.** A Tier-1 (cheap-bound) probe forward is one extra forward pass every 200 steps: $\approx \frac{1}{3}\times\frac{1}{200} \approx 0.17\%$ of training compute (a forward is ~1/3 of forward+backward). A Tier-2 exact probe adds $O(BHT^2)$ and ~4.3 GB of transient memory per layer, still amortized to well under 1%.
+    **QK-clip amortized cost.** Tier 1 costs $O(BHTd_h)$ — two norms and a max over tensors you already have — so running it inside the normal forward every step is a fraction of a percent. A Tier-2 exact probe every 200 steps adds one forward pass, $\approx \frac{1}{3}\times\frac{1}{200} \approx 0.17\%$ of training compute (a forward is ~1/3 of forward+backward), plus ~4.3 GB of transient memory per layer.
 
 The takeaway: Muon buys faster convergence for essentially free *compute* at this scale — the Newton–Schulz iterations are dwarfed by the transformer's own matmuls — provided you do not squander it on kernel launches.
 
 !!! warning "Common pitfall: writing the per-step FLOPs as ~1e17"
-    A frequent slip is to compute $6ND$ with $D$ = the *whole* 20B-token budget and call the result "per step." $6 \times 101.4\text{e}6 \times 20\text{e}9 \approx 1.22\times10^{19}$ is the **total** training FLOPs for the run — a useful number in its own right. At 40% MFU on an A100's ~312 TFLOP/s bf16 peak it predicts $1.22\text{e}19 / (0.4\times312\text{e}12) \approx 9.8\times10^{4}$ s ≈ **27 GPU-hours**, a little above PLAN's 15–25 hour estimate; closing that gap is exactly what `torch.compile`, a well-fed micro-batch, and the batched Muon path buy you. Per *step*, $D$ is the 524,288 tokens in the batch, giving $\sim3.2\times10^{14}$.
+    A frequent slip is to compute $6ND$ with $D$ = the *whole* 20B-token budget and call the result "per step." $6 \times 101.4\text{e}6 \times 20\text{e}9 \approx 1.22\times10^{19}$ is the **total** training FLOPs for the run — a useful number in its own right. At 40% MFU on an A100's ~312 TFLOP/s bf16 peak it predicts $1.22\text{e}19 / (0.4\times312\text{e}12) \approx 9.8\times10^{4}$ s ≈ **27 GPU-hours**, in the upper half of PLAN's 22–29 hour band; pulling toward the low end is exactly what `torch.compile`, a well-fed micro-batch, and the batched Muon path buy you. Per *step*, $D$ is the 524,288 tokens in the batch, giving $\sim3.2\times10^{14}$.
 
 ## Contrasting the Choices, and What Would Break
 
@@ -722,69 +783,53 @@ It is worth stating plainly why each alternative was rejected, because an interv
 - **Pure Muon (no AdamW).** Breaks on the embedding: orthogonalizing a `32768 × 512` matrix with sparse per-row gradients is both wrong and slow, and 1D norms cannot be orthogonalized at all. The hybrid is not optional.
 - **Shampoo / full-matrix preconditioning.** Strictly more expressive than Muon and strictly more expensive: you must form and invert (or root) the preconditioner, and keep its state. Muon is the "just the orthogonal factor, via matmuls only" corner of that design space, and at 100M the extra expressiveness does not pay for its wall-clock.
 - **Cosine instead of WSD.** Works, but forces you to commit to a step count and gives no clean data-annealing hook. Since the capstone's entire mid-training story ([Chapter 14.8](../14-capstone/08-mid-training.html)) rides on the decay phase, WSD is the natural fit. A useful mental model: **WSD is cosine with the middle stretched into a flat plateau you can extend at will.**
-- **No QK-clip.** Defensible here, and worth saying out loud: with QK-norm on, the logits are bounded a priori by $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$, so the run is already structurally safe. We keep the clip because its trigger log is a *free instability sensor* — a rising `qk_fired` rate is the earliest warning that the LR is too high. Without QK-norm, it is not optional; it is the thing standing between you and a NaN at hour 14.
+- **No QK-clip.** Defensible here, and worth saying out loud: with QK-norm on, the logits are bounded a priori by $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$, so the run is already structurally safe — which is precisely why the shipped $\tau = 100$ never fires. We keep the clip because at $\tau = 30$ its trigger log is a *free instability sensor*. Without QK-norm, it is not optional; it is the thing standing between you and a NaN at hour 14.
 - **Scaling out.** If you move past one GPU, note that Muon's orthogonalization needs the **whole** matrix, which fights naive optimizer-state sharding. Moonshot's Moonlight release shows the fix: a ZeRO-1-style distributed Muon that gathers each matrix, orthogonalizes, and re-shards ([Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html)). At 100M you will never need it — but it is the reason "just wrap it in FSDP" is not a complete answer.
-
-!!! warning "Common pitfall: mismatched Muon/AdamW learning rates"
-    The single most common way to get a bad Muon run is to forget the RMS-matching scale ($0.2\sqrt{\max(m,n)}$) and then reuse an AdamW-tuned learning rate directly. Without the scale, Muon's raw orthogonal update has RMS $\sim 1/\sqrt{\max(m,n)}$ — $0.027$ for a `1408×512` matrix — so a "normal" LR of `3e-3` barely moves the weights and the run looks dead. With the scale, `6e-3` on Muon and `3e-3` on AdamW live in comparable regimes. If Muon training stalls, check this scale *first*, before touching the LR.
 
 !!! interview "Interview Corner"
     **Q:** You're training a 100M model with Muon on the weight matrices and AdamW on embeddings and norms. Why the split, and what stability problem does Muon introduce that you must mitigate?
 
-    **A:** Muon orthogonalizes the momentum update of a 2D matrix — it replaces the update with the $UV^\top$ polar factor via ~5 Newton–Schulz iterations, so every singular direction gets an equal-magnitude push. That's a cheap spectral preconditioner that converges faster than Adam's per-coordinate rescaling on the dense attention and MLP matrices. It only makes sense for 2D "feature-mixing" matrices, though: the token embedding has row-sparse gradients (most rows untouched each batch) and 1D RMSNorm gains have no matrix structure, so both stay on AdamW for per-coordinate adaptive rates. I'd also mention the RMS-matching scale $0.2\sqrt{\max(m,n)}$ — it cancels the shape dependence of the orthogonal update and lands its per-element RMS at 0.2, which is where AdamW's *measured* update RMS actually sits, so the two groups can share one tuned LR up to a small fixed ratio.
+    **A:** Muon orthogonalizes the momentum update of a 2D matrix — it replaces the update with the $UV^\top$ polar factor via ~5 Newton–Schulz iterations, so every singular direction gets an equal-magnitude push. That's a cheap spectral preconditioner that converges faster than Adam's per-coordinate rescaling on the dense attention and MLP matrices. It only makes sense for 2D "feature-mixing" matrices, though: the token embedding has row-sparse gradients (most rows untouched each batch) and 1D RMSNorm gains have no matrix structure, so both stay on AdamW for per-coordinate adaptive rates. I'd mention the RMS-matching scale $0.2\sqrt{\max(m,n)}$ — its job is to make Muon's LR *shape-invariant*, so one number governs every matrix — and be careful not to overclaim it: it does not mean the two groups share a learning rate. In practice Muon runs around 0.02 and the embedding/gain group around 3e-3, an empirical ~6.7:1 ratio, with both riding one WSD multiplier.
 
-    The stability problem is **attention-logit blow-up**: Muon's equal-direction updates let the query/key path grow until $\max q^\top k/\sqrt{d_h}$ saturates the softmax and NaNs the loss in bf16. The fix depends on your architecture, and this is the part people get wrong. Kimi K2's **MuonClip** rescales $W_Q$ and $W_K$ by $\sqrt{\tau/S_{\max}}$ after any step where a head's max logit exceeded $\tau$ — with GQA, the shared key slice is scaled once by its group's worst logit, not once per query head, or you'd shrink it four times over. But that only works if you *don't* have QK-norm. With QK-norm, RMSNorm is scale-invariant, so rescaling $W_Q$ is provably a no-op; the logit is bounded a priori by $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ and the only free scale is the learned gains — so you clip *those*. I'd close by noting that harvesting $S_{\max}$ isn't free either: the exact max forces you off FlashAttention and materializes a $(B,H,T,T)$ tensor, so in practice you either use the Cauchy–Schwarz bound $\max\lVert q\rVert\max\lVert k\rVert/\sqrt{d_h}$, which keeps the fused kernel, or you measure exactly but only every few hundred steps.
+    The stability problem is **attention-logit blow-up**: Muon's equal-direction updates let the query/key path grow until $\max q^\top k/\sqrt{d_h}$ saturates the softmax and NaNs the loss in bf16. The fix depends on your architecture, and this is the part people get wrong. Kimi K2's **MuonClip** rescales $W_Q$ and $W_K$ by $\sqrt{\tau/S_{\max}}$ after any step where a head's max logit exceeded $\tau$ — with GQA, the shared key slice is scaled once by its group's worst logit, not once per query head, or you'd shrink it four times over. But that only works if you *don't* have QK-norm. With QK-norm, RMSNorm is scale-invariant, so rescaling $W_Q$ is provably a no-op; the logit is bounded a priori by $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ and the only free scale is the learned gains — so you clip *those*, and you pick $\tau$ relative to that bound, not by copying Kimi's 100.
+
+    One more thing I'd volunteer: harvesting $S_{\max}$ isn't free — the exact max forces you off FlashAttention and materializes a $(B,H,T,T)$ tensor — so you either use the Cauchy–Schwarz bound $\max\lVert q\rVert\max\lVert k\rVert/\sqrt{d_h}$, which keeps the fused kernel, or measure exactly every few hundred steps. And global grad clipping won't save you here: Newton–Schulz normalizes its input by the Frobenius norm, so the Muon update is invariant to a uniform gradient rescale. The clip protects the AdamW group; for Muon, the pre-clip norm is a *sensor*, not a fix.
 
 !!! key "Key Takeaways"
     - **Muon orthogonalizes the momentum update** of 2D weight matrices via ~5 Newton–Schulz iterations (a matmul-only approximation to the $UV^\top$ polar factor), setting all singular values to ~1 so the update pushes equally in every direction — faster per-token convergence than AdamW on attention/MLP matrices.
     - The standard **hybrid is mandatory**: Muon for the 210 2D hidden matrices, **AdamW for the tied embedding, all RMSNorm/QK-norm gains, and every 1D param**. Route by `p.ndim == 2` (and "not the embedding").
-    - A **RMS-matching scale** of $0.2\sqrt{\max(m,n)}$ cancels the shape dependence and lands the update RMS at 0.2 — where AdamW's *measured* update RMS actually sits. Forget it and Muon appears "dead." Capstone peaks: Muon **6e-3**, AdamW **3e-3**.
-    - **FLOP overhead ≠ wall-clock overhead.** Newton–Schulz is 0.33% of the step's FLOPs but ~4,200 kernel launches; `torch.compile` it or batch the three shape classes into `bmm`s (~60 launches), then *measure* `optimizer.step()`.
+    - A **RMS-matching scale** of $0.2\sqrt{\max(m,n)}$ makes Muon's LR *shape-invariant* (one number for all 210 matrices) and lands the update RMS at 0.2. It does **not** equalize the two groups: capstone peaks are Muon **0.02**, AdamW **3e-3** — an empirical ~6.7:1. Drive both off one `wsd_lr(..., peak_lr=1.0)` multiplier; setting one shared LR on both is the classic bug.
+    - **FLOP overhead ≠ wall-clock overhead.** Newton–Schulz is 0.33% of the step's FLOPs but ~4,200 kernel launches; `torch.compile` it or use `batched_muon=True` to bucket the three shape classes into `bmm`s (~60 launches), then *measure* `optimizer.step()`.
+    - **Global grad-clip is nearly a no-op for the Muon group** — Newton–Schulz normalizes by $\lVert X\rVert_F$, so the update is invariant to a uniform gradient rescale. Clip anyway (it protects the AdamW group), but treat the *pre-clip norm it returns* as your sensor, not the clip as your defense.
     - **Under QK-norm, rescaling $W_Q$/$W_K$ is a no-op** — RMSNorm is scale-invariant. The logit obeys $|s| \le \sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ (= 8 at init for `Stack-100M`), so the **QK-clip scales the learned gains** by $\sqrt{\tau/S_{\max}}$. Kimi K2's per-head, GQA-aware $W_Q/W_K$ clip is the *alternative* you use when QK-norm is off.
-    - **Measuring $S_{\max}$ costs real money**: the exact max forces eager attention and a $(B,H,T,T)$ tensor (~4.3 GB/layer at micro-batch 32). Default to the Cauchy–Schwarz bound (SDPA-safe) and gate the whole thing behind `qk_clip_every = 200`. Set $\tau = 30$, not Kimi's 100, because QK-norm shrinks the natural logit scale.
+    - **Measuring $S_{\max}$ costs real money**: the exact max forces eager attention and a $(B,H,T,T)$ tensor (~4.3 GB/layer at micro-batch 32). Default to the Cauchy–Schwarz bound (SDPA-safe, cheap enough to run every step); gate exact readings behind `qk_clip_every = 200`. $\tau = 100$ ships and is *inert* under QK-norm; use $\tau = 30$ when you want a sensor.
     - **WSD (Warmup–Stable–Decay)** replaces cosine: linear warmup, a long **constant-LR stable phase you can extend at will**, then a $1-\sqrt{}$ **decay to ~0** — and clamp `progress` to 1.0 or you will return a negative LR past the horizon.
-    - The **decay phase is the mid-training annealing phase** ([Chapter 14.8](../14-capstone/08-mid-training.html)): low LR + higher-quality data yields a sharp loss drop for little compute — a hook cosine can't cleanly provide.
-    - Frozen `Stack-100M` numbers: **524,288-token batch** (32 × 2048 × 8), **38,147 steps**, **500 warmup / 31,647 stable / 6,000 decay**, weight decay 0.1 (0.0 on 1D), global grad-clip 1.0, betas (0.9, 0.95), bf16 with no loss scaler.
+    - The **decay phase is the mid-training annealing phase** ([Chapter 14.8](../14-capstone/08-mid-training.html)): low LR + higher-quality data yields a sharp loss drop for little compute — a hook cosine can't cleanly provide. Ch. 14.7 therefore stops *before* decay and hands over a pre-decay checkpoint.
+    - Frozen `Stack-100M` numbers: **524,288-token batch** (32 × 2048 × 8), **38,147 steps**, **2,000 warmup / 32,332 stable / 3,815 decay** (`decay_frac = 0.10`), weight decay 0.1 (0.0 on 1D), global grad-clip 1.0, betas (0.9, 0.95), bf16 with no loss scaler.
 
 !!! sota "State of the Art & Resources (2026)"
-    Muon (with the Moonshot RMS-matching fix) and QK-clip have moved from nanoGPT speedrun tricks to production ingredients at frontier scale, and WSD is now a common default for schedule-agnostic pretraining — the capstone's stack mirrors what Kimi K2, Moonlight, and DeepSeek actually shipped. The live research frontier is making orthogonalized updates *distributed-friendly* (Moonlight's ZeRO-1 Muon; follow-ups such as Microsoft's **Dion**, 2025, which explores communication-efficient orthonormalized updates) and pinning down how Muon's optimal LR transfers across width and batch.
+    Muon (with the Moonshot RMS-matching fix) and QK-clip have moved from nanoGPT speedrun tricks to production ingredients at frontier scale, and WSD is now a common default for schedule-agnostic pretraining — the capstone's stack mirrors what Kimi K2, Moonlight, and DeepSeek actually shipped. The live research frontier is making orthogonalized updates *distributed-friendly* (Moonlight's ZeRO-1 Muon; follow-ups such as Microsoft's **Dion**, 2025, which explores communication-efficient orthonormalized updates) and pinning down how Muon's optimal LR transfers across width and batch — the question Step 4 of this chapter's protocol resolves empirically rather than theoretically.
 
-    **Foundational work**
+    **The open-source layer you actually run**
 
-    - [Gupta, Koren & Singer, *Shampoo: Preconditioned Stochastic Tensor Optimization* (2018)](https://arxiv.org/abs/1802.09568) — the full-matrix preconditioner Muon cheaply approximates via Newton–Schulz.
-    - [McCandlish, Kaplan & Amodei, *An Empirical Model of Large-Batch Training* (2018)](https://arxiv.org/abs/1812.06162) — the gradient-noise-scale / critical-batch-size argument behind the ~0.5M-token effective batch.
-    - [Loshchilov & Hutter, *Decoupled Weight Decay Regularization* (2019)](https://arxiv.org/abs/1711.05101) — the AdamW paper; Muon's decoupled weight decay follows the same recipe.
-
-    **Recent advances (2023–2026)**
-
-    - [Hu et al., *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (2024)](https://arxiv.org/abs/2404.06395) — introduces the Warmup–Stable–Decay schedule and its continuable-pretraining property.
-    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — a frontier-scale run using a WSD-style multi-stage schedule.
-    - [Liu et al. (Moonshot AI), *Muon is Scalable for LLM Training* (2025)](https://arxiv.org/abs/2502.16982) — the Moonlight report: decoupled weight decay for Muon, the update-RMS matching constant, and distributed (ZeRO-1) Muon.
-    - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — introduces MuonClip and the per-head QK-clip that tamed attention-logit blow-up under Muon at trillion-parameter scale.
-
-    **Open-source & tools**
-
-    - [KellerJordan/Muon](https://github.com/KellerJordan/Muon) — the reference PyTorch `Optimizer` implementation this chapter's `muon.py` follows.
-    - [KellerJordan/modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) — the speedrun repo where Muon, QK-norm, and related tricks were stress-tested step by step.
-    - [MoonshotAI/Moonlight](https://github.com/MoonshotAI/Moonlight) — open-source distributed Muon plus checkpoints from the "Muon is Scalable" report.
-    - [karpathy/nanochat](https://github.com/karpathy/nanochat) — a small full-stack LLM repo (2025) that uses the same Muon-for-matrices / AdamW-for-embeddings hybrid, a useful second reference implementation.
-    - `torch.optim.AdamW(fused=True)`, `torch._foreach_*`, `torch.compile`, and `torch.nn.attention.flex_attention` — the PyTorch primitives this chapter leans on for a fast optimizer step and a fused soft-cap.
-
-    **Go deeper**
-
-    - [Keller Jordan, *Muon: An optimizer for hidden layers in neural networks* (blog, 2024)](https://kellerjordan.github.io/posts/muon/) — the original writeup deriving Newton–Schulz orthogonalization and the nanoGPT speedrun results.
+    - [KellerJordan/Muon](https://github.com/KellerJordan/Muon) — the reference PyTorch `Optimizer` implementation this chapter's `muon.py` follows, including the quintic coefficients.
+    - [KellerJordan/modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) — the speedrun repo where Muon, QK-norm, and related tricks were stress-tested step by step; the best place to see the hybrid ablated.
+    - [MoonshotAI/Moonlight](https://github.com/MoonshotAI/Moonlight) — open-source distributed (ZeRO-1) Muon plus checkpoints from the "Muon is Scalable" report.
+    - [karpathy/nanochat](https://github.com/karpathy/nanochat) — a small full-stack LLM repo (2025) using the same Muon-for-matrices / AdamW-for-embeddings hybrid; a useful second reference implementation at almost exactly this scale.
+    - HuggingFace `transformers` `get_wsd_schedule` and PyTorch **torchtitan** — production WSD schedulers, if you would rather configure than write one.
+    - `torch.optim.AdamW(fused=True)`, `torch._foreach_*`, `torch.compile`, and `torch.nn.attention.flex_attention` — the PyTorch primitives this chapter leans on for a fast optimizer step and a fused attention soft-cap.
 
 ## Further Reading
 
-- **Keller Jordan et al.**, *Muon: An optimizer for the hidden layers of neural networks* (2024) — the original Muon and Newton–Schulz orthogonalization; the nanoGPT speedrun context.
-- **Liu et al. (Moonshot AI)**, *Muon is Scalable for LLM Training* (2025) — decoupled weight decay for Muon, the update-RMS matching constant, and ZeRO-1 distributed Muon.
-- **Kimi K2 Technical Report** (Moonshot AI, 2025) — MuonClip and the per-head QK-clip mechanism for attention-logit stability at scale.
+- **Keller Jordan**, [*Muon: An optimizer for hidden layers in neural networks*](https://kellerjordan.github.io/posts/muon/) (blog, 2024) — the original writeup deriving Newton–Schulz orthogonalization, the tuned quintic, and the nanoGPT speedrun context.
+- **Liu et al. (Moonshot AI)**, [*Muon is Scalable for LLM Training*](https://arxiv.org/abs/2502.16982) (2025) — the Moonlight report: decoupled weight decay for Muon, the $0.2\sqrt{\max(m,n)}$ update-RMS matching constant, and ZeRO-1 distributed Muon.
+- **Kimi Team**, [*Kimi K2: Open Agentic Intelligence*](https://arxiv.org/abs/2507.20534) (2025) — MuonClip and the per-head QK-clip that tamed attention-logit blow-up under Muon at trillion-parameter scale.
 - **Henry et al.**, *Query-Key Normalization for Transformers* (2020) — the QK-norm whose scale-invariance is the reason this chapter's clip targets the gains, not the projections.
-- **Hu et al.**, *MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies* (2024) — the Warmup–Stable–Decay schedule and its continuable-pretraining / annealing properties.
-- **DeepSeek-V2 / V3 technical reports** (DeepSeek-AI, 2024) — WSD-style multi-step schedules used at frontier scale.
-- **McCandlish, Kaplan, Amodei et al.**, *An Empirical Model of Large-Batch Training* (2018) — the critical batch size that justifies the ~0.5M-token effective batch.
-- **Kingma & Ba**, *Adam: A Method for Stochastic Optimization* (2015) and **Loshchilov & Hutter**, *Decoupled Weight Decay Regularization (AdamW)* (2019) — the baseline this whole stack extends.
-- **Gupta, Koren & Singer**, *Shampoo: Preconditioned Stochastic Tensor Optimization* (2018) — the full-preconditioner method Muon cheaply approximates.
+- **Hu et al.**, [*MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies*](https://arxiv.org/abs/2404.06395) (2024) — the Warmup–Stable–Decay schedule and its continuable-pretraining / annealing properties.
+- **DeepSeek-AI**, [*DeepSeek-V3 Technical Report*](https://arxiv.org/abs/2412.19437) (2024) — a frontier-scale run on a WSD-style multi-stage schedule.
+- **McCandlish, Kaplan & Amodei**, [*An Empirical Model of Large-Batch Training*](https://arxiv.org/abs/1812.06162) (2018) — the gradient-noise-scale / critical-batch-size argument behind the ~0.5M-token effective batch.
+- **Gupta, Koren & Singer**, [*Shampoo: Preconditioned Stochastic Tensor Optimization*](https://arxiv.org/abs/1802.09568) (2018) — the full-matrix preconditioner Muon cheaply approximates.
+- **Kingma & Ba**, *Adam* (2015) and **Loshchilov & Hutter**, [*Decoupled Weight Decay Regularization*](https://arxiv.org/abs/1711.05101) (2019) — the baseline this whole stack extends, and the decoupling recipe Muon reuses.
 - **Yang & Hu et al.**, *Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer* (muP, 2022) — the principled alternative to this chapter's empirical LR-transfer protocol.
 
 ## Exercises
@@ -798,7 +843,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     What the embedding actually wants is a **per-row adaptive learning rate** so that a rarely-seen token's row is not swamped by the scale of frequent tokens. That is exactly what AdamW's per-coordinate second-moment rescaling gives. Hence the hybrid: 2D *hidden* feature-mixing matrices to Muon, embedding/norms/1D to AdamW.
 
-**2.** The RMS-matching scale is $0.2\sqrt{\max(m,n)}$. Take the SwiGLU gate weight `w_gate` of shape `1408 x 512`. (a) What is the root-mean-square element magnitude of the raw orthogonalized update $O = UV^\top$ *before* scaling? (b) Compute the scale factor. (c) Confirm the post-scale RMS. (d) The constant is 0.2, not 1.0 — what empirical fact about AdamW does that number encode, and why does it matter for the learning rate?
+**2.** The RMS-matching scale is $0.2\sqrt{\max(m,n)}$. Take the SwiGLU gate weight `w_gate` of shape `1408 x 512`. (a) What is the root-mean-square element magnitude of the raw orthogonalized update $O = UV^\top$ *before* scaling? (b) Compute the scale factor. (c) Confirm the post-scale RMS. (d) State precisely what the scale buys you and what it does *not* — in particular, why the capstone still runs Muon at 0.02 and AdamW at 3e-3 rather than one shared number.
 
 ??? note "Solution"
     Let $m = 1408$, $n = 512$, so $\min(m,n) = 512$ and $\max(m,n) = 1408$.
@@ -815,11 +860,11 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     **(c)** Post-scale RMS $= 0.02665 \times 7.505 \approx 0.200$. (Cleanly: $\tfrac{1}{\sqrt{1408}} \cdot 0.2\sqrt{1408} = 0.2$ exactly.)
 
-    **(d)** The idealized AdamW update $m/(\sqrt{v}+\epsilon)$ has per-element magnitude $\approx 1$ *only* when $m$ and $v$ are estimated over the same window on a stationary gradient. Real LLM training violates both assumptions ($\beta_1 = 0.9$ vs $\beta_2 = 0.95$, and a highly non-stationary gradient), and the **measured** update RMS across a transformer's matrices comes out substantially smaller — on the order of 0.2–0.4, which is where Moonshot's constant of 0.2 comes from. So the constant is empirical, not theoretical.
+    **(d)** What it buys: **shape invariance**. Without it, `1408×512`, `512×512`, and `128×512` matrices have raw update RMS $0.0266$, $0.0442$, and $0.0442$ respectively, so a single learning rate would move them by different relative amounts and Muon would need a per-shape LR. With it, every one of the 210 matrices moves at per-element RMS $0.2$, so the whole group is governed by one scalar you can sweep. The constant $0.2$ itself is empirical: it is where AdamW's *measured* update RMS sits on transformer weight matrices (the idealized $m/(\sqrt{v}+\epsilon)\approx 1$ holds only for a stationary gradient with matched EMA windows; with $\beta_1=0.9$ vs $\beta_2=0.95$ and non-stationary LM gradients the observed value is more like $0.2$–$0.4$).
 
-    Why it matters: the scale first **cancels the shape dependence** (without it, `1408×512` and `128×512` matrices would move by different relative amounts under the same LR), and then **puts Muon's step in AdamW's measured band**, so you tune one number and derive the other with a small fixed ratio (here 2:1) instead of searching a 2D grid. Forget the scale entirely and Muon's raw update has RMS $\approx 0.027$ — a normal LR barely moves the weights and training looks dead.
+    What it does **not** buy: a shared learning rate. The AdamW group here is not a set of hidden matrices — it is the tied embedding plus every 1D gain, with completely different gradient statistics (row-sparse for the embedding; a single scalar per feature for the gains). The ~6.7:1 ratio between $0.02$ and $3\text{e-}3$ is an empirical calibration from the reference recipes, not a consequence of the RMS algebra. The practical rule is: RMS matching lets you tune a *line* (one LR + a fixed ratio) instead of a plane. Forget the scale entirely and Muon's raw update has RMS $\approx 0.027$ — a "normal" LR barely moves the weights and training looks dead.
 
-**3.** Suppose you re-budget the run to **30B tokens** at the same **524,288-token** effective batch, keep `warmup_steps = 500`, and want the decay phase to cover the same *fraction* of the run as the flagship (6,000 / 38,147). (a) How many total optimizer steps? (b) Give the warmup / stable / decay step counts. (c) Using the $1-\sqrt{\cdot}$ decay with `peak_lr = 6e-3`, what Muon LR is in effect at **one quarter** of the way through the decay phase, and what is the corresponding AdamW LR?
+**3.** Suppose you re-budget the run to **30B tokens** at the same **524,288-token** effective batch, keeping `warmup_steps = 2_000` and `decay_frac = 0.10`. (a) How many total optimizer steps? (b) Give the warmup / stable / decay step counts. (c) Using the $1-\sqrt{\cdot}$ decay, what Muon LR and what AdamW LR are in effect at **one quarter** of the way through the decay phase? (d) At which step would Ch. 14.7's pretraining script hand over its pre-decay checkpoint?
 
 ??? note "Solution"
     **(a)** Total steps:
@@ -827,17 +872,19 @@ It is worth stating plainly why each alternative was rejected, because an interv
     T = \left\lceil\frac{30\times10^{9}}{524{,}288}\right\rceil = \left\lceil 57{,}220.5 \right\rceil = 57{,}221 \text{ steps.}
     $$
 
-    **(b)** The flagship decay fraction is $6{,}000/38{,}147 = 0.1573$. Applied to 57,221: decay $= 0.1573 \times 57{,}221 \approx 9{,}000$ steps. Warmup stays at 500. Stable $= 57{,}221 - 500 - 9{,}000 = 47{,}721$ steps.
+    **(b)** Decay $= 0.10 \times 57{,}221 \approx 5{,}722$ steps ($\approx 3.0$B tokens). Warmup stays at $2{,}000$ ($\approx 1.05$B tokens, now only 3.5% of the run). Stable $= 57{,}221 - 2{,}000 - 5{,}722 = 49{,}499$ steps ($\approx 25.9$B tokens).
 
-    (Equivalently, call `wsd_lr(..., total_steps=57_220, decay_steps=9_000)` — the `decay_steps` argument exists precisely so you can state this directly instead of re-deriving a fraction.)
+    (You can state this to `wsd_lr` either way: `decay_frac=0.10` with `total_steps=57_221`, or `decay_steps=5_722` directly. `decay_steps` wins if both are given.)
 
-    **(c)** At progress $= 0.25$ through decay:
+    **(c)** At progress $= 0.25$ through decay the multiplier is
     $$
-    \text{decay\_mult} = 1 - \sqrt{0.25} = 1 - 0.5 = 0.5,
+    1 - \sqrt{0.25} = 1 - 0.5 = 0.5,
     $$
-    so (with `final_frac = 0`) $\eta_{\text{Muon}} = 6\text{e-}3 \times 0.5 = 3\text{e-}3$, and $\eta_{\text{AdamW}} = 0.5 \times \eta_{\text{Muon}} = 1.5\text{e-}3$. Note the LR is already halved only a quarter of the way in — the $1-\sqrt{\cdot}$ shape drops fast early, which is what produces WSD's characteristic sharp loss drop right as decay (and premium-data annealing) begins.
+    so (with `final_frac = 0`) $\eta_{\text{Muon}} = 0.02 \times 0.5 = 1.0\text{e-}2$ and $\eta_{\text{AdamW}} = 3\text{e-}3 \times 0.5 = 1.5\text{e-}3$. Note the LR is already halved only a quarter of the way in — the $1-\sqrt{\cdot}$ shape drops fast early, which is what produces WSD's characteristic sharp loss drop right as decay (and premium-data annealing) begins. Note also that the *ratio* between the groups is preserved exactly: they share a multiplier, not a value.
 
-**4.** *(The no-QK-norm configuration.)* You set `qk_norm = False` to reproduce Kimi K2's setup, so `qk_clip_` takes the `_clip_projections_` path. A block has `n_heads = 8` query heads and `n_kv_heads = 2` (GQA group size 4), with $\tau = 100$. The per-head max pre-softmax logits recorded this step are
+    **(d)** At `stop_at_step` $= 57{,}221 - 5{,}722 = 51{,}499$ — the last step of the stable phase, LR still at plateau, so mid-training can start the anneal without an LR re-warm.
+
+**4.** *(The no-QK-norm configuration.)* You set `qk_norm = False` to reproduce Kimi K2's setup, so `qk_clip_` takes the `_clip_projections_` path, and you keep the shipped $\tau = 100$ (which is now load-bearing, since there is no a-priori bound). A block has `n_heads = 8` query heads and `n_kv_heads = 2` (GQA group size 4). The per-head max pre-softmax logits recorded this step are
 
     s_max = [120, 90, 100, 80, 150, 60, 70, 200]   # heads 0..7
 
@@ -860,9 +907,9 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     **(c)** Head 7 set group 1's max. Its logit is scaled by $\eta_{W_Q} \cdot \eta_{W_K} = 0.7071 \times 0.7071 = 0.5$, giving $200 \times 0.5 = 100 = \tau$ exactly. Head 4 shares group 1's $W_K$ ($0.7071$) but keeps its own $W_Q$ scale ($0.8165$): its logit becomes $150 \times 0.8165 \times 0.7071 = 150 \times 0.5774 \approx 86.6 < \tau$. So the group-setting head lands on the cap and the other members are pulled conservatively below it.
 
-    **(d)** Group 1 contains two tripping heads (4 and 7). Scaling $W_K$ once per tripping query head would multiply that KV slice by $0.8165 \times 0.7071 = 0.5774$ instead of $0.7071$ — a 18% over-shrink. In the worst case (all four query heads in a group tripping) the shared slice would be multiplied four times, e.g. $0.7071^4 = 0.25$, gutting a key projection that four heads depend on and taking several hundred steps to recover. That is the whole reason for the two-loop structure.
+    **(d)** Group 1 contains two tripping heads (4 and 7). Scaling $W_K$ once per tripping query head would multiply that KV slice by $0.8165 \times 0.7071 = 0.5774$ instead of $0.7071$ — an 18% over-shrink. In the worst case (all four query heads in a group tripping) the shared slice would be multiplied four times, e.g. $0.7071^4 = 0.25$, gutting a key projection that four heads depend on and taking several hundred steps to recover. That is the whole reason for the two-loop structure.
 
-**5.** The chapter stresses WSD's *continuable* property: you branch multiple decay runs off the same **stable** checkpoint, and the decay length is not tied to any pre-committed total. `wsd_lr()` now accepts `decay_steps` directly — but it still computes `stable_end = total_steps - decay_steps`, so a horizon is baked in. Implement `wsd_lr_branch()` that takes `stable_steps` and `decay_steps` **directly**, with no `total_steps` at all, so you can spawn a decay of any length from a checkpoint saved at the end of the stable phase. Keep the linear warmup, the constant stable phase, and the $1-\sqrt{\cdot}$ decay to `final_frac * peak_lr`.
+**5.** The chapter stresses WSD's *continuable* property: you branch multiple decay runs off the same **stable** checkpoint, and the decay length is not tied to any pre-committed total. `wsd_lr()` accepts `decay_steps` directly — but it still computes `stable_end = total_steps - decay_steps`, so a horizon is baked in. Implement `wsd_lr_branch()` that takes `stable_steps` and `decay_steps` **directly**, with no `total_steps` at all. Keep the linear warmup, the constant stable phase, and the $1-\sqrt{\cdot}$ decay to `final_frac * peak_lr`.
 
 ??? note "Solution"
     The fix is to stop referencing a global horizon and instead pass the three phase lengths independently. This makes the stable checkpoint a genuine fork point: save at `warmup_steps + stable_steps`, then launch any number of decay runs, each with its own `decay_steps`, all reading the same weights — which is exactly the experiment [Chapter 14.8](../14-capstone/08-mid-training.html) runs when comparing annealing mixes.
@@ -878,7 +925,8 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
         Decouples the decay from any pre-committed step count, so multiple decay
         runs of different lengths can branch off one stable-phase checkpoint
-        (MiniCPM's continuable-pretraining property).
+        (MiniCPM's continuable-pretraining property). Call with peak_lr=1.0 to
+        get a multiplier and preserve the Muon/AdamW ratio.
         """
         stable_end = warmup_steps + stable_steps          # first decay step
         if step < warmup_steps:                           # --- warmup ---
@@ -893,16 +941,17 @@ It is worth stating plainly why each alternative was rejected, because an interv
         return floor + (peak_lr - floor) * decay_mult
     ```
 
-    Two things to notice. First, `total_steps` never appears — the schedule is fully determined by the three phase lengths, so extending the stable phase or trying a longer/shorter decay is a config change, not a re-derivation. Second, the `min(progress, 1.0)` clamp: without it, any step past the end of decay gives $\sqrt{\text{progress}} > 1$, `decay_mult` goes negative, and you return a **negative learning rate** — which does not error, it silently performs *gradient ascent*. (This is why the main-text `wsd_lr` carries the same clamp.) To reproduce the flagship recipe, call it with `warmup_steps = 500`, `stable_steps = 31_647`, `decay_steps = 6_000`.
+    Two things to notice. First, `total_steps` never appears — the schedule is fully determined by the three phase lengths, so extending the stable phase or trying a longer/shorter decay is a config change, not a re-derivation. Second, the `min(progress, 1.0)` clamp: without it, any step past the end of decay gives $\sqrt{\text{progress}} > 1$, `decay_mult` goes negative, and you return a **negative learning rate** — which does not error, it silently performs *gradient ascent*. (This is why the main-text `wsd_lr` carries the same clamp.) To reproduce the flagship recipe, call it with `warmup_steps = 2_000`, `stable_steps = 32_332`, `decay_steps = 3_815`.
 
-**6.** You want a sanity check that `zeropower_via_newtonschulz5` really conditions the update. Write a short script that builds an ill-conditioned random `256 x 128` matrix (singular values spanning a couple orders of magnitude, condition number $\sim100$), runs the orthogonalizer, and prints the singular-value spread of the result. Explain what you expect to see and why the chapter says we do *not* need machine-precision orthogonality.
+**6.** You want a sanity check that `zeropower_via_newtonschulz5` really conditions the update. Write a short script that builds an ill-conditioned random `256 x 128` matrix (singular values spanning a couple orders of magnitude, condition number $\sim100$), runs the orthogonalizer, and prints the singular-value spread of the result. Explain what you expect to see and why the chapter says we do *not* need machine-precision orthogonality. Then extend it to check the batched path against the looped one.
 
 ??? note "Solution"
     Build a matrix with a deliberately bad spectrum via an SVD with geometrically spaced singular values, orthogonalize, then read back the singular values of the output with `torch.linalg.svdvals`.
 
     ```python
     import torch
-    from stacklm.optim.muon import zeropower_via_newtonschulz5
+    from stacklm.optim.muon import (zeropower_via_newtonschulz5,
+                                    _orthogonalize_bucketed)
 
     torch.manual_seed(0)
     m, n = 256, 128
@@ -919,6 +968,14 @@ It is worth stating plainly why each alternative was rejected, because an interv
     sv = torch.linalg.svdvals(O)
     print("output sigma: min %.4f  max %.4f  cond %.4f"
           % (sv.min(), sv.max(), sv.max() / sv.min()))
+
+    # Batched path must agree to reduction-order noise, on Stack-100M's shapes.
+    dirs = [torch.randn(*s_) for s_ in [(512, 512), (128, 512),
+                                        (1408, 512), (512, 1408)]]
+    looped = [zeropower_via_newtonschulz5(d) for d in dirs]
+    batched = _orthogonalize_bucketed(dirs, 5)
+    print("max |looped - batched| =",
+          max(float((a - b).abs().max()) for a, b in zip(looped, batched)))
     ```
 
     **Output (fp32 iteration, as in `capstone/stacklm/optim/muon.py`):**
@@ -926,13 +983,16 @@ It is worth stating plainly why each alternative was rejected, because an interv
     ```text
     input  sigma: min 1.000e-01  max 1.000e+01  cond 1.000e+02
     output sigma: min 0.6818     max 1.2023     cond 1.7634
+    max |looped - batched| = 4.02e-07
     ```
 
     The input condition number is $\sim 10^2$; after 5 Newton–Schulz steps every singular value has been pulled toward 1, so the output's spread collapses to roughly $[0.68, 1.20]$ and its condition number drops from $\sim100$ to under 2. That is the whole point of orthogonalization — turn a spectrum dominated by a few large directions into a nearly isotropic one so the update pushes equally along all directions of the matrix. Notice the largest singular values slightly **overshoot** 1 (to $\approx1.2$): the tuned quintic is designed to converge *fast*, not monotonically, so it rings a little around 1 rather than approaching it from below. (In bf16 the last digits move; the shape does not.)
 
     Why not more steps for exact orthogonality? Because we only need a **well-conditioned direction**, not $\sigma = 1$ to machine precision. The optimizer immediately multiplies the result by $0.2\sqrt{\max(m,n)}$ and the learning rate; the residual $\pm20\%$ deviation from perfect orthogonality is utterly washed out by that. Five matmul-only iterations are far cheaper than an exact SVD and give a direction as good as the optimization needs. (Push the input condition number to $10^5$ and 5 steps would *not* fully recover the tiniest singular values — Newton–Schulz converges only linearly near 0 — but real momentum buffers are nowhere near that ill-conditioned.)
 
-**7.** *(The invariance, from scratch.)* Prove that with QK-norm enabled, replacing $W_Q \leftarrow \eta W_Q$ leaves every attention logit unchanged (ignore $\epsilon$), and that replacing $\gamma_q \leftarrow \eta\gamma_q$ multiplies every logit by exactly $\eta$. Then: `Stack-100M` has $d_h = 64$ and shares one gain vector per layer across all 8 query heads. (a) State the a-priori bound on $|s_{ij}|$ at initialization. (b) A layer's worst head reports $S_{\max} = 45$ with $\tau = 30$. What factor does `_clip_qk_norm_gains_` apply to $\gamma_q$ and to $\gamma_k$, and what happens to a head in the same layer that was sitting at $S_{\max} = 12$? (c) Why is that acceptable, and what one-line architecture change would make the clip per-head instead?
+    The last line is the licence to turn on `batched_muon=True`: $4\times10^{-7}$ absolute is `bmm`-vs-`mm` reduction-order noise, four orders of magnitude below the orthogonality slack we already accept.
+
+**7.** *(The invariance, from scratch.)* Prove that with QK-norm enabled, replacing $W_Q \leftarrow \eta W_Q$ leaves every attention logit unchanged (ignore $\epsilon$), and that replacing $\gamma_q \leftarrow \eta\gamma_q$ multiplies every logit by exactly $\eta$. Then: `Stack-100M` has $d_h = 64$ and shares one gain vector per layer across all 8 query heads. (a) State the a-priori bound on $|s_{ij}|$ at initialization. (b) You are debugging, so you set `qk_clip_tau = 30`. A layer's worst head reports $S_{\max} = 45$. What factor does `_clip_qk_norm_gains_` apply to $\gamma_q$ and to $\gamma_k$, and what happens to a head in the same layer that was sitting at $S_{\max} = 12$? (c) Why is that acceptable, and what one-line architecture change would make the clip per-head instead?
 
 ??? note "Solution"
     **Proof.** With $z = W_Q x$, the query is $q = \gamma_q \odot z/\operatorname{rms}(z)$ where $\operatorname{rms}(z) = \sqrt{\frac{1}{d_h}\sum_i z_i^2}$. Replace $W_Q$ by $\eta W_Q$: then $z \mapsto \eta z$ and $\operatorname{rms}(z) \mapsto \eta\operatorname{rms}(z)$, so the ratio $z/\operatorname{rms}(z)$ is unchanged and $q \mapsto q$. RoPE is applied afterwards and is a rotation, hence linear and norm-preserving, so it cannot reintroduce the scale. Therefore $s_{ij} = q_i^\top k_j/\sqrt{d_h}$ is unchanged — **the projection rescale is a no-op**. By contrast $\gamma_q \mapsto \eta\gamma_q$ gives $q \mapsto \eta q$ directly (the gain multiplies *after* normalization), so $s_{ij} \mapsto \eta s_{ij}$ exactly. Scaling both gains by $\sqrt{\tau/S}$ therefore multiplies every logit by exactly $\tau/S$.
@@ -941,7 +1001,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
     $$
     |s_{ij}| \le \frac{\lVert q\rVert\lVert k\rVert}{\sqrt{d_h}} \le \sqrt{d_h}\,\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty .
     $$
-    At initialization $\gamma = \mathbf{1}$, so the bound is $\sqrt{64} = \mathbf{8}$.
+    At initialization $\gamma = \mathbf{1}$, so the bound is $\sqrt{64} = \mathbf{8}$. (This is also why the shipped $\tau = 100$ is inert: it would take $\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty > 12.5$ to reach it.)
 
     **(b)** $\eta = \sqrt{\tau/S_{\max}} = \sqrt{30/45} = \sqrt{2/3} \approx 0.8165$, applied to **both** $\gamma_q$ and $\gamma_k$. The worst head's logit becomes $45 \times 0.8165^2 = 45 \times 2/3 = 30 = \tau$ exactly. The quiet head at 12 shares the same layer-wide gains, so it drops to $12 \times 2/3 = 8$ — well below the cap, through no fault of its own.
 
@@ -957,14 +1017,10 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     (`RMSNorm` still reduces over the last axis; only the shape of `self.weight` changes, from `torch.ones(dim)` to `torch.ones(*shape)`.) This costs $8{\cdot}64 + 2{\cdot}64 = 640$ parameters per layer instead of 128 — 15,360 extra across 30 layers, 0.015% of the model. With per-head gains, the GQA logic from `_clip_projections_` transfers verbatim: scale $\gamma_q$ per query head, and each shared $\gamma_k$ once by its group's worst logit. Note that `k_norm` is applied *before* `repeat_interleave`, so its gain is indexed by KV head — exactly the granularity the GQA argument needs.
 
-**8.** *(Cost accounting.)* Your training loop records the exact per-head max logit (Tier 2) on **every** micro-batch of **every** step, with `micro_batch_size = 32`, `seq_len = 2048`, `n_heads = 8`, `n_layers = 30`, `grad_accum_steps = 8`, in fp32. (a) How much transient memory does the score tensor take *per layer*, and why does this not simply add up across 30 layers? (b) Roughly how many extra FLOPs per optimizer step does the score matmul cost, versus the model's $6ND \approx 3.19\times10^{14}$? (c) Give two ways to cut this by more than 100× and state what each gives up.
+**8.** *(Cost accounting.)* Your training loop records the exact per-head max logit (Tier 2) on **every** micro-batch of **every** step, with `micro_batch_size = 32`, `seq_len = 2048`, `n_heads = 8`, `n_layers = 30`, `grad_accum_steps = 8`, in fp32. (a) You computed the per-layer score-tensor size in §"Harvesting $S_{\max}$": **4.29 GB**. Explain why it does *not* accumulate across the 30 layers, and what the real damage is instead. (b) Roughly how many extra FLOPs per optimizer step does the score matmul cost, versus the model's $6ND \approx 3.19\times10^{14}$? (c) Give two ways to cut this by more than 100× and state what each gives up.
 
 ??? note "Solution"
-    **(a)** The score tensor is $(B, H, T, T) = (32, 8, 2048, 2048)$ in fp32:
-    $$
-    32 \times 8 \times 2048 \times 2048 \times 4\ \text{bytes} = 4.29\ \text{GB}.
-    $$
-    It does *not* accumulate across layers because it is built inside `torch.no_grad()` and dropped as soon as `amax` is taken, so at most one (well, transiently two, counting the `masked_fill` copy) lives at a time. The real damage is different: to build it at all you must take the eager branch, which means you have given up FlashAttention's memory savings *for that pass* and pay a large allocator spike that can fragment the 80GB pool and OOM a run that was otherwise comfortable.
+    **(a)** It does not accumulate because the tensor is built inside `torch.no_grad()` and dropped as soon as `amax` is taken, so at most one (transiently two, counting the `masked_fill` copy) lives at a time — there is no autograd graph holding a reference. The real damage is different and worse: to build it at all you must take the eager branch, which means you have given up FlashAttention's memory savings *for that pass* and you pay a repeated 4.3 GB allocator spike that can fragment the 80GB pool and OOM a run that was otherwise comfortable.
 
     **(b)** The $QK^\top$ product is $2BHT^2d_h$ FLOP per layer:
     $$
@@ -974,7 +1030,16 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     **(c)** Two cuts, composable:
 
-    1. **Gate it in time.** `qk_clip_every = 200` and a single probe micro-batch instead of all 8: the cost falls by $200 \times 8 = 1600\times$, to well under 0.01%. What you give up: your $S_{\max}$ reading is up to 200 steps stale. That is fine — the gains move by $\eta \approx 6\text{e-}3$ times a bounded update per step, so logit drift over 200 steps is small compared to the gap between the init bound (8) and $\tau$ (30).
-    2. **Change the estimator.** Use the Tier-1 Cauchy–Schwarz bound $\max_i\lVert q_i\rVert\max_j\lVert k_j\rVert/\sqrt{d_h}$, which is $O(BHTd_h)$ — about $1/T \approx 5\times10^{-4}$ of the score matmul's cost — and keeps the SDPA/FlashAttention fast path entirely. What you give up: it is an *upper* bound, so the clip may fire on a layer whose true max was below $\tau$. That error is conservative and, since Cauchy–Schwarz is loose only when $q$ and $k$ are far from aligned, usually small.
+    1. **Gate it in time.** `qk_clip_every = 200` and a single probe micro-batch instead of all 8: the cost falls by $200 \times 8 = 1600\times$, to well under 0.01%. What you give up: your $S_{\max}$ reading is up to 200 steps stale. That is fine — the gains move by $\eta \le 0.003$ (they are on the AdamW group) times a bounded update per step, so logit drift over 200 steps is small compared to the gap between the init bound (8) and $\tau$.
+    2. **Change the estimator.** Use the Tier-1 Cauchy–Schwarz bound $\max_i\lVert q_i\rVert\max_j\lVert k_j\rVert/\sqrt{d_h}$, which is $O(BHTd_h)$ — about $1/T \approx 5\times10^{-4}$ of the score matmul's cost — and keeps the SDPA/FlashAttention fast path entirely. What you give up: it is an *upper* bound, so the clip may fire on a layer whose true max was below $\tau$. That error is conservative and, since Cauchy–Schwarz is loose only when $q$ and $k$ are far from aligned, usually small. This is cheap enough that Ch. 14.7 runs it every step.
 
     In combination the diagnostic costs less than a rounding error, which is the only way a safety net earns its place in a 27-GPU-hour run.
+
+**9.** *(The clip that isn't.)* A colleague reports that their Muon run spikes badly at step 4,000, and proposes tightening the global gradient clip from `max_norm = 1.0` to `0.25`. (a) Using the first line of `zeropower_via_newtonschulz5`, argue precisely what effect that change has on the update applied to the 210 Muon-routed matrices. (b) What effect does it have on the AdamW group? Quantify roughly, using $\beta_2 = 0.95$ and a one-step $10\times$ gradient spike. (c) What *should* they change instead?
+
+??? note "Solution"
+    **(a)** Essentially none. `zeropower_via_newtonschulz5` starts with `X = G / (G.norm() + 1e-7)`, so the iteration sees a Frobenius-normalized matrix and the returned orthogonal factor satisfies $O(cG) = O(G)$ for any $c > 0$. Global clipping multiplies *every* gradient by one scalar $c = \texttt{max\_norm}/\lVert g\rVert$, so the Nesterov direction $g + \mu B$ is scaled by $c$ (once the momentum buffer has equilibrated) and the orthogonalized update is unchanged. The only residual effect is second-order: on a step where clipping fires, that step contributes less to the momentum EMA relative to its unclipped neighbours, subtly changing the buffer's mix over the next $\sim 1/(1-\mu) = 20$ steps. Tightening $1.0 \to 0.25$ therefore does almost nothing to the hidden matrices — which is where the spike almost certainly lives.
+
+    **(b)** Adam is also scale-invariant in the *steady state* (a persistent rescale of $g$ cancels between $m$ and $\sqrt{v}$), but a **transient** spike is not removed, because $v$ lags. With $\beta_2 = 0.95$ and a normal $g^2 \approx 1$, a single step with $g^2 = 100$ gives $v \approx 0.95(1) + 0.05(100) = 5.95$, so $\sqrt{v} \approx 2.44$ while $|g| = 10$: the update grows by about $10/2.44 \approx 4\times$ instead of $10\times$. Clipping caps exactly that residual $4\times$. So the clip genuinely protects the tied embedding and the 1D gains, and tightening it is not useless — it is just aimed at the wrong 16% of the parameters.
+
+    **(c)** Three things, in order. (i) **Log the pre-clip norm** — `clip_grad_norm_` returns it — and find the step where it jumps, which will predate the loss spike. (ii) **Add the non-finite skip guard** (Ch. 14.7): if `torch.isfinite(grad_norm)` is false, discard the step entirely rather than writing NaN into the parameters *and* into all 210 Muon momentum buffers, which is unrecoverable. (iii) **Set `qk_clip_tau = 30`** and watch the trigger count: if the spike is attention-logit growth, that log will have been rising for hundreds of steps. If it has, the fix is a lower Muon peak or a longer warmup, not a tighter clip.

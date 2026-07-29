@@ -23,7 +23,7 @@ stacklm-100m/
 └── agent-int4/     # round-to-nearest int4 weights, ~55-65 MB on disk, runs on a CPU laptop
 ```
 
-None of these is a frontier model, and the capstone never pretended otherwise. A 100M model is a *narrow instrument*: within a scaffolded, retrieval-grounded domain it can produce coherent, useful, grounded text; outside that scaffold it hallucinates freely. What is remarkable is not the model's raw quality but that **every layer of the stack that produces a GPT-4-class system is present here in miniature and actually ran** — the tokenizer, the scaling-law fit, the optimizer, the distributed-ready loop, the alignment stack, the agent harness, the quantized deployment. You now have a mental model of the whole machine that is *load-bearing*, not decorative, because you built each part.
+None of these is a frontier model, and the capstone never pretended otherwise. A 100M model is a *narrow instrument*: within a scaffolded, retrieval-grounded domain it can produce coherent, useful, grounded text; outside that scaffold it hallucinates freely. What is remarkable is not the model's raw quality but that **every layer of the stack that produces a GPT-4-class system is present here in miniature and actually ran** — the tokenizer, the scaling-law fit, the optimizer, the distributed-ready loop, the alignment stack, the agent harness, the quantized deployment.
 
 The single most important lesson the capstone teaches — the one that makes a 100M model in 2026 vastly better than GPT-2 (117M) in 2019 at the same size — is **deliberate over-training**. Chinchilla-optimal for our ~84.5M non-embedding parameters is ~1.7B tokens; we trained on ~20B, roughly 200 tokens/param and ~12× past compute-optimal. That is economically irrational for a model you train and throw away, and completely rational for a model you will *serve*, because you pay training compute once and save inference cost forever. Keep that asymmetry in mind — it reappears in the cost table (over-training is most of the bill) and in the scale-up section (it only gets more extreme at 1B).
 
@@ -107,10 +107,10 @@ $$
 
 For Stack-100M ($L=30$, $s=2048$, $d=512$, $N=1.014\times10^8$) that ratio is $30 \times 2048 \times 512 / 1.014\times10^{8} = \mathbf{0.31}$. **Attention adds 31% on top of the 6ND count.** Two things follow immediately:
 
-- **Deep-and-thin models pay this tax hardest.** For a standard block the ratio simplifies to roughly $s/(12\,d_{\text{model}})$ — it grows with sequence length and *shrinks* with width. Our narrow $d=512$ is why it is 31% here, while a 1B model at $d=2048$ and the same sequence length pays only ~8%. The deep-thin recipe that buys quality per parameter (MobileLLM, Liu et al., 2024) costs efficiency per FLOP. That is a real trade, not a free win.
+- **Deep-and-thin models pay this tax hardest.** For a standard block the ratio simplifies to roughly $s/(12\,d_{\text{model}})$ — it grows with sequence length and *shrinks* with width. Our narrow $d=512$ is why it is 31% here, while a 1B model at $d=2048$ and the same sequence length pays only ~10%. The deep-thin recipe that buys quality per parameter (MobileLLM, Liu et al., 2024) costs efficiency per FLOP. That is a real trade, not a free win.
 - **Long context multiplies it.** At the mid-training length $s=8192$ the ratio quadruples to ~1.24, i.e. attention now costs *more* than all the matmuls combined. This is the quantitative version of Chapter 14.8's warning that pretraining at 8192 from step zero would have been ruinous.
 
-Note that **GQA does not help here**: 2 KV heads shrink the KV *cache* 4×, but Q, K and V are still broadcast to 8 query heads, so the attention FLOPs are unchanged. GQA is a memory optimization, not a compute one.
+Note that **GQA does not help here**: 2 KV heads shrink the KV *cache* 4×, but K and V are still broadcast to 8 query heads, so the attention FLOPs are unchanged. GQA is a memory optimization, not a compute one.
 
 ### MFU, HFU, and which one your loop logs
 
@@ -122,11 +122,13 @@ An NVIDIA A100 (80GB) has a bf16 tensor-core peak of ~312 TFLOP/s dense. You nev
 | **MFU (model FLOPs)** | $(6N + 6Lsd)\times$ tokens/s | Counts attention. The PaLM-style definition. |
 | **HFU (hardware FLOPs)** | model FLOPs **+ recomputation** | With full activation checkpointing you re-run the forward pass: $\text{HFU} \approx \tfrac{8}{6}\,\text{MFU}$. |
 
-The flagship config runs *without* activation checkpointing (Chapter 14.7's table), so for us HFU = model-FLOPs MFU, and the only correction that matters is the 1.31× attention factor. Concretely: a loop logging **MFU(6ND) = 0.45** is really pushing $0.45 \times 1.31 \approx 0.59$ of A100 peak. That is at the *top* of what this shape sustains — large-$M$ GEMMs with a shallow $K=512$ reduction, 30 layers of kernel launches, and elementwise RMSNorm/RoPE/SiLU traffic between them — and it requires `torch.compile`, a FlashAttention-backed SDPA, and a micro-batch large enough to keep the GEMMs in the compute-bound regime.
+The flagship config runs *without* activation checkpointing (Chapter 14.7's table), so for us HFU = model-FLOPs MFU, and the only correction that matters is the 1.31× attention factor. Concretely: a loop logging **MFU(6ND) = 0.45** is really pushing $0.45 \times 1.31 \approx 0.59$ of A100 peak. That is at the *top* of what this shape sustains, and it requires `torch.compile`, a FlashAttention-backed SDPA, and a micro-batch large enough to keep the GEMMs saturated.
 
-!!! note "Are these GEMMs even compute-bound? A one-line roofline check"
+!!! note "Are these GEMMs compute-bound? A roofline check, and what actually hurts at small batch"
 
-    Take the SwiGLU up-projection at the flagship micro-batch: $M = 32 \times 2048 = 65{,}536$ tokens, $K = 512$, $N = 1408$. FLOPs $= 2MNK \approx 9.4\times10^{10}$; bf16 bytes moved $= 2(MK + KN + MN) \approx 2.5\times10^{8}$. Arithmetic intensity $\approx 377$ FLOP/byte, versus the A100's ridge point of $312\times10^{12} / 2.0\times10^{12} \approx 156$ FLOP/byte. Comfortably compute-bound — the large token dimension rescues us. Now halve the micro-batch to 4 sequences ($M = 8192$): intensity falls to ~186 FLOP/byte, still above the ridge but with far less headroom, and the shallow $K=512$ reduction leaves the tensor cores under-fed. **This is why "raise the micro-batch and use gradient accumulation" is the single highest-leverage throughput knob in the capstone**, and why the 24GB and 16GB tiers in Chapter 14.7 report materially lower MFU. See [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html).
+    Take the SwiGLU up-projection at the flagship micro-batch: $M = 32 \times 2048 = 65{,}536$ tokens, $K = 512$, $N = 1408$. FLOPs $= 2MNK \approx 9.4\times10^{10}$; bf16 bytes moved $= 2(MK + KN + MN) \approx 2.5\times10^{8}$. Arithmetic intensity $\approx 373$ FLOP/byte, versus the A100's ridge point of $312\times10^{12} / 2.04\times10^{12} \approx 153$ FLOP/byte. Comfortably compute-bound.
+
+    Now the instructive part. Cut the micro-batch 4× to 8 sequences (Chapter 14.7's actual 24 GB-tier setting, $M = 8192$) and the intensity barely moves — it falls only to **~359 FLOP/byte**. Arithmetic intensity for a GEMM is $1/(1/M + 1/K + 1/N)$, so with $K = 512$ and $N = 1408$ it is pinned near 360 for *any* large $M$; you would have to drop to $M \approx 370$ tokens before it reached the ridge. **Small micro-batches do not hurt you through the roofline.** They hurt you through three other mechanisms, all covered in [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html): (a) **tile and wave quantization** — fewer output tiles means fewer thread blocks, so an A100's 108 SMs run a partial final wave and sit idle, and the shallow $K = 512$ reduction gives each tile little work to hide latency behind; (b) **kernel-launch and pipeline overhead** — 30 layers × roughly ten kernels each is a fixed per-step cost that a smaller batch amortizes over fewer tokens; and (c) a **rising memory-bound share** — RMSNorm, RoPE, SiLU and residual adds are bandwidth-limited regardless of batch, so as GEMM time shrinks their fraction of the step grows. That is the real reason "raise the micro-batch and use gradient accumulation" is the highest-leverage throughput knob in the capstone, and why the 24GB and 16GB tiers in Chapter 14.7 report materially lower MFU.
 
 Putting the pieces together for the 18B-token stable phase. Hardware FLOPs $= 6ND \times 1.31 = (6 \times 1.014\times10^{8} \times 1.8\times10^{10}) \times 1.31 \approx 1.43\times10^{19}$. At a sustained $u = 0.59$ of A100 peak:
 
@@ -134,7 +136,7 @@ $$
 t_{\text{pretrain}} = \frac{1.43\times 10^{19}}{0.59 \times 3.12\times 10^{14}} \approx 7.8\times10^{4}\ \text{s} \approx 21.6\ \text{GPU-hours},
 $$
 
-which corresponds to ~231,500 tokens/s and **MFU(6ND) ≈ 45%** — matching the worked example in Chapter 14.7 almost exactly. Run the same arithmetic at $u = 0.45$ (an un-compiled loop, an unfused attention path, or a smaller micro-batch) and you get **28.4 GPU-hours at MFU(6ND) ≈ 34%**. So the honest planning band is **21–29 GPU-hours for the stable phase**, and the bill below uses the well-tuned end while the re-run tax and the price axis absorb the rest.
+which corresponds to ~231,500 tokens/s and **MFU(6ND) ≈ 45%** — matching the worked example in Chapter 14.7 almost exactly. Run the same arithmetic at $u = 0.45$ (an un-compiled loop, an unfused attention path, or a smaller micro-batch) and you get **28.4 GPU-hours at MFU(6ND) ≈ 34%**. So the honest planning band is **22–29 GPU-hours for the stable phase**, and the bill below uses the well-tuned end while the re-run tax and the price axis absorb the rest.
 
 The following helper turns any measured throughput into a cost — feed it the tokens/sec your loop actually logs, not the theoretical peak.
 
@@ -230,7 +232,7 @@ Three consequences for this project, and one for the next one:
 
 - **The newest chip is often the cheapest, not just the fastest.** Repricing the 18B-token stable phase onto an H100 at a (deliberately conservative) $u = 0.45$ — small models get *less* efficient on bigger chips because they are more launch-bound and less able to fill the tensor cores — gives $1.43\times10^{19}/(0.45 \times 9.89\times10^{14}) \approx 9.0$ GPU-hours. At USD 2.50/hr that is USD 22.4 against the A100's USD 38.9 at USD 1.80/hr, *and* it finishes in 9 hours instead of 22. Exercise 7 works out the break-even rental price.
 - **FP8 is a ≥1B lever, not a 100M one.** Hopper and Blackwell roughly double peak throughput in FP8, and per-tensor/per-block scaling recipes (see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html), and `torchao`'s `float8` integration used by torchtitan) make it usable for pretraining. But the realized end-to-end gain is well under the 2× peak ratio, and at 100M you are not GEMM-limited enough to collect most of it, while you *are* taking on real numerical risk. Turn it on at 1B+, where the GEMMs are fat enough to pay you back.
-- **Consumer cards are a legitimate tier, not a consolation prize.** A 4090 at 24 GB cannot hold the flagship's 34 GB of activations (see §14.12.5), so you cut the micro-batch ~4× and lean on gradient accumulation; wall-clock roughly triples but the marginal dollar cost of a card you already own is electricity. The plan's USD 40 low end assumes exactly this.
+- **Consumer cards are a legitimate tier, not a consolation prize.** The flagship's ~22 GB peak (§14.12.5) leaves a 24 GB 4090 no room for fragmentation or the `torch.compile` workspace, so Chapter 14.7's consumer tier drops the micro-batch 4× to 8 sequences and raises gradient accumulation to 32, holding the ~524k-token global batch fixed. Wall-clock roughly triples; the marginal dollar cost of a card you already own is electricity. The owned-hardware scenario in §14.12's cost sweep — the GPU column collapsing to electricity — assumes exactly this.
 - **Memory tier, not model size, decides when you shard.** Hold that thought — it is why the "7B does not fit one GPU" folklore is now hardware-generation-dependent (§14.12.5).
 
 ### The itemized bill
@@ -240,35 +242,35 @@ Every stage of the capstone, priced at an illustrative **USD 1.80/GPU-hour** A10
 | Stage (chapter) | GPU-hr | GPU USD | Non-GPU USD | Stage USD |
 |---|---:|---:|---:|---:|
 | Tokenizer BPE training (14.3) — mostly CPU | 0.3 | 0.54 | — | 0.54 |
-| Scaling-law ladder {4M,9M,19M,44M} sweep (14.5) | 2.5 | 4.50 | — | 4.50 |
+| Scaling-law ladder + data-mixture screen (14.5) | 4.9 | 8.82 | — | 8.82 |
 | **Pretrain, 18B tokens, WSD stable phase (14.7)** | 21.6 | 38.88 | — | 38.88 |
-| Mid-training: anneal + 8192 ctx + capability, ~2B tok (14.8) | 3.5 | 6.30 | — | 6.30 |
+| Mid-training: anneal + 8192 ctx + capability, ~2B tok (14.8) | 3.6 | 6.48 | — | 6.48 |
 | SFT on chat template (14.9) | 1.0 | 1.80 | — | 1.80 |
 | DPO preference optimization (14.9) | 1.2 | 2.16 | — | 2.16 |
 | GRPO / narrow RLVR on arithmetic (14.9) | 3.0 | 5.40 | — | 5.40 |
 | Agent distillation: teacher traces + SFT (14.10) | 1.0 | 1.80 | 8.00 | 9.80 |
 | Eval + int8/int4 quantization + export (14.11) | 1.2 | 2.16 | — | 2.16 |
 | Object storage + egress (~200 GB, one month) | — | — | 5.00 | 5.00 |
-| **Subtotal** | **35.3** | **63.54** | **13.00** | **76.54** |
-| Re-run reality tax (~25% of GPU USD: OOMs, bad launches, 2 restarts) | — | 15.89 | — | 15.89 |
-| **Grand total** | — | — | — | **≈ USD 92** |
+| **Subtotal** | **37.8** | **68.04** | **13.00** | **81.04** |
+| Re-run reality tax (~25% of GPU USD: OOMs, bad launches, 2 restarts) | — | 17.01 | — | 17.01 |
+| **Grand total** | — | — | — | **≈ USD 98** |
 
 Two of those lines deserve to be *derived* rather than accepted, because they are the ones a reader would otherwise have to take on faith:
 
-**The mid-training line.** Chapter 14.8 slices ~2B tokens into ~1.2B of anneal at `seq_len=2048`, ~0.6B of long-context extension at 8192, and ~0.2B of capability injection at 8192. Applying the attention correction per sub-phase: the 2048 portion costs $6ND \times 1.31 = 9.6\times10^{17}$ hardware FLOPs, and the 8192 portion costs $6ND \times 2.24 = 1.09\times10^{18}$ — the shorter sub-phase is the more expensive one, entirely because of the quadratic attention term. Sum ≈ $2.0\times10^{18}$ FLOPs, and at the reduced $u \approx 0.50$ you sustain once the micro-batch drops 4× to fit 8192-token sequences, that is ~3.4 GPU-hours. The table's 3.5 falls out; it was never a guess.
+**The mid-training line.** Chapter 14.8 slices ~2B tokens into ~1.2B of anneal at `seq_len=2048`, ~0.6B of long-context extension at 8192, and ~0.2B of capability injection at 8192. Applying the attention correction per sub-phase: the 2048 portion costs $6ND \times 1.31 = 9.6\times10^{17}$ hardware FLOPs, and the 8192 portion costs $6ND \times 2.24 = 1.09\times10^{18}$ — the shorter sub-phase is the more expensive one, entirely because of the quadratic attention term. Sum ≈ $2.05\times10^{18}$ FLOPs, and at the reduced $u \approx 0.50$ you sustain once the micro-batch drops 4× to fit 8192-token sequences, that is **3.6 GPU-hours**. The table's number was never a guess.
 
-**The ladder line.** Chapter 14.5 budgets the four-rung ladder at roughly 10% of the flagship's compute — ~2.5 GPU-hours, ~USD 4.50. That is the cheapest insurance in the project: it is what told you 20B tokens was the right budget before you spent 22 GPU-hours finding out.
+**The ladder line.** Chapter 14.5 prices the four-rung ladder at **4.11 GPU-hours** and the six-candidate data-mixture screen at a further **0.80** — 4.9 GPU-hours together, or **~14–16% of the flagship's compute**. That is the cheapest insurance in the project: it is what told you 20B tokens was the right budget, and 70/15/10/5 the right mix, before you spent the other ~86%.
 
-Four things this table teaches that a bare "USD 92" hides:
+Four things this table teaches that a bare "USD 98" hides:
 
-1. **Pretraining is ~50% of the bill and over-training is ~90% of *that*.** A Chinchilla-optimal run (1.7B tokens) would have cost ~2.0 GPU-hours, ~USD 3.7. We deliberately spent the other ~USD 41 to buy a permanently cheaper-to-serve model. That is the deployment-economics trade made *visible*.
+1. **Pretraining is ~48% of the pre-tax bill and over-training is ~92% of *that*.** A Chinchilla-optimal run (1.7B tokens) would have cost ~2.0 GPU-hours, ~USD 3.7. We deliberately spent the other ~USD 42 to buy a permanently cheaper-to-serve model. That is the deployment-economics trade made *visible*.
 2. **Alignment + agent is cheap; the teacher API is the surprise.** All of SFT+DPO+GRPO+distill is ~USD 19, and USD 8 of that is *not* your GPU at all — it is API calls to a large teacher to generate ReAct trajectories you then filter and distill. At 1B and beyond, teacher/data-generation cost often *exceeds* your own training cost (§14.12.5 puts a number on it).
-3. **The reality tax is real, and 25% is the optimistic version.** No first run of a 30-layer model at high LR survives cleanly. You will hit an OOM from a mis-set gradient-accumulation count, a loss spike from an un-clipped attention logit, a corrupted shard. A practitioner who has done this before pays ~25%; a first-timer pays closer to 50%, which pushes the same bill to ~USD 108. **That gap — not the FLOPs — is why the sticker says "~USD 100."**
+3. **The reality tax is real, and 25% is the optimistic version.** No first run of a 30-layer model at high LR survives cleanly. You will hit an OOM from a mis-set gradient-accumulation count, a loss spike from an un-clipped attention logit, a corrupted shard. A practitioner who has done this before pays ~25%; a first-timer pays closer to 50%, which pushes the same bill to ~USD 115. **That gap — not the FLOPs — is why the sticker says "~USD 100."**
 4. **The bill is a function of three inputs, only one of which is the model.** Tokens, MFU, and USD/GPU-hr. Two of the three are yours to control; the third is a market.
 
 !!! note "Why the bill is a band, not a point"
 
-    The plan quotes **USD 40–100**, and both ends are honest. Re-run the same table with 2026-typical A100 spot at USD 1.20/hr and it lands at ~USD 66; run it on an H100 (2.4× the throughput at USD 2.50/hr) and it lands at ~USD 59 *and finishes in a third of the wall-clock*; run it on an owned 4090 and the GPU column collapses to electricity, leaving the ~USD 13 of API and storage. The high end is the fully-loaded invoice: A100 at USD 1.80/hr, a 34-hour un-tuned pretrain, a first-timer's re-run tax. Same recipe, same tokens — the ~2.5× spread is *entirely* GPU market price, kernel quality, and how many times you fat-finger a launch. Quote the number with its assumptions attached: **a dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.**
+    The plan quotes **≈USD 90–100** for the whole project at its planning assumptions — a rented A100 at ≈USD 1.80/hr with a practitioner's re-run tax — and that figure is a market price, not a law. Re-run the same table with 2026-typical A100 spot at USD 1.20/hr and it lands at ~USD 70; run it on an H100 (2.4× the throughput at USD 2.50/hr) and it lands at ~USD 62 *and finishes in under half the wall-clock*; run it on an owned 4090 and the GPU column collapses to electricity, leaving the ~USD 13 of API and storage. The USD 98 above is the planning corner — A100 at USD 1.80/hr, a practitioner's re-run tax — and a first-timer on that same tier overshoots it at ~USD 115. Same recipe, same tokens: the ~2× spread is *entirely* GPU market price, kernel quality, and how many times you fat-finger a launch. Quote the number with its assumptions attached: **a dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.**
 
 {{fig:capstone-cost-anatomy}}
 
@@ -280,7 +282,7 @@ Four things this table teaches that a bare "USD 92" hides:
     C_{\text{serve}} \approx 2 \times (1.014\times10^8) \times (10^{9}\times 256) \approx 5.2\times10^{19}\ \text{FLOPs.}
     $$
 
-    That is ~4.3× the *entire* 20B-token pretraining budget ($1.22\times10^{19}$). Now imagine over-training let you hit your target quality at 100M instead of needing a 200M model (roughly 2× the serving FLOPs). The extra ~USD 41 you spent over-training saves you ~$5.2\times10^{19}$ FLOPs — on the order of four full pretrain budgets — *per billion requests*. The over-training pays for itself many times over the moment you deploy at scale. This is exactly the "inference-aware over-training" of Sardana et al. (*Beyond Chinchilla-Optimal*, 2024), and it only sharpens as you scale. Exercise 5 derives the break-even request count, which — pleasingly — is independent of model size.
+    That is ~4.3× the *entire* 20B-token pretraining budget ($1.22\times10^{19}$). Now imagine over-training let you hit your target quality at 100M instead of needing a 200M model (roughly 2× the serving FLOPs). The extra ~USD 42 you spent over-training saves you ~$5.2\times10^{19}$ FLOPs — on the order of four full pretrain budgets — *per billion requests*. The over-training pays for itself many times over the moment you deploy at scale. This is exactly the "inference-aware over-training" of Sardana et al. (*Beyond Chinchilla-Optimal*, 2024), and it only sharpens as you scale. Exercise 5 derives the break-even request count, which — pleasingly — is independent of model size.
 
 {{fig:capstone-pay-once-save-forever}}
 
@@ -328,7 +330,7 @@ def rng_state_dict() -> dict:
     NOTE the numpy conversion: `np.random.get_state()` returns a tuple containing
     a raw ndarray, which `torch.load(weights_only=True)` will refuse. We store it
     as a torch tensor so the whole checkpoint stays loadable under the SAFE
-    unpickler (see `load_trainer_state` below). This is not fussiness -- it is
+    unpickler (see `load_checkpoint` below). This is not fussiness -- it is
     the difference between a checkpoint you can hand to a stranger and one you
     cannot.
     """
@@ -419,7 +421,7 @@ def data_manifest(shard_paths: list[str]) -> dict:
     """Content-addressed manifest of the tokenized corpus.
 
     For each .bin memmap shard we record its SHA-256, byte size, and token count
-    (uint16 tokens => 2 bytes each, valid because vocab_size=32768 < 65536). The
+    (uint16 tokens => 2 bytes each, valid because vocab_size=32768 <= 65536). The
     top-level `corpus_hash` fingerprints the WHOLE dataset: change any shard, or
     the order, and it changes.
     """
@@ -507,6 +509,37 @@ def build_provenance(config, shard_paths: list[str]) -> dict:
     }
 
 
+def weights_for_safetensors(model) -> dict:
+    """Model weights, de-aliased, ready for `safetensors.save_file`.
+
+    safetensors REFUSES to serialize two keys that alias the same storage --
+    `RuntimeError: Some tensors share memory ...`. Stack-100M ties
+    `lm_head.weight` to `tok_emb.weight` (16.8M params, 16.6% of the model), so
+    a naive `model.state_dict()` trips exactly that guard.
+
+    Two traps worth naming, because they hide the bug until the worst moment:
+      * `.contiguous()` does NOT break aliasing. It returns `self` when the
+        tensor is already contiguous, so both keys keep the same `data_ptr`.
+      * `.cpu()` DOES break it -- but only on a CUDA tensor, where it allocates
+        a fresh host copy per key. So the naive version silently writes 33 MB of
+        duplicate embedding on the GPU run and raises on the CPU toy/CI run.
+
+    The correct fix is the one HF `save_pretrained` uses via `_tied_weights_keys`:
+    drop the duplicate key and re-create the tie on load. Ch. 14.11 §7.4 leans on
+    the same refusal as a free correctness check on the quantized export.
+    """
+    sd = model.state_dict()
+    if getattr(model.cfg, "tie_embeddings", False):
+        sd = {k: v for k, v in sd.items() if k != "lm_head.weight"}
+    out = {k: v.detach().cpu().contiguous() for k, v in sd.items()}
+    by_ptr: dict[int, list[str]] = {}
+    for k, v in out.items():
+        by_ptr.setdefault(v.data_ptr(), []).append(k)
+    dupes = [ks for ks in by_ptr.values() if len(ks) > 1]
+    assert not dupes, f"unexpected aliased tensors would break safetensors: {dupes}"
+    return out
+
+
 def save_checkpoint(path, model, optimizer, step, provenance, dataloader=None):
     """Write a self-describing checkpoint DIRECTORY:
 
@@ -524,11 +557,10 @@ def save_checkpoint(path, model, optimizer, step, provenance, dataloader=None):
         shutil.rmtree(tmp)
     tmp.mkdir(parents=True)
 
-    # 1. Weights. `.contiguous()` because safetensors refuses shared/strided storage,
-    #    which tied embeddings would otherwise trip over.
-    save_file({k: v.detach().cpu().contiguous() for k, v in model.state_dict().items()},
-              tmp / "model.safetensors",
-              metadata={"step": str(step), "config_hash": provenance["config_hash"]})
+    # 1. Weights, with the tied duplicate dropped (re-tied by load_checkpoint).
+    save_file(weights_for_safetensors(model), tmp / "model.safetensors",
+              metadata={"step": str(step), "config_hash": provenance["config_hash"],
+                        "tied_keys": "lm_head.weight"})
 
     # 2. Trainer state. BOTH the Muon and the AdamW param-group states live here.
     trainer = {"step": step, "optimizer": optimizer.state_dict(), "rng": rng_state_dict()}
@@ -555,7 +587,14 @@ def load_checkpoint(path, model, optimizer, expect_config_hash=None, dataloader=
             f"Config hash mismatch: checkpoint={got} expected={expect_config_hash}. "
             "You are resuming a run with a DIFFERENT architecture/optimizer config."
         )
-    model.load_state_dict(load_file(path / "model.safetensors"))
+    # strict=False because `lm_head.weight` was intentionally not serialized.
+    missing, unexpected = model.load_state_dict(load_file(path / "model.safetensors"),
+                                                strict=False)
+    if getattr(model.cfg, "tie_embeddings", False):
+        model.lm_head.weight = model.tok_emb.weight     # re-create the tie, explicitly
+        missing = [k for k in missing if k != "lm_head.weight"]
+    assert not missing and not unexpected, (missing, unexpected)
+
     trainer = torch.load(path / "trainer.pt", map_location="cpu", weights_only=True)
     optimizer.load_state_dict(trainer["optimizer"])
     load_rng_state(trainer["rng"])
@@ -607,8 +646,11 @@ REPRODUCIBILITY PREFLIGHT  (stacklm)
 [ ] held-out eval shard provably EXCLUDED from the manifest (contamination, Ch. 14.11)
 [ ] git commit clean (git_dirty == False); commit hash logged
 [ ] uv.lock committed AND its sha256 recorded; container digest recorded
-[ ] checkpoints: safetensors weights + weights_only-safe trainer state + provenance.json
+[ ] checkpoints: safetensors weights (tied key dropped) + weights_only-safe trainer
+    state + provenance.json
 [ ] checkpoints atomic (tmp+rename), retention policy set (keep_last + milestones)
+[ ] save -> load -> save round-trip is byte-identical, run on CPU (where the tied
+    embedding actually aliases) not only on GPU
 [ ] eval harness pinned to a commit sha; results.json committed beside the weights
 [ ] a 50-step CPU toy run reproduces bit-identically across two invocations
 ```
@@ -632,11 +674,11 @@ The uncomfortable truth: at 1B, *data engineering* — not model code — is whe
 
 ### Memory: the accounting the folklore gets wrong
 
-Does 1B even fit on one 80 GB GPU? Do the arithmetic properly, because both the usual per-parameter rule and the usual conclusion are wrong for this project.
+Does 1B even fit on one 80 GB GPU? Do the arithmetic properly, because both the usual per-parameter rule and the usual conclusion are wrong for this project — and because the standard activation formula, applied naively, is wrong for *our* architecture by nearly 2×.
 
 **First error: 16 bytes/param assumes pure AdamW.** Stack-100M uses the Muon+AdamW hybrid fixed in the plan — Muon for the 2D hidden matrices, AdamW for embeddings, norms, and 1D parameters. Muon keeps **one** momentum buffer, not Adam's $m$ *and* $v$, so its groups cost 12 bytes/param, not 16.
 
-**Second error: weights+optimizer is not what fills the GPU.** Activations are. Here is the accounting that actually predicts an OOM:
+**Second error: weights+optimizer is not what fills the GPU.** Activations are — and at Stack-100M's 32,768-token vocabulary the single biggest activation is not in the transformer blocks at all, it is the **loss head**. Here is the accounting that actually predicts an OOM:
 
 ```python
 # stacklm/scaleup.py -- what really fills an 80 GB GPU?
@@ -658,41 +700,85 @@ def optimizer_state_gb(groups: dict[str, float]) -> float:
     return sum(n * state_bytes_per_param(o) for o, n in groups.items()) / 1e9
 
 
-def activation_gb(n_layers: int, d_model: int, seq_len: int, micro_batch: int,
-                  n_heads: int, flash: bool = True, recompute: bool = False) -> float:
-    """Per-layer activation memory, Korthikanti et al. (2022), 16-bit storage:
+KORTHIKANTI_COEFF = 34   # MHA + 4h GELU MLP + dropout, as published
+STACK_COEFF       = 20   # Stack-100M's actual block shape (see docstring)
 
-           bytes_per_layer = s*b*h * (34 + 5*a*s/h)
+
+def block_activation_gb(n_layers: int, d_model: int, seq_len: int, micro_batch: int,
+                        n_heads: int, coeff: float = STACK_COEFF,
+                        flash: bool = True, recompute: bool = False) -> float:
+    """Per-layer TRUNK activation memory, Korthikanti et al. (2022), 16-bit storage:
+
+           bytes_per_layer = s*b*h * (coeff + 5*a*s/h)
 
     The 5*a*s/h term is the materialized s x s attention matrix. A fused
     FlashAttention kernel never writes it, so with `flash=True` it vanishes --
     which is the entire reason 8192-token mid-training fits at all.
+
+    `coeff` is the paper's 34 ONLY for its reference block: multi-head attention
+    (K and V as wide as Q), a 4h GELU MLP, and dropout masks. Stack-100M is none
+    of those, so the coefficient drops:
+      - no dropout in pretraining          -> -2 s*b*h  (two saved masks)
+      - GQA 8:2, so K and V are h/4 each   -> -3 s*b*h  (K, V storage 4x smaller)
+      - SwiGLU at 2.75h with torch.compile fusing silu(g)*u and recomputing it in
+        backward -> the MLP costs ~13-16 s*b*h instead of the paper's 19
+    That lands at roughly **16-24**, i.e. ~20 as a planning number -- which is
+    exactly what reconciles this function with Ch. 14.7's measured 15-25 GB
+    trunk budget for the same config. Pass 34 for a conservative upper bound.
     Full activation checkpointing stores only each layer's input: 2*s*b*h.
     """
     s, b, h, a = seq_len, micro_batch, d_model, n_heads
     if recompute:
         per_layer = 2 * s * b * h
     else:
-        per_layer = s * b * h * (34 + (0.0 if flash else 5 * a * s / h))
+        per_layer = s * b * h * (coeff + (0.0 if flash else 5 * a * s / h))
     return n_layers * per_layer / 1e9
+
+
+def logits_gb(micro_batch: int, seq_len: int, vocab_size: int,
+              chunk_size: int = 4096, chunked: bool = True) -> float:
+    """The loss head -- the term Korthikanti's per-layer formula does not model,
+    and the largest single allocation in the Stack-100M job.
+
+    Naive (Ch. 14.4's forward): for every one of B*T tokens you hold V logits in
+    bf16 (2 B) + an fp32 copy for cross-entropy (4 B) + the saved log_softmax
+    output (4 B) + a second fp32 copy for the z-loss logsumexp (4 B) = 14 B.
+    Chunked (Ch. 14.7's `chunked_lm_loss`): only `chunk_size` rows are live at
+    once, holding fp32 logits + their gradient (8 B), and the logits are
+    recomputed in backward rather than stored.
+    """
+    rows = chunk_size if chunked else micro_batch * seq_len
+    return rows * vocab_size * (8 if chunked else 14) / 1e9
 
 
 # --- Stack-100M at the flagship config (Ch. 14.7: micro-batch 32 x 2048, no recompute)
 STACK_100M = {"muon": 84.5e6,     # 2D hidden matrices across the 30 blocks
               "adamw": 16.83e6}   # tied embedding + norms + 1D params
-print(f"weights+opt : {optimizer_state_gb(STACK_100M):5.2f} GB")
-print(f"activations : {activation_gb(30, 512, 2048, 32, 8):5.1f} GB  (FlashAttention)")
-print(f"  no flash  : {activation_gb(30, 512, 2048, 32, 8, flash=False):5.1f} GB  (!!)")
-print(f"  recompute : {activation_gb(30, 512, 2048, 32, 8, recompute=True):5.1f} GB")
-# weights+opt :  1.28 GB
-# activations :  34.2 GB  (FlashAttention)
-#   no flash  : 195.3 GB  (!!)
-#   recompute :   2.0 GB
+L, D, S, MB, A, V = 30, 512, 2048, 32, 8, 32768
+
+state = optimizer_state_gb(STACK_100M)
+trunk = block_activation_gb(L, D, S, MB, A)
+print(f"weights + optimizer   : {state:6.2f} GB")
+print(f"trunk, our shape      : {trunk:6.1f} GB   (coeff 20; Ch. 14.7 measures 15-25)")
+print(f"  Korthikanti bound   : {block_activation_gb(L, D, S, MB, A, coeff=34):6.1f} GB")
+print(f"  without FlashAttn   : {block_activation_gb(L, D, S, MB, A, flash=False):6.1f} GB (!!)")
+print(f"  full recompute      : {block_activation_gb(L, D, S, MB, A, recompute=True):6.1f} GB")
+print(f"loss head, naive      : {logits_gb(MB, S, V, chunked=False):6.1f} GB  <-- biggest single alloc")
+print(f"loss head, chunked    : {logits_gb(MB, S, V):6.2f} GB")
+print(f"PEAK as shipped       : {state + trunk + logits_gb(MB, S, V):6.1f} GB")
+# weights + optimizer   :   1.28 GB
+# trunk, our shape      :   20.1 GB   (coeff 20; Ch. 14.7 measures 15-25)
+#   Korthikanti bound   :   34.2 GB
+#   without FlashAttn   :  181.2 GB (!!)
+#   full recompute      :    2.0 GB
+# loss head, naive      :   30.1 GB  <-- biggest single alloc
+# loss head, chunked    :   1.07 GB
+# PEAK as shipped       :   22.5 GB
 ```
 
-Read those four numbers again. On the flagship A100, **weights and optimizer state are 1.28 GB — under 4% of the memory in play — while activations are 34 GB.** Without FlashAttention the run does not fit on any GPU that exists. With full activation checkpointing it would fit in 4 GB, at the cost of a 33% FLOP surcharge (that is the MFU-vs-HFU gap from §14.12.3), which is precisely why Chapter 14.7 leaves recompute *off* at 80 GB and *on* at 24 GB.
+Read those numbers again, because three of them overturn folklore. **Weights and optimizer state are 1.28 GB — under 6% of the memory in play.** Without FlashAttention the run does not fit on any GPU that exists. And the *naive loss head alone*, 30.1 GB, is larger than the entire 30-block trunk: at $B\cdot T = 65{,}536$ and $V = 32{,}768$ the logits tensor is 64× wider than the residual stream. **At a large vocabulary and a narrow $d_{\text{model}}$, it is the loss head — not attention — that caps your batch size**, which is why Chapter 14.7's chunked loss head buys more memory than activation checkpointing does. Peak with both fixes in place is ~22.5 GB, matching Chapter 14.7's measured budget, and that is why the flagship tier leaves recompute *off* at 80 GB and turns it *on* at 24 GB.
 
-Now scale the same two functions to 1B and beyond:
+Now scale the same three functions to 1B and beyond:
 
 ```python
 for name, groups in [
@@ -708,20 +794,23 @@ for name, groups in [
 # 70B dense   weights+opt =   868.0 GB
 
 # ...and the activations that decide whether it ACTUALLY fits (1B: L=24, d=2048, a=16)
+head = logits_gb(0, 0, 32768)                     # chunked: batch-independent, 1.07 GB
 for mb in (4, 8, 16, 32):
-    act = activation_gb(24, 2048, 2048, mb, 16)
-    print(f"1B micro-batch {mb:2d}: {act:5.1f} GB act + 12.4 GB state = {act+12.4:5.1f} GB")
-# 1B micro-batch  4:  13.7 GB act + 12.4 GB state =  26.1 GB
-# 1B micro-batch  8:  27.4 GB act + 12.4 GB state =  39.8 GB
-# 1B micro-batch 16:  54.8 GB act + 12.4 GB state =  67.2 GB
-# 1B micro-batch 32: 109.6 GB act + 12.4 GB state = 122.0 GB   <- OOM on 80 GB
+    lo = block_activation_gb(24, 2048, 2048, mb, 16)                  # coeff 20
+    hi = block_activation_gb(24, 2048, 2048, mb, 16, coeff=34)        # conservative
+    print(f"1B micro-batch {mb:2d}: trunk {lo:5.1f}-{hi:5.1f} GB + 12.4 state + "
+          f"{head:.1f} head = {lo+12.4+head:5.1f}-{hi+12.4+head:5.1f} GB")
+# 1B micro-batch  4: trunk   8.1- 13.7 GB + 12.4 state + 1.1 head =  21.5- 27.2 GB
+# 1B micro-batch  8: trunk  16.1- 27.4 GB + 12.4 state + 1.1 head =  29.6- 40.9 GB
+# 1B micro-batch 16: trunk  32.2- 54.8 GB + 12.4 state + 1.1 head =  45.7- 68.2 GB
+# 1B micro-batch 32: trunk  64.4-109.5 GB + 12.4 state + 1.1 head =  77.9-123.0 GB  <- OOM
 ```
 
-So **1B fits a single 80 GB GPU, but the headroom is activations, not weights** — you get micro-batch 8, comfortably, or 16 if you are careful, and 32 only with recompute. The naive "16 GB of state, 64 GB to spare" reading is off by a factor of five in the thing that matters.
+So **1B fits a single 80 GB GPU, but the headroom is activations, not weights** — micro-batch 16 is comfortable under either coefficient, and 32 only survives at the optimistic end, which is not a bet to take on a multi-day run. The naive "12 GB of state, 68 GB to spare" reading is off by a factor of four in the thing that matters. Note also how the shape shifts: at 1B the naive loss head at micro-batch 16 is $32{,}768 \times 32{,}768 \times 14\,\text{B} \approx 15$ GB against a 32–55 GB trunk, so the head is no longer the dominant term. **The loss head dominating is a small-and-narrow, large-vocab phenomenon** — a Stack-100M problem that mostly solves itself as $d_{\text{model}}$ grows.
 
 Note also what happened to the folklore threshold: 7B needs ~87 GB of weights+optimizer state, so it does *not* fit an 80 GB A100 or H100 — but it *does* fit an **H200 (141 GB)**, a **B200 (192 GB)**, or an **MI300X (192 GB)** with room for a real batch. **"When do I need FSDP?" is a hardware-generation question, not a model-size question.** The rule that survives is the ratio: shard when weights + optimizer + activations exceed your device memory, and re-derive it every time you change tiers.
 
-Levers, in the order you should reach for them, all covered in [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html): raise gradient accumulation (free), turn on activation checkpointing (33% FLOP surcharge), switch AdamW groups to 8-bit (`bitsandbytes.optim.AdamW8bit`, ~6 GB saved at 7B), keep optimizer states in bf16, then — only then — shard.
+Levers, in the order you should reach for them, all covered in [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html): chunk the loss head (free, and biggest at small $d$), raise gradient accumulation (free), turn on activation checkpointing (33% FLOP surcharge), switch AdamW groups to 8-bit (`bitsandbytes.optim.AdamW8bit`, ~6 GB saved at 7B), keep optimizer states in bf16, then — only then — shard.
 
 ### Time, and the parallelism ladder (with the libraries you would actually use)
 
@@ -764,40 +853,40 @@ The recipe does not break on memory at 1B. It breaks on *time*: 1B over 200B tok
 
 ### What does 1B actually cost?
 
-A cost chapter that spends a third of its length on "the path to 1B" owes you the number. Run the same machinery as §14.12.3 on a 1B model (24 layers, $d=2048$, so the attention correction is only $1 + Lsd/N = 1.08$) over 200B tokens:
+A cost chapter that spends a third of its length on "the path to 1B" owes you the number. Run the same machinery as §14.12.3 on a 1B model (24 layers, $d=2048$, so the attention correction is $1 + Lsd/N = 1 + 24\times2048\times2048/10^{9} = 1.10$, a 10% adder rather than our 31%) over 200B tokens. Hardware FLOPs $= 1.2\times10^{21} \times 1.10 = 1.32\times10^{21}$:
 
 | Path | Hardware FLOPs | Assumed $u$ | GPU-hr | Wall-clock on 8 GPUs | GPU USD |
 |---|---:|---:|---:|---:|---:|
-| 8×A100-80GB, bf16, DDP | $1.30\times10^{21}$ | 0.55 | ~2,100 | ~12 days | ~USD 2,730 @ 1.30/hr |
-| 8×H100-SXM, bf16, FSDP2 | $1.30\times10^{21}$ | 0.50 | ~730 | ~4.2 days | ~USD 1,830 @ 2.50/hr |
-| 8×H100-SXM, **FP8** | $1.30\times10^{21}$ | 0.50 (fp8 peak) | ~450–600 | ~3 days | ~USD 1,100–1,500 |
+| 8×A100-80GB, bf16, DDP | $1.32\times10^{21}$ | 0.55 | ~2,140 | ~12 days | ~USD 2,780 @ 1.30/hr |
+| 8×H100-SXM, bf16, FSDP2 | $1.32\times10^{21}$ | 0.50 | ~740 | ~4.2 days | ~USD 1,850 @ 2.50/hr |
+| 8×H100-SXM, **FP8** | $1.32\times10^{21}$ | 0.50 (fp8 peak) | ~460–620 | ~3 days | ~USD 1,150–1,550 |
 
-(The FP8 row assumes a realized 1.2–1.6× end-to-end speedup, not the 2× peak ratio — that gap is scaling-factor overhead and the non-GEMM work FP8 does not touch. Add ~10% to every GPU-hour figure for data-parallel communication and stragglers.)
+(The FP8 row assumes a realized 1.2–1.6× end-to-end speedup, not the 2× peak ratio — that gap is scaling-factor overhead and the non-GEMM work FP8 does not touch. Wall-clock figures already include ~10% for data-parallel communication and stragglers.)
 
 Now the part that is genuinely different at 1B — the non-GPU column:
 
 | Line item | Stack-100M (20B tok) | Stack-1B (200B tok) | Why it moves |
 |---|---:|---:|---|
-| Tokenizer + scaling-law ladder | USD 5.04 | ~USD 100 | re-run the ladder with a higher top rung (§14.12.2) |
-| Pretrain GPU | USD 38.88 | ~USD 1,830 | 98× the FLOPs, ~3× faster hardware |
-| Mid-training GPU | USD 6.30 | ~USD 190 | ~20B tokens of anneal + long-context |
+| Tokenizer + scaling-law ladder | USD 9.36 | ~USD 100 | re-run the ladder with a higher top rung (§14.12.2) |
+| Pretrain GPU | USD 38.88 | ~USD 1,850 | 98× the FLOPs, ~3× faster hardware |
+| Mid-training GPU | USD 6.48 | ~USD 190 | ~20B tokens of anneal + long-context |
 | Post-training + agent distill GPU | USD 11.16 | ~USD 250 | GRPO is generation-bound; scales worse than FLOPs |
 | Eval + quantize + serve GPU | USD 2.16 | ~USD 60 | bigger harness, more probes |
 | **Data pipeline (CPU + storage)** | USD 5.00 | **~USD 800** | datatrove MinHash over ~1T docs; 2–10 TB of shards |
 | **Synthetic / teacher data** | USD 8.00 | **~USD 1,500** | e.g. 10B synthetic tokens at ~USD 0.15 / M tokens |
-| Re-run reality tax (25% of GPU) | USD 15.89 | ~USD 610 | |
-| **Total** | **≈ USD 92** | **≈ USD 5,300** | |
+| Re-run reality tax (25% of GPU) | USD 17.01 | ~USD 610 | |
+| **Total** | **≈ USD 98** | **≈ USD 5,400** | |
 
 Two readings of that table, and the second is the thesis of the whole chapter:
 
-- **1B is ~58× the cost, not ~98×.** The FLOPs went up 98×, but three generations of hardware and a 3× cheaper FLOP absorbed part of it. The compute wall moves under you; plan against *current* price-performance, never against the number in a two-year-old blog post.
-- **The non-GPU share went from 13% to 43%.** At 100M, "cost" means GPU-hours and the data is basically free. At 1B, the dedup pipeline and the synthetic-data bill together (~USD 2,300) rival the entire pretraining run (~USD 1,830). This is the quantitative form of "at 1B, data engineering is where the budget goes" — and it is why the tooling recommendations in the data subsection are not incidental. Extrapolate the trend one more decade and you can see why frontier labs are data organizations that happen to own GPUs.
+- **1B is ~55× the cost, not ~98×.** The FLOPs went up 98×, but three generations of hardware and a cheaper FLOP absorbed part of it. The compute wall moves under you; plan against *current* price-performance, never against the number in a two-year-old blog post.
+- **The non-GPU share went from 13% to 43%.** At 100M, "cost" means GPU-hours and the data is basically free. At 1B, the dedup pipeline and the synthetic-data bill together (~USD 2,300) rival the entire pretraining run (~USD 1,850). This is the quantitative form of "at 1B, data engineering is where the budget goes" — and it is why the tooling recommendations in the data subsection are not incidental. Extrapolate the trend one more decade and you can see why frontier labs are data organizations that happen to own GPUs.
 
 ### Learning rate and batch size: what to rescale
 
 You cannot copy Stack-100M's hyperparameters to 1B unchanged; width and batch both grew. Two rules, both from [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html):
 
-- **Learning rate vs. width.** Optimal LR shrinks as the model widens. The principled tool is **μP (Maximal Update Parametrization)**: tune LR on a small proxy, then transfer it to the large model with width-dependent scaling so the *same* tuned value stays optimal — note this is the same "fit small, predict large" discipline as §14.12.2, applied to hyperparameters instead of loss, and it is well supported in torchtitan and Megatron-Core. A cheaper heuristic is $\eta \propto 1/\sqrt{d_{\text{model}}}$; going from $d{=}512$ to $d{=}2048$ roughly *halves* the peak LR. The AdamW groups (embeddings, norms) and the Muon groups (2D hidden matrices) rescale differently — Muon's orthogonalized update is naturally more scale-robust, one reason the hybrid was chosen (see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html)) — but you still retune.
+- **Learning rate vs. width.** Optimal LR shrinks as the model widens. The principled tool is **μP (Maximal Update Parametrization)**: tune LR on a small proxy, then transfer it to the large model with width-dependent scaling so the *same* tuned value stays optimal — the same "fit small, predict large" discipline as §14.12.2, applied to hyperparameters instead of loss, and well supported in torchtitan and Megatron-Core. A cheaper heuristic is $\eta \propto 1/\sqrt{d_{\text{model}}}$; going from $d{=}512$ to $d{=}2048$ roughly *halves* the peak LR. The AdamW groups (embeddings, norms) and the Muon groups (2D hidden matrices) rescale differently — Muon's orthogonalized update is naturally more scale-robust, one reason the hybrid was chosen (see [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html)) — but you still retune.
 - **Batch size and warmup.** Larger models have a larger **critical batch size** — the point past which more parallelism stops helping per-step progress. At 1B you can raise the global batch from ~0.5M tokens toward ~1–2M tokens (more data-parallel ranks make this nearly free) and extend warmup proportionally. The WSD schedule transfers cleanly: keep the long stable phase, keep the short decay phase as your mid-training quality anneal — the schedule's shape is scale-invariant even though the numbers move.
 
 Keep MuonClip / QK-clip on. Attention-logit blow-ups get *worse* at scale and high LR, and QK-clip is exactly the stability fix (Kimi K2, Moonshot AI, 2025) that made Muon usable at scale — do not drop it when you can least afford instability. See [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
@@ -894,24 +983,23 @@ The catch — and why MoE is a *fork*, not a free lunch: MoE trades compute for 
 
 ## 14.12.6 Landing the Plane
 
-You have now built the whole stack once — small, real, and end to end. Not a tutorial that stops at "and the rest is left as an exercise," but every stage that a frontier lab runs, executed in miniature on hardware you can rent for an afternoon. The tokenizer is yours; the scaling law is one you fit *and then checked against the outcome*; the optimizer, the schedule, the alignment stack, the agent, the quantized deployment — you touched all of it, and you know where every dollar went and why.
+You have now built the whole stack once — small, real, and end to end. Not a tutorial that stops at "and the rest is left as an exercise," but every stage a frontier lab runs, executed in miniature on hardware you can rent for an afternoon. The tokenizer is yours; the scaling law is one you fit *and then checked against the outcome*; the optimizer, the schedule, the alignment stack, the agent, the quantized deployment — you touched all of it, and you know where every dollar went and why.
 
-The gap between Stack-100M and a frontier model is real and enormous, and this book has been honest about it at every step: a 100M model is a narrow instrument, over-training is the lever that makes it punch above its size, and the path to 1B is mostly *data engineering and parallelism discipline*, not new ideas. But the *shape* of the machine is the same at every scale. The person who has built it once at 100M and understands why each piece is there is far better equipped to reason about a 100B run than someone who has only read about one. That transfer — from a run you can hold in your head to systems you cannot — is the entire point of the capstone.
+The gap between Stack-100M and a frontier model is real and enormous, and this book has been honest about it at every step. But the *shape* of the machine is the same at every scale, and the path to 1B is mostly data engineering and parallelism discipline, not new ideas. Someone who has built the machine once at 100M is far better equipped to reason about a 100B run than someone who has only read about one. That transfer — from a run you can hold in your head to systems you cannot — is the entire point of the capstone.
 
 Go run it. Then over-train it. Then, when you are ready, scale it up.
 
 !!! key "Key Takeaways"
 
     - **Close the loop on your own prediction.** The Ch. 14.5 ladder forecast ≈2.94 ±0.1 nats/token for the flagship, and the run landed in that band — but only because the extrapolation was 1.9× in $N$ and the recipe was byte-identical. Trust a fitted law to ~2–3× past your top rung; before a 1B run, re-run the ladder with a higher top rung rather than stretching this fit 20×.
-    - **6ND is a floor, not the bill.** Attention adds $Lsd/N$ on top — **31% for Stack-100M at seq 2048, 124% at 8192** — so state which MFU convention you log (6ND, model-FLOPs, or HFU with recomputation). An MFU(6ND) of 0.45 here is ~0.59 of A100 peak; deep-and-thin buys quality per parameter and pays for it per FLOP.
-    - **The "~USD 100 model" itemizes to ~35 GPU-hours at USD 1.80/hr plus ~USD 13 non-GPU and a ~25% re-run tax ≈ USD 92** — and **over-training is ~90% of the pretraining line by design**, bought back many times over in saved inference. On 2026 hardware the same recipe is ~USD 59 on an H100 *and 2.4× faster in wall-clock*: the newest chip is often the cheapest.
-    - **A dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.** Compute the bill from *measured* throughput; re-price against today's market, never a two-year-old blog post.
+    - **6ND is a floor, not the bill.** Attention adds $Lsd/N$ on top — **31% for Stack-100M at seq 2048, 124% at 8192, only 10% for a 1B model at $d{=}2048$** — so state which MFU convention you log (6ND, model-FLOPs, or HFU with recomputation). An MFU(6ND) of 0.45 here is ~0.59 of A100 peak; deep-and-thin buys quality per parameter and pays for it per FLOP.
+    - **The "~USD 100 model" itemizes to ~38 GPU-hours at USD 1.80/hr plus ~USD 13 non-GPU and a ~25% re-run tax ≈ USD 98** — and **over-training is ~92% of the pretraining line by design**, bought back many times over in saved inference. On 2026 hardware the same recipe is ~USD 62 on an H100 *and 2.4× faster in wall-clock*: the newest chip is often the cheapest. A dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.
     - **Reproducibility has six pillars** — RNG *state* (plus dataloader state via `StatefulDataLoader`), a hashed frozen config (Hydra/pydantic) logged to a tracker (W&B/MLflow), a content-addressed data manifest (DVC / HF fingerprints), an environment pin (uv.lock hash + container digest, fail on a dirty git tree), safetensors checkpoints that never unpickle, and a **release** (HF Hub + model card + licence provenance + a pinned `lm-evaluation-harness` commit). Validate with a hermetic 50-step CPU run that reproduces bit-for-bit.
+    - **Tied embeddings and safetensors:** `safetensors` refuses *aliased* tensors, and `.contiguous()` does not de-alias — drop `lm_head.weight` before saving and re-tie on load, exactly as HF's `_tied_weights_keys` does. Test it on CPU, because `.cpu()` accidentally hides the bug on a GPU run.
     - **At 1B, data breaks first**: you need 200B–1T tokens, which means `datatrove` / NeMo Curator / dolma rather than a laptop dedup script; repetition past ~4 epochs does not substitute for volume.
-    - **Activations decide memory, not weights.** Stack-100M is 1.28 GB of weights+optimizer (Muon's single momentum buffer makes it 12 B/param, not 16) against **34 GB of activations** — and 195 GB without FlashAttention. A 1B model fits one 80 GB card at micro-batch 8–16; 7B needs ~87 GB and so fits an H200/B200/MI300X but not an A100. When to shard is a hardware-generation question.
+    - **Activations decide memory, and at a 32k vocab the loss head decides activations.** Stack-100M is 1.28 GB of weights+optimizer (Muon's single momentum makes it 12 B/param, not 16) against a ~20 GB trunk and a **30 GB naive loss head** — chunk the head and peak falls to ~22 GB, matching Ch. 14.7. Korthikanti's coefficient 34 is an upper bound; GQA + SwiGLU + no dropout put our block nearer 20. A 1B model fits one 80 GB card at micro-batch 16; 7B needs ~87 GB and so fits an H200/B200/MI300X but not an A100 — when to shard is a hardware-generation question.
     - **Climb the parallelism ladder only as far as forced**: DDP → FSDP2 (`fully_shard`, not the legacy wrapper) with `torch.distributed.checkpoint` for resharding-safe resume → tensor/pipeline only at tens of billions. `torchtitan` is this exact recipe already wired up at 1B–70B; Megatron-Core, DeepSpeed, and nanotron are the alternatives.
-    - **1B costs ~USD 5,300, and 43% of it is not GPU** (vs 13% at 100M) — the dedup pipeline plus the synthetic-data bill rival the pretraining run. That ratio, not the FLOP count, is the real lesson about scale.
-    - **MoE (DeepSeekMoE fine-grained + shared experts, Qwen3-MoE)** decouples capacity from compute/token — the highest-leverage change beyond 1B — but trades FLOPs for memory, all-to-all communication, and a router you must load-balance (DeepSeek-V3's bias-based balancer; MegaBlocks for dropless grouped GEMMs). It is a serving decision, not a free lunch.
+    - **1B costs ~USD 5,400 (~55× the capstone, not 98×), and 43% of it is not GPU** (vs 13% at 100M) — the dedup pipeline plus the synthetic-data bill rival the pretraining run. **MoE** (DeepSeekMoE fine-grained + shared experts, DeepSeek-V3's bias-based balancer, MegaBlocks for dropless grouped GEMMs) decouples capacity from compute/token beyond 1B, at the price of memory, all-to-all communication, and a router you must babysit.
 
 ---
 
@@ -923,7 +1011,7 @@ Go run it. Then over-train it. Then, when you are ready, scale it up.
     - [Kaplan et al., *Scaling Laws for Neural Language Models* (2020)](https://arxiv.org/abs/2001.08361) — the original power-law relationships between loss, params, data, and compute that the capstone's cost arithmetic builds on.
     - [Hoffmann et al., *Training Compute-Optimal Large Language Models* (2022)](https://arxiv.org/abs/2203.15556) — the Chinchilla result showing most trained models are compute-inefficient, the baseline the capstone deliberately trains past.
     - [Rajbhandari et al., *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2019)](https://arxiv.org/abs/1910.02054) — the sharded-optimizer-state idea behind FSDP, the first rung of the 1B→beyond parallelism ladder.
-    - [Korthikanti et al., *Reducing Activation Recomputation in Large Transformer Models* (2022)](https://arxiv.org/abs/2205.05198) — the per-layer activation-memory formula this chapter uses to show that activations, not weights, decide what fits.
+    - [Korthikanti et al., *Reducing Activation Recomputation in Large Transformer Models* (2022)](https://arxiv.org/abs/2205.05198) — the per-layer activation-memory formula this chapter adapts (and re-derives the coefficient of) to show that activations, not weights, decide what fits.
 
     **Recent advances (2023–2026)**
 
@@ -940,7 +1028,7 @@ Go run it. Then over-train it. Then, when you are ready, scale it up.
     - [pytorch/torchtitan](https://github.com/pytorch/torchtitan) — PyTorch's reference pretraining stack (FSDP2, TP/PP/CP, `torch.compile`, Float8, DCP). The literal answer to "run this recipe at 1B."
     - [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM) (and Megatron-Core) — the reference tensor/pipeline-parallel implementation; [microsoft/DeepSpeed](https://github.com/microsoft/DeepSpeed) for ZeRO stages, offload, and DeepSpeed-MoE; [huggingface/nanotron](https://github.com/huggingface/nanotron) for a compact readable 3D-parallel pretrainer.
     - [huggingface/datatrove](https://github.com/huggingface/datatrove) — the sharded MinHash-LSH dedup and filtering pipeline that produced FineWeb / FineWeb-Edu; [NVIDIA/NeMo-Curator](https://github.com/NVIDIA/NeMo-Curator) and [allenai/dolma](https://github.com/allenai/dolma) are the alternatives.
-    - [huggingface/safetensors](https://github.com/huggingface/safetensors) — the zero-copy, no-code-execution tensor format that should hold every checkpoint you publish.
+    - [huggingface/safetensors](https://github.com/huggingface/safetensors) — the zero-copy, no-code-execution tensor format that should hold every checkpoint you publish; its refusal of aliased tensors is the guard §14.12.4's `weights_for_safetensors` is written against.
     - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — pin a commit and commit the `results.json`; [huggingface/lighteval](https://github.com/huggingface/lighteval) is the lighter alternative.
     - [KellerJordan/Muon](https://github.com/KellerJordan/Muon) — the reference Muon-optimizer implementation, paired with AdamW for embeddings/norms exactly as in Stack-100M's hybrid optimizer.
     - [karpathy/nanoGPT](https://github.com/karpathy/nanoGPT) — a minimal, widely-reproduced training loop; useful as a second reference implementation for the cost-accounting discipline this chapter builds.
@@ -1006,7 +1094,7 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
     - If you train the model and then throw it away (a research probe, a one-off experiment), you get zero inference back, so any tokens beyond Chinchilla-optimal are pure waste — you spent ~12× the compute for a marginal loss improvement you will never amortize. Irrational.
     - If you will *serve* the model to many requests, over-training buys a permanently smaller/cheaper model at your target quality. A better 100M can replace a 200M that would have cost ~2× the FLOPs on *every* one of billions of future requests. You pay the extra training compute once and harvest the inference saving forever. Rational.
 
-    In the cost table this decision is the **pretrain + mid-training lines**: 25.1 GPU-hours / ~USD 45.2, which is ~49% of the whole bill. A Chinchilla-optimal run (1.69B tokens, per the Ch. 14.5 fit) would take ~2.0 GPU-hours / ~USD 3.7, so roughly USD 41 of that USD 45 — about **91%** — is the over-training premium, spent deliberately to lower serving cost. This is the "inference-aware over-training" of Sardana et al. (2024). Note the §14.12.2 corroboration: at 20B tokens the data-penalty term $B/D^\beta \approx 0.19$ nats has fallen below the capacity term $A/N^\alpha \approx 0.30$ nats, i.e. the model is now capacity-limited — which is exactly the point at which further over-training stops paying and a *bigger* model starts to.
+    In the cost table this decision is the **pretrain + mid-training lines**: 25.2 GPU-hours / ~USD 45.36, which is ~56% of the pre-tax bill. A Chinchilla-optimal run (1.69B tokens, per the Ch. 14.5 fit) would take ~2.0 GPU-hours / ~USD 3.65, so roughly USD 42 of that USD 45 — about **92%** — is the over-training premium, spent deliberately to lower serving cost. This is the "inference-aware over-training" of Sardana et al. (2024). Note the §14.12.2 corroboration: at 20B tokens the data-penalty term $B/D^\beta \approx 0.19$ nats has fallen below the capacity term $A/N^\alpha \approx 0.30$ nats, i.e. the model is now capacity-limited — which is exactly the point at which further over-training stops paying and a *bigger* model starts to.
 
 **2.** (Quantitative) The `cost.py` example assumes the stable phase sustained 231,500 tokens/sec, which the chapter says gives 21.6 GPU-hours at MFU(6ND) 45.1% over 18B tokens. Suppose instead your kernels are less well tuned and the loop sustains only **200,000 tokens/sec** on the same 18B-token run. Using the chapter's formulas and constants ($N = 1.014\times10^8$, A100 bf16 peak $= 3.12\times10^{14}$ FLOP/s, USD 1.80/GPU-hr), compute (a) the pretrain GPU-hours, (b) MFU under the 6ND convention, (c) the true fraction of A100 peak being used at `seq_len=2048`, and (d) the pretrain dollar cost. By what fraction does the slower run raise the pretrain bill?
 
@@ -1061,36 +1149,56 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
 
     Yes: the active MoE compute (1.62M, effective FFN width $3\times352 = 1056$) is **below** the dense block (2.16M, width 1408) — about $1.62/2.16 \approx 0.75\times$ the compute per token — while resident capacity is $9.19/2.16 \approx 4.3\times$ larger (equivalently $17/3 \approx 5.7\times$ the experts). That is the MoE pitch: more capacity than dense at less-than-dense compute/token, paid for in memory.
 
-    (e) Swapping all 30 MLPs: total params become $16.8\text{M (embed)} + 30 \times (0.655\text{M attn} + 9.19\text{M experts}) \approx 312\text{M}$, while *active* params per token fall to $16.8 + 30\times(0.655 + 1.62) \approx 85\text{M}$ — under the dense 101M. So you would have a **312M-parameter model with ~85M-parameter inference cost.** In §14.12.5's memory table, weights+optimizer state triples (from ~1.3 GB to ~3.8 GB at 12 B/param) while activations barely change, so on the flagship A100 the MoE variant still fits comfortably — the memory pressure at 100M is activations, and MoE does not touch those. The MoE memory problem only becomes the binding constraint at scales where weights already dominate, which is exactly the 7B+ regime where all-to-all expert parallelism becomes mandatory.
+    (e) Swapping all 30 MLPs: total params become $16.8\text{M (embed)} + 30 \times (0.655\text{M attn} + 9.19\text{M experts}) \approx 312\text{M}$, while *active* params per token fall to $16.8 + 30\times(0.655 + 1.62) \approx 85\text{M}$ — under the dense 101M. So you would have a **312M-parameter model with ~85M-parameter inference cost.** In §14.12.5's memory table, weights+optimizer state triples (from ~1.3 GB to ~3.8 GB at 12 B/param) while trunk activations barely change and the loss head does not change at all — so on the flagship A100 the MoE variant still peaks around 25 GB and fits comfortably. The memory pressure at 100M is activations, and MoE does not touch those. MoE's memory problem only becomes binding at scales where weights already dominate, which is exactly the 7B+ regime where all-to-all expert parallelism becomes mandatory.
 
-**4.** (Quantitative) The chapter claims 1B "fits a single 80 GB GPU, but the headroom is activations, not weights." Verify both halves with the chapter's two functions. (a) Using the Muon/AdamW blend (12 B/param for 2D hidden matrices, 16 B/param for embeddings and 1D params), compute weights+optimizer state for Stack-100M (84.5M Muon / 16.8M AdamW) and for a 1B model (0.9B Muon / 0.1B AdamW), and say how each compares to the naive 16 B/param figure. (b) Using Korthikanti's $s\,b\,h\,(34 + 5as/h)$ per layer with FlashAttention, compute activation memory for a 1B model ($L{=}24$, $h{=}2048$, $a{=}16$, $s{=}2048$) at micro-batch 8 and 16, and state the largest micro-batch that fits 80 GB. (c) Compute total pretraining FLOPs for 1B over 200B tokens, express it as a multiple of the capstone's $1.22\times10^{19}$, and estimate the single-GPU A100 wall-clock at MFU(6ND) 0.45.
+**4.** (Implementation + quantitative) The chapter argues that Korthikanti's coefficient 34 is an upper bound for Stack-100M, and that the term the formula omits entirely — the loss head — is the largest allocation in the job. Make that concrete. (a) Extend `stacklm/scaleup.py` with a `peak_memory_gb(cfg, micro_batch, coeff, chunked_head)` helper that sums weights+optimizer, trunk activations, and the loss head, and use it to reproduce the flagship's ~22.5 GB and the ~50 GB figure Ch. 14.7 reports *before* the head is chunked. (b) Using the same helper, find the largest micro-batch that keeps a 1B model ($L{=}24$, $h{=}2048$, $a{=}16$, $s{=}2048$, $V{=}32{,}768$, 12.4 GB of state) under 80 GB at both `coeff=20` and `coeff=34`, and say which number you would actually plan against. (c) Compute total pretraining FLOPs for 1B over 200B tokens including the attention correction, express it as a multiple of the capstone's $1.22\times10^{19}$, and estimate the single-GPU A100 wall-clock at MFU(6ND) 0.45.
 
 ??? note "Solution"
 
-    **(a) Weights + optimizer.** Bytes/param: bf16 weights (2) + bf16 grads (2) + fp32 master (4) = 8 common, plus Muon's single fp32 momentum (4) → 12, or AdamW's fp32 $m,v$ (8) → 16.
+    **(a)**
 
-    - Stack-100M: $84.5\times10^{6}\times12 + 16.8\times10^{6}\times16 = 1.014\times10^{9} + 2.69\times10^{8} = 1.28$ GB. The naive 16 B/param figure gives 1.62 GB — **27% too high**, which matters directly for the checkpoint-retention footgun.
-    - 1B: $0.9\times10^{9}\times12 + 0.1\times10^{9}\times16 = 1.08\times10^{10} + 1.6\times10^{9} = 12.4$ GB, versus 16 GB naively.
+    ```python
+    # stacklm/scaleup.py  (append)
+    def peak_memory_gb(n_layers, d_model, seq_len, micro_batch, n_heads, vocab_size,
+                       state_gb, coeff=STACK_COEFF, chunked_head=True,
+                       flash=True, recompute=False) -> float:
+        """Weights+optimizer + trunk activations + loss head, in GB.
 
-    **(b) Activations.** With FlashAttention the $5as/h$ term vanishes, leaving $34\,s\,b\,h$ bytes per layer:
+        The three terms have completely different scaling: state is constant in
+        batch, the trunk is linear in micro_batch, and the loss head is linear in
+        micro_batch when unchunked and CONSTANT when chunked. That last fact is
+        why chunking the head is what unlocks a large micro-batch.
+        """
+        trunk = block_activation_gb(n_layers, d_model, seq_len, micro_batch,
+                                    n_heads, coeff, flash, recompute)
+        head = logits_gb(micro_batch, seq_len, vocab_size, chunked=chunked_head)
+        return state_gb + trunk + head
 
-    $$
-    \text{micro-batch }8:\quad 24 \times 34 \times 2048 \times 8 \times 2048 = 2.74\times10^{10}\ \text{B} = 27.4\ \text{GB}
-    $$
+    S100 = dict(n_layers=30, d_model=512, seq_len=2048, n_heads=8,
+                vocab_size=32768, state_gb=1.28)
+    print(peak_memory_gb(micro_batch=32, **S100))                      # 22.5 GB
+    print(peak_memory_gb(micro_batch=32, chunked_head=False, **S100))  # 51.5 GB
+    ```
 
-    $$
-    \text{micro-batch }16:\quad 54.8\ \text{GB}
-    $$
+    22.5 GB with the chunked head reproduces Ch. 14.7's "$1.3 + 20 + 1 \approx 22$ GB"; 51.5 GB with the naive head reproduces its "before the fix, peak is roughly 50 GB." The gap — 29 GB — is a single design choice in the loss function.
 
-    Adding the 12.4 GB of state: micro-batch 8 → 39.8 GB (comfortable), 16 → 67.2 GB (fits, but leaves little room for fragmentation, the `torch.compile` workspace, and eval activations), 32 → 122 GB (**OOM**). So the practical answer is **16, and 8 if you want to sleep**. Note that *without* FlashAttention the $5as/h = 5\times16\times2048/2048 = 80$ term more than triples the per-layer cost and micro-batch 8 alone needs ~92 GB — the fused kernel is not an optimization here, it is a prerequisite.
+    **(b)** Trunk activations for the 1B shape are $24 \times \text{coeff} \times 2048 \times b \times 2048$ bytes $= 2.01\,b$ GB at `coeff=20` and $3.42\,b$ GB at `coeff=34`. Adding 12.4 GB of state and a 1.07 GB chunked head:
 
-    **(c) FLOPs and time.** $C = 6 \times 10^{9} \times 2\times10^{11} = 1.2\times10^{21}$ FLOPs $= 1.2\times10^{21}/1.22\times10^{19} \approx 98\times$ the capstone campaign. At MFU(6ND) 0.45 on one A100:
+    | micro-batch | `coeff=20` | `coeff=34` |
+    |---:|---:|---:|
+    | 8 | 29.6 GB | 40.9 GB |
+    | 16 | 45.7 GB | 68.2 GB |
+    | 32 | 77.9 GB | 123.0 GB |
+
+    At `coeff=20` micro-batch 32 nominally fits (77.9 of 80 GB); at `coeff=34` it OOMs by 50%. **Plan against 16.** The 2.1 GB of nominal headroom at 32 is smaller than allocator fragmentation plus the `torch.compile` workspace plus eval-time activations, and an OOM 40 hours into a multi-day run costs more than the throughput you were buying. This is the general rule for memory planning: use the conservative coefficient to *choose* the setting and the measured one to *explain* it.
+
+    **(c)** $C_{6ND} = 6 \times 10^{9} \times 2\times10^{11} = 1.2\times10^{21}$ FLOPs; with the $d{=}2048$ attention correction $1 + 24\times2048\times2048/10^{9} = 1.10$, hardware FLOPs are $1.32\times10^{21}$. The 6ND figure alone is $1.2\times10^{21}/1.22\times10^{19} \approx 98\times$ the capstone campaign. At MFU(6ND) 0.45 on one A100:
 
     $$
     t = \frac{1.2\times10^{21}}{0.45 \times 3.12\times10^{14}} \approx 8.5\times10^{6}\ \text{s} \approx 2{,}370\ \text{GPU-hours} \approx 99\ \text{days.}
     $$
 
-    So 1B does not break on memory — it breaks on *time*: ~2,400 GPU-hours on one card is unacceptable wall-clock, which is exactly why you go multi-GPU with DDP (near-linear speedup while the model still fits per GPU, which it does at 1B). Sanity check on the MFU assumption: at $d=2048$ the attention correction is only $1 + 24\times2048\times2048/1.2\times10^{9} = 1.08$, so MFU(6ND) 0.45 means ~49% of peak — plausible, and notably *easier* to reach than the same nominal MFU at Stack-100M's narrower shape.
+    So 1B does not break on memory — it breaks on *time*: ~2,400 GPU-hours on one card is unacceptable wall-clock, which is exactly why you go multi-GPU with DDP (near-linear speedup while the model still fits per GPU, which it does at 1B). Sanity check on the MFU assumption: with the 1.10 correction, MFU(6ND) 0.45 means ~49% of peak — plausible, and notably *easier* to reach than the same nominal MFU at Stack-100M's narrower shape, where the same 0.45 implies 59%.
 
 **5.** (Implementation) Extend `stacklm/cost.py` with an inference-side accounting to make the "worked example" reproducible in code. Implement `serving_flops(n_params, n_requests, tokens_per_request=256)` using the $2ND$ inference rule, verify it reproduces the chapter's $\approx 5.2\times10^{19}$ FLOPs for a billion 256-token requests, and add `breakeven_requests(...)` returning how many 256-token requests it takes for cumulative serving FLOPs to equal the 20B-token pretraining budget. Report that number and explain why it does not depend on model size.
 
@@ -1135,9 +1243,38 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
 
     **~234 million requests.** The cancellation is the point: the break-even depends only on the *tokens-per-parameter ratio you trained at* and the tokens per request — $n = 3D/(2\cdot\text{tok per request})$ — not on how big the model is. Train at 200 tokens/param and you break even after a fixed number of requests regardless of scale. After roughly a quarter-billion 256-token requests, cumulative serving compute equals the *entire* 20B-token pretraining budget — which is exactly why serving economics, not training economics, dominate the decision to over-train.
 
-**6.** (Implementation) Footgun #4 in the "Checkpoint hygiene" admonition warns that ~1.28 GB of state written every 500 steps "fills a disk overnight," and prescribes keeping "a rolling window of the last *k* plus milestone checkpoints ... and delete the rest." Implement `prune_checkpoints(ckpt_dir, keep_last=3, milestones=())` consistent with `stacklm/repro.py`'s **directory-per-checkpoint** layout: given a directory containing sub-directories named `ckpt_step{N}`, delete every checkpoint except the `keep_last` highest steps and any step in `milestones`; return the list of deleted names. Be careful about the `.tmp` sibling an in-flight atomic write leaves behind.
+**6.** (Implementation) Two checkpoint-hygiene tasks from §14.12.4. (a) Write a `pytest` test that would have caught the tied-embedding bug: build a tiny `Stack100M` on **CPU** with `tie_embeddings=True`, save and reload a checkpoint, and assert the tie survives the round-trip. Explain why the test must run on CPU. (b) Implement `prune_checkpoints(ckpt_dir, keep_last=3, milestones=())` consistent with the **directory-per-checkpoint** layout: given a directory containing sub-directories named `ckpt_step{N}`, delete every checkpoint except the `keep_last` highest steps and any step in `milestones`; return the list of deleted names. Be careful about the `.tmp` sibling an in-flight atomic write leaves behind.
 
 ??? note "Solution"
+
+    **(a)** The test.
+
+    ```python
+    # tests/test_checkpoint_roundtrip.py
+    def test_tied_embedding_survives_roundtrip(tmp_path):
+        cfg = StackConfig(vocab_size=64, d_model=32, n_layers=2,
+                          n_heads=2, n_kv_heads=1, tie_embeddings=True)
+        model = Stack100M(cfg)                       # CPU: the tie is a real alias
+        assert model.lm_head.weight.data_ptr() == model.tok_emb.weight.data_ptr()
+
+        opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+        prov = {"config_hash": config_hash(cfg)}
+        save_checkpoint(tmp_path / "ckpt_step1", model, opt, 1, prov)
+
+        # the duplicate key must NOT be on disk
+        from safetensors import safe_open
+        with safe_open(tmp_path / "ckpt_step1/model.safetensors", framework="pt") as f:
+            assert "lm_head.weight" not in f.keys()
+
+        fresh = Stack100M(cfg)
+        load_checkpoint(tmp_path / "ckpt_step1", fresh, opt)
+        assert fresh.lm_head.weight.data_ptr() == fresh.tok_emb.weight.data_ptr()
+        torch.testing.assert_close(fresh.tok_emb.weight, model.tok_emb.weight)
+    ```
+
+    It must run on CPU because that is the only place the failure is visible. `model.state_dict()` returns the *same tensor object* under both `tok_emb.weight` and `lm_head.weight`. On CUDA, `.detach().cpu()` allocates a fresh host buffer per key, so the two keys silently de-alias — `save_file` succeeds and quietly writes 33 MB of duplicate embedding, and the reload produces two *independent* tensors whose tie is broken, so the next training step updates them separately. On CPU, `.cpu()` is a no-op returning `self`, both keys keep the same `data_ptr`, and `save_file` raises `RuntimeError: Some tensors share memory`. Same bug, two different symptoms; only the CPU one is loud. (`.contiguous()` does not help in either case: it returns `self` for an already-contiguous tensor.) This is the general lesson — run the hermetic CPU toy path in CI precisely because it exposes aliasing and determinism problems the GPU path papers over.
+
+    **(b)** The retention policy.
 
     ```python
     # stacklm/repro.py  (part 4: retention policy)
@@ -1176,9 +1313,9 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
         return removed
     ```
 
-    Walking through it: we discover checkpoints by the anchored `ckpt_step{N}` pattern, which by construction *excludes* the `ckpt_step{N}.tmp` sibling an in-flight `save_checkpoint` may be writing — deleting that mid-write would be a spectacular own-goal. We sort by *step number* rather than filesystem order or lexicographic name (so `ckpt_step900` is correctly older than `ckpt_step1000`), and form the keep-set as the union of the `keep_last` newest steps and the explicit `milestones`. Everything else is `rmtree`d and its name returned for logging.
+    We discover checkpoints by the anchored `ckpt_step{N}` pattern, which by construction *excludes* the `ckpt_step{N}.tmp` sibling an in-flight `save_checkpoint` may be writing — deleting that mid-write would be a spectacular own-goal. We sort by *step number* rather than filesystem or lexicographic order (so `ckpt_step900` is correctly older than `ckpt_step1000`), and form the keep-set as the union of the `keep_last` newest steps and the explicit `milestones`.
 
-    Example: with checkpoints at steps `{500, 1000, 1500, 2000, 2500}`, `keep_last=2`, `milestones={500}` keeps `{2500, 2000}` (newest two) plus `{500}` (a milestone), and returns `["ckpt_step1000", "ckpt_step1500"]`. Guarding `keep_last > 0` avoids `found[-0:]` accidentally selecting the whole list when a caller passes `keep_last=0` to retain milestones only. In a sharded (DCP) run the same policy applies to `checkpoint_id` directories — with the extra rule that pruning must run on rank 0 only, after a barrier, or ranks will race each other into a half-deleted directory.
+    Example: with checkpoints at steps `{500, 1000, 1500, 2000, 2500}`, `keep_last=2`, `milestones={500}` keeps `{2500, 2000}` plus `{500}`, and returns `["ckpt_step1000", "ckpt_step1500"]`. Guarding `keep_last > 0` avoids `found[-0:]` accidentally selecting the whole list when a caller passes `keep_last=0` to retain milestones only. In a sharded (DCP) run the same policy applies to `checkpoint_id` directories — with the extra rule that pruning must run on rank 0 only, after a barrier, or ranks will race each other into a half-deleted directory.
 
 **7.** (Quantitative) Your cloud offers A100-80GB at USD 1.30/GPU-hr and H100-SXM at USD 2.50/GPU-hr. The 18B-token stable phase requires $1.43\times10^{19}$ hardware FLOPs (6ND plus the 31% attention correction). Assume you sustain $u = 0.59$ of peak on the A100 (312 TFLOP/s dense bf16) but only $u = 0.45$ on the H100 (989 TFLOP/s dense bf16), because the smaller model leaves the bigger chip more launch-bound. Compute (a) GPU-hours and cost on each, (b) the speedup, and (c) the H100 rental price at which the two become equally expensive. What does this say about how to choose a tier?
 

@@ -26,8 +26,12 @@ labs. We adopt those.
 - **What the reader ends with:** a ~100M-param base model, a mid-trained + instruction-tuned
   chat model, a narrow tool-using agent, all runnable on a laptop after int4 quantization.
 - **Primary compute tier (the flagship walkthrough):** a **single NVIDIA A100 (80GB)**,
-  rented at ~\$1–2/GPU-hr. Full pretraining ≈ **15–25 GPU-hours ⇒ ~\$40–\$100**. We call
-  this "the ~\$100 model."
+  rented at ~\$1–2/GPU-hr. The 18B-token WSD stable phase costs
+  ≈ **22–29 GPU-hours (≈25 planning) ⇒ ~\$25–\$50**, derived in Ch. 14.1 from
+  `C = (6N + 6Lsd_q)D` at an attention-inclusive MFU of 0.45–0.59 (equivalently
+  0.34–0.45 under 6ND-only). The **whole project** — data, ladder, mid-training,
+  post-training, teacher API, storage, and a ~25% re-run tax — lands at
+  **≈\$90–\$100** (itemized in Ch. 14.12). We call this "the ~\$100 model."
 - **Also documented (not the flagship path):**
   - **Consumer 24GB GPU** (RTX 4090 / 3090): same recipe, more gradient accumulation,
     ~2–4× wall-clock, ~\$0 if owned.
@@ -208,7 +212,9 @@ across recent open models):
 - Model = **Stack-100M**, exact config in §1. Package = `stacklm`, repo dir = `capstone/`.
 - Token budget = **~20B** (over-trained; Chinchilla-optimal ≈ 2B — always frame over-training as
   deliberate deployment economics).
-- Primary compute = **1×A100, ~\$40–\$100, 15–25 GPU-hr**. Secondary = 4090 / Colab.
+- Primary compute = **1×A100; stable phase 22–29 GPU-hr (~\$25–\$50); whole project ~\$90–\$100**.
+  Secondary = 4090 / Colab. Always quote MFU **with its FLOP convention** (6ND-only vs.
+  attention-inclusive `6N + 6Lsd_q` — a 31% difference at this shape).
 - Components & citations exactly as listed (RoPE+NoPE, RMSNorm, QK-norm, GQA, SwiGLU, tied-emb,
   Muon+MuonClip, WSD, MLA/MTP as options, DeepSeek/Kimi/GLM/SmolLM/Qwen3/Liquid/MobileLLM sources).
 - Never fabricate exact benchmark numbers/dates/quotes; illustrative magnitudes are "on the order of".

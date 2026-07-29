@@ -92,21 +92,36 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--ids", nargs="*", default=[])
     args = ap.parse_args()
+    r = args.round
 
     book = json.load(open(os.path.join(ROOT, "book.json")))
     caps = [c for c in flat(book) if c["dir"] == "14-capstone"]
     if args.ids:
         caps = [c for c in caps if c["id"] in args.ids]
 
+    R2_REVIEW = ("\n\nNOTE — THIS IS A ROUND-2 POLISH PASS. The chapter was already deepened in round 1, so it "
+                 "is now long and comprehensive. Do NOT reward further expansion. Focus your critique on: "
+                 "(a) CORRECTNESS of the round-1 additions — verify the code runs and matches PLAN.md, the "
+                 "FLOPs/MFU/memory numbers are right, library APIs are used correctly, and citations are real; "
+                 "(b) INTEGRATION — is the added material woven in coherently or bolted on / repeated across "
+                 "sections; (c) REDUNDANCY to cut; (d) only genuinely REMAINING objective-gaps. Flag bloat and "
+                 "contradictions as high-severity. A tight, correct chapter beats a longer one.") if r == 2 else ""
+    R2_REVISE = ("\n\nNOTE — THIS IS A ROUND-2 POLISH/CONSOLIDATION PASS (the chapter was deepened in round 1). "
+                 "Your goal is a tight, correct, coherent SoTA reference chapter — NOT a longer one. Prioritize: "
+                 "fix every correctness issue (code, numbers, APIs, citations); de-duplicate and CUT padding/"
+                 "repetition introduced in round 1; improve flow so additions read as one voice; ensure the "
+                 "build-it-yourself-vs-library material is accurate. Add new content ONLY to close a real "
+                 "objective-gap a reviewer flagged. It is good to make the chapter SHORTER if it stays complete.") if r == 2 else ""
+
     def fill(t, ab):
+        extra = R2_REVIEW if t is REVIEW else (R2_REVISE if t is REVISE else "")
         return (t.replace("{OBJECTIVES}", OBJECTIVES).replace("{ABSPATH}", ab)
-                .replace("{PLAN}", PLAN).replace("{STYLE}", STYLE).replace("{LINKMAP}", LINKMAP))
+                .replace("{PLAN}", PLAN).replace("{STYLE}", STYLE).replace("{LINKMAP}", LINKMAP) + extra)
 
     jobs = [{"id": c["id"], "abspath": c["abspath"],
              "review": fill(REVIEW, c["abspath"]),
              "revise_tmpl": fill(REVISE, c["abspath"])} for c in caps]
 
-    r = args.round
     js = f"""export const meta = {{
   name: 'capstone-revise-r{r}',
   description: 'Capstone revision round {r}: Opus-5 + Fable-5 review -> Opus-5 revise ({len(jobs)} chapters)',
