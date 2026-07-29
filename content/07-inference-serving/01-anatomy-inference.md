@@ -551,6 +551,9 @@ print(past.get_seq_length())   # tokens currently cached, per layer
 - Williams, Waterman & Patterson, *Roofline: An Insightful Visual Performance Model* (2009) — the arithmetic-intensity model underpinning the compute- vs memory-bound argument; see [The Roofline Model](../04-kernels-efficiency/01-roofline-performance.html).
 - Little, *A Proof for the Queuing Formula $L = \lambda W$* (1961) — the throughput law used for fleet sizing.
 
+
+{{tool:ag-kv-cache-gib}}
+
 ## Exercises
 
 **1.** (Conceptual) A colleague proposes speeding up your serving system by increasing the decode batch size $B$ from 1 to 32, and separately by increasing the prefill batch size from 1 to 32. Using the arithmetic-intensity argument $I \approx 2N/P$, explain why the first change gives a near-32x aggregate throughput win while the second gives almost nothing. What single physical quantity ($N$, the tokens processed per forward pass) is different between the two phases *before* you batch, and why does that make batching act so differently on each?

@@ -578,6 +578,12 @@ Despite these caveats, the roofline remains the most valuable single tool in per
 - NVIDIA *Nsight Systems* and *Nsight Compute* documentation, and the *CUDA C++ Programming Guide* — the practical profiling tools, including Nsight Compute's built-in roofline analysis.
 - PyTorch documentation for `torch.profiler` and `torch.utils.flop_counter` — operator-level profiling and exact FLOP accounting on a real graph.
 
+
+{{tool:ag-mfu}}
+
+
+{{tool:ag-ridge-point}}
+
 ## Exercises
 
 **1.** (Conceptual) A colleague benchmarks a LayerNorm kernel, finds it runs at 4% of the GPU's peak FLOP/s, and concludes "the kernel is badly written — it's wasting 96% of the compute." Using the roofline vocabulary of this chapter, explain why this conclusion is likely wrong, and state what single measurement would settle the question.

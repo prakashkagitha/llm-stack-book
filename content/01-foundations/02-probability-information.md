@@ -778,6 +778,9 @@ This picture has three take-aways:
 
 ---
 
+
+{{tool:ag-perplexity-from-ce}}
+
 ## Exercises
 
 **1.** (Conceptual) The chapter states that cross-entropy loss for a language model is *exactly* the negative log-likelihood, and that in language modeling the true distribution $p$ is one-hot. Explain in your own words why, under a one-hot target on the observed token $x^*$, the cross-entropy $H(p,q) = -\sum_x p(x)\log q(x)$ collapses to $-\log q(x^*)$, and what the decomposition $H(p,q)=H(p)+D_{\text{KL}}(p\|q)$ becomes in this one-hot case.

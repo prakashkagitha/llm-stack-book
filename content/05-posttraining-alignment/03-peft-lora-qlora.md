@@ -606,6 +606,9 @@ This connects directly to the data-formatting and templating choices in [Chat Te
 - Sheng et al. — *S-LoRA: Serving Thousands of Concurrent LoRA Adapters* (2023); Chen et al. — *Punica: Multi-Tenant LoRA Serving* (2024). The multi-adapter serving systems.
 - The HuggingFace **PEFT** library and **bitsandbytes** repository — the reference implementations of everything in this chapter.
 
+
+{{tool:ag-lora-params}}
+
 ## Exercises
 
 **1.** In the from-scratch implementation, $A$ is initialized with Kaiming-uniform random values and $B$ is initialized to all zeros. Explain (a) why this makes the adapter a no-op at step 0, (b) what would happen if you initialized *both* $A$ and $B$ to zero, and (c) whether the reverse convention ($B$ random, $A$ zero) also yields a valid no-op at init and, if so, how its first-step gradient behavior differs. Use the chapter's gradient formulas.

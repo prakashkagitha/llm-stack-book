@@ -530,6 +530,9 @@ A pragmatic decision procedure for a new pretraining run:
 - Rajbhandari et al., *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2020) — the optimizer-state memory analysis and sharding.
 - Dettmers et al., *8-bit Optimizers via Block-wise Quantization* (2022) — quantized Adam states.
 
+
+{{tool:ag-adam-optimizer-memory}}
+
 ## Exercises
 
 **1.** *(Weight decay.)* A colleague configures AdamW with a single parameter group and applies weight decay $\lambda = 0.1$ to *every* parameter in a transformer, including RMSNorm gains and biases. (a) Explain why L2 regularization (adding $\tfrac{\lambda}{2}\lVert\theta\rVert^2$ to the loss) and decoupled weight decay are *not* equivalent under Adam, even though they are identical under plain SGD. (b) Why is decaying the 1-D RMSNorm gains specifically harmful? What should the correct setup look like?

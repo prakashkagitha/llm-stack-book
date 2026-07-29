@@ -688,6 +688,9 @@ This perspective has practical implications:
 
 ---
 
+
+{{tool:ag-embedding-params}}
+
 ## Exercises
 
 **1.** *(Conceptual.)* The chapter says the embedding operation $\mathbf{e}_i = \mathbf{W}_E \mathbf{o}_i$ is "mathematically equivalent" to a matrix multiply but is "implemented as an index select, not an actual matmul." If the two produce the same output, why does the distinction matter? State the asymptotic cost of each and explain the physical reason one is preferred on a GPU.

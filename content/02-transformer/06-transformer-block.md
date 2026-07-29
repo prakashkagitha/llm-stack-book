@@ -661,6 +661,9 @@ For more on these and other architectural choices, see [Modern Architecture Impr
 
 ---
 
+
+{{tool:ag-mlp-swiglu-params}}
+
 ## Exercises
 
 **1.** (Conceptual) A colleague builds a 96-layer decoder-only transformer but, to "simplify" the block, removes both residual connections so that each block computes $\mathbf{x}' = \text{FFN}(\text{Norm}(\text{Attn}(\text{Norm}(\mathbf{x}))))$ with no skip paths. Training loss immediately plateaus and never improves. Using the gradient-flow argument from this chapter, explain why. What single term in the backward-pass product is responsible for the identity "gradient highway," and why does removing residuals reintroduce the vanishing-gradient problem?

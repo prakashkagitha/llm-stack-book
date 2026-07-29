@@ -706,6 +706,12 @@ The grand picture: scaling laws turned LLM development from alchemy into enginee
 
 ---
 
+
+{{tool:ag-chinchilla-tokens}}
+
+
+{{tool:ag-flops-6nd}}
+
 ## Exercises
 
 1. **Extrapolation, not interpolation.** Take the synthetic grid from *Fitting a Scaling Law From Scratch*, hold out the single largest run ($N=3\times10^9$, $D=10^{11}$), refit on the remaining 41 rows, and predict that held-out loss. Verify the prediction lands within ~2% of the observed value. Then use the refit to predict the compute-optimal $(N^\star, D^\star)$ at $10\times$ the largest grid budget and report tokens/param.
