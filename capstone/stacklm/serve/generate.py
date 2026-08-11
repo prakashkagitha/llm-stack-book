@@ -10,7 +10,9 @@ def generate(model, tokenizer, prompt: str, max_new_tokens: int = 32,
              temperature: float = 0.0, top_p: float = 1.0, stop_id=None,
              use_cache: bool = True) -> str:
     model.eval()
-    ids = torch.tensor([tokenizer.encode(prompt, add_special_tokens=True)], dtype=torch.long)
+    device = next(model.parameters()).device   # follow the model (CPU or the GPU it trained on)
+    ids = torch.tensor([tokenizer.encode(prompt, add_special_tokens=True)],
+                       dtype=torch.long, device=device)
     if stop_id is None:
         stop_id = tokenizer.eos_id
     # keep the prompt inside the context window, leaving room for the completion
