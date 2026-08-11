@@ -618,7 +618,7 @@ def write_tools_hub(book):
         brand_sub=html.escape(book.m.get("subtitle", "")), desc="Interactive LLM calculators and visualizers.",
         base="../", home="../index.html", search_name="search-index.json",
         canonical=SITE_BASE + "tools/", og_image=OG_IMAGE, repo_url=REPO_URL,
-        sidebar=render_sidebar(book, "index.html"),
+        sidebar=render_sidebar(book, "tools/index.html"),
         breadcrumb="", chapter_meta="", body=body, page_nav="",
         toc_side="",
     )
@@ -739,7 +739,7 @@ def write_learning_map(book):
         desc="Guided reading tracks, topic index, and the prerequisite map for the whole book.",
         base="../", home="../index.html", search_name="search-index.json",
         canonical=SITE_BASE + "map/", og_image=OG_IMAGE, repo_url=REPO_URL,
-        sidebar=render_sidebar(book, "index.html"),
+        sidebar=render_sidebar(book, "map/index.html"),
         breadcrumb="", chapter_meta="", body=body, page_nav="", toc_side="")
     os.makedirs(os.path.join(SITE, "map"), exist_ok=True)
     open(os.path.join(SITE, "map", "index.html"), "w").write(page)
@@ -827,7 +827,7 @@ def write_glossary(book):
         desc="A filterable glossary of LLM-stack terms, each linked to the chapter that defines it.",
         base="../", home="../index.html", search_name="search-index.json",
         canonical=SITE_BASE + "glossary/", og_image=OG_IMAGE, repo_url=REPO_URL,
-        sidebar=render_sidebar(book, "index.html"),
+        sidebar=render_sidebar(book, "glossary/index.html"),
         breadcrumb="", chapter_meta="", body=body, page_nav="", toc_side="")
     os.makedirs(os.path.join(SITE, "glossary"), exist_ok=True)
     open(os.path.join(SITE, "glossary", "index.html"), "w").write(page)
@@ -848,7 +848,11 @@ def write_print_edition(book):
     def anchor(url):
         return url[:-5].replace("/", "__") if url.endswith(".html") else url.replace("/", "__")
 
-    link_re = re.compile(r'href="(?:\.\./)?([0-9a-z][0-9a-z-]+)/([0-9a-z][0-9a-z-]+)\.html((?:#[^"]*)?)"')
+    # cross-chapter link -> in-page anchor. Case-insensitive filenames (e.g. 12-diffusion-nonAR-lms).
+    dir_link_re = re.compile(r'href="(?:\.\./)*([0-9A-Za-z][0-9A-Za-z-]+)/([0-9A-Za-z][0-9A-Za-z-]+)\.html(?:#[^"]*)?"')
+    bare_link_re = re.compile(r'href="([0-9A-Za-z][0-9A-Za-z-]+)\.html(?:#[^"]*)?"')
+    home_link_re = re.compile(r'href="(?:\.\./)*index\.html(?:#[^"]*)?"')
+    valid_anchors = {anchor(c["url"]) for c in book.flat_chapters}
     sections, toc, cur_part = [], [], None
     for c in book.flat_chapters:
         md = markdown.Markdown(extensions=MD_EXTENSIONS, extension_configs=MD_CONFIG)
@@ -859,8 +863,16 @@ def write_print_edition(book):
         raw = expand_figures(raw)
         raw = expand_tools(raw)
         body = md.convert(raw)
-        # cross-chapter links -> in-page anchors
-        body = link_re.sub(lambda m: f'href="#{m.group(1)}__{m.group(2)}"', body)
+        # interview-companion links: not part of the printed book -> point at the live site.
+        body = re.sub(r'href="(?:\.\./)*interview/([0-9A-Za-z-]+)\.html((?:#[^"]*)?)"',
+                      lambda m: f'href="{SITE_BASE}interview/{m.group(1)}.html{m.group(2)}"', body)
+        # cross-chapter links -> in-page anchors (dir/file, bare same-part file, and home)
+        body = dir_link_re.sub(lambda m: f'href="#{m.group(1)}__{m.group(2)}"', body)
+        cur_dir = c["part_dir"]
+        body = bare_link_re.sub(
+            lambda m: (f'href="#{cur_dir}__{m.group(1)}"'
+                       if f'{cur_dir}__{m.group(1)}' in valid_anchors else m.group(0)), body)
+        body = home_link_re.sub('href="#pe-top"', body)
         a = anchor(c["url"])
         num = "" if c.get("is_front") else f'{c["part_no"]}.{c["chap_no"]} '
         if c.get("part_title") != cur_part:
@@ -870,7 +882,7 @@ def write_print_edition(book):
         toc.append(f'<li class="pe-toc-ch"><a href="#{a}">{html.escape(num + c["title"])}</a></li>')
 
     m = book.m
-    cover = (f'<div class="pe-cover">'
+    cover = (f'<div class="pe-cover" id="pe-top">'
              f'<div class="pe-cover-eyebrow">The complete book &middot; print / PDF edition</div>'
              f'<h1 class="pe-cover-title">{html.escape(m["title"])}</h1>'
              f'<div class="pe-cover-sub">{html.escape(m.get("subtitle",""))}</div>'
