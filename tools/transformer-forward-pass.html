@@ -2,6 +2,26 @@
   <div class="vt-title">A full transformer forward pass, stage by stage</div>
   <div class="vt-hint">Pick four input tokens, choose how many layers to stack, then step (or Play) through <em>every</em> stage of a real decoder-only GPT forward pass. Every number shown is computed live from fixed, seeded weights (B=1, T=4, d=8, heads=2, head_dim=4, d_ff=16, V=16) &mdash; the same RMSNorm, fused QKV projection, causal softmax attention, SwiGLU MLP, and residual adds a real model runs, just tiny enough to see whole.</div>
 
+  <div id="transformer-forward-pass-lesson-bar">
+    <div class="transformer-forward-pass-lesson-row">
+      <button type="button" id="transformer-forward-pass-lesson-start">Start guided tour</button>
+      <span class="transformer-forward-pass-lesson-tag">15 steps, token ids to next-token distribution. The tour drives the controls below and every control stays live; each step re-applies its own settings, so you can poke at anything and still land back on the canonical run.</span>
+    </div>
+    <div id="transformer-forward-pass-lesson-panel" tabindex="-1" hidden>
+      <div class="transformer-forward-pass-lesson-head">
+        <span id="transformer-forward-pass-lesson-count">Step 1 / 15</span>
+        <span id="transformer-forward-pass-lesson-title"></span>
+      </div>
+      <div id="transformer-forward-pass-lesson-text" aria-live="polite"></div>
+      <div class="transformer-forward-pass-lesson-row">
+        <button type="button" id="transformer-forward-pass-lesson-prev" aria-label="Previous tour step">&larr; Prev</button>
+        <button type="button" id="transformer-forward-pass-lesson-next" aria-label="Next tour step">Next &rarr;</button>
+        <button type="button" id="transformer-forward-pass-lesson-exit" aria-label="Exit the guided tour and explore freely">Exit tour</button>
+        <span class="transformer-forward-pass-lesson-tag">Left / Right arrow keys also step.</span>
+      </div>
+    </div>
+  </div>
+
   <div class="vt-grid">
     <label for="transformer-forward-pass-tok0">Token 1
       <select id="transformer-forward-pass-tok0" aria-label="Token at position 1"></select>
@@ -64,7 +84,7 @@
     <div class="tfp-residual-strip" id="transformer-forward-pass-residual-strip"></div>
   </div>
 
-  <div class="vt-note">The residual stream is a width-<code>d</code> highway: attention and the MLP only ever <em>add</em> to it (never overwrite it), so its shape <code>[T,d]</code> is identical at every checkpoint no matter how many layers you stack. Everything you see is computed from genuinely fixed, seeded (untrained) weights &mdash; the shapes and the arithmetic at every stage are exactly what a real GPT computes, but since nothing has been trained, the final next-token distribution is linguistically arbitrary, not a meaningful prediction.</div>
+  <div class="vt-note">The residual stream is a width-<code>d</code> highway: attention and the MLP only ever <em>add</em> to it (never overwrite it), so its shape <code>[T,d]</code> is identical at every checkpoint no matter how many layers you stack. Everything you see is computed from genuinely fixed, seeded (untrained) weights &mdash; the shapes and the arithmetic at every stage are exactly what a real GPT computes, but since nothing has been trained, the final next-token distribution is linguistically arbitrary, not a meaningful prediction. New to this? <b>Start guided tour</b> at the top walks the whole pass in 15 steps, naming every shape; exit at any point to keep exploring on your own.</div>
 
   <style>
     #tool-transformer-forward-pass{ border:1px solid var(--border-2,#e5e7eb); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); color:var(--ink,#1a1a2e); }
@@ -177,6 +197,61 @@
 
     #tool-transformer-forward-pass .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#889); line-height:1.55; }
     #tool-transformer-forward-pass code{ font-family:var(--mono,monospace); background:var(--surface-3,#eceef3); border-radius:3px; padding:0 4px; }
+
+    /* ---- guided lesson mode (additive; all ids/classes prefixed transformer-forward-pass-lesson-) ---- */
+    #tool-transformer-forward-pass [hidden]{ display:none !important; }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-bar{
+      margin:0 0 14px; padding:10px 12px; border:1px solid var(--border-2,#e5e7eb);
+      border-radius:10px; background:var(--surface-2,#f6f7f9);
+    }
+    #tool-transformer-forward-pass .transformer-forward-pass-lesson-row{
+      display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px;
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-bar button{
+      font:inherit; font-size:.82rem; font-weight:600; padding:6px 12px; border-radius:7px; cursor:pointer;
+      border:1px solid var(--border-2,#e5e7eb); background:var(--surface,#fff); color:var(--ink,#1a1a2e);
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-bar button:hover{ background:var(--surface-3,#eceef3); }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-bar button[disabled]{ opacity:.45; cursor:default; }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-start{
+      background:var(--accent,#4f46e5) !important; color:var(--surface,#fff) !important; border-color:var(--accent,#4f46e5) !important;
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-start:hover{ opacity:.9; }
+    #tool-transformer-forward-pass .transformer-forward-pass-lesson-tag{
+      font-size:.72rem; color:var(--muted,#889); line-height:1.45; flex:1 1 200px; min-width:0;
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-panel{ margin-top:10px; outline:none; }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-panel:focus-visible{ outline:2px solid var(--accent,#4f46e5); outline-offset:3px; }
+    #tool-transformer-forward-pass .transformer-forward-pass-lesson-head{
+      display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; margin-bottom:5px;
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-count{
+      font-family:var(--mono,monospace); font-size:.72rem; color:var(--accent,#4f46e5);
+      font-variant-numeric:tabular-nums; white-space:nowrap;
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-title{
+      font-weight:700; font-size:.9rem; color:var(--ink,#1a1a2e);
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-text{
+      font-size:.83rem; line-height:1.6; color:var(--ink-soft,#556); margin-bottom:10px;
+    }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-text b{ color:var(--ink,#1a1a2e); }
+    #tool-transformer-forward-pass #transformer-forward-pass-lesson-text code{ font-size:.95em; }
+
+    #tool-transformer-forward-pass .transformer-forward-pass-lesson-hl{
+      outline:2px solid var(--accent,#4f46e5); outline-offset:3px; border-radius:8px;
+      animation:transformer-forward-pass-lesson-pulse 1.5s ease-out 2;
+    }
+    #tool-transformer-forward-pass rect.transformer-forward-pass-lesson-hl-cell{
+      stroke:var(--accent,#4f46e5); stroke-width:2.4;
+    }
+    @keyframes transformer-forward-pass-lesson-pulse{
+      0%{ box-shadow:0 0 0 0 rgba(79,70,229,.40); }
+      100%{ box-shadow:0 0 0 7px rgba(79,70,229,0); }
+    }
+    @media (prefers-reduced-motion: reduce){
+      #tool-transformer-forward-pass .transformer-forward-pass-lesson-hl{ animation:none; box-shadow:none; }
+    }
   </style>
 
   <script>(function(){
@@ -687,7 +762,7 @@
           svg.appendChild(rect);
           if(showNums){
             var txt;
-            if(!finite) txt='−∞';
+            if(!finite) txt='\u2212\u221E';
             else if(opts.intFmt) txt=String(Math.round(v));
             else if(kind==='prob') txt=fmt2(v).replace(/^0\./,'.');
             else txt=fmt2(v);
@@ -803,7 +878,7 @@
         case 'softmax':
           var last=TRACE.probs[T-1];
           var top=0; for(var k=1;k<last.length;k++) if(last[k]>last[top]) top=k;
-          return 'softmax(logits), with max-subtraction, turns each row of V=16 logits into a valid probability distribution over "what comes next". At training time all T rows are scored against the true next tokens; at generation time only the <b>last</b> row is used to sample. For this (untrained) model and this input, the argmax next token is <b>"'+esc(VOCAB[top])+'"</b> at '+(last[top]*100).toFixed(1)+'% &mdash; a fact about these fixed random weights, not about English. Note how flat the distribution is: an untrained model sits near uniform (1/16 = 6.25%).';
+          return 'softmax(logits), with max-subtraction, turns each row of V=16 logits into a valid probability distribution over "what comes next". At training time all T rows are scored against the true next tokens; at generation time only the <b>last</b> row is used to sample. For this (untrained) model and this input, the argmax next token is <b>"'+esc(VOCAB[top])+'"</b> at '+(last[top]*100).toFixed(1)+'% &mdash; a fact about these fixed random weights, not about English. No token gets a decisive share (uniform would be 1/16 = 6.25%), and reseeding hands the top spot to a different word: an untrained model has no opinion to express.';
       }
       return '';
     }
@@ -838,7 +913,7 @@
           break;
         case 'attn':
           for(h=0;h<HEADS;h++){
-            addCard('masked scores QKᵀ/√hd, head '+h+' [T,T]', lyr.scoresH[h],
+            addCard('masked scores QK\u1D40/\u221Ahd, head '+h+' [T,T]', lyr.scoresH[h],
               {cell:38, showNums:true, rowLabels:tokLabels('q'), colLabels:shortTokLabels('k')});
           }
           for(h=0;h<HEADS;h++){
@@ -1053,5 +1128,290 @@
     populateTokenSelects();
     buildDiagramStatic();
     fullRecompute(false);
+  })();</script>
+
+  <script>(function(){
+    // ===== guided lesson mode: an ADDITIVE layer that drives the widget's own controls.
+    // It never renders anything itself -- every step sets real inputs and dispatches the
+    // events the main script already listens for, so the existing render path does the work.
+    var root=document.getElementById('tool-transformer-forward-pass');
+    if(!root) return;
+
+    var HL='transformer-forward-pass-lesson-hl';
+    var HLCELL='transformer-forward-pass-lesson-hl-cell';
+    function q(suffix){ return root.querySelector('#transformer-forward-pass-'+suffix); }
+
+    // --- the widget's own controls (never modified, only driven) ---
+    var elToks=[q('tok0'), q('tok1'), q('tok2'), q('tok3')];
+    var elLayers=q('layers'), elSeed=q('seed'), elRange=q('stage-range');
+    var elDiagram=q('diagram-wrap'), elTensor=q('tensor-panel'), elStrip=q('residual-strip');
+    var elStepper=q('stepper');
+    var elLayersLabel=root.querySelector('label[for="transformer-forward-pass-layers"]');
+
+    // --- lesson elements ---
+    var bar=q('lesson-bar'), startBtn=q('lesson-start'), panel=q('lesson-panel');
+    var elTitle=q('lesson-title'), elText=q('lesson-text'), elCount=q('lesson-count');
+    var btnPrev=q('lesson-prev'), btnNext=q('lesson-next'), btnExit=q('lesson-exit');
+    if(!bar||!startBtn||!panel||!elTitle||!elText||!elCount||!btnPrev||!btnNext||!btnExit) return;
+    if(!elLayers||!elSeed||!elRange||!elToks[0]||!elToks[3]){ bar.setAttribute('hidden',''); return; }
+
+    // ================= driving helpers =================
+    function fire(el,type){
+      if(!el) return;
+      var ev;
+      try{ ev=new Event(type,{bubbles:true}); }
+      catch(e){
+        try{ ev=document.createEvent('Event'); ev.initEvent(type,true,false); }
+        catch(e2){ return; }
+      }
+      el.dispatchEvent(ev);
+    }
+    function setControl(el,val,type){
+      if(!el) return;
+      var s=String(val);
+      if(el.value===s) return;      // no spurious recomputes
+      el.value=s;
+      fire(el,type);
+    }
+
+    // "the cat sat on", seed 42 -> the tour is deterministic and its numbers are quotable.
+    var CANON={ tokens:[0,1,2,3], seed:42 };
+
+    // Stage ordering mirrors buildStages(): [tokens, embed] + N x LAYER_BOXES + [finalnorm, lmhead, softmax].
+    var LAYER_BOXES=['norm1','qkv','split','attn','outproj','add1','norm2','mlp','add2'];
+    function stageIndex(box, layer, n){
+      if(box==='tokens') return 0;
+      if(box==='embed') return 1;
+      var tail=2+n*LAYER_BOXES.length;
+      if(box==='finalnorm') return tail;
+      if(box==='lmhead') return tail+1;
+      if(box==='softmax') return tail+2;
+      var p=-1, i;
+      for(i=0;i<LAYER_BOXES.length;i++){ if(LAYER_BOXES[i]===box){ p=i; break; } }
+      if(p<0) return 0;
+      var L=(layer==null?0:layer);
+      if(L<0) L=0;
+      if(L>n-1) L=n-1;
+      return 2+L*LAYER_BOXES.length+p;
+    }
+    // Set tokens / seed / layers first (they trigger a full recompute that preserves the
+    // stage index), then scrub the stage range so the final render is the one we want.
+    // Every step re-asserts the canonical tokens + seed, so the narration stays true even if
+    // the reader edits a control mid-tour; setControl is a no-op when the value already matches.
+    function drive(o){
+      o=o||{};
+      var i;
+      var toks=o.tokens||CANON.tokens;
+      for(i=0;i<4;i++) setControl(elToks[i], toks[i], 'change');
+      setControl(elSeed, (o.seed!=null?o.seed:CANON.seed), 'change');
+      if(o.layers!=null) setControl(elLayers, o.layers, 'input');
+      var n=parseInt(elLayers.value,10);
+      if(!(n>=1)) n=1;
+      var idx=stageIndex(o.box, o.layer, n);
+      var maxIdx=parseInt(elRange.max,10);
+      if(isFinite(maxIdx) && maxIdx>=0 && idx>maxIdx) idx=maxIdx;
+      if(idx<0) idx=0;
+      elRange.value=String(idx);
+      fire(elRange,'input');           // -> the widget's existing setStage/renderStageView
+    }
+
+    // ================= temporary highlights =================
+    function clearHighlights(){
+      var a=root.querySelectorAll('.'+HL), i;
+      for(i=0;i<a.length;i++){ if(a[i].classList) a[i].classList.remove(HL); }
+      var b=root.querySelectorAll('.'+HLCELL);
+      for(i=0;i<b.length;i++){ if(b[i].classList) b[i].classList.remove(HLCELL); }
+    }
+    function mark(el){ if(el&&el.classList) el.classList.add(HL); return el||null; }
+    function cardByLabel(sub){
+      if(!elTensor) return null;
+      var cards=elTensor.querySelectorAll('.tfp-card'), i, lab;
+      for(i=0;i<cards.length;i++){
+        lab=cards[i].querySelector('.tfp-card-label');
+        if(lab && lab.textContent && lab.textContent.indexOf(sub)>=0) return cards[i];
+      }
+      return null;
+    }
+    function markCard(sub){ return mark(cardByLabel(sub)); }
+    // Outline the rowIdx-th row of a heatmap by grouping cells on their y attribute.
+    function markHeatRow(card, rowIdx){
+      if(!card) return;
+      var cells=card.querySelectorAll('rect.tfp-cell');
+      if(!cells.length) return;
+      var ys=[], seen={}, i, y;
+      for(i=0;i<cells.length;i++){
+        y=cells[i].getAttribute('y');
+        if(y!=null && !Object.prototype.hasOwnProperty.call(seen,y)){ seen[y]=1; ys.push(y); }
+      }
+      ys.sort(function(a,b){ return parseFloat(a)-parseFloat(b); });
+      if(rowIdx<0||rowIdx>=ys.length) return;
+      var target=ys[rowIdx];
+      for(i=0;i<cells.length;i++){
+        if(cells[i].getAttribute('y')===target && cells[i].classList) cells[i].classList.add(HLCELL);
+      }
+    }
+
+    // ================= the lesson =================
+    var STEPS=[
+      { title:'The plan: one forward pass, end to end',
+        text:'Four token ids go in; a probability distribution over the next token comes out. Everything between them hangs on one idea: the <b>residual stream</b>, a <code>[T,d]</code> highway that each sublayer reads from and then <em>adds</em> back to. I have reset the controls to a canonical run &mdash; tokens "the cat sat on", seed 42, 2 layers &mdash; so the numbers match the words. The thing to watch is the width of that highway. Branches bulge out to <code>[4,24]</code>, <code>[2,4,4]</code> and <code>[4,16]</code> and come straight back, but the stream itself changes shape exactly twice in the whole pass, and I will flag both.',
+        run:function(){
+          drive({tokens:CANON.tokens, seed:CANON.seed, layers:2, box:'tokens'});
+          mark(elDiagram);
+        } },
+      { title:'Token ids &mdash; [B,T] = [1,4]',
+        text:'Nothing is a vector yet. Each word is a single integer index into a V=16 vocabulary, so the input tensor is just <b>[B,T] = [1,4]</b>: B is the batch (one sequence here), T is the sequence length. Every number you will see downstream is a deterministic function of these four integers and the fixed seeded weights.',
+        run:function(){
+          drive({layers:2, box:'tokens'});
+          markCard('token ids');
+        } },
+      { title:'Embeddings &mdash; [B,T,d] = [1,4,8]',
+        text:'<b>Shape change 1 of 2.</b> Each id selects a row of the token table <code>W_E</code> <code>[V,d]=[16,8]</code>, each position selects a row of <code>W_P</code> <code>[T,d]=[4,8]</code>, and the two are added elementwise: <b>x0 = W_E[id] + W_P[pos]</b>. That sum (highlighted) is the first value ever written onto the residual stream. From here until the LM head, every tensor on the trunk stays <code>[T,d] = [4,8]</code>.',
+        run:function(){
+          drive({layers:2, box:'embed'});
+          markCard('x0 = sum');
+        } },
+      { title:'Block 1, RMSNorm before attention',
+        text:'A block never reads the stream raw. RMSNorm builds a <b>normalized copy</b>: <code>x_i / sqrt(mean(x^2)+eps) * g_i</code>, with no mean subtraction. Compare the two heatmaps: same shape <code>[4,8]</code>, same signs, magnitudes tamed to RMS about 1. The stream itself is untouched on the trunk of the diagram, waiting to be added back a few stages from now.',
+        run:function(){
+          drive({layers:2, box:'norm1', layer:0});
+          markCard('normed1');
+        } },
+      { title:'QKV &mdash; one fused projection, [T,3d] = [4,24]',
+        text:'<b>normed1 x W_qkv</b> with <code>W_qkv [d,3d]=[8,24]</code> produces queries, keys and values in a single GEMM &mdash; the wide heatmap below. Slicing that <code>[4,24]</code> block into three <code>[4,8]</code> pieces (columns 0-7 Q, 8-15 K, 16-23 V) is free, and so is the stage right after this one in the stepper, <b>Multi-head split</b>: each piece is reinterpreted as <b>[heads,T,head_dim] = [2,4,4]</b>, columns 0-3 becoming head 0 and columns 4-7 head 1, without a single number moving. All of this happens on a <em>branch</em>; the trunk is still <code>[4,8]</code>.',
+        run:function(){
+          drive({layers:2, box:'qkv', layer:0});
+          markCard('qkv [T,3d]');
+        } },
+      { title:'Attention &mdash; the only place tokens talk',
+        text:'<b>scores = Q K^T / sqrt(head_dim)</b> (sqrt(4)=2 here), a causal mask sends every future key to &minus;&infin; (the grey cells), a row-wise softmax turns each row into weights summing to 1, and the head output is <b>weights x V</b>. The outlined row is query <b>q0</b>: it can only see key k0, so that weight is exactly 1.00. Scores and weights are <code>[heads,T,T] = [2,4,4]</code> &mdash; per head, and never on the stream.',
+        run:function(){
+          drive({layers:2, box:'attn', layer:0});
+          var card=markCard('softmax weights, head 0');
+          markHeatRow(card, 0);
+        } },
+      { title:'Residual add 1 &mdash; the branch rejoins',
+        text:'<b>x_mid = x_prev + attn_out</b>. Note the verb: <em>add</em>, never overwrite. The three heatmaps below are, in order, the stream exactly as it was before RMSNorm, what attention contributed, and the updated stream (highlighted) &mdash; all three <code>[4,8]</code>. This is why a 2-layer and a 96-layer model have identically shaped trunks, and why gradients reach layer 1 undiminished.',
+        run:function(){
+          drive({layers:2, box:'add1', layer:0});
+          markCard('= x_mid');
+          mark(elStrip);
+        } },
+      { title:'RMSNorm again, before the MLP',
+        text:'The same operation with its own gain vector <code>g</code>, applied to x_mid. Putting both norms <em>inside</em> the branches (pre-norm) rather than on the trunk is exactly what keeps the residual stream a clean identity path from the embedding all the way to the final norm.',
+        run:function(){
+          drive({layers:2, box:'norm2', layer:0});
+          markCard('normed2');
+        } },
+      { title:'SwiGLU MLP &mdash; per-position compute',
+        text:'<b>gate = normed2 x W_gate</b> and <b>up = normed2 x W_up</b> (both <code>[d,dff]=[8,16]</code>), then <b>hidden = SiLU(gate) * up</b> elementwise (highlighted), then <b>out = hidden x W_down</b> <code>[16,8]</code>. The branch widens to dff=16 and comes straight back to d=8. Unlike attention, nothing crosses positions here: each of the 4 rows is transformed alone.',
+        run:function(){
+          drive({layers:2, box:'mlp', layer:0});
+          markCard('hidden = SiLU');
+        } },
+      { title:'Residual add 2 &mdash; block output',
+        text:'<b>x_next = x_mid + mlp_out</b>, and the block is done. It handed back a tensor of precisely the shape it was given, <code>[4,8]</code>. Every block is the same read &rarr; normalize &rarr; compute &rarr; add cycle onto a highway it is never allowed to resize. In the checkpoint strip below, the marked tile has moved from x0 to <b>x1</b>: one block, one new checkpoint, same width.',
+        run:function(){
+          drive({layers:2, box:'add2', layer:0});
+          markCard('= x_next');
+          mark(elStrip);
+        } },
+      { title:'Repeat over layers',
+        text:'Stacking is literal repetition of that block with fresh weights. I have set the <b>Layers</b> control to 3 and jumped to the end of layer 3: the checkpoint strip now runs <b>x0..x3</b> instead of x0..x2, and every tile in it is still <code>[4,8]</code>. Depth buys compute and abstraction, never width &mdash; the trunk has not changed shape since the embedding, and would not at 96 layers either.',
+        run:function(){
+          drive({layers:3, box:'add2', layer:2});
+          mark(elStrip);
+          mark(elLayersLabel);
+        } },
+      { title:'Final RMSNorm',
+        text:'After the last block, one more RMSNorm normalizes the finished stream. It is the only normalization whose output is <b>not</b> added back anywhere &mdash; it exists purely to condition the read-out. Still <code>[T,d] = [4,8]</code>.',
+        run:function(){
+          drive({layers:3, box:'finalnorm'});
+          markCard('normed_final');
+        } },
+      { title:'LM head &mdash; [B,T,V] = [1,4,16]',
+        text:'<b>Shape change 2 of 2, and the last one.</b> <code>normed_final x W_lm_head</code> with <code>W_lm_head [d,V]=[8,16]</code> turns each token\'s 8-dimensional stream vector into 16 raw logits, so <code>[B,T,d]=[1,4,8]</code> becomes <b>[B,T,V]=[1,4,16]</b>. Every position gets its own prediction &mdash; that is how a single sequence yields T training signals.',
+        run:function(){
+          drive({layers:3, box:'lmhead'});
+          markCard('logits [T,V]');
+        } },
+      { title:'Softmax &rarr; next-token distribution',
+        text:'A row-wise softmax (with max subtraction for numerical safety) converts each row of 16 logits into probabilities that sum to 1; the shape is unchanged at <code>[T,V]=[4,16]</code>. Training scores <em>all</em> T rows against the true next tokens. Generation uses only the <b>last</b> row, t3 &mdash; the row belonging to the final token, "on".',
+        run:function(){
+          drive({layers:3, box:'softmax'});
+          markCard('probs [T,V]');
+        } },
+      { title:'The prediction &mdash; and over to you',
+        text:'The highlighted bar is the argmax of row t3: the token this model would emit next. Its probability is only a few times uniform (1/16 = 6.25%), and typing a different <b>Weight seed</b> hands the crown to a different word &mdash; these weights are seeded but <em>untrained</em>, so the machinery is real and the opinion is not. The whole trip in shapes: <code>[B,T]</code> &rarr; <code>[B,T,d]</code> &rarr; ... unchanged through every layer ... &rarr; <code>[B,T,V]</code>. Press <b>Finish tour</b>, then try it yourself: swap a token, drag Layers to 4, or reseed for a different fixed model.',
+        run:function(){
+          drive({layers:3, box:'softmax'});
+          mark(root.querySelector('.tfp-bar-row.tfp-bar-top'));
+        } }
+    ];
+
+    // ================= tour state =================
+    var TOURING=false, IDX=0;
+
+    function renderLesson(){
+      var s=STEPS[IDX];
+      if(!s) return;
+      elCount.textContent='Step '+(IDX+1)+' / '+STEPS.length;
+      elTitle.innerHTML=s.title;
+      elText.innerHTML=s.text;
+      clearHighlights();
+      try{ s.run(); }catch(e){ /* never break the widget for a highlight */ }
+      btnPrev.disabled=(IDX<=0);
+      btnNext.disabled=(IDX>=STEPS.length-1);
+      btnExit.textContent=(IDX>=STEPS.length-1)?'Finish tour':'Exit tour';
+    }
+    function goTo(i){
+      if(!TOURING) return;
+      if(i<0) i=0;
+      if(i>STEPS.length-1) i=STEPS.length-1;
+      IDX=i;
+      renderLesson();
+    }
+    function startTour(){
+      TOURING=true;
+      IDX=0;
+      startBtn.setAttribute('hidden','');
+      panel.removeAttribute('hidden');
+      renderLesson();
+      try{ panel.focus({preventScroll:true}); }catch(e){ try{ panel.focus(); }catch(e2){} }
+    }
+    function exitTour(){
+      TOURING=false;
+      clearHighlights();
+      panel.setAttribute('hidden','');
+      startBtn.removeAttribute('hidden');
+      startBtn.textContent='Restart guided tour';
+      try{ startBtn.focus({preventScroll:true}); }catch(e){ try{ startBtn.focus(); }catch(e2){} }
+    }
+
+    startBtn.addEventListener('click', startTour);
+    btnPrev.addEventListener('click', function(){ goTo(IDX-1); });
+    btnNext.addEventListener('click', function(){ goTo(IDX+1); });
+    btnExit.addEventListener('click', exitTour);
+
+    document.addEventListener('keydown', function(ev){
+      if(!TOURING) return;
+      if(ev.key!=='ArrowLeft' && ev.key!=='ArrowRight') return;
+      if(ev.altKey||ev.ctrlKey||ev.metaKey) return;
+      // the widget's own stage stepper already claims arrows when it has focus -- let it win
+      if(ev.defaultPrevented) return;
+      var t=ev.target;
+      if(t && t.nodeType===1){
+        var tag=(t.tagName||'').toLowerCase();
+        // never hijack arrows inside a text/number/select control
+        if(tag==='input'||tag==='select'||tag==='textarea'||tag==='option'||t.isContentEditable) return;
+        if(elStepper && elStepper.contains && elStepper.contains(t)) return;
+        // on the concatenated /tools hub, only respond when focus is in this widget (or nowhere)
+        var inScope=(t===document.body)||(t===document.documentElement)||
+                    (root.contains?root.contains(t):false);
+        if(!inScope) return;
+      }
+      ev.preventDefault();
+      goTo(ev.key==='ArrowRight' ? IDX+1 : IDX-1);
+    });
   })();</script>
 </div>

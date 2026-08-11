@@ -11,20 +11,42 @@
     feature &mdash; the reward-hacking trap, by construction), and the trainable scalar <b>value/critic</b>.
   </div>
 
+  <div class="rlhf-ppo-pipeline-lesson-bar" id="rlhf-ppo-pipeline-lesson-bar">
+    <div class="rlhf-ppo-pipeline-lesson-intro" id="rlhf-ppo-pipeline-lesson-intro">
+      <button class="vt-btn rp-primary" id="rlhf-ppo-pipeline-lesson-startbtn" type="button">Start guided tour</button>
+      <span class="rlhf-ppo-pipeline-lesson-tag">7 steps: the four models &rarr; rollout &rarr; reward &rarr; GAE
+        &rarr; the clip &rarr; the KL leash &rarr; reward hacking. Every control stays live during the tour.</span>
+    </div>
+    <div class="rlhf-ppo-pipeline-lesson-panel" id="rlhf-ppo-pipeline-lesson-panel" hidden>
+      <div class="rlhf-ppo-pipeline-lesson-head">
+        <span class="rlhf-ppo-pipeline-lesson-count" id="rlhf-ppo-pipeline-lesson-count">Step 1 / 7</span>
+        <span class="rlhf-ppo-pipeline-lesson-title" id="rlhf-ppo-pipeline-lesson-title"></span>
+        <span class="rlhf-ppo-pipeline-lesson-dots" id="rlhf-ppo-pipeline-lesson-dots"></span>
+      </div>
+      <div class="rlhf-ppo-pipeline-lesson-text" id="rlhf-ppo-pipeline-lesson-text" aria-live="polite"></div>
+      <div class="rlhf-ppo-pipeline-lesson-nav">
+        <button class="vt-btn" id="rlhf-ppo-pipeline-lesson-prevbtn" type="button">&larr; Prev</button>
+        <button class="vt-btn rp-primary" id="rlhf-ppo-pipeline-lesson-nextbtn" type="button">Next &rarr;</button>
+        <button class="vt-btn" id="rlhf-ppo-pipeline-lesson-exitbtn" type="button">Exit tour (restore)</button>
+        <span class="rlhf-ppo-pipeline-lesson-kbd">Left / Right arrows step; Esc exits</span>
+      </div>
+    </div>
+  </div>
+
   <div class="vt-grid vt-controls">
-    <label for="rlhf-ppo-pipeline-beta">KL coefficient &beta; <span class="vt-val" id="rlhf-ppo-pipeline-betaval">0.050</span>
+    <label for="rlhf-ppo-pipeline-beta" data-rp-ctl="beta">KL coefficient &beta; <span class="vt-val" id="rlhf-ppo-pipeline-betaval">0.050</span>
       <input id="rlhf-ppo-pipeline-beta" type="range" min="0" max="0.3" step="0.005" value="0.05"
              aria-label="KL penalty coefficient beta">
     </label>
-    <label for="rlhf-ppo-pipeline-eps">Clip &epsilon; <span class="vt-val" id="rlhf-ppo-pipeline-epsval">0.20</span>
+    <label for="rlhf-ppo-pipeline-eps" data-rp-ctl="eps">Clip &epsilon; <span class="vt-val" id="rlhf-ppo-pipeline-epsval">0.20</span>
       <input id="rlhf-ppo-pipeline-eps" type="range" min="0.05" max="0.4" step="0.01" value="0.2"
              aria-label="PPO clip epsilon">
     </label>
-    <label for="rlhf-ppo-pipeline-epochs">PPO epochs / step <span class="vt-val" id="rlhf-ppo-pipeline-epochsval">3</span>
+    <label for="rlhf-ppo-pipeline-epochs" data-rp-ctl="epochs">PPO epochs / step <span class="vt-val" id="rlhf-ppo-pipeline-epochsval">3</span>
       <input id="rlhf-ppo-pipeline-epochs" type="range" min="1" max="6" step="1" value="3"
              aria-label="Number of PPO optimization epochs per iteration">
     </label>
-    <label for="rlhf-ppo-pipeline-T">Response length T <span class="vt-val" id="rlhf-ppo-pipeline-Tval">8</span>
+    <label for="rlhf-ppo-pipeline-T" data-rp-ctl="T">Response length T <span class="vt-val" id="rlhf-ppo-pipeline-Tval">8</span>
       <input id="rlhf-ppo-pipeline-T" type="range" min="4" max="12" step="1" value="8"
              aria-label="Number of tokens in the sampled response">
     </label>
@@ -40,14 +62,14 @@
   <div class="rp-legend" id="rlhf-ppo-pipeline-legend"></div>
 
   <div class="rp-panel-h">The loop (numbers below are the <i>pending</i> iteration &mdash; drag sliders to preview it)</div>
-  <div class="rp-wrap rp-scroll">
+  <div class="rp-wrap rp-scroll" id="rlhf-ppo-pipeline-lesson-cyclewrap">
     <svg id="rlhf-ppo-pipeline-cycle" viewBox="0 0 1060 300"
          preserveAspectRatio="xMidYMid meet" role="img"
          aria-label="Cycle diagram: prompt to policy to reward model to GAE with critic to PPO clip with reference KL to policy update and back to policy"></svg>
   </div>
 
   <div class="rp-panel-h">Response #1 of 16 sampled this iteration, token by token</div>
-  <div class="rp-wrap rp-scroll">
+  <div class="rp-wrap rp-scroll" id="rlhf-ppo-pipeline-lesson-tablewrap">
     <table class="rp-table" id="rlhf-ppo-pipeline-table"></table>
   </div>
 
@@ -56,7 +78,7 @@
   <div class="vt-out" id="rlhf-ppo-pipeline-out" aria-live="polite"></div>
 
   <div class="rp-panel-h">Reward vs. KL over iterations (the classic tradeoff)</div>
-  <div class="rp-wrap">
+  <div class="rp-wrap" id="rlhf-ppo-pipeline-lesson-plotwrap">
     <svg id="rlhf-ppo-pipeline-plot" viewBox="0 0 460 270"
          preserveAspectRatio="xMidYMid meet" role="img"
          aria-label="Scatter plot of true reward and reward-model reward versus KL divergence from the reference policy, across iterations"></svg>
@@ -107,9 +129,57 @@
       border-radius:7px; background:var(--rp-surface); color:var(--rp-ink); cursor:pointer; }
     #tool-rlhf-ppo-pipeline .vt-btn:hover{ background:var(--rp-surface3); }
     #tool-rlhf-ppo-pipeline .vt-btn:focus-visible{ outline:2px solid var(--rp-accent); outline-offset:2px; }
+    #tool-rlhf-ppo-pipeline .vt-btn[disabled]{ opacity:.45; cursor:default; }
+    #tool-rlhf-ppo-pipeline .vt-btn[disabled]:hover{ background:var(--rp-surface); }
     #tool-rlhf-ppo-pipeline .rp-primary{ background:var(--rp-accent); color:var(--rp-onaccent); border-color:var(--rp-accent); font-weight:600; }
     #tool-rlhf-ppo-pipeline .rp-primary:hover{ filter:brightness(1.08); background:var(--rp-accent); }
     #tool-rlhf-ppo-pipeline .rp-tag{ font-family:var(--rp-mono); font-size:.76rem; color:var(--rp-muted); margin-left:auto; }
+
+    /* ---------------- guided lesson layer (additive) ---------------- */
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-bar{ margin:0 0 16px; padding:10px 12px; border:1px solid var(--rp-border2);
+      border-radius:10px; background:var(--rp-surface2); }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-intro{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-intro[hidden]{ display:none; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-tag{ font-size:.74rem; color:var(--rp-muted); line-height:1.45; flex:1 1 260px; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-panel[hidden]{ display:none; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-head{ display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-count{ font-family:var(--rp-mono); font-size:.72rem; color:var(--rp-accent);
+      font-weight:700; letter-spacing:.02em; white-space:nowrap; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-title{ font-size:.86rem; font-weight:700; color:var(--rp-ink); }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-dots{ margin-left:auto; display:flex; gap:5px; align-items:center; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-dot{ width:11px; height:11px; padding:0; border-radius:50%;
+      border:1px solid var(--rp-border2); background:var(--rp-surface); cursor:pointer; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-dot:hover{ border-color:var(--rp-accent); }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-dot:focus-visible{ outline:2px solid var(--rp-accent); outline-offset:2px; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-dot[aria-current="true"]{ background:var(--rp-accent); border-color:var(--rp-accent); }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-text{ margin:7px 0 10px; font-size:.8rem; line-height:1.6; color:var(--rp-inksoft); }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-text b{ color:var(--rp-ink); }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-text code{ font-family:var(--rp-mono); font-size:.94em; color:var(--rp-ink); }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-nav{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-kbd{ font-size:.7rem; color:var(--rp-muted); margin-left:auto; }
+
+    #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-hl{ outline:2px solid var(--rp-accent); outline-offset:2px; border-radius:8px; }
+    #tool-rlhf-ppo-pipeline td.rlhf-ppo-pipeline-lesson-hl,
+    #tool-rlhf-ppo-pipeline th.rlhf-ppo-pipeline-lesson-hl{ outline-offset:-2px; border-radius:0;
+      background:var(--rp-surface3); background:color-mix(in srgb, var(--rp-accent) 12%, transparent); }
+    #tool-rlhf-ppo-pipeline tr.rlhf-ppo-pipeline-lesson-hl{ outline:none; }
+    #tool-rlhf-ppo-pipeline tr.rlhf-ppo-pipeline-lesson-hl > td{ background:var(--rp-surface3);
+      background:color-mix(in srgb, var(--rp-accent) 12%, transparent); box-shadow:inset 0 -2px 0 0 var(--rp-accent); }
+    /* class repeated on purpose: it has to out-rank .rp-node-box.trainable / .frozen */
+    #tool-rlhf-ppo-pipeline rect.rlhf-ppo-pipeline-lesson-hl.rlhf-ppo-pipeline-lesson-hl,
+    #tool-rlhf-ppo-pipeline path.rlhf-ppo-pipeline-lesson-hl.rlhf-ppo-pipeline-lesson-hl,
+    #tool-rlhf-ppo-pipeline line.rlhf-ppo-pipeline-lesson-hl.rlhf-ppo-pipeline-lesson-hl{
+      outline:none; stroke:var(--rp-accent); stroke-width:3; }
+    #tool-rlhf-ppo-pipeline rect.rp-node-box.rlhf-ppo-pipeline-lesson-hl,
+    #tool-rlhf-ppo-pipeline rect.rp-tagbox.rlhf-ppo-pipeline-lesson-hl{
+      fill:var(--rp-surface3); fill:color-mix(in srgb, var(--rp-accent) 10%, var(--rp-surface2)); }
+    @media (prefers-reduced-motion: no-preference){
+      #tool-rlhf-ppo-pipeline .rlhf-ppo-pipeline-lesson-hl{ animation:rlhf-ppo-pipeline-lesson-pulse 1.6s ease-in-out infinite; }
+      @keyframes rlhf-ppo-pipeline-lesson-pulse{
+        0%,100%{ outline-color:var(--rp-accent); opacity:1; }
+        50%    { outline-color:var(--rp-warn);   opacity:.82; }
+      }
+    }
 
     #tool-rlhf-ppo-pipeline .rp-legend{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
       gap:8px 10px; }
@@ -337,6 +407,11 @@
     var vocab = buildVocab(seed);
     var thetaRef, theta, V, iteration, history, pending;
 
+    // Guided-tour state, declared here because render()/drawNote() consult it.
+    // Everything that drives it lives in the GUIDED TOUR section further down.
+    var HL = 'rlhf-ppo-pipeline-lesson-hl';
+    var LZ = { ok:false, active:false, idx:0, hl:[], timer:null, seq:0, snap:null };
+
     function initRun(rebuildVocab){
       if(rebuildVocab) vocab = buildVocab(seed);
       thetaRef = new Array(NV);
@@ -453,10 +528,10 @@
     // ================================================================= drawing
     function drawLegend(){
       legendEl.innerHTML =
-        '<div class="rp-legend-item trainable"><b>POLICY &pi;&theta; (trainable)</b><span>the actor; its logits move every Step</span></div>'+
-        '<div class="rp-legend-item frozen"><b>REFERENCE &pi;ref (frozen)</b><span>SFT snapshot at iteration 0; defines the KL leash</span></div>'+
-        '<div class="rp-legend-item frozen"><b>REWARD MODEL (frozen)</b><span>scores quality + &kappa;&middot;hack, &kappa;='+KAPPA.toFixed(1)+' &mdash; its exploitable blind spot</span></div>'+
-        '<div class="rp-legend-item trainable"><b>VALUE / CRITIC V&phi; (trainable)</b><span>scalar baseline, regressed toward GAE returns</span></div>';
+        '<div class="rp-legend-item trainable" data-rp-legend="policy"><b>POLICY &pi;&theta; (trainable)</b><span>the actor; its logits move every Step</span></div>'+
+        '<div class="rp-legend-item frozen" data-rp-legend="reference"><b>REFERENCE &pi;ref (frozen)</b><span>SFT snapshot at iteration 0; defines the KL leash</span></div>'+
+        '<div class="rp-legend-item frozen" data-rp-legend="reward"><b>REWARD MODEL (frozen)</b><span>scores quality + &kappa;&middot;hack, &kappa;='+KAPPA.toFixed(1)+' &mdash; its exploitable blind spot</span></div>'+
+        '<div class="rp-legend-item trainable" data-rp-legend="value"><b>VALUE / CRITIC V&phi; (trainable)</b><span>scalar baseline, regressed toward GAE returns</span></div>';
     }
 
     function drawCycle(P){
@@ -499,7 +574,7 @@
 
       for(i=0;i<6;i++){
         var cls='rp-node-box'+(frozenFlag[i]?' frozen':'')+(trainFlag[i]?' trainable':'');
-        p.push('<rect class="'+cls+'" x="'+(xs[i]-ws[i]/2)+'" y="'+boxTop+'" width="'+ws[i]+'" height="'+boxH+'" rx="9"></rect>');
+        p.push('<rect class="'+cls+'" data-rp-node="'+i+'" x="'+(xs[i]-ws[i]/2)+'" y="'+boxTop+'" width="'+ws[i]+'" height="'+boxH+'" rx="9"></rect>');
         p.push('<text class="rp-node-title" x="'+xs[i]+'" y="'+(rowY-6)+'" text-anchor="middle">'+titles[i]+'</text>');
         p.push('<text class="rp-node-sub'+(i===4&&P.clipfrac>0?' warn':'')+'" x="'+xs[i]+'" y="'+(rowY+14)+'" text-anchor="middle">'+subs[i]+'</text>');
       }
@@ -508,12 +583,12 @@
       var tagW=200, tagH=46;
       var aY=178, bY=240;
       p.push('<line class="rp-conn" x1="'+xs[3]+'" y1="'+boxBot+'" x2="'+xs[3]+'" y2="'+aY+'"></line>');
-      p.push('<rect class="rp-tagbox" x="'+(xs[3]-tagW/2)+'" y="'+aY+'" width="'+tagW+'" height="'+tagH+'" rx="7"></rect>');
+      p.push('<rect class="rp-tagbox" data-rp-node="critic" x="'+(xs[3]-tagW/2)+'" y="'+aY+'" width="'+tagW+'" height="'+tagH+'" rx="7"></rect>');
       p.push('<text class="rp-node-title" x="'+xs[3]+'" y="'+(aY+18)+'" text-anchor="middle" style="font-size:11px">VALUE / CRITIC V&phi;</text>');
       p.push('<text class="rp-node-sub" x="'+xs[3]+'" y="'+(aY+35)+'" text-anchor="middle">V '+fmt(V,3)+' &rarr; '+fmt(P.Vcandidate,3)+' if Step</text>');
 
       p.push('<line class="rp-conn" x1="'+xs[4]+'" y1="'+boxBot+'" x2="'+xs[4]+'" y2="'+bY+'"></line>');
-      p.push('<rect class="rp-tagbox" x="'+(xs[4]-tagW/2)+'" y="'+bY+'" width="'+tagW+'" height="'+tagH+'" rx="7"></rect>');
+      p.push('<rect class="rp-tagbox" data-rp-node="reference" x="'+(xs[4]-tagW/2)+'" y="'+bY+'" width="'+tagW+'" height="'+tagH+'" rx="7"></rect>');
       p.push('<text class="rp-node-title" x="'+xs[4]+'" y="'+(bY+18)+'" text-anchor="middle" style="font-size:11px">REFERENCE &pi;ref</text>');
       p.push('<text class="rp-node-sub" x="'+xs[4]+'" y="'+(bY+35)+'" text-anchor="middle">frozen at iter 0; feeds KL_t</text>');
 
@@ -542,16 +617,16 @@
       for(t=0;t<T;t++){
         var isLast = t===T-1;
         var clip = P.clipped[t];
-        rows.push('<tr class="'+(clip?'rp-clipped ':'')+(isLast?'rp-last':'')+'">'+
+        rows.push('<tr class="'+(clip?'rp-clipped ':'')+(isLast?'rp-last':'')+'"'+(isLast?' data-rp-row="last"':'')+'>'+
           '<td class="rp-lab">'+(t+1)+'</td>'+
           '<td class="rp-lab">'+LABELS[tokens[t]]+(isLast?' (+RM score)':'')+'</td>'+
           '<td>'+fmt(pending.piOld[tokens[t]],3)+'</td>'+
           '<td>'+fmt(pending.piRef[tokens[t]],3)+'</td>'+
           '<td>'+fmt(P.piCand[tokens[t]],3)+'</td>'+
-          '<td>'+fmt(P.ratioFinal[t],3)+'</td>'+
-          '<td class="rp-lab">'+ratioBar(P.ratioFinal[t], P.eps, clip)+'</td>'+
+          '<td data-rp-cell="ratio">'+fmt(P.ratioFinal[t],3)+'</td>'+
+          '<td class="rp-lab" data-rp-cell="ratio">'+ratioBar(P.ratioFinal[t], P.eps, clip)+'</td>'+
           '<td>'+fmt(P.klTok[t],3)+'</td>'+
-          '<td>'+fmt(P.whitenedA[t],3)+'</td>'+
+          '<td data-rp-cell="adv">'+fmt(P.whitenedA[t],3)+'</td>'+
           '<td class="'+(clip?'rp-status-clip':'rp-status-ok')+'">'+(clip?'CLIPPED':'active')+'</td>'+
         '</tr>');
       }
@@ -581,15 +656,15 @@
 
     function drawOut(P){
       var stats = [
-        ['', fmt(P.rRmSample,3), 'RM score r(o) of response #1 (mean over '+P.T+' tokens, quality + '+KAPPA.toFixed(1)+'&times;hack)'],
-        ['', fmt(P.rTrueSample,3), 'True reward of response #1 (quality only -- what a human would actually want)'],
-        ['', fmt(exactKL(softmax(theta),softmax(thetaRef)),4), 'Exact D_KL(pi_theta || pi_ref) at the CURRENT committed policy'],
-        [P.clipfrac>0.4?'rp-warn':'', (P.clipfrac*100).toFixed(0)+'%', 'clipfrac if you Step now (pooled over '+(P.B*P.T)+' tokens, '+P.B+' rollouts &times; T='+P.T+')'],
-        ['', fmt(V,3)+' &rarr; '+fmt(P.Vcandidate,3), 'Critic V: current &rarr; pending (regression toward mean GAE return)'],
-        ['', String(iteration), 'Iterations committed so far']
+        ['', fmt(P.rRmSample,3), 'RM score r(o) of response #1 (mean over '+P.T+' tokens, quality + '+KAPPA.toFixed(1)+'&times;hack)', 'rm'],
+        ['', fmt(P.rTrueSample,3), 'True reward of response #1 (quality only -- what a human would actually want)', 'true'],
+        ['', fmt(exactKL(softmax(theta),softmax(thetaRef)),4), 'Exact D_KL(pi_theta || pi_ref) at the CURRENT committed policy', 'kl'],
+        [P.clipfrac>0.4?'rp-warn':'', (P.clipfrac*100).toFixed(0)+'%', 'clipfrac if you Step now (pooled over '+(P.B*P.T)+' tokens, '+P.B+' rollouts &times; T='+P.T+')', 'clipfrac'],
+        ['', fmt(V,3)+' &rarr; '+fmt(P.Vcandidate,3), 'Critic V: current &rarr; pending (regression toward mean GAE return)', 'critic'],
+        ['', String(iteration), 'Iterations committed so far', 'iter']
       ];
       outEl.innerHTML = stats.map(function(s){
-        return '<div class="vt-stat '+s[0]+'"><div class="n">'+s[1]+'</div><div class="l">'+s[2]+'</div></div>';
+        return '<div class="vt-stat '+s[0]+'" data-rp-stat="'+s[3]+'"><div class="n">'+s[1]+'</div><div class="l">'+s[2]+'</div></div>';
       }).join('');
     }
 
@@ -674,7 +749,9 @@
         'model itself is trustworthy. That job belongs entirely to the KL-to-reference penalty, whose strength is &beta;. '+betaTxt+
         ' Watch both curves on the reward-vs-KL plot: raising &beta; buys lower KL at the cost of a lower <i>reward-model</i> score &mdash; '+
         'which, when the RM is exploitable, is exactly the trade you want. The dashed-minus-solid gap is the quantity a real RLHF run must '+
-        'watch (via held-out human or judge evals, since the true reward is never observable) to catch over-optimization before it compounds.';
+        'watch (via held-out human or judge evals, since the true reward is never observable) to catch over-optimization before it compounds.'+
+        (LZ.active ? '' : ' <b>New to this loop?</b> Press <b>Start guided tour</b> at the top for a seven-step walkthrough that drives these '+
+        'same controls; you can exit at any point and keep exploring.');
     }
 
     // ================================================================= master render
@@ -683,7 +760,7 @@
       epsVal.textContent = fv(epsIn,0.2,0.01,0.9).toFixed(2);
       epochsVal.textContent = String(iv(epochsIn,3,1,10));
       Tval.textContent = String(iv(Tin,8,4,12));
-      iterLabel.textContent = 'iteration '+iteration+' · seed '+seed;
+      iterLabel.textContent = 'iteration '+iteration+' \u00b7 seed '+seed;
 
       var P = computePreview();
       drawCycle(P);
@@ -692,6 +769,7 @@
       drawOut(P);
       drawPlot(P);
       drawNote(P);
+      lessonApplyHl();          // re-attach guided-tour highlights after any re-render
     }
 
     // ================================================================= wiring
@@ -706,6 +784,377 @@
     stepBtn.addEventListener('click', commitStep);
     resetBtn.addEventListener('click', function(){ initRun(false); render(); });
     reseedBtn.addEventListener('click', function(){ seed = (seed+1) % 100000; initRun(true); render(); });
+
+    // =================================================================
+    // GUIDED TOUR ("lesson mode") -- a purely additive layer. It never renders
+    // anything itself: every step drives the tool's OWN controls (dispatching real
+    // input/change events, or clicking Step/Reset) and then highlights the element
+    // the narration is talking about. Exiting restores the exact pre-tour state.
+    // =================================================================
+    function addCls(el,c){
+      if(!el) return;
+      if(el.classList){ el.classList.add(c); return; }
+      var a=el.getAttribute('class')||'';
+      if((' '+a+' ').indexOf(' '+c+' ')<0) el.setAttribute('class', a? a+' '+c : c);
+    }
+    function remCls(el,c){
+      if(!el) return;
+      if(el.classList){ el.classList.remove(c); return; }
+      var a=' '+(el.getAttribute('class')||'')+' ';
+      el.setAttribute('class', a.split(' '+c+' ').join(' ').replace(/^\s+/,'').replace(/\s+$/,''));
+    }
+    // Called at the end of every render(): the cycle SVG, the table and the stat tiles
+    // are rebuilt from scratch each time, so the highlight has to be re-applied.
+    function lessonApplyHl(){
+      var old = root.querySelectorAll('.'+HL), i;
+      for(i=0;i<old.length;i++) remCls(old[i], HL);
+      if(!LZ.active || !LZ.hl || !LZ.hl.length) return;
+      for(i=0;i<LZ.hl.length;i++){
+        var els;
+        try { els = root.querySelectorAll(LZ.hl[i]); } catch(err){ els = []; }
+        for(var j=0;j<els.length;j++) addCls(els[j], HL);
+      }
+    }
+
+    var lessonBar   = q('lesson-bar');
+    var lessonIntro = q('lesson-intro');
+    var lessonPanel = q('lesson-panel');
+    var lessonStart = q('lesson-startbtn');
+    var lessonPrev  = q('lesson-prevbtn');
+    var lessonNext  = q('lesson-nextbtn');
+    var lessonExit  = q('lesson-exitbtn');
+    var lessonCount = q('lesson-count');
+    var lessonTitle = q('lesson-title');
+    var lessonText  = q('lesson-text');
+    var lessonDots  = q('lesson-dots');
+
+    // ---- control drivers (real events -> the tool's existing handlers) ----
+    function fire(el, type){
+      var ev;
+      try { ev = new Event(type, {bubbles:true}); }
+      catch(err){ ev = document.createEvent('Event'); ev.initEvent(type, true, false); }
+      el.dispatchEvent(ev);
+    }
+    function setControl(el, value){
+      if(!el) return;
+      el.value = String(value);
+      fire(el,'input');
+      fire(el,'change');
+    }
+    // Deterministic scene: same seed, same vocab, same rollouts every time.
+    function scene(o){
+      resetBtn.click();                       // initRun(false): keeps seed + vocab
+      setControl(Tin,      o.T);
+      setControl(epsIn,    o.eps);
+      setControl(epochsIn, o.epochs);
+      setControl(betaIn,   o.beta);
+      var n = o.steps||0, i;
+      for(i=0;i<n;i++) stepBtn.click();       // the tool's own commit path
+    }
+    function reducedMotion(){
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    }
+    function later(ms, fn){
+      var mySeq = LZ.seq;
+      if(LZ.timer){ clearTimeout(LZ.timer); LZ.timer=null; }
+      LZ.timer = setTimeout(function(){
+        LZ.timer=null;
+        if(LZ.active && LZ.seq===mySeq) fn();
+      }, ms);
+    }
+    // Preview the pending iteration at a hypothetical beta without touching any state.
+    function previewAtBeta(b){
+      var keep = betaIn.value;
+      betaIn.value = String(b);
+      var P = computePreview();
+      betaIn.value = keep;
+      return P;
+    }
+    // Narration formatter: same as fmt(), but never prints a signed "-0.000".
+    function lfmt(x,d){
+      var s = fmt(x,d);
+      if(/^-0(\.0+)?$/.test(s)) s = s.slice(1);
+      return s;
+    }
+    function tokenList(){
+      var s=[], i; for(i=0;i<pending.tokens.length;i++) s.push(LABELS[pending.tokens[i]]);
+      return s.join(', ');
+    }
+    function rmBestToken(){
+      var b=0,i;
+      for(i=1;i<NV;i++) if(vocab.quality[i]+KAPPA*vocab.hack[i] > vocab.quality[b]+KAPPA*vocab.hack[b]) b=i;
+      return b;
+    }
+
+    // ---------------------------------------------------------------- the steps
+    var STEPS = [
+      {
+        title:'Four models are in play',
+        hl:['[data-rp-legend]','[data-rp-node="1"]','[data-rp-node="2"]','[data-rp-node="critic"]','[data-rp-node="reference"]'],
+        drive:function(){ scene({beta:0.05, eps:0.2, epochs:3, T:8, steps:0}); },
+        body:function(){
+          return 'One PPO iteration touches <b>four</b> networks, and only two of them learn. '+
+            '<b>Policy pi_theta</b> (accent outline, trainable) is the model you are training and the only one that '+
+            'generates text. <b>Reference pi_ref</b> (dashed, frozen) is the SFT snapshot the policy started from: it '+
+            'never moves, and it is what KL is measured against. <b>Reward model</b> (dashed, frozen) turns a finished '+
+            'response into a single scalar. <b>Value / critic V_phi</b> (trainable) is not a scorer at all &mdash; it is a '+
+            'baseline that predicts the return so the advantage can be reward minus baseline. The four cards and the '+
+            'matching boxes in the loop diagram are highlighted. The run has been reset to iteration 0 with the default '+
+            'sliders, where pi_theta is still exactly pi_ref.';
+        }
+      },
+      {
+        title:'The policy generates a response',
+        hl:['[data-rp-node="0"]','[data-rp-node="1"]','#rlhf-ppo-pipeline-lesson-tablewrap'],
+        drive:function(){ scene({beta:0.05, eps:0.2, epochs:3, T:8, steps:0}); },
+        body:function(){
+          var top = argmax(pending.piOld);
+          return 'Sampling is the environment. From the fixed prompt the policy drew <b>'+pending.B+' independent '+
+            'responses</b> of T='+pending.T+' tokens each from pi_old; the table shows response #1 token by token: '+
+            '<code>'+tokenList()+'</code>. Under pi_old the most likely token is "<b>'+LABELS[top]+'</b>" at '+
+            (pending.piOld[top]*100).toFixed(0)+'%, and the <code>pi_old</code> column is exactly the probability the '+
+            'policy assigned to the token it actually sampled &mdash; its log is the denominator every ratio is measured '+
+            'against later. Nothing has been scored or updated yet.';
+        }
+      },
+      {
+        title:'The reward model scores the whole response: one scalar',
+        hl:['[data-rp-node="2"]','#rlhf-ppo-pipeline-table tr.rp-last','[data-rp-stat="rm"]','[data-rp-stat="true"]'],
+        drive:function(){ scene({beta:0.05, eps:0.2, epochs:3, T:8, steps:0}); },
+        body:function(){
+          var P = computePreview(), h = rmBestToken();
+          return 'The reward model never labels individual tokens. It consumes the finished response and returns one '+
+            'number: for response #1, <b>r(o) = '+fmt(P.rRmSample,3)+'</b> (reported per token so lengths stay '+
+            'comparable), against a true reward of <b>'+lfmt(P.rTrueSample,3)+'</b>. That scalar is credited to the '+
+            '<b>last token only</b> &mdash; the highlighted bold row marked "(+RM score)"; every other token starts with '+
+            'reward 0. And this RM is exploitable by construction: it pays kappa='+KAPPA.toFixed(1)+' for a "hack" '+
+            'feature, so "<b>'+LABELS[h]+'</b>" scores '+fmt(vocab.quality[h]+KAPPA*vocab.hack[h],2)+' under the RM while '+
+            'its true quality is only '+lfmt(vocab.quality[h],2)+'. Hold on to that gap; step 7 is entirely about it.';
+        }
+      },
+      {
+        title:'GAE turns one scalar into per-token advantages',
+        hl:['[data-rp-node="3"]','[data-rp-node="critic"]','[data-rp-cell="adv"]','[data-rp-stat="critic"]'],
+        drive:function(){ scene({beta:0.05, eps:0.2, epochs:3, T:8, steps:0}); },
+        body:function(){
+          var P = computePreview();
+          var lo=P.whitenedA[0], hi=P.whitenedA[0], i;
+          for(i=1;i<P.whitenedA.length;i++){ if(P.whitenedA[i]<lo) lo=P.whitenedA[i]; if(P.whitenedA[i]>hi) hi=P.whitenedA[i]; }
+          var sign = (hi<0) ? 'every one of them is negative, because this response landed below the batch mean &mdash; '+
+                              'PPO will push all of its tokens down'
+                    : (lo>0) ? 'all of them are positive: this response beat the batch mean, so every token gets pushed up'
+                    : 'they change sign inside the response: some tokens get pushed up, others down';
+          return 'One scalar for '+P.T+' tokens is a brutal credit-assignment problem, and GAE is what spreads it. Each '+
+            'token gets reward <code>-beta*KL_t</code>, plus <code>r(o)</code> on the last one. The critic supplies the '+
+            'baseline <b>V='+fmt(V,3)+'</b>, so <code>delta_t = r_t + gamma*V(s_t+1) - V(s_t)</code>, and the backward '+
+            'recursion with gamma='+GAMMA+', lambda='+LAMBDA+' accumulates those deltas into A_t. The advantages are then '+
+            '<b>whitened over the whole pooled batch</b> of '+(P.B*P.T)+' tokens, not per response. The highlighted '+
+            '<code>A_t</code> column runs from '+lfmt(lo,2)+' to '+lfmt(hi,2)+': '+sign+'. The critic is meanwhile regressed '+
+            'toward those returns: V '+fmt(V,3)+' &rarr; '+fmt(P.Vcandidate,3)+' if you Step.';
+        }
+      },
+      {
+        title:'The clipped objective: a trust region on the ratio',
+        hl:['[data-rp-node="4"]','[data-rp-cell="ratio"]','#rlhf-ppo-pipeline-table tr.rp-clipped','[data-rp-stat="clipfrac"]'],
+        drive:function(){ scene({beta:0.05, eps:0.05, epochs:6, T:8, steps:0}); },
+        body:function(){
+          var P = computePreview(), n=0, i;
+          for(i=0;i<P.clipped.length;i++) if(P.clipped[i]) n++;
+          var crossed = (n===0)
+            ? 'no token of response #1 has left it this time (the pooled batch still has some, see clipfrac)'
+            : '<b>'+n+' of response #1\'s '+P.T+' tokens</b> '+(n===1?'has':'have')+
+              ' pushed past it in the direction the objective wanted to keep going';
+          return 'The clip is a trust region on <code>r_t = pi_theta(o_t) / pi_old(o_t)</code>. At the start of an update '+
+            'every ratio is exactly 1; re-using the same batch for several epochs is what moves them. I tightened the '+
+            'sliders to <b>eps='+fmt(P.eps,2)+'</b> and <b>'+P.epochs+' epochs</b> to make it visible: the shaded strip in '+
+            'the highlighted "r vs clip band" column is ['+fmt(1-P.eps,2)+', '+fmt(1+P.eps,2)+'], and '+crossed+'. For any '+
+            'such token, <code>min(r*A, clip(r)*A)</code> selects the flat branch, the derivative is zero and the token stops '+
+            'contributing &mdash; the rows marked CLIPPED. Pooled over all '+(P.B*P.T)+' tokens, clipfrac = <b>'+
+            (P.clipfrac*100).toFixed(0)+'%</b>. Widen eps or drop the epoch count and the clipping melts away: that is the '+
+            'entire mechanism, and note that it bounds the step, not the reward model.';
+        }
+      },
+      {
+        title:'beta: the KL leash to the reference',
+        hl:['[data-rp-ctl="beta"]','[data-rp-node="reference"]','#rlhf-ppo-pipeline-lesson-plotwrap','[data-rp-stat="kl"]'],
+        drive:function(){
+          scene({beta:0.05, eps:0.2, epochs:3, T:8, steps:3});
+          if(reducedMotion()){
+            setControl(betaIn, 0.2);
+          } else {
+            setControl(betaIn, 0.005);
+            later(1300, function(){ setControl(betaIn, 0.2); });
+          }
+        },
+        body:function(){
+          var lo = previewAtBeta(0.005), hi = previewAtBeta(0.2);
+          var klNow = exactKL(softmax(theta), softmax(thetaRef));
+          return '<code>KL_t = log pi_old(o_t) - log pi_ref(o_t)</code> (the k1 estimator) is charged against every '+
+            'token\'s reward, which is why the leash can only bite once the policy has actually moved &mdash; so the tour '+
+            'committed <b>'+iteration+' real iterations</b> first, which is why the highlighted KL tile now reads '+
+            fmt(klNow,4)+' instead of 0. Same rollouts, two betas: at <b>beta=0.005</b> the next '+
+            'policy would land at KL='+fmt(lo.klExactCandidate,3)+' with RM score '+fmt(lo.rRmExactCand,3)+' but true '+
+            'reward '+lfmt(lo.rTrueExactCand,3)+'; at <b>beta=0.200</b> it lands at KL='+fmt(hi.klExactCandidate,3)+', RM '+
+            fmt(hi.rRmExactCand,3)+', true '+lfmt(hi.rTrueExactCand,3)+'. Raising beta buys a lower RM score and a '+
+            '<i>higher</i> true reward &mdash; when the reward model is exploitable, that is exactly the trade you want. '+
+            'The beta slider is live right now: drag it and watch the hollow "pending" marker slide along the reward-vs-KL '+
+            'plot.';
+        }
+      },
+      {
+        title:'beta near zero: reward hacking, live',
+        hl:['#rlhf-ppo-pipeline-lesson-plotwrap','[data-rp-stat="rm"]','[data-rp-stat="true"]','#rlhf-ppo-pipeline-note'],
+        drive:function(){ scene({beta:0, eps:0.2, epochs:3, T:8, steps:8}); },
+        body:function(){
+          var first = history[0], last = history[history.length-1];
+          var P = computePreview();
+          var top = LABELS[argmax(softmax(theta))];
+          return 'With <b>beta=0</b> the leash is gone. The tour reset the run and took <b>'+iteration+' steps</b> at '+
+            'beta=0: on the plot the reward-model score (dashed) climbed from '+fmt(first.rRm,3)+' to <b>'+fmt(last.rRm,3)+
+            '</b> while the true reward (solid) fell from '+lfmt(first.rTrue,3)+' to <b>'+lfmt(last.rTrue,3)+'</b>, with KL '+
+            'drifting out to '+fmt(last.kl,3)+'. (Those curves are exact expectations under the policy; the two highlighted '+
+            'tiles show the same split for the one sampled response #1: RM '+fmt(P.rRmSample,3)+' against true '+
+            lfmt(P.rTrueSample,3)+'.) The policy has collapsed onto "<b>'+top+'</b>", the token the RM overpays for. And '+
+            'the clip did not stop it: it kept firing all the way down (clipfrac is still '+(P.clipfrac*100).toFixed(0)+
+            '% right now), because it only bounds the <i>size</i> of each step, never its direction. In a real run you only '+
+            'ever observe the dashed curve &mdash; the solid one needs the true reward you do not have &mdash; which is why '+
+            'RLHF runs watch KL and held-out evals instead. <b>That is the tour.</b> Press <b>Finish</b> to keep this hacked '+
+            'run and explore from here (try raising beta and stepping again), or <b>Exit tour</b> to restore the settings '+
+            'and run state you had before the tour started.';
+        }
+      }
+    ];
+
+    function buildDots(){
+      if(!lessonDots) return;
+      var h=[], i;
+      for(i=0;i<STEPS.length;i++){
+        h.push('<button type="button" class="rlhf-ppo-pipeline-lesson-dot" data-rp-goto="'+i+'" '+
+               'aria-label="Go to step '+(i+1)+': '+STEPS[i].title.replace(/"/g,'')+'"></button>');
+      }
+      lessonDots.innerHTML = h.join('');
+      var btns = lessonDots.querySelectorAll('[data-rp-goto]');
+      for(i=0;i<btns.length;i++){
+        btns[i].addEventListener('click', function(e){
+          var n = parseInt(e.currentTarget.getAttribute('data-rp-goto'),10);
+          if(isFinite(n)) showStep(n);
+        });
+      }
+    }
+    function syncDots(){
+      if(!lessonDots) return;
+      var btns = lessonDots.querySelectorAll('[data-rp-goto]'), i;
+      for(i=0;i<btns.length;i++) btns[i].setAttribute('aria-current', i===LZ.idx ? 'true' : 'false');
+    }
+
+    function snapshot(){
+      return {
+        seed:seed, quality:copyArr(vocab.quality), hack:copyArr(vocab.hack),
+        thetaRef:copyArr(thetaRef), theta:copyArr(theta), V:V, iteration:iteration,
+        history:history.map(function(h){ return {iter:h.iter, kl:h.kl, rTrue:h.rTrue, rRm:h.rRm}; }),
+        beta:betaIn.value, eps:epsIn.value, epochs:epochsIn.value, T:Tin.value
+      };
+    }
+    function restore(s){
+      if(!s) return;
+      seed = s.seed;
+      vocab = {quality:copyArr(s.quality), hack:copyArr(s.hack)};
+      thetaRef = copyArr(s.thetaRef); theta = copyArr(s.theta); V = s.V; iteration = s.iteration;
+      history = s.history.map(function(h){ return {iter:h.iter, kl:h.kl, rTrue:h.rTrue, rRm:h.rRm}; });
+      betaIn.value = s.beta; epsIn.value = s.eps; epochsIn.value = s.epochs; Tin.value = s.T;
+      prepareRollout();
+      render();
+    }
+
+    function showStep(i){
+      if(!LZ.active) return;
+      if(i<0) i=0;
+      if(i>STEPS.length-1) i=STEPS.length-1;
+      LZ.seq++;
+      if(LZ.timer){ clearTimeout(LZ.timer); LZ.timer=null; }
+      LZ.idx = i;
+      LZ.hl = [];               // clear the previous step's highlight before driving
+      lessonApplyHl();
+      var st = STEPS[i];
+      try { st.drive(); } catch(err){ render(); }
+      LZ.hl = st.hl || [];
+      lessonApplyHl();
+      if(lessonCount) lessonCount.textContent = 'Step '+(i+1)+' / '+STEPS.length;
+      if(lessonTitle) lessonTitle.textContent = st.title;
+      if(lessonText){
+        var html;
+        try { html = st.body(); } catch(err){ html = ''; }
+        lessonText.innerHTML = html;
+      }
+      if(lessonPrev) lessonPrev.disabled = (i===0);
+      if(lessonNext) lessonNext.innerHTML = (i===STEPS.length-1) ? 'Finish (keep this scene)' : 'Next &rarr;';
+      syncDots();
+    }
+
+    function startTour(){
+      if(LZ.active) return;
+      LZ.snap = snapshot();
+      LZ.active = true;
+      if(lessonIntro) lessonIntro.hidden = true;
+      if(lessonPanel) lessonPanel.hidden = false;
+      showStep(0);
+      if(lessonNext && lessonNext.focus) lessonNext.focus();
+    }
+    function endTour(doRestore){
+      if(!LZ.active) return;
+      LZ.seq++;
+      if(LZ.timer){ clearTimeout(LZ.timer); LZ.timer=null; }
+      LZ.active = false;
+      LZ.hl = [];
+      lessonApplyHl();
+      if(lessonPanel) lessonPanel.hidden = true;
+      if(lessonIntro) lessonIntro.hidden = false;
+      if(doRestore && LZ.snap) restore(LZ.snap); else render();
+      LZ.snap = null;
+      if(lessonStart && lessonStart.focus) lessonStart.focus();
+    }
+
+    if(lessonBar && lessonPanel && lessonIntro && lessonStart && lessonPrev && lessonNext && lessonExit && lessonText){
+      LZ.ok = true;
+      buildDots();
+      lessonStart.addEventListener('click', startTour);
+      lessonPrev.addEventListener('click', function(){ showStep(LZ.idx-1); });
+      lessonNext.addEventListener('click', function(){
+        if(LZ.idx >= STEPS.length-1) endTour(false);   // Finish: keep the scene on screen
+        else showStep(LZ.idx+1);
+      });
+      lessonExit.addEventListener('click', function(){ endTour(true); });
+
+      // A real drag on any slider cancels a pending scripted control change, so the
+      // tour never fights the reader for the controls.
+      [betaIn,epsIn,epochsIn,Tin].forEach(function(el){
+        el.addEventListener('input', function(e){
+          if(e && e.isTrusted && LZ.timer){ clearTimeout(LZ.timer); LZ.timer=null; }
+        });
+      });
+
+      // Arrow keys drive the tour, but only while it is running and focus is inside
+      // this widget and NOT in a form control (sliders keep their own arrow keys).
+      document.addEventListener('keydown', function(e){
+        if(!LZ.active) return;
+        var ae = document.activeElement;
+        if(!ae || !root.contains(ae)) return;
+        var tag = ae.tagName ? String(ae.tagName).toUpperCase() : '';
+        if(tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT' || ae.isContentEditable) return;
+        if(e.key==='ArrowRight' || e.key==='Right'){
+          e.preventDefault();
+          if(LZ.idx >= STEPS.length-1) endTour(false); else showStep(LZ.idx+1);
+        } else if(e.key==='ArrowLeft' || e.key==='Left'){
+          e.preventDefault();
+          showStep(LZ.idx-1);
+        } else if(e.key==='Escape' || e.key==='Esc'){
+          e.preventDefault();
+          endTour(true);
+        }
+      });
+    } else if(lessonBar){
+      lessonBar.hidden = true;   // tour markup incomplete: hide the bar, tool stays intact
+    }
 
     drawLegend();
     initRun(true);

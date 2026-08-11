@@ -2,6 +2,30 @@
   <div class="vt-title">Self-attention explorer: Q, K, V and the attention matrix</div>
   <div class="vt-hint">Type a short sentence, pick a head, and toggle the causal mask / scale. Every number below is computed live from fixed, seeded token embeddings and random Q/K/V projections (d<sub>k</sub> = 8) &mdash; this is the actual softmax(QK<sup>T</sup>/&radic;d<sub>k</sub>)V computation, not a mock-up.</div>
 
+  <div class="self-attention-explorer-lesson-bar" id="self-attention-explorer-lesson-bar">
+    <div class="self-attention-explorer-lesson-launch" id="self-attention-explorer-lesson-launch">
+      <button type="button" class="self-attention-explorer-lesson-btn self-attention-explorer-lesson-btn-go" id="self-attention-explorer-lesson-start" aria-controls="self-attention-explorer-lesson-panel">Start guided tour</button>
+      <span class="self-attention-explorer-lesson-tag">Seven steps from one token to one context vector. The tour drives the controls below; you can leave at any point and keep exploring.</span>
+    </div>
+    <div class="self-attention-explorer-lesson-panel" id="self-attention-explorer-lesson-panel" role="group" aria-label="Guided tour" hidden>
+      <div class="self-attention-explorer-lesson-live" role="status" aria-live="polite">
+        <div class="self-attention-explorer-lesson-top">
+          <span class="self-attention-explorer-lesson-counter" id="self-attention-explorer-lesson-counter">Step 1 / 7</span>
+          <span class="self-attention-explorer-lesson-title" id="self-attention-explorer-lesson-title"></span>
+        </div>
+        <div class="self-attention-explorer-lesson-body" id="self-attention-explorer-lesson-text"></div>
+        <div class="self-attention-explorer-lesson-chips" id="self-attention-explorer-lesson-chips"></div>
+      </div>
+      <div class="self-attention-explorer-lesson-track" aria-hidden="true"><span class="self-attention-explorer-lesson-fill" id="self-attention-explorer-lesson-fill"></span></div>
+      <div class="self-attention-explorer-lesson-nav">
+        <button type="button" class="self-attention-explorer-lesson-btn" id="self-attention-explorer-lesson-prev">&larr; Prev</button>
+        <button type="button" class="self-attention-explorer-lesson-btn self-attention-explorer-lesson-btn-go" id="self-attention-explorer-lesson-next">Next &rarr;</button>
+        <span class="self-attention-explorer-lesson-kbd">or press &larr; / &rarr;</span>
+        <button type="button" class="self-attention-explorer-lesson-btn self-attention-explorer-lesson-exit" id="self-attention-explorer-lesson-exit">Exit tour</button>
+      </div>
+    </div>
+  </div>
+
   <div class="vt-grid">
     <label for="self-attention-explorer-tokens">Token sequence (space-separated, up to 10 tokens)
       <input id="self-attention-explorer-tokens" type="text" value="the cat sat on the mat" autocomplete="off" spellcheck="false">
@@ -58,7 +82,7 @@
     </div>
   </div>
 
-  <div class="vt-note">The heatmap <em>is</em> the transformer: each row is one query's probability distribution over all keys (random here, learned in a trained model), and the context vector below is literally that distribution used as mixing weights over the value vectors &mdash; so the output can never leave the convex hull of V. Watch the row sum stay pinned at 1.000: softmax normalizes over <em>keys</em>, never over queries. Turn the scale off and the score spread jumps by exactly &radic;8 &asymp; 2.83&times;, the rows sharpen toward one-hot, and the effective-key count collapses &mdash; that is softmax saturating into its low-gradient regime, which is the whole reason for the 1/&radic;d<sub>k</sub> factor. This toy has no positional encoding, so two copies of the same word get identical embeddings; only the causal mask makes their rows differ.</div>
+  <div class="vt-note">The heatmap <em>is</em> the transformer: each row is one query's probability distribution over all keys (random here, learned in a trained model), and the context vector below is literally that distribution used as mixing weights over the value vectors &mdash; so the output can never leave the convex hull of V. Watch the row sum stay pinned at 1.000: softmax normalizes over <em>keys</em>, never over queries. Turn the scale off and the score spread jumps by exactly &radic;8 &asymp; 2.83&times;, the rows sharpen toward one-hot, and the effective-key count collapses &mdash; that is softmax saturating into its low-gradient regime, which is the whole reason for the 1/&radic;d<sub>k</sub> factor. This toy has no positional encoding, so two copies of the same word get identical embeddings; only the causal mask makes their rows differ. New to this? Press <em>Start guided tour</em> at the top for a seven-step walkthrough that drives these same controls.</div>
 
   <style>
     #tool-self-attention-explorer{ border:1px solid var(--border-2,#94a3b8); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
@@ -131,6 +155,87 @@
     @media (max-width:560px){
       #tool-self-attention-explorer .sae-bar-row{ grid-template-columns:62px 1fr 52px; }
       #tool-self-attention-explorer .sae-bar-score{ display:none; }
+    }
+
+    /* ---------- guided lesson layer (additive; nothing above depends on it) ---------- */
+    /* Local tokens. Media query first as a fallback; explicit data-theme wins in both
+       directions. The dark accent (#e1845f) is light, so white-on-accent would drop to
+       ~2.7:1 there; flip to dark ink instead. */
+    #tool-self-attention-explorer{
+      --sae-on-accent:#ffffff;
+      --sae-glow:rgba(193,91,57,.20);
+    }
+    @media (prefers-color-scheme: dark){
+      #tool-self-attention-explorer{ --sae-on-accent:#1b1815; --sae-glow:rgba(225,132,95,.24); }
+    }
+    :root[data-theme="light"] #tool-self-attention-explorer{ --sae-on-accent:#ffffff; --sae-glow:rgba(193,91,57,.20); }
+    :root[data-theme="dark"]  #tool-self-attention-explorer{ --sae-on-accent:#1b1815; --sae-glow:rgba(225,132,95,.24); }
+
+    #tool-self-attention-explorer .self-attention-explorer-lesson-bar{
+      margin:0 0 14px; padding:9px 11px; border:1px solid var(--border-2,#94a3b8);
+      border-radius:10px; background:var(--surface-3,#f0ece3);
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-launch{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-launch[hidden],
+    #tool-self-attention-explorer .self-attention-explorer-lesson-panel[hidden]{ display:none; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-tag{ font-size:.74rem; color:var(--muted,#6d675d); line-height:1.45; flex:1 1 240px; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-btn{
+      font:inherit; font-size:.78rem; line-height:1.2; padding:6px 11px; border-radius:7px; cursor:pointer;
+      border:1px solid var(--border-2,#94a3b8); background:var(--surface,#fff); color:var(--ink,#211f1b);
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-btn:hover{ border-color:var(--accent,#c15b39); }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-btn[disabled]{ opacity:.45; cursor:default; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-btn-go{
+      background:var(--accent,#c15b39); border-color:var(--accent,#c15b39); color:var(--sae-on-accent,#fff); font-weight:600;
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-top{ display:flex; align-items:baseline; gap:9px; flex-wrap:wrap; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-counter{
+      font-family:var(--mono,monospace); font-size:.7rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums;
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-title{ font-size:.86rem; font-weight:700; color:var(--ink,#211f1b); }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-track{
+      margin:7px 0 8px; height:3px; border-radius:2px; background:var(--border-2,#94a3b8); overflow:hidden;
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-fill{
+      display:block; height:100%; width:0%; background:var(--accent,#c15b39); transition:width .18s ease-out;
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-body{ font-size:.8rem; line-height:1.55; color:var(--ink,#211f1b); }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-chips:empty{ display:none; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-chip{
+      font-family:var(--mono,monospace); font-size:.72rem; padding:3px 7px; border-radius:6px;
+      border:1px solid var(--border-2,#94a3b8); background:var(--surface,#fff); color:var(--muted,#6d675d);
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-nav{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-kbd{ font-size:.7rem; color:var(--muted,#6d675d); }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-exit{ margin-left:auto; }
+
+    #tool-self-attention-explorer .self-attention-explorer-lesson-hi{
+      outline:2px solid var(--accent,#c15b39); outline-offset:4px; border-radius:8px;
+      animation:self-attention-explorer-lesson-glow 1.5s ease-in-out 3;
+    }
+    @keyframes self-attention-explorer-lesson-glow{
+      0%,100%{ box-shadow:0 0 0 0 transparent; }
+      50%{ box-shadow:0 0 0 5px var(--sae-glow,rgba(193,91,57,.20)); }
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-cellhi{
+      stroke:var(--ink,#211f1b); stroke-width:2;
+      animation:self-attention-explorer-lesson-cellglow 1.4s ease-in-out 3;
+    }
+    @keyframes self-attention-explorer-lesson-cellglow{
+      0%,100%{ stroke-opacity:1; }
+      50%{ stroke-opacity:.25; }
+    }
+    #tool-self-attention-explorer .self-attention-explorer-lesson-maskhi{
+      stroke:var(--accent,#c15b39); stroke-width:1.5; stroke-dasharray:3 2;
+    }
+    @media (prefers-reduced-motion: reduce){
+      #tool-self-attention-explorer .self-attention-explorer-lesson-hi,
+      #tool-self-attention-explorer .self-attention-explorer-lesson-cellhi{ animation:none; }
+      #tool-self-attention-explorer .self-attention-explorer-lesson-fill{ transition:none; }
+    }
+    @media (max-width:560px){
+      #tool-self-attention-explorer .self-attention-explorer-lesson-exit{ margin-left:0; }
     }
   </style>
 
@@ -681,5 +786,274 @@
     });
 
     renderAll();
+  })();</script>
+
+  <script>(function(){
+    // Guided lesson layer. Purely additive: it drives the widget's OWN controls by
+    // dispatching the same input/change events a reader would, so the existing
+    // render path (and its seeded determinism) is the only thing that ever draws.
+    var root=document.getElementById('tool-self-attention-explorer');
+    if(!root) return;
+    var PFX='self-attention-explorer-lesson-';
+    function byId(id){ return root.querySelector('#'+id); }
+
+    var elStart=byId(PFX+'start'), elLaunch=byId(PFX+'launch'), elPanel=byId(PFX+'panel'),
+        elCounter=byId(PFX+'counter'), elTitle=byId(PFX+'title'), elBody=byId(PFX+'text'),
+        elChips=byId(PFX+'chips'), elFill=byId(PFX+'fill'),
+        elPrev=byId(PFX+'prev'), elNext=byId(PFX+'next'), elExit=byId(PFX+'exit');
+    var elTokens=byId('self-attention-explorer-tokens'),
+        elHead=byId('self-attention-explorer-head'),
+        elCausal=byId('self-attention-explorer-causal'),
+        elScale=byId('self-attention-explorer-scale'),
+        elQuery=byId('self-attention-explorer-query'),
+        elSvg=byId('self-attention-explorer-svg');
+    if(!elStart||!elLaunch||!elPanel||!elBody||!elPrev||!elNext||!elExit) return;
+    if(!elTokens||!elHead||!elCausal||!elScale||!elQuery) return;
+
+    var TOUR_SENTENCE='the cat sat on the mat';
+    var TOUR_Q=3;                      // query i=3 -> the token "on" in TOUR_SENTENCE
+    var FREE_SENTENCE='the cat sat on the mat and purred';
+
+    // ---------- event plumbing (reuse the widget's own handlers) ----------
+    var driving=false, active=false, userTouched=false, idx=0, snap=null;
+    function fire(el,type){
+      var ev;
+      try{ ev=new Event(type,{bubbles:true}); }
+      catch(e){ ev=document.createEvent('Event'); ev.initEvent(type,true,false); }
+      el.dispatchEvent(ev);
+    }
+    function drive(fn){ driving=true; try{ fn(); }catch(e){} driving=false; }
+    function setText(el,v){ if(el.value!==v){ el.value=v; fire(el,'input'); } }
+    function setSelVal(el,v){ v=String(v); if(el.value!==v){ el.value=v; fire(el,'change'); } }
+    function setChk(el,v){ v=!!v; if(el.checked!==v){ el.checked=v; fire(el,'change'); } }
+    function setQueryIdx(i){
+      var n=elQuery.options.length;
+      if(!n) return;
+      var k=Math.max(0, Math.min(n-1, i|0));
+      elQuery.value=String(k);
+      fire(elQuery,'change'); // always fire: pins the row even when the value already matched
+    }
+    function applySet(s){
+      if(!s) return;
+      if(s.tokens!=null) setText(elTokens, s.tokens);
+      if(s.head!=null) setSelVal(elHead, s.head);
+      if(s.causal!=null) setChk(elCausal, s.causal);
+      if(s.scale!=null) setChk(elScale, s.scale);
+      if(s.query!=null) setQueryIdx(s.query);   // last: token edits reset the selector
+    }
+    function snapshot(){
+      return {tokens:elTokens.value, head:elHead.value, causal:elCausal.checked,
+              scale:elScale.checked, query:elQuery.value};
+    }
+
+    // ---------- temporary highlights ----------
+    var hiTracked=[];
+    function addCls(el,cls){
+      if(!el||!el.setAttribute) return;
+      var c=el.getAttribute('class')||'';
+      if((' '+c+' ').indexOf(' '+cls+' ')>=0) return;
+      el.setAttribute('class', c ? c+' '+cls : cls);
+      hiTracked.push({el:el, cls:cls});
+    }
+    function delCls(el,cls){
+      var c=(' '+(el.getAttribute('class')||'')+' ').split(' '+cls+' ').join(' ');
+      c=c.replace(/\s+/g,' ').replace(/^ | $/g,'');
+      if(c) el.setAttribute('class', c); else el.removeAttribute('class');
+    }
+    function clearHighlights(){
+      for(var i=0;i<hiTracked.length;i++){ try{ delCls(hiTracked[i].el, hiTracked[i].cls); }catch(e){} }
+      hiTracked=[];
+    }
+    function hiEl(sel){ addCls(root.querySelector(sel), PFX+'hi'); }
+    function hiRow(i){
+      if(!elSvg) return;
+      var cells=elSvg.querySelectorAll('rect.sae-cell');
+      var total=cells.length;
+      if(!total) return;
+      var n=Math.round(Math.sqrt(total));
+      if(n*n!==total || i<0 || i>=n) return;
+      for(var j=0;j<n;j++) addCls(cells[i*n+j], PFX+'cellhi');
+    }
+    function hiMasked(){
+      if(!elSvg) return;
+      var cells=elSvg.querySelectorAll('rect.sae-masked');
+      for(var i=0;i<cells.length;i++) addCls(cells[i], PFX+'maskhi');
+    }
+    function prefersReduced(){
+      try{ return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+      catch(e){ return false; }
+    }
+    function maybeScroll(sel){
+      if(!sel) return;
+      var el=root.querySelector(sel);
+      if(!el||!el.getBoundingClientRect||!el.scrollIntoView) return;
+      try{
+        var r=el.getBoundingClientRect();
+        var vh=window.innerHeight||document.documentElement.clientHeight||0;
+        if(r.top>vh-40 || r.bottom<40){
+          el.scrollIntoView({block:'center', behavior: prefersReduced() ? 'auto' : 'smooth'});
+        }
+      }catch(e){}
+    }
+
+    // ---------- the walkthrough ----------
+    var STEPS=[
+      {
+        title:'One token in, three vectors out',
+        html:'The box below holds the sequence. Each token is embedded into a fixed 8-dimensional vector x<sub>i</sub> (seeded, so it is identical on every reload), then projected three ways by W<sub>Q</sub>, W<sub>K</sub>, W<sub>V</sub>. One token becomes a <b>query</b> (what am I looking for?), a <b>key</b> (what do I advertise?) and a <b>value</b> (what do I hand over if I get picked?). The mask is off for the moment so you can see the full matrix.',
+        chips:['q<sub>i</sub> = x<sub>i</sub>W<sub>Q</sub>','k<sub>j</sub> = x<sub>j</sub>W<sub>K</sub>','v<sub>j</sub> = x<sub>j</sub>W<sub>V</sub>'],
+        set:{tokens:TOUR_SENTENCE, head:'0', causal:false, scale:true, query:TOUR_Q},
+        hi:function(){ hiEl('label[for="self-attention-explorer-tokens"]'); }
+      },
+      {
+        title:'A query scores every key',
+        html:'Query i=3, the token <b>"on"</b>, is dot-producted with all six keys and divided by &radic;d<sub>k</sub> = &radic;8. Its row of the heatmap is glowing: one number per key, brighter meaning a larger dot product, i.e. this key looks more relevant to that query. Hover or focus any cell for the exact score. Without the 1/&radic;d<sub>k</sub> factor the dot products grow with d<sub>k</sub> and shove softmax into its flat, low-gradient regime.',
+        chips:['s<sub>ij</sub> = (q<sub>i</sub> &middot; k<sub>j</sub>) / &radic;d<sub>k</sub>'],
+        set:{tokens:TOUR_SENTENCE, head:'0', causal:false, scale:true, query:TOUR_Q},
+        scroll:'.sae-heatmap-block',
+        hi:function(){ hiRow(TOUR_Q); }
+      },
+      {
+        title:'Softmax turns scores into weights',
+        html:'The same row, drawn as bars. Softmax exponentiates each score and divides by the row total, so every weight is positive and the row sums to exactly 1.000 &mdash; watch the &Sigma; line under the bars, it never moves. The middle column is the raw score s<sub>ij</sub>, the bar is the weight A<sub>ij</sub>. Normalization runs <em>along keys</em>, never down a column: queries do not compete with one another.',
+        chips:['A<sub>ij</sub> = exp(s<sub>ij</sub>) / &Sigma;<sub>j\'</sub> exp(s<sub>ij\'</sub>)'],
+        set:{tokens:TOUR_SENTENCE, head:'0', causal:false, scale:true, query:TOUR_Q},
+        scroll:'.sae-dist-block',
+        hi:function(){ hiEl('.sae-dist-block'); }
+      },
+      {
+        title:'The output is a weighted sum of values',
+        html:'Now use those weights as mixing coefficients over the value vectors. The eight bars below are one context vector, one bar per value dimension &mdash; the entire output of attention for the token "on". Because the weights are non-negative and sum to 1 this is a convex combination: attention interpolates between the values it was handed and can never step outside them.',
+        chips:['c<sub>i</sub> = &Sigma;<sub>j</sub> A<sub>ij</sub> v<sub>j</sub>'],
+        set:{tokens:TOUR_SENTENCE, head:'0', causal:false, scale:true, query:TOUR_Q},
+        scroll:'.sae-ctx-block',
+        hi:function(){ hiEl('.sae-ctx-block'); }
+      },
+      {
+        title:'Causal mask: a token sees only itself and the past',
+        html:'A decoder predicts token i+1 from tokens up to i, so any key with j &gt; i is set to &minus;&infin; <em>before</em> the softmax; exp(&minus;&infin;) = 0 and the whole upper triangle greys out (hatched cells). Row "on" now spreads its full 1.000 over keys 0..3 only. The masking happens inside the softmax, not after it, which is why the surviving weights still normalize to 1.',
+        chips:['s<sub>ij</sub> = &minus;&infin; for j &gt; i'],
+        set:{tokens:TOUR_SENTENCE, head:'0', causal:true, scale:true, query:TOUR_Q},
+        scroll:'.sae-heatmap-block',
+        hi:function(){ hiEl('label[for="self-attention-explorer-causal"]'); hiMasked(); }
+      },
+      {
+        title:'Different heads, different relationships',
+        html:'Same sentence, head 2: a different seeded W<sub>Q</sub>/W<sub>K</sub>/W<sub>V</sub>, so the tokens are compared inside a different subspace and the pattern changes completely. That is the point of multi-head attention &mdash; one head can track the previous token while another tracks the subject of the clause &mdash; and the per-head context vectors are concatenated and mixed by W<sub>O</sub>. Flip the selector between heads 1, 2 and 3 to compare.',
+        set:{tokens:TOUR_SENTENCE, head:'1', causal:true, scale:true, query:TOUR_Q},
+        scroll:'.sae-heatmap-block',
+        hi:function(){ hiEl('label[for="self-attention-explorer-head"]'); hiEl('.sae-heatmap-wrap'); }
+      },
+      {
+        title:'Your turn: free explore',
+        html:'Edit the sentence (up to 10 tokens) and watch the pattern move; click any heatmap row to inspect that query; untick the scale and watch the rows sharpen toward one-hot as the score spread grows by &radic;8 &asymp; 2.83&times;. Both copies of "the" get the same embedding here because this toy has no positional encoding, so only the causal mask makes their rows differ. Leaving the tour puts the controls back the way you found them &mdash; unless you have already changed one yourself, in which case your settings are left alone.',
+        set:{tokens:FREE_SENTENCE, head:'0', causal:true, scale:true, query:7},
+        hi:function(){ hiEl('label[for="self-attention-explorer-tokens"]'); }
+      }
+    ];
+
+    function show(k){
+      idx=Math.max(0, Math.min(STEPS.length-1, k));
+      var s=STEPS[idx];
+      clearHighlights();
+      drive(function(){ applySet(s.set); });
+      if(elCounter) elCounter.textContent='Step '+(idx+1)+' / '+STEPS.length;
+      if(elTitle) elTitle.textContent=s.title;
+      elBody.innerHTML=s.html;
+      if(elChips){
+        while(elChips.firstChild) elChips.removeChild(elChips.firstChild);
+        var chips=s.chips||[];
+        for(var c=0;c<chips.length;c++){
+          var chip=document.createElement('span');
+          chip.className=PFX+'chip';
+          chip.innerHTML=chips[c];
+          elChips.appendChild(chip);
+        }
+      }
+      if(elFill) elFill.style.width=(((idx+1)/STEPS.length)*100).toFixed(1)+'%';
+      // disabling a focused button drops focus to <body>; hand it to Next instead so the
+      // keyboard reader stays inside the panel
+      var prevHadFocus=(document.activeElement===elPrev);
+      elPrev.disabled=(idx===0);
+      if(elPrev.disabled && prevHadFocus){ try{ elNext.focus(); }catch(e){} }
+      elNext.innerHTML=(idx===STEPS.length-1) ? 'Finish' : 'Next &rarr;';
+      try{ if(s.hi) s.hi(); }catch(e){}
+      maybeScroll(s.scroll);
+    }
+    function step(dir){
+      if(!active) return;
+      if(dir>0 && idx===STEPS.length-1){ stop(); return; }
+      show(idx+dir);
+    }
+    function start(){
+      if(active) return;
+      snap=snapshot();
+      userTouched=false;
+      active=true;
+      elLaunch.hidden=true;
+      elPanel.hidden=false;
+      show(0);
+      try{ elNext.focus(); }catch(e){}
+    }
+    function stop(){
+      if(!active) return;
+      active=false;
+      clearHighlights();
+      elPanel.hidden=true;
+      elLaunch.hidden=false;
+      if(snap && !userTouched) drive(function(){ applySet(snap); });
+      snap=null;
+      try{ elStart.focus(); }catch(e){}
+    }
+
+    // ---------- wiring ----------
+    elStart.addEventListener('click', start);
+    elPrev.addEventListener('click', function(){ step(-1); });
+    elNext.addEventListener('click', function(){ step(1); });
+    elExit.addEventListener('click', stop);
+
+    function touch(){ if(active && !driving) userTouched=true; }
+    elTokens.addEventListener('input', touch);
+    elHead.addEventListener('change', touch);
+    elCausal.addEventListener('change', touch);
+    elScale.addEventListener('change', touch);
+    elQuery.addEventListener('change', touch);
+    if(elSvg){
+      elSvg.addEventListener('click', touch);
+      elSvg.addEventListener('keydown', function(ev){
+        if(ev.key==='Enter' || ev.key===' ' || ev.key==='Spacebar') touch();
+      });
+    }
+
+    document.addEventListener('keydown', function(ev){
+      if(!active || ev.defaultPrevented) return;
+      if(ev.altKey || ev.ctrlKey || ev.metaKey) return;
+      var k=ev.key;
+      if(k!=='ArrowLeft' && k!=='ArrowRight') return;
+      var t=ev.target;
+      if(t && t.nodeType===1){
+        var tag=(t.tagName||'').toUpperCase();
+        // never hijack arrows from a form field or from the heatmap's own cell navigation
+        if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||tag==='OPTION'||t.isContentEditable) return;
+        if(t.closest && t.closest('#self-attention-explorer-svg')) return;
+      }
+      var ae=document.activeElement;
+      if(ae && ae!==document.body && !root.contains(ae)) return;
+      ev.preventDefault();
+      step(k==='ArrowRight' ? 1 : -1);
+    });
+
+    // the widget redraws the heatmap on resize, which drops the SVG highlights
+    var rePending=false;
+    window.addEventListener('resize', function(){
+      if(!active || rePending) return;
+      rePending=true;
+      window.requestAnimationFrame(function(){
+        rePending=false;
+        if(!active) return;
+        clearHighlights();
+        try{ if(STEPS[idx].hi) STEPS[idx].hi(); }catch(e){}
+      });
+    });
   })();</script>
 </div>
