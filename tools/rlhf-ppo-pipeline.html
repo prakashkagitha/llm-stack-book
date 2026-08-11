@@ -1,0 +1,714 @@
+<div class="viz-tool" id="tool-rlhf-ppo-pipeline">
+  <div class="vt-title">RLHF with PPO: the full loop</div>
+  <div class="vt-hint">
+    One toy vocabulary of 6 response tokens, seeded so the numbers are exact and reproducible. Each iteration samples
+    <b>16 independent responses</b> from the policy (a real PPO minibatch, never just one rollout) &mdash; response #1
+    is shown token-by-token below, but the GAE/whitening/clip/gradient math pools all 16&times;T tokens, exactly like
+    a production trainer. Every slider drag live-recomputes <b>the pending iteration</b> (same sampled rollouts, new
+    &beta;/&epsilon;/epochs) so you can feel the tradeoff before committing; press <b>Step</b> to actually apply the
+    PPO update and advance the reward-vs-KL trajectory. Four models are in play: the trainable <b>policy</b>, the
+    frozen <b>reference</b> (SFT) model, the frozen <b>reward model</b> (which over-weights an exploitable "hack"
+    feature &mdash; the reward-hacking trap, by construction), and the trainable scalar <b>value/critic</b>.
+  </div>
+
+  <div class="vt-grid vt-controls">
+    <label for="rlhf-ppo-pipeline-beta">KL coefficient &beta; <span class="vt-val" id="rlhf-ppo-pipeline-betaval">0.050</span>
+      <input id="rlhf-ppo-pipeline-beta" type="range" min="0" max="0.3" step="0.005" value="0.05"
+             aria-label="KL penalty coefficient beta">
+    </label>
+    <label for="rlhf-ppo-pipeline-eps">Clip &epsilon; <span class="vt-val" id="rlhf-ppo-pipeline-epsval">0.20</span>
+      <input id="rlhf-ppo-pipeline-eps" type="range" min="0.05" max="0.4" step="0.01" value="0.2"
+             aria-label="PPO clip epsilon">
+    </label>
+    <label for="rlhf-ppo-pipeline-epochs">PPO epochs / step <span class="vt-val" id="rlhf-ppo-pipeline-epochsval">3</span>
+      <input id="rlhf-ppo-pipeline-epochs" type="range" min="1" max="6" step="1" value="3"
+             aria-label="Number of PPO optimization epochs per iteration">
+    </label>
+    <label for="rlhf-ppo-pipeline-T">Response length T <span class="vt-val" id="rlhf-ppo-pipeline-Tval">8</span>
+      <input id="rlhf-ppo-pipeline-T" type="range" min="4" max="12" step="1" value="8"
+             aria-label="Number of tokens in the sampled response">
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn rp-primary" id="rlhf-ppo-pipeline-stepbtn" type="button">Step (apply this iteration)</button>
+    <button class="vt-btn" id="rlhf-ppo-pipeline-resetbtn" type="button">Reset run</button>
+    <button class="vt-btn" id="rlhf-ppo-pipeline-reseedbtn" type="button">Reseed vocab</button>
+    <span class="rp-tag" id="rlhf-ppo-pipeline-iterlabel" role="status">iteration 0 &middot; seed 7</span>
+  </div>
+
+  <div class="rp-legend" id="rlhf-ppo-pipeline-legend"></div>
+
+  <div class="rp-panel-h">The loop (numbers below are the <i>pending</i> iteration &mdash; drag sliders to preview it)</div>
+  <div class="rp-wrap rp-scroll">
+    <svg id="rlhf-ppo-pipeline-cycle" viewBox="0 0 1060 300"
+         preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Cycle diagram: prompt to policy to reward model to GAE with critic to PPO clip with reference KL to policy update and back to policy"></svg>
+  </div>
+
+  <div class="rp-panel-h">Response #1 of 16 sampled this iteration, token by token</div>
+  <div class="rp-wrap rp-scroll">
+    <table class="rp-table" id="rlhf-ppo-pipeline-table"></table>
+  </div>
+
+  <div class="rp-formula" id="rlhf-ppo-pipeline-formula"></div>
+
+  <div class="vt-out" id="rlhf-ppo-pipeline-out" aria-live="polite"></div>
+
+  <div class="rp-panel-h">Reward vs. KL over iterations (the classic tradeoff)</div>
+  <div class="rp-wrap">
+    <svg id="rlhf-ppo-pipeline-plot" viewBox="0 0 460 270"
+         preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Scatter plot of true reward and reward-model reward versus KL divergence from the reference policy, across iterations"></svg>
+  </div>
+  <div class="rp-legend2">
+    <span class="rp-sw rp-sw-true"></span> true reward (quality only)
+    <span class="rp-sw rp-sw-rm"></span> reward-model score (quality + hack)
+    <span class="rp-sw rp-sw-ghost"></span> pending preview (not yet committed)
+  </div>
+
+  <div class="vt-note" id="rlhf-ppo-pipeline-note"></div>
+
+  <style>
+    #tool-rlhf-ppo-pipeline{
+      --rp-accent:   var(--accent,#c15b39);
+      --rp-ink:      var(--ink,#211f1b);
+      --rp-inksoft:  var(--ink-soft,#45413a);
+      --rp-muted:    var(--muted,#6d675d);
+      --rp-surface:  var(--surface,#fff);
+      --rp-surface2: var(--surface-2,#f3efe6);
+      --rp-surface3: var(--surface-3,#ece7da);
+      --rp-border:   var(--border,#e7e1d4);
+      --rp-border2:  var(--border-2,#d8d1c0);
+      --rp-good:     var(--good,#17784e);
+      --rp-warn:     var(--warn,#a8620a);
+      --rp-onaccent: #ffffff;
+      --rp-mono:     var(--mono,ui-monospace,monospace);
+      --rp-sans:     var(--sans,sans-serif);
+      border:1px solid var(--rp-border2); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--rp-surface); color:var(--rp-ink); font-family:var(--rp-sans); max-width:100%;
+    }
+    html[data-theme="dark"] #tool-rlhf-ppo-pipeline{
+      --rp-good: var(--good,#4fc48f);
+      --rp-warn: var(--warn,#e8b451);
+    }
+    #tool-rlhf-ppo-pipeline .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--rp-ink); }
+    #tool-rlhf-ppo-pipeline .vt-hint{ font-size:.8rem; color:var(--rp-muted); margin-bottom:14px; line-height:1.55; }
+    #tool-rlhf-ppo-pipeline .vt-hint b{ color:var(--rp-inksoft); }
+
+    #tool-rlhf-ppo-pipeline .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px 18px; }
+    #tool-rlhf-ppo-pipeline label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--rp-muted); }
+    #tool-rlhf-ppo-pipeline .vt-val{ color:var(--rp-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-rlhf-ppo-pipeline input[type="range"]{ width:100%; accent-color:var(--rp-accent); }
+    #tool-rlhf-ppo-pipeline input[type="range"]:focus-visible{ outline:2px solid var(--rp-accent); outline-offset:3px; }
+
+    #tool-rlhf-ppo-pipeline .vt-actions{ margin-top:12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    #tool-rlhf-ppo-pipeline .vt-btn{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--rp-border2);
+      border-radius:7px; background:var(--rp-surface); color:var(--rp-ink); cursor:pointer; }
+    #tool-rlhf-ppo-pipeline .vt-btn:hover{ background:var(--rp-surface3); }
+    #tool-rlhf-ppo-pipeline .vt-btn:focus-visible{ outline:2px solid var(--rp-accent); outline-offset:2px; }
+    #tool-rlhf-ppo-pipeline .rp-primary{ background:var(--rp-accent); color:var(--rp-onaccent); border-color:var(--rp-accent); font-weight:600; }
+    #tool-rlhf-ppo-pipeline .rp-primary:hover{ filter:brightness(1.08); background:var(--rp-accent); }
+    #tool-rlhf-ppo-pipeline .rp-tag{ font-family:var(--rp-mono); font-size:.76rem; color:var(--rp-muted); margin-left:auto; }
+
+    #tool-rlhf-ppo-pipeline .rp-legend{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+      gap:8px 10px; }
+    #tool-rlhf-ppo-pipeline .rp-legend-item{ border:1px solid var(--rp-border2); border-radius:8px; padding:7px 10px;
+      background:var(--rp-surface2); font-size:.72rem; line-height:1.4; }
+    #tool-rlhf-ppo-pipeline .rp-legend-item b{ display:block; font-size:.74rem; color:var(--rp-ink); margin-bottom:2px; }
+    #tool-rlhf-ppo-pipeline .rp-legend-item span{ color:var(--rp-muted); }
+    #tool-rlhf-ppo-pipeline .rp-legend-item.trainable{ border-left:3px solid var(--rp-accent); }
+    #tool-rlhf-ppo-pipeline .rp-legend-item.frozen{ border-left:3px solid var(--rp-muted); }
+
+    #tool-rlhf-ppo-pipeline .rp-panel-h{ font-size:.74rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+      color:var(--rp-muted); margin:18px 0 8px; }
+    #tool-rlhf-ppo-pipeline .rp-wrap{ max-width:100%; }
+    #tool-rlhf-ppo-pipeline .rp-scroll{ overflow-x:auto; }
+    #tool-rlhf-ppo-pipeline svg{ display:block; width:100%; height:auto; }
+    #tool-rlhf-ppo-pipeline #rlhf-ppo-pipeline-cycle{ min-width:660px; max-width:1060px; }
+    #tool-rlhf-ppo-pipeline #rlhf-ppo-pipeline-plot{ max-width:460px; }
+
+    #tool-rlhf-ppo-pipeline .rp-node-box{ fill:var(--rp-surface2); stroke:var(--rp-border2); stroke-width:1.2; }
+    #tool-rlhf-ppo-pipeline .rp-node-box.trainable{ stroke:var(--rp-accent); stroke-width:1.6; }
+    #tool-rlhf-ppo-pipeline .rp-node-box.frozen{ stroke-dasharray:4 3; }
+    #tool-rlhf-ppo-pipeline .rp-node-title{ font-size:12.5px; font-weight:700; fill:var(--rp-ink); font-family:var(--rp-sans); }
+    #tool-rlhf-ppo-pipeline .rp-node-sub{ font-size:10.5px; fill:var(--rp-muted); font-family:var(--rp-mono); }
+    #tool-rlhf-ppo-pipeline .rp-node-sub.warn{ fill:var(--rp-warn); }
+    #tool-rlhf-ppo-pipeline .rp-node-sub.good{ fill:var(--rp-good); }
+    #tool-rlhf-ppo-pipeline .rp-arrow{ stroke:var(--rp-inksoft); stroke-width:1.6; fill:none; }
+    #tool-rlhf-ppo-pipeline .rp-arrowhead{ fill:var(--rp-inksoft); stroke:none; }
+    #tool-rlhf-ppo-pipeline .rp-arrow-fb{ stroke:var(--rp-accent); stroke-width:1.6; fill:none; stroke-dasharray:5 3; }
+    #tool-rlhf-ppo-pipeline .rp-arrowhead-fb{ fill:var(--rp-accent); stroke:none; }
+    #tool-rlhf-ppo-pipeline .rp-conn{ stroke:var(--rp-muted); stroke-width:1; stroke-dasharray:2 2; fill:none; }
+    #tool-rlhf-ppo-pipeline .rp-tagbox{ fill:var(--rp-surface); stroke:var(--rp-border); stroke-dasharray:3 2; }
+    #tool-rlhf-ppo-pipeline .rp-flowlab{ font-size:10px; fill:var(--rp-muted); font-family:var(--rp-sans); }
+
+    #tool-rlhf-ppo-pipeline .rp-table{ border-collapse:collapse; font-size:.74rem; min-width:760px; width:100%; }
+    #tool-rlhf-ppo-pipeline .rp-table th, #tool-rlhf-ppo-pipeline .rp-table td{
+      border-bottom:1px solid var(--rp-border); padding:5px 9px; text-align:right; font-variant-numeric:tabular-nums;
+      white-space:nowrap; }
+    #tool-rlhf-ppo-pipeline .rp-table th{ color:var(--rp-muted); font-weight:600; text-align:right; }
+    #tool-rlhf-ppo-pipeline .rp-table td.rp-lab, #tool-rlhf-ppo-pipeline .rp-table th.rp-lab{ text-align:left; font-family:var(--rp-mono); color:var(--rp-ink); }
+    #tool-rlhf-ppo-pipeline .rp-table tr.rp-clipped td{ background:var(--rp-surface3); }
+    #tool-rlhf-ppo-pipeline .rp-table tr.rp-clipped td{ background:color-mix(in srgb, var(--rp-warn) 14%, transparent); }
+    #tool-rlhf-ppo-pipeline .rp-table tr.rp-last td{ font-weight:700; }
+    #tool-rlhf-ppo-pipeline .rp-status-clip{ color:var(--rp-warn); font-weight:700; }
+    #tool-rlhf-ppo-pipeline .rp-status-ok{ color:var(--rp-good); }
+
+    #tool-rlhf-ppo-pipeline .rp-mini{ width:104px; height:14px; display:block; }
+    #tool-rlhf-ppo-pipeline .rp-band{ fill:var(--rp-accent); opacity:.18; }
+    #tool-rlhf-ppo-pipeline .rp-bandline{ stroke:var(--rp-border2); stroke-width:1; }
+    #tool-rlhf-ppo-pipeline .rp-onetick{ stroke:var(--rp-muted); stroke-width:1; stroke-dasharray:2 2; }
+    #tool-rlhf-ppo-pipeline .rp-rtick{ stroke:var(--rp-good); stroke-width:2.2; }
+    #tool-rlhf-ppo-pipeline .rp-rtick.rp-clip{ stroke:var(--rp-warn); }
+
+    #tool-rlhf-ppo-pipeline .rp-formula{ margin-top:14px; font-family:var(--rp-mono); font-size:.72rem; line-height:1.75;
+      color:var(--rp-inksoft); background:var(--rp-surface2); border-radius:8px; padding:10px 13px; overflow-x:auto;
+      white-space:pre; }
+
+    #tool-rlhf-ppo-pipeline .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; }
+    #tool-rlhf-ppo-pipeline .vt-stat{ background:var(--rp-surface2); border-radius:9px; padding:11px 13px; }
+    #tool-rlhf-ppo-pipeline .vt-stat .n{ font-size:1.15rem; font-weight:700; color:var(--rp-accent); font-variant-numeric:tabular-nums; }
+    #tool-rlhf-ppo-pipeline .vt-stat .l{ font-size:.71rem; color:var(--rp-muted); margin-top:2px; line-height:1.35; }
+    #tool-rlhf-ppo-pipeline .vt-stat.rp-warn .n{ color:var(--rp-warn); }
+
+    #tool-rlhf-ppo-pipeline .rp-grid{ stroke:var(--rp-border); fill:none; }
+    #tool-rlhf-ppo-pipeline .rp-ax{ font-size:9.5px; fill:var(--rp-muted); font-family:var(--rp-sans); }
+    #tool-rlhf-ppo-pipeline .rp-axtitle{ font-size:10px; font-weight:600; fill:var(--rp-muted); font-family:var(--rp-sans); }
+    #tool-rlhf-ppo-pipeline .rp-path-true{ stroke:var(--rp-accent); stroke-width:1.8; fill:none; }
+    #tool-rlhf-ppo-pipeline .rp-path-rm{ stroke:var(--rp-warn); stroke-width:1.8; fill:none; stroke-dasharray:4 3; }
+    #tool-rlhf-ppo-pipeline .rp-dot-true{ fill:var(--rp-accent); }
+    #tool-rlhf-ppo-pipeline .rp-dot-rm{ fill:var(--rp-warn); }
+    #tool-rlhf-ppo-pipeline .rp-ghost{ fill:none; stroke:var(--rp-accent); stroke-width:1.4; stroke-dasharray:2 2; opacity:.7; }
+    #tool-rlhf-ppo-pipeline .rp-ghost-dot{ fill:var(--rp-surface); stroke:var(--rp-accent); stroke-width:1.6; }
+
+    #tool-rlhf-ppo-pipeline .rp-legend2{ margin-top:8px; font-size:.74rem; color:var(--rp-muted); display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+    #tool-rlhf-ppo-pipeline .rp-sw{ display:inline-block; width:14px; height:2px; margin-right:4px; vertical-align:middle; }
+    #tool-rlhf-ppo-pipeline .rp-sw-true{ background:var(--rp-accent); }
+    #tool-rlhf-ppo-pipeline .rp-sw-rm{ background:none; border-top:2px dashed var(--rp-warn); }
+    #tool-rlhf-ppo-pipeline .rp-sw-ghost{ width:8px; height:8px; border-radius:50%; background:var(--rp-surface); border:1.6px solid var(--rp-accent); }
+
+    #tool-rlhf-ppo-pipeline .vt-note{ margin-top:14px; font-size:.78rem; color:var(--rp-muted); line-height:1.55; }
+    #tool-rlhf-ppo-pipeline .vt-note b{ color:var(--rp-inksoft); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-rlhf-ppo-pipeline');
+    if(!root) return;
+    function q(id){ return root.querySelector('#rlhf-ppo-pipeline-' + id); }
+
+    var betaIn=q('beta'), epsIn=q('eps'), epochsIn=q('epochs'), Tin=q('T');
+    var betaVal=q('betaval'), epsVal=q('epsval'), epochsVal=q('epochsval'), Tval=q('Tval');
+    var stepBtn=q('stepbtn'), resetBtn=q('resetbtn'), reseedBtn=q('reseedbtn'), iterLabel=q('iterlabel');
+    var legendEl=q('legend'), cycleSvg=q('cycle'), tableEl=q('table'), formulaEl=q('formula');
+    var outEl=q('out'), plotSvg=q('plot'), noteEl=q('note');
+    if(!betaIn||!epsIn||!epochsIn||!Tin||!betaVal||!epsVal||!epochsVal||!Tval) return;
+    if(!stepBtn||!resetBtn||!reseedBtn||!iterLabel||!legendEl) return;
+    if(!cycleSvg||!tableEl||!formulaEl||!outEl||!plotSvg||!noteEl) return;
+
+    // ================================================================= constants
+    var NV = 6;                       // vocabulary size
+    var LABELS = ['exact','clear','concise','flatter','padded','hollow'];
+    var BASE_Q = [0.9, 0.5, 0.15, -0.15, -0.5, -0.9];   // "true" quality, best..worst
+    var BASE_H = [0.0, 0.1, 0.25, 0.55, 0.85, 1.0];     // exploitable "hack" feature, anti-correlated with quality
+    var KAPPA  = 2.2;                 // reward model over-weights the hack feature vs its true (zero) value:
+                                       // this makes "padded"/"hollow" score HIGHER under the RM than "exact"
+                                       // despite being worse quality -- the reward-hacking trap, by construction.
+    var GAMMA  = 1.0, LAMBDA = 0.95;  // GAE dial (fixed; the chapter's own defaults)
+    var LR_POLICY = 2.0;              // logit-space ascent step size (toy scale)
+    var ETA_V = 0.3;                  // critic (value) regression step size
+    var THETA_CLAMP = 6.0;
+    var REF_SCALE = 0.9;              // theta_ref[v] = quality[v] * REF_SCALE: an SFT model already prefers
+                                       // higher-quality tokens somewhat, but is far from a one-hot policy.
+    var BATCH = 16;                   // rollouts per iteration pooled for the gradient/critic update (one is
+                                       // shown in the table below; real PPO always updates from a batch, not one).
+
+    // ================================================================= seeded PRNG
+    function mulberry32(a){
+      return function(){
+        a|=0; a=(a+0x6D2B79F5)|0;
+        var t=Math.imul(a^(a>>>15),1|a);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+    function hashSeedIter(seed, iter){ return ((Math.imul(seed,2654435761) + iter*40503 + 12345) >>> 0); }
+
+    // ================================================================= core math
+    function softmax(logits){
+      var m=logits[0],i; for(i=1;i<logits.length;i++) if(logits[i]>m) m=logits[i];
+      var ex=new Array(logits.length), Z=0;
+      for(i=0;i<logits.length;i++){ ex[i]=Math.exp(logits[i]-m); Z+=ex[i]; }
+      for(i=0;i<logits.length;i++) ex[i]=ex[i]/Z;
+      return ex;
+    }
+    function sampleCategorical(probs, rng){
+      var r=rng(), c=0, i;
+      for(i=0;i<probs.length;i++){ c+=probs[i]; if(r<=c) return i; }
+      return probs.length-1;
+    }
+    function copyArr(a){ return a.slice(); }
+    function clampArr(a, lo, hi){
+      var i, r=new Array(a.length);
+      for(i=0;i<a.length;i++) r[i]=Math.max(lo,Math.min(hi,a[i]));
+      return r;
+    }
+
+    function buildVocab(seed){
+      var rng=mulberry32(seed), quality=new Array(NV), hack=new Array(NV), v;
+      for(v=0;v<NV;v++){
+        var q1 = BASE_Q[v] + (rng()-0.5)*0.25;
+        var h1 = BASE_H[v] + (rng()-0.5)*0.18;
+        h1 = Math.max(0, Math.min(1,h1));
+        quality[v]=q1; hack[v]=h1;
+      }
+      return {quality:quality, hack:hack};
+    }
+
+    // Backward GAE recursion with a CONSTANT scalar critic V(s_t)=V for every interior
+    // position (our critic is a single learned scalar, not a per-token head): then
+    // delta_t = r_t + gamma*V(s_{t+1}) - V(s_t) collapses to delta_t = r_t for every
+    // interior t (the V's cancel at gamma=1) and delta_{T-1} = r_{T-1} - V at the
+    // terminal bootstrap V(s_T)=0. This is the exact GAE formula specialized to a
+    // constant baseline, not an approximation of it.
+    function gae(tokenRewards, V, T){
+      var delta=new Array(T), A=new Array(T), t;
+      for(t=0;t<T;t++){
+        var vNext = (t<T-1) ? V : 0;         // bootstrap 0 at the true terminal step
+        delta[t] = tokenRewards[t] + GAMMA*vNext - V;
+      }
+      A[T-1]=delta[T-1];
+      for(t=T-2;t>=0;t--) A[t]=delta[t] + GAMMA*LAMBDA*A[t+1];
+      var returns=new Array(T);
+      for(t=0;t<T;t++) returns[t]=A[t]+V;    // critic target: R_t = A_t + V(s_t)
+      return {delta:delta, A:A, returns:returns};
+    }
+
+    function whiten(A){
+      var n=A.length, i, mean=0;
+      for(i=0;i<n;i++) mean+=A[i]; mean/=n;
+      var varsum=0;
+      for(i=0;i<n;i++) varsum+=(A[i]-mean)*(A[i]-mean);
+      var std = n>1 ? Math.sqrt(varsum/(n-1)) : 0;   // unbiased, matching torch.std default
+      var out=new Array(n);
+      for(i=0;i<n;i++) out[i]=(A[i]-mean)/(std+1e-8);
+      return out;
+    }
+
+    // One PPO gradient-ascent "epoch" over the whole (fixed) rollout batch: recompute
+    // the ratio at the CURRENT theta, zero the gradient for any token where the clip is
+    // engaged (min() picked the flat branch), else accumulate the analytic softmax
+    // gradient d logpi(o_t)/d theta_j = 1[j==o_t] - pi_theta(j), scaled by ratio*A.
+    function ppoEpoch(theta, tokens, oldLp, whitenedA, eps){
+      var pi = softmax(theta), N=tokens.length, t, j;
+      var ratio=new Array(N);
+      for(t=0;t<N;t++) ratio[t]=Math.exp(Math.log(pi[tokens[t]])-oldLp[t]);
+      var grad=new Array(NV); for(j=0;j<NV;j++) grad[j]=0;
+      for(t=0;t<N;t++){
+        var A=whitenedA[t], r=ratio[t];
+        var clipEngaged = (A>0 && r>1+eps) || (A<0 && r<1-eps);
+        if(!clipEngaged){
+          for(j=0;j<NV;j++) grad[j] += A*r*((j===tokens[t]?1:0) - pi[j]);
+        }
+      }
+      var newTheta=new Array(NV);
+      for(j=0;j<NV;j++) newTheta[j] = theta[j] + LR_POLICY*grad[j]/N;
+      return clampArr(newTheta, -THETA_CLAMP, THETA_CLAMP);
+    }
+
+    function exactKL(piA, piB){ // D_KL(piA || piB), full categorical, no sampling
+      var s=0, i;
+      for(i=0;i<piA.length;i++) s += piA[i]*Math.log(piA[i]/piB[i]);
+      return s;
+    }
+    function expectedReward(pi, quality, hack, kappa){
+      var rTrue=0, rRm=0, i;
+      for(i=0;i<pi.length;i++){ rTrue += pi[i]*quality[i]; rRm += pi[i]*(quality[i]+kappa*hack[i]); }
+      return {rTrue:rTrue, rRm:rRm};
+    }
+
+    // ================================================================= input readers
+    function iv(el,def,lo,hi){ var v=parseInt(el.value,10); if(!isFinite(v)) v=def; return Math.max(lo,Math.min(hi,v)); }
+    function fv(el,def,lo,hi){ var v=parseFloat(el.value); if(!isFinite(v)) v=def; return Math.max(lo,Math.min(hi,v)); }
+    function fmt(x,d){ if(x==null||!isFinite(x)) return '--'; return x.toFixed(d==null?3:d); }
+
+    // ================================================================= persistent state
+    var seed = 7;
+    var vocab = buildVocab(seed);
+    var thetaRef, theta, V, iteration, history, pending;
+
+    function initRun(rebuildVocab){
+      if(rebuildVocab) vocab = buildVocab(seed);
+      thetaRef = new Array(NV);
+      var v; for(v=0;v<NV;v++) thetaRef[v] = vocab.quality[v]*REF_SCALE;
+      theta = copyArr(thetaRef);
+      var piRef0 = softmax(thetaRef);
+      var er0 = expectedReward(piRef0, vocab.quality, vocab.hack, KAPPA);
+      V = er0.rRm;               // critic initialized as if seeded from the reward model
+      iteration = 0;
+      history = [{iter:0, kl:0, rTrue:er0.rTrue, rRm:er0.rRm}];
+      prepareRollout();
+    }
+
+    // Sample BATCH independent responses from the current (about-to-be-old) policy.
+    // Response #1 is shown in full below; the policy/critic update pools tokens from
+    // ALL of them, exactly like a real PPO minibatch (never just one rollout).
+    function prepareRollout(){
+      var T = iv(Tin,8,4,12), B = BATCH;
+      var thetaOld = copyArr(theta);
+      var piOld = softmax(thetaOld);
+      var piRefNow = softmax(thetaRef);
+      var rng = mulberry32(hashSeedIter(seed, iteration));
+      var batch = [], b, t;
+      for(b=0;b<B;b++){
+        var tokens=new Array(T);
+        for(t=0;t<T;t++) tokens[t]=sampleCategorical(piOld, rng);
+        var oldLp=new Array(T), refLp=new Array(T);
+        for(t=0;t<T;t++){ oldLp[t]=Math.log(piOld[tokens[t]]); refLp[t]=Math.log(piRefNow[tokens[t]]); }
+        batch.push({tokens:tokens, oldLp:oldLp, refLp:refLp});
+      }
+      pending = {thetaOld:thetaOld, piOld:piOld, piRef:piRefNow, T:T, B:B, batch:batch,
+                 tokens:batch[0].tokens, oldLp:batch[0].oldLp, refLp:batch[0].refLp};
+    }
+
+    // ================================================================= preview (pure function of pending + sliders)
+    function computePreview(){
+      var beta = fv(betaIn,0.05,0,1), eps = fv(epsIn,0.2,0.01,0.9), epochs = iv(epochsIn,3,1,10);
+      var T = pending.T, B = pending.B;
+      var allTokens=[], allOldLp=[], allRawA=[], allReturns=[];
+      var respKlTok=null, respTokenRewards=null, respGae=null, rTrueSample=0, rRmSample=0;
+      var r, t;
+      for(r=0;r<B;r++){
+        var resp = pending.batch[r];
+        var tokens=resp.tokens, oldLp=resp.oldLp, refLp=resp.refLp;
+        var klTok=new Array(T), tokenRewards=new Array(T);
+        for(t=0;t<T;t++) klTok[t] = oldLp[t]-refLp[t];            // k1 per-token KL estimator
+        var rT=0, rR=0;
+        for(t=0;t<T;t++){ rT+=vocab.quality[tokens[t]]; rR+=vocab.quality[tokens[t]]+KAPPA*vocab.hack[tokens[t]]; }
+        rT/=T; rR/=T;
+        for(t=0;t<T;t++) tokenRewards[t] = -beta*klTok[t];
+        tokenRewards[T-1] += rR;                                  // terminal RM score, last token only
+        var g = gae(tokenRewards, V, T);                          // GAE resets per-trajectory, as it must
+        for(t=0;t<T;t++){ allTokens.push(tokens[t]); allOldLp.push(oldLp[t]); allRawA.push(g.A[t]); allReturns.push(g.returns[t]); }
+        if(r===0){ respKlTok=klTok; respTokenRewards=tokenRewards; respGae=g; rTrueSample=rT; rRmSample=rR; }
+      }
+      var whitenedPooled = whiten(allRawA);            // whitened over the WHOLE batch, as real PPO does
+      var whitenedResp0 = whitenedPooled.slice(0, T);  // response #1's slice (it was pushed first)
+
+      var meanReturn=0; for(t=0;t<allReturns.length;t++) meanReturn+=allReturns[t]; meanReturn/=allReturns.length;
+      var Vcandidate = V + ETA_V*(meanReturn - V);     // one SGD step on 0.5*(V - R)^2
+
+      var thetaCand = copyArr(pending.thetaOld), e;
+      for(e=0;e<epochs;e++) thetaCand = ppoEpoch(thetaCand, allTokens, allOldLp, whitenedPooled, eps);
+
+      var piCand = softmax(thetaCand);
+
+      // clip status for the DISPLAYED response's tokens:
+      var ratioFinal=new Array(T), clipped=new Array(T);
+      for(t=0;t<T;t++){
+        var newLp = Math.log(piCand[pending.tokens[t]]);
+        ratioFinal[t] = Math.exp(newLp - pending.oldLp[t]);
+        var A = whitenedResp0[t], rr = ratioFinal[t];
+        clipped[t] = (A>0 && rr>1+eps) || (A<0 && rr<1-eps);
+      }
+      // clipfrac over the FULL pooled batch (the real diagnostic):
+      var clipCountAll=0;
+      for(t=0;t<allTokens.length;t++){
+        var newLpA = Math.log(piCand[allTokens[t]]);
+        var rA = Math.exp(newLpA - allOldLp[t]);
+        var Aa = whitenedPooled[t];
+        if((Aa>0 && rA>1+eps) || (Aa<0 && rA<1-eps)) clipCountAll++;
+      }
+
+      var klExactCandidate = exactKL(piCand, pending.piRef);
+      var erCand = expectedReward(piCand, vocab.quality, vocab.hack, KAPPA);
+
+      return {
+        beta:beta, eps:eps, epochs:epochs, T:T, B:B,
+        klTok:respKlTok, tokenRewards:respTokenRewards, gae:respGae, whitenedA:whitenedResp0,
+        rTrueSample:rTrueSample, rRmSample:rRmSample,
+        thetaCand:thetaCand, piCand:piCand, ratioFinal:ratioFinal, clipped:clipped,
+        clipfrac: clipCountAll/allTokens.length, Vcandidate:Vcandidate,
+        klExactCandidate:klExactCandidate, rTrueExactCand:erCand.rTrue, rRmExactCand:erCand.rRm
+      };
+    }
+
+    // ================================================================= commit (advance state)
+    function commitStep(){
+      var P = computePreview();
+      theta = P.thetaCand;
+      V = P.Vcandidate;
+      iteration += 1;
+      history.push({iter:iteration, kl:P.klExactCandidate, rTrue:P.rTrueExactCand, rRm:P.rRmExactCand});
+      if(history.length>400) history.shift();
+      prepareRollout();
+      render();
+    }
+
+    // ================================================================= small helpers
+    function argmax(a){ var bi=0,i; for(i=1;i<a.length;i++) if(a[i]>a[bi]) bi=i; return bi; }
+    function mean(a){ var s=0,i; for(i=0;i<a.length;i++) s+=a[i]; return s/a.length; }
+    function thetaDelta(a,b){ var s=0,i; for(i=0;i<a.length;i++) s+=(b[i]-a[i])*(b[i]-a[i]); return Math.sqrt(s); }
+
+    // ================================================================= drawing
+    function drawLegend(){
+      legendEl.innerHTML =
+        '<div class="rp-legend-item trainable"><b>POLICY &pi;&theta; (trainable)</b><span>the actor; its logits move every Step</span></div>'+
+        '<div class="rp-legend-item frozen"><b>REFERENCE &pi;ref (frozen)</b><span>SFT snapshot at iteration 0; defines the KL leash</span></div>'+
+        '<div class="rp-legend-item frozen"><b>REWARD MODEL (frozen)</b><span>scores quality + &kappa;&middot;hack, &kappa;='+KAPPA.toFixed(1)+' &mdash; its exploitable blind spot</span></div>'+
+        '<div class="rp-legend-item trainable"><b>VALUE / CRITIC V&phi; (trainable)</b><span>scalar baseline, regressed toward GAE returns</span></div>';
+    }
+
+    function drawCycle(P){
+      var W=1060, H=300;
+      var rowY=120, boxH=64, boxTop=rowY-boxH/2, boxBot=rowY+boxH/2;
+      var xs=[ 75, 239, 428, 617, 801, 975];            // box centres
+      var ws=[110, 150, 160, 150, 150, 130];            // box widths (34px gaps, 20px margins)
+      var titles=['PROMPT','POLICY &pi;&theta;','REWARD MODEL','GAE','PPO CLIP','POLICY UPDATE'];
+      var topTok = LABELS[argmax(pending.piOld)];
+      var topProb = pending.piOld[argmax(pending.piOld)];
+      var subs=[
+        'fixed context',
+        'top: '+topTok+' ('+(topProb*100).toFixed(0)+'%)',
+        'r_RM #1 = '+fmt(P.rRmSample,3),
+        'mean A #1 = '+fmt(mean(P.gae.A),3),
+        'clipfrac '+(P.clipfrac*100).toFixed(0)+'%',
+        '|d&theta;| = '+fmt(thetaDelta(pending.thetaOld,P.thetaCand),3)
+      ];
+      var frozenFlag=[false,false,true,false,false,false];
+      var trainFlag =[false,true,false,false,false,false];
+
+      var p=[];
+      p.push('<defs>'+
+             '<marker id="rlhf-ppo-pipeline-mk" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">'+
+               '<path class="rp-arrowhead" d="M0,0 L6,3 L0,6 Z"></path></marker>'+
+             '<marker id="rlhf-ppo-pipeline-mkfb" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">'+
+               '<path class="rp-arrowhead-fb" d="M0,0 L6,3 L0,6 Z"></path></marker>'+
+             '</defs>');
+
+      var i;
+      for(i=0;i<5;i++){
+        var x1=xs[i]+ws[i]/2+2, x2=xs[i+1]-ws[i+1]/2-8;
+        p.push('<line class="rp-arrow" x1="'+x1+'" y1="'+rowY+'" x2="'+x2+'" y2="'+rowY+'" marker-end="url(#rlhf-ppo-pipeline-mk)"></line>');
+      }
+      // feedback arc: POLICY UPDATE -> POLICY, over the top
+      var ux=xs[5], px=xs[1];
+      p.push('<path class="rp-arrow-fb" d="M '+ux+' '+boxTop+' C '+ux+' 26, '+px+' 26, '+px+' '+(boxTop-6)+
+             '" marker-end="url(#rlhf-ppo-pipeline-mkfb)"></path>');
+      p.push('<text class="rp-flowlab" x="'+((ux+px)/2)+'" y="16" text-anchor="middle">next rollout: &theta;old &larr; &theta; (every ratio resets to exactly 1)</text>');
+
+      for(i=0;i<6;i++){
+        var cls='rp-node-box'+(frozenFlag[i]?' frozen':'')+(trainFlag[i]?' trainable':'');
+        p.push('<rect class="'+cls+'" x="'+(xs[i]-ws[i]/2)+'" y="'+boxTop+'" width="'+ws[i]+'" height="'+boxH+'" rx="9"></rect>');
+        p.push('<text class="rp-node-title" x="'+xs[i]+'" y="'+(rowY-6)+'" text-anchor="middle">'+titles[i]+'</text>');
+        p.push('<text class="rp-node-sub'+(i===4&&P.clipfrac>0?' warn':'')+'" x="'+xs[i]+'" y="'+(rowY+14)+'" text-anchor="middle">'+subs[i]+'</text>');
+      }
+
+      // annotation tags, vertically staggered so they never collide
+      var tagW=200, tagH=46;
+      var aY=178, bY=240;
+      p.push('<line class="rp-conn" x1="'+xs[3]+'" y1="'+boxBot+'" x2="'+xs[3]+'" y2="'+aY+'"></line>');
+      p.push('<rect class="rp-tagbox" x="'+(xs[3]-tagW/2)+'" y="'+aY+'" width="'+tagW+'" height="'+tagH+'" rx="7"></rect>');
+      p.push('<text class="rp-node-title" x="'+xs[3]+'" y="'+(aY+18)+'" text-anchor="middle" style="font-size:11px">VALUE / CRITIC V&phi;</text>');
+      p.push('<text class="rp-node-sub" x="'+xs[3]+'" y="'+(aY+35)+'" text-anchor="middle">V '+fmt(V,3)+' &rarr; '+fmt(P.Vcandidate,3)+' if Step</text>');
+
+      p.push('<line class="rp-conn" x1="'+xs[4]+'" y1="'+boxBot+'" x2="'+xs[4]+'" y2="'+bY+'"></line>');
+      p.push('<rect class="rp-tagbox" x="'+(xs[4]-tagW/2)+'" y="'+bY+'" width="'+tagW+'" height="'+tagH+'" rx="7"></rect>');
+      p.push('<text class="rp-node-title" x="'+xs[4]+'" y="'+(bY+18)+'" text-anchor="middle" style="font-size:11px">REFERENCE &pi;ref</text>');
+      p.push('<text class="rp-node-sub" x="'+xs[4]+'" y="'+(bY+35)+'" text-anchor="middle">frozen at iter 0; feeds KL_t</text>');
+
+      cycleSvg.setAttribute('viewBox','0 0 '+W+' '+H);
+      cycleSvg.innerHTML = p.join('');
+    }
+
+    // Mini "ratio inside the clip band" gauge, one per token row.
+    function ratioBar(ratio, eps, isClipped){
+      var W=104, H=14, lo=0.4, hi=1.8;
+      function X(v){ return ((Math.max(lo,Math.min(hi,v))-lo)/(hi-lo))*(W-2)+1; }
+      var xa=X(1-eps), xb=X(1+eps), x1=X(1), xr=X(ratio);
+      return '<svg class="rp-mini" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true" focusable="false">'+
+        '<rect class="rp-band" x="'+xa.toFixed(1)+'" y="2" width="'+Math.max(0.5,xb-xa).toFixed(1)+'" height="10"></rect>'+
+        '<line class="rp-bandline" x1="1" y1="7" x2="'+(W-1)+'" y2="7"></line>'+
+        '<line class="rp-onetick" x1="'+x1.toFixed(1)+'" y1="1" x2="'+x1.toFixed(1)+'" y2="13"></line>'+
+        '<line class="rp-rtick'+(isClipped?' rp-clip':'')+'" x1="'+xr.toFixed(1)+'" y1="1" x2="'+xr.toFixed(1)+'" y2="13"></line>'+
+      '</svg>';
+    }
+
+    function drawTable(P){
+      var T=P.T, tokens=pending.tokens, rows=[], t;
+      rows.push('<tr><th class="rp-lab">#</th><th class="rp-lab">token</th><th>&pi;old</th><th>&pi;ref</th>'+
+                '<th>&pi;&theta; (after Step)</th><th>ratio r</th><th class="rp-lab">r vs clip band [' +
+                fmt(1-P.eps,2)+', '+fmt(1+P.eps,2)+']</th><th>KL_t (k1)</th><th>A_t (whitened)</th><th>status</th></tr>');
+      for(t=0;t<T;t++){
+        var isLast = t===T-1;
+        var clip = P.clipped[t];
+        rows.push('<tr class="'+(clip?'rp-clipped ':'')+(isLast?'rp-last':'')+'">'+
+          '<td class="rp-lab">'+(t+1)+'</td>'+
+          '<td class="rp-lab">'+LABELS[tokens[t]]+(isLast?' (+RM score)':'')+'</td>'+
+          '<td>'+fmt(pending.piOld[tokens[t]],3)+'</td>'+
+          '<td>'+fmt(pending.piRef[tokens[t]],3)+'</td>'+
+          '<td>'+fmt(P.piCand[tokens[t]],3)+'</td>'+
+          '<td>'+fmt(P.ratioFinal[t],3)+'</td>'+
+          '<td class="rp-lab">'+ratioBar(P.ratioFinal[t], P.eps, clip)+'</td>'+
+          '<td>'+fmt(P.klTok[t],3)+'</td>'+
+          '<td>'+fmt(P.whitenedA[t],3)+'</td>'+
+          '<td class="'+(clip?'rp-status-clip':'rp-status-ok')+'">'+(clip?'CLIPPED':'active')+'</td>'+
+        '</tr>');
+      }
+      tableEl.innerHTML = rows.join('');
+    }
+
+    function drawFormula(P){
+      var t=0, tok=pending.tokens[t];
+      var isLast = (t === P.T-1);          // token #1 carries the RM score only if T==1
+      var lines = [];
+      lines.push('Worked example -- token #1 of this response = "'+LABELS[tok]+'":');
+      lines.push('  pi_old(tok)  = softmax(theta_old)[tok] = '+fmt(pending.piOld[tok],4));
+      lines.push('  pi_ref(tok)  = softmax(theta_ref)[tok]  = '+fmt(pending.piRef[tok],4));
+      lines.push('  KL_1 = log(pi_old) - log(pi_ref) = '+fmt(Math.log(pending.piOld[tok]),4)+' - '+fmt(Math.log(pending.piRef[tok]),4)+' = '+fmt(P.klTok[0],4)+'   (k1 estimator)');
+      lines.push('  token_reward_1 = -beta * KL_1'+(isLast?' + r_RM':'')+' = ('+fmt(-P.beta,3)+') * '+fmt(P.klTok[0],4)+(isLast?' + '+fmt(P.rRmSample,3):'')+' = '+fmt(P.tokenRewards[0],4));
+      lines.push('  critic V = '+fmt(V,4)+';  delta_1 = token_reward_1 + gamma*'+(P.T>1?'V':'0')+' - V = '+fmt(P.gae.delta[0],4));
+      lines.push('  A_1 (raw GAE, backward recursion, gamma='+GAMMA+', lambda='+LAMBDA+') = '+fmt(P.gae.A[0],4)+'  ->  whitened over the batch = '+fmt(P.whitenedA[0],4));
+      lines.push('  after '+P.epochs+' PPO epoch(s): pi_theta_candidate(tok) = '+fmt(P.piCand[tok],4));
+      lines.push('  ratio_1 = pi_theta_candidate / pi_old = '+fmt(P.ratioFinal[0],4)+'   clip band [1-eps,1+eps] = ['+fmt(1-P.eps,2)+', '+fmt(1+P.eps,2)+']');
+      var unclipped = P.ratioFinal[0]*P.whitenedA[0];
+      var clippedVal = Math.max(1-P.eps, Math.min(1+P.eps, P.ratioFinal[0]))*P.whitenedA[0];
+      var Lval = Math.min(unclipped, clippedVal);
+      lines.push('  L_1 = min(r*A, clip(r,1-eps,1+eps)*A) = min('+fmt(unclipped,4)+', '+fmt(clippedVal,4)+') = '+fmt(Lval,4)+
+                 '   -> gradient '+(P.clipped[0]?'CLIPPED (zero)':'active'));
+      formulaEl.textContent = lines.join('\n');
+    }
+
+    function drawOut(P){
+      var stats = [
+        ['', fmt(P.rRmSample,3), 'RM score r(o) of response #1 (mean over '+P.T+' tokens, quality + '+KAPPA.toFixed(1)+'&times;hack)'],
+        ['', fmt(P.rTrueSample,3), 'True reward of response #1 (quality only -- what a human would actually want)'],
+        ['', fmt(exactKL(softmax(theta),softmax(thetaRef)),4), 'Exact D_KL(pi_theta || pi_ref) at the CURRENT committed policy'],
+        [P.clipfrac>0.4?'rp-warn':'', (P.clipfrac*100).toFixed(0)+'%', 'clipfrac if you Step now (pooled over '+(P.B*P.T)+' tokens, '+P.B+' rollouts &times; T='+P.T+')'],
+        ['', fmt(V,3)+' &rarr; '+fmt(P.Vcandidate,3), 'Critic V: current &rarr; pending (regression toward mean GAE return)'],
+        ['', String(iteration), 'Iterations committed so far']
+      ];
+      outEl.innerHTML = stats.map(function(s){
+        return '<div class="vt-stat '+s[0]+'"><div class="n">'+s[1]+'</div><div class="l">'+s[2]+'</div></div>';
+      }).join('');
+    }
+
+    function drawPlot(P){
+      var W=460,H=270, padL=46,padR=16,padT=16,padB=42;
+      var allKL=[0], allR=[], i;
+      for(i=0;i<history.length;i++){ allKL.push(history[i].kl); allR.push(history[i].rTrue, history[i].rRm); }
+      allKL.push(P.klExactCandidate); allR.push(P.rTrueExactCand, P.rRmExactCand);
+      var klMax=0.15, rLo=-0.2, rHi=0.2;
+      for(i=0;i<allKL.length;i++) if(isFinite(allKL[i]) && allKL[i]>klMax) klMax=allKL[i];
+      for(i=0;i<allR.length;i++){ if(!isFinite(allR[i])) continue; if(allR[i]<rLo) rLo=allR[i]; if(allR[i]>rHi) rHi=allR[i]; }
+      klMax*=1.15; rLo-=0.1; rHi+=0.1;
+      function X(kl){ return padL + (kl/klMax)*(W-padL-padR); }
+      function Y(r){ return padT + (1-(r-rLo)/(rHi-rLo))*(H-padT-padB); }
+
+      var p=[];
+      // axes + gridlines
+      p.push('<line class="rp-grid" x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+(H-padB)+'"></line>');
+      p.push('<line class="rp-grid" x1="'+padL+'" y1="'+(H-padB)+'" x2="'+(W-padR)+'" y2="'+(H-padB)+'"></line>');
+      if(0>=rLo && 0<=rHi){
+        p.push('<line class="rp-grid" x1="'+padL+'" y1="'+Y(0).toFixed(1)+'" x2="'+(W-padR)+'" y2="'+Y(0).toFixed(1)+'"></line>');
+        p.push('<text class="rp-ax" x="'+(padL-6)+'" y="'+(Y(0)+3).toFixed(1)+'" text-anchor="end">0.00</text>');
+      }
+      p.push('<line class="rp-grid" x1="'+X(klMax/2).toFixed(1)+'" y1="'+padT+'" x2="'+X(klMax/2).toFixed(1)+'" y2="'+(H-padB)+'"></line>');
+
+      var dTrue='', dRm='';
+      for(i=0;i<history.length;i++){
+        var cx=X(history[i].kl), cy1=Y(history[i].rTrue), cy2=Y(history[i].rRm);
+        dTrue += (i===0?'M':'L')+cx.toFixed(1)+' '+cy1.toFixed(1)+' ';
+        dRm   += (i===0?'M':'L')+cx.toFixed(1)+' '+cy2.toFixed(1)+' ';
+      }
+      p.push('<path class="rp-path-true" d="'+dTrue+'"></path>');
+      p.push('<path class="rp-path-rm" d="'+dRm+'"></path>');
+      for(i=0;i<history.length;i++){
+        p.push('<circle class="rp-dot-true" cx="'+X(history[i].kl).toFixed(1)+'" cy="'+Y(history[i].rTrue).toFixed(1)+'" r="2.6"></circle>');
+        p.push('<circle class="rp-dot-rm" cx="'+X(history[i].kl).toFixed(1)+'" cy="'+Y(history[i].rRm).toFixed(1)+'" r="2.6"></circle>');
+      }
+      var last=history[history.length-1];
+      var gx=X(P.klExactCandidate), gyT=Y(P.rTrueExactCand), gyR=Y(P.rRmExactCand);
+      p.push('<line class="rp-ghost" x1="'+X(last.kl).toFixed(1)+'" y1="'+Y(last.rTrue).toFixed(1)+'" x2="'+gx.toFixed(1)+'" y2="'+gyT.toFixed(1)+'"></line>');
+      p.push('<line class="rp-ghost" x1="'+X(last.kl).toFixed(1)+'" y1="'+Y(last.rRm).toFixed(1)+'" x2="'+gx.toFixed(1)+'" y2="'+gyR.toFixed(1)+'"></line>');
+      p.push('<circle class="rp-ghost-dot" cx="'+gx.toFixed(1)+'" cy="'+gyT.toFixed(1)+'" r="3.6"></circle>');
+      p.push('<circle class="rp-ghost-dot" cx="'+gx.toFixed(1)+'" cy="'+gyR.toFixed(1)+'" r="3.6"></circle>');
+      p.push('<text class="rp-ax" x="'+Math.min(W-padR-2,gx+7).toFixed(1)+'" y="'+(gyT-6).toFixed(1)+'" text-anchor="'+(gx>W-90?'end':'start')+'">iter '+(iteration+1)+' (pending)</text>');
+
+      // ticks
+      p.push('<text class="rp-ax" x="'+padL+'" y="'+(H-padB+14)+'" text-anchor="middle">0</text>');
+      p.push('<text class="rp-ax" x="'+X(klMax/2).toFixed(1)+'" y="'+(H-padB+14)+'" text-anchor="middle">'+(klMax/2).toFixed(2)+'</text>');
+      p.push('<text class="rp-ax" x="'+(W-padR)+'" y="'+(H-padB+14)+'" text-anchor="end">'+klMax.toFixed(2)+'</text>');
+      p.push('<text class="rp-axtitle" x="'+((padL+W-padR)/2)+'" y="'+(H-8)+'" text-anchor="middle">D_KL(&pi;&theta; || &pi;ref)  &rarr;  drift from the SFT reference</text>');
+      p.push('<text class="rp-ax" x="'+(padL-6)+'" y="'+(padT+4)+'" text-anchor="end">'+rHi.toFixed(2)+'</text>');
+      p.push('<text class="rp-ax" x="'+(padL-6)+'" y="'+(H-padB)+'" text-anchor="end">'+rLo.toFixed(2)+'</text>');
+      var midY = padT + (H-padT-padB)/2;
+      p.push('<text class="rp-axtitle" x="11" y="'+midY.toFixed(1)+'" text-anchor="middle" transform="rotate(-90 11 '+midY.toFixed(1)+')">reward per token</text>');
+
+      plotSvg.setAttribute('viewBox','0 0 '+W+' '+H);
+      plotSvg.innerHTML = p.join('');
+    }
+
+    function drawNote(P){
+      var gap = P.rRmExactCand - P.rTrueExactCand;
+      var topCandTok = LABELS[argmax(P.piCand)];
+      var betaTxt;
+      if(iteration === 0){
+        betaTxt = 'Right now &pi;&theta; <i>is</i> &pi;ref, so every KL_t is exactly 0 and &beta; provably cannot change this first update &mdash; '+
+                  'that is not a bug, it is why the leash only starts to bite once the policy has actually moved. Press <b>Step</b> once, '+
+                  'then drag &beta;.';
+      } else if(P.beta < 0.02){
+        betaTxt = '&beta;='+fmt(P.beta,3)+' is a very loose leash: the reward-model score keeps climbing ('+fmt(P.rRmExactCand,3)+
+                  ') while the true reward stalls or falls ('+fmt(P.rTrueExactCand,3)+') &mdash; the policy is drifting toward "'+
+                  topCandTok+'", which exploits the RM\'s hack feature. That growing RM-minus-true gap ('+fmt(gap,3)+') is reward hacking, live.';
+      } else if(P.beta > 0.18){
+        betaTxt = '&beta;='+fmt(P.beta,3)+' is a tight leash: KL barely grows ('+fmt(P.klExactCandidate,4)+') and the RM score barely moves &mdash; '+
+                  'safe from hacking, but you are also leaving real gains on the table, because the policy can hardly move away from the SFT reference.';
+      } else {
+        betaTxt = '&beta;='+fmt(P.beta,3)+' sits in the usual working range: KL grows to '+fmt(P.klExactCandidate,4)+' while the RM/true gap stays '+
+                  'modest ('+fmt(gap,3)+') &mdash; the policy is buying reward without yet selling out on quality.';
+      }
+      noteEl.innerHTML =
+        '<b>Takeaway:</b> the clip only ever guards <i>within-batch</i> stability (it zeroed the gradient on '+
+        (P.clipfrac*100).toFixed(0)+'% of the pooled '+(P.B*P.T)+' tokens this iteration) &mdash; it says nothing about whether the reward '+
+        'model itself is trustworthy. That job belongs entirely to the KL-to-reference penalty, whose strength is &beta;. '+betaTxt+
+        ' Watch both curves on the reward-vs-KL plot: raising &beta; buys lower KL at the cost of a lower <i>reward-model</i> score &mdash; '+
+        'which, when the RM is exploitable, is exactly the trade you want. The dashed-minus-solid gap is the quantity a real RLHF run must '+
+        'watch (via held-out human or judge evals, since the true reward is never observable) to catch over-optimization before it compounds.';
+    }
+
+    // ================================================================= master render
+    function render(){
+      betaVal.textContent = fv(betaIn,0.05,0,1).toFixed(3);
+      epsVal.textContent = fv(epsIn,0.2,0.01,0.9).toFixed(2);
+      epochsVal.textContent = String(iv(epochsIn,3,1,10));
+      Tval.textContent = String(iv(Tin,8,4,12));
+      iterLabel.textContent = 'iteration '+iteration+' · seed '+seed;
+
+      var P = computePreview();
+      drawCycle(P);
+      drawTable(P);
+      drawFormula(P);
+      drawOut(P);
+      drawPlot(P);
+      drawNote(P);
+    }
+
+    // ================================================================= wiring
+    [betaIn,epsIn,epochsIn].forEach(function(el){
+      el.addEventListener('input', render);
+      el.addEventListener('change', render);
+    });
+    function onT(){ prepareRollout(); render(); }
+    Tin.addEventListener('input', onT);
+    Tin.addEventListener('change', onT);
+
+    stepBtn.addEventListener('click', commitStep);
+    resetBtn.addEventListener('click', function(){ initRun(false); render(); });
+    reseedBtn.addEventListener('click', function(){ seed = (seed+1) % 100000; initRun(true); render(); });
+
+    drawLegend();
+    initRun(true);
+    render();
+  })();</script>
+</div>

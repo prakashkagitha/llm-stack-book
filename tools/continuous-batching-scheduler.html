@@ -1,0 +1,1079 @@
+<div class="viz-tool" id="tool-continuous-batching-scheduler">
+  <div class="vt-title">Continuous (iteration-level) batching</div>
+  <div class="vt-hint">A real iteration-level scheduler, simulated step by step against the <em>same</em> arrival stream as a static/dynamic (request-level) baseline. Every iteration the scheduler re-derives the running set: it reserves one decode token + KV block per running request (<strong>preempting</strong> LIFO when blocks run out), backfills the remaining token budget with <strong>prefill chunks</strong>, runs one fused pass, then <strong>retires finished requests immediately</strong> so a waiting request takes the freed slot on the very next iteration. Watch a bar end mid-batch and the slot refill one column later &mdash; that is the whole idea. Iteration time is the chapter&rsquo;s model &tau; = &tau;<sub>0</sub> + &beta; &middot; (tokens in this pass), with &tau;<sub>0</sub> = 20 ms and &beta; = 0.2 ms/token.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="continuous-batching-scheduler-workload">Workload
+      <select id="continuous-batching-scheduler-workload" aria-label="Request workload mix: prompt and output length distribution">
+        <option value="chat" selected>chat (short prompts, heavy-tail outputs)</option>
+        <option value="rag">RAG (long prompts, short outputs)</option>
+        <option value="mixed">mixed (both, worst case)</option>
+      </select>
+    </label>
+    <label for="continuous-batching-scheduler-rate">Arrival rate <span class="vt-val" id="continuous-batching-scheduler-rateVal">8.0 req/s</span>
+      <input id="continuous-batching-scheduler-rate" type="range" min="0.5" max="30" step="0.5" value="8" aria-label="Poisson request arrival rate in requests per second">
+    </label>
+    <label for="continuous-batching-scheduler-seqs">max_num_seqs (slots) <span class="vt-val" id="continuous-batching-scheduler-seqsVal">8</span>
+      <input id="continuous-batching-scheduler-seqs" type="range" min="1" max="16" step="1" value="8" aria-label="Maximum number of concurrently running sequences, the slot cap">
+    </label>
+    <label for="continuous-batching-scheduler-budget">max_num_batched_tokens <span class="vt-val" id="continuous-batching-scheduler-budgetVal">256</span>
+      <input id="continuous-batching-scheduler-budget" type="range" min="16" max="1024" step="16" value="256" aria-label="Per-iteration token budget in tokens">
+    </label>
+    <label for="continuous-batching-scheduler-blocks">KV blocks (16 tok each) <span class="vt-val" id="continuous-batching-scheduler-blocksVal">256</span>
+      <input id="continuous-batching-scheduler-blocks" type="range" min="32" max="2048" step="32" value="256" aria-label="Total KV cache blocks available on the device, 16 tokens per block">
+    </label>
+    <label class="cbs-check" for="continuous-batching-scheduler-chunked">
+      <span>Chunked prefill</span>
+      <input id="continuous-batching-scheduler-chunked" type="checkbox" checked aria-label="Split long prefills across iterations under the token budget instead of running prefill-only iterations">
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-reset" id="continuous-batching-scheduler-play" type="button">&#9658; Play</button>
+    <button class="vt-reset" id="continuous-batching-scheduler-step" type="button">Step 1 iteration</button>
+    <button class="vt-reset" id="continuous-batching-scheduler-run" type="button">Run 25 iterations</button>
+    <button class="vt-reset" id="continuous-batching-scheduler-reset" type="button">Reset</button>
+  </div>
+
+  <div class="cbs-clock" id="continuous-batching-scheduler-clock" aria-live="polite"></div>
+
+  <div class="cbs-svgwrap">
+    <svg id="continuous-batching-scheduler-timeline" viewBox="0 0 780 400" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Slot-versus-time timeline comparing continuous batching with static request-level batching" aria-describedby="continuous-batching-scheduler-tldesc"></svg>
+  </div>
+  <div class="cbs-axis-note" id="continuous-batching-scheduler-tldesc"></div>
+
+  <div class="cbs-legend">
+    <span><i class="cbs-sw cbs-sw-prefill"></i>prefill tokens</span>
+    <span><i class="cbs-sw cbs-sw-decode"></i>decode (1 token)</span>
+    <span><i class="cbs-sw cbs-sw-pad"></i>prompt padding (static)</span>
+    <span><i class="cbs-sw cbs-sw-dead"></i>dead slot: finished but locked</span>
+    <span><i class="cbs-sw cbs-sw-stall"></i>stalled: no token budget left this pass</span>
+    <span><i class="cbs-sw cbs-sw-idle"></i>idle slot</span>
+    <span><i class="cbs-sw cbs-sw-hand"></i>slot handoff (new occupant)</span>
+    <span><i class="cbs-sw cbs-sw-fin"></i>EOS: slot released</span>
+    <span><i class="cbs-sw cbs-sw-pre"></i>preemption</span>
+  </div>
+
+  <div class="cbs-panels">
+    <div class="cbs-panel">
+      <div class="cbs-row-label">Running batch right now (one bar per slot; each iteration advances one token)</div>
+      <div id="continuous-batching-scheduler-batch"></div>
+    </div>
+    <div class="cbs-panel">
+      <div class="cbs-row-label">KV cache &amp; waiting queue</div>
+      <div id="continuous-batching-scheduler-mem"></div>
+      <div class="cbs-row-label cbs-mt">Scheduler event log (most recent first)</div>
+      <div id="continuous-batching-scheduler-log"></div>
+    </div>
+  </div>
+
+  <div class="cbs-stats" id="continuous-batching-scheduler-stats"></div>
+
+  <div class="vt-note">
+    Both systems see the <strong>identical seeded arrival stream</strong> and the same device model, so every difference is scheduling. <strong>Continuous batching</strong> re-derives the running set each forward pass, so a slot freed by an EOS is refilled on the next iteration and the active batch stays pinned near <code>max_num_seqs</code>. <strong>Static/request-level batching</strong> (given the benefit of a 1 s dynamic-batching window to fill its batch) freezes membership: short requests turn into <em>dead slots</em> that still cost a row in every GEMM until the longest request in the batch finishes, and prompts are padded to the batch maximum &mdash; the three leaks, visible as hatching. Turn <strong>chunked prefill</strong> off (try the RAG workload) and a long prompt seizes a whole prefill-only iteration: &tau; = 20 + 0.2&times;2400 = 500 ms during which every decode stalls, drawn as warn-hatched cells. Turn it on and the same prompt is spread over &lceil;prompt / leftover budget&rceil; iterations that ride along with the decodes, and the <em>longest forward pass</em> row collapses to the budget cap &tau;<sub>0</sub> + &beta; &middot; <code>max_num_batched_tokens</code> &mdash; a bound the widget holds exactly. That bound is the point: it is a hard ceiling on inter-token latency. Whether it also costs raw throughput depends on the mix (compare the two <em>output tok/s</em> numbers with the box on and off): chopping prefill into more, thinner passes pays &tau;<sub>0</sub> more times, but keeping decodes alive alongside it raises the mean active batch, and on chat-shaped traffic the second effect usually wins. That trade &mdash; ITL ceiling versus &tau;<sub>0</sub> amortization &mdash; is the knob Sarathi-Serve turns. Shrink <em>KV blocks</em> until the scheduler cannot reserve the next block for a running request: it evicts the newest request (LIFO), whose materialized KV must be recomputed on resume &mdash; that redundant work is what the &ldquo;useful-compute share&rdquo; row charges continuous batching for, and it is why you keep headroom instead of admitting to the last block. Caveats: &tau;<sub>0</sub> and &beta; are a linear stand-in for a real kernel timing curve, attention cost grows with context length (ignored here), and the mock model emits a fixed number of tokens per request instead of a real EOS.
+  </div>
+
+  <style>
+    #tool-continuous-batching-scheduler{
+      --cbs-surface: var(--surface,#ffffff);
+      --cbs-surface-2: var(--surface-2,#f6f7f9);
+      --cbs-surface-3: var(--surface-3,#eceef3);
+      --cbs-ink: var(--ink,#1a1a2e);
+      --cbs-ink-soft: var(--ink-soft,#556);
+      --cbs-muted: var(--muted,#889);
+      --cbs-border: var(--border,#e5e7eb);
+      --cbs-border-2: var(--border-2,#e5e7eb);
+      --cbs-accent: var(--accent,#4f46e5);
+      --cbs-good: var(--good,#2f9e6e);
+      --cbs-warn: var(--warn,#e0a106);
+      --cbs-bad: var(--bad,#b03a34);
+    }
+    @media (prefers-color-scheme: dark){
+      #tool-continuous-batching-scheduler{
+        --cbs-surface: var(--surface,#1a1a20);
+        --cbs-surface-2: var(--surface-2,#22222a);
+        --cbs-surface-3: var(--surface-3,#2c2c36);
+        --cbs-ink: var(--ink,#e8e8ee);
+        --cbs-ink-soft: var(--ink-soft,#c3c3cf);
+        --cbs-muted: var(--muted,#9a9aa8);
+        --cbs-border: var(--border,#33333d);
+        --cbs-border-2: var(--border-2,#43434f);
+        --cbs-accent: var(--accent,#8b85f0);
+        --cbs-good: var(--good,#5fd3a0);
+        --cbs-warn: var(--warn,#e3b23c);
+        --cbs-bad: var(--bad,#f08b83);
+      }
+    }
+    html[data-theme="light"] #tool-continuous-batching-scheduler{
+      --cbs-surface: var(--surface,#ffffff);
+      --cbs-surface-2: var(--surface-2,#f6f7f9);
+      --cbs-surface-3: var(--surface-3,#eceef3);
+      --cbs-ink: var(--ink,#1a1a2e);
+      --cbs-ink-soft: var(--ink-soft,#556);
+      --cbs-muted: var(--muted,#889);
+      --cbs-border: var(--border,#e5e7eb);
+      --cbs-border-2: var(--border-2,#e5e7eb);
+      --cbs-accent: var(--accent,#4f46e5);
+      --cbs-good: var(--good,#2f9e6e);
+      --cbs-warn: var(--warn,#e0a106);
+      --cbs-bad: var(--bad,#b03a34);
+    }
+    html[data-theme="dark"] #tool-continuous-batching-scheduler{
+      --cbs-surface: var(--surface,#1a1a20);
+      --cbs-surface-2: var(--surface-2,#22222a);
+      --cbs-surface-3: var(--surface-3,#2c2c36);
+      --cbs-ink: var(--ink,#e8e8ee);
+      --cbs-ink-soft: var(--ink-soft,#c3c3cf);
+      --cbs-muted: var(--muted,#9a9aa8);
+      --cbs-border: var(--border,#33333d);
+      --cbs-border-2: var(--border-2,#43434f);
+      --cbs-accent: var(--accent,#8b85f0);
+      --cbs-good: var(--good,#5fd3a0);
+      --cbs-warn: var(--warn,#e3b23c);
+      --cbs-bad: var(--bad,#f08b83);
+    }
+
+    #tool-continuous-batching-scheduler{ border:1px solid var(--cbs-border-2); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--cbs-surface); font-family:var(--sans,sans-serif); max-width:100%; overflow-x:hidden; }
+    #tool-continuous-batching-scheduler .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--cbs-ink); }
+    #tool-continuous-batching-scheduler .vt-hint{ font-size:.8rem; color:var(--cbs-muted); margin-bottom:14px; line-height:1.55; }
+    #tool-continuous-batching-scheduler .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-continuous-batching-scheduler label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--cbs-ink-soft); }
+    #tool-continuous-batching-scheduler label.cbs-check{ flex-direction:row; align-items:center; gap:8px; align-self:end; padding-bottom:4px; }
+    #tool-continuous-batching-scheduler .vt-val{ color:var(--cbs-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-continuous-batching-scheduler input[type="range"]{ width:100%; accent-color:var(--cbs-accent); }
+    #tool-continuous-batching-scheduler input[type="checkbox"]{ accent-color:var(--cbs-accent); width:15px; height:15px; }
+    #tool-continuous-batching-scheduler select{ font:inherit; font-size:.78rem; padding:5px 6px; border:1px solid var(--cbs-border-2); border-radius:7px; background:var(--cbs-surface); color:var(--cbs-ink); max-width:100%; }
+    #tool-continuous-batching-scheduler input:focus-visible, #tool-continuous-batching-scheduler select:focus-visible{ outline:2px solid var(--cbs-accent); outline-offset:3px; }
+    #tool-continuous-batching-scheduler .vt-actions{ margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; }
+    #tool-continuous-batching-scheduler .vt-reset{ font:inherit; font-size:.78rem; padding:6px 12px; border:1px solid var(--cbs-border-2); border-radius:7px; background:var(--cbs-surface); color:var(--cbs-ink); cursor:pointer; }
+    #tool-continuous-batching-scheduler .vt-reset:hover{ background:var(--cbs-surface-3); }
+    #tool-continuous-batching-scheduler .vt-reset:focus-visible{ outline:2px solid var(--cbs-accent); outline-offset:2px; }
+    #tool-continuous-batching-scheduler .vt-note{ margin-top:14px; font-size:.78rem; color:var(--cbs-muted); line-height:1.6; }
+    #tool-continuous-batching-scheduler code{ font-family:var(--mono,monospace); font-size:.95em; }
+
+    #tool-continuous-batching-scheduler .cbs-clock{ margin-top:12px; font-family:var(--mono,monospace); font-size:.76rem; color:var(--cbs-ink); background:var(--cbs-surface-2); border:1px solid var(--cbs-border); border-radius:8px; padding:7px 10px; line-height:1.8; }
+    #tool-continuous-batching-scheduler .cbs-clock b{ color:var(--cbs-accent); }
+    #tool-continuous-batching-scheduler .cbs-svgwrap{ margin-top:10px; width:100%; overflow-x:auto; }
+    #tool-continuous-batching-scheduler svg#continuous-batching-scheduler-timeline{ width:100%; min-width:520px; height:auto; display:block; }
+    #tool-continuous-batching-scheduler .cbs-axis-note{ margin-top:4px; font-size:.72rem; color:var(--cbs-muted); line-height:1.5; }
+
+    #tool-continuous-batching-scheduler .cbs-panel-title{ fill:var(--cbs-ink); font-size:10px; font-weight:700; font-family:var(--sans,sans-serif); }
+    #tool-continuous-batching-scheduler .cbs-panel-sub{ fill:var(--cbs-muted); font-size:8.5px; font-family:var(--sans,sans-serif); }
+    #tool-continuous-batching-scheduler .cbs-axis{ fill:var(--cbs-muted); font-size:8.5px; font-family:var(--sans,sans-serif); }
+    #tool-continuous-batching-scheduler .cbs-slotlab{ fill:var(--cbs-muted); font-size:8px; font-family:var(--mono,monospace); }
+    #tool-continuous-batching-scheduler .cbs-rid{ fill:var(--cbs-surface); font-size:7px; font-family:var(--mono,monospace); font-weight:700; pointer-events:none; }
+    #tool-continuous-batching-scheduler .cbs-cell-prefill{ fill:var(--cbs-accent); }
+    #tool-continuous-batching-scheduler .cbs-cell-decode{ fill:var(--cbs-good); }
+    #tool-continuous-batching-scheduler .cbs-cell-idle{ fill:var(--cbs-surface-3); }
+    #tool-continuous-batching-scheduler .cbs-hatch-bg{ fill:var(--cbs-surface-3); }
+    #tool-continuous-batching-scheduler .cbs-hatch-pad{ stroke:var(--cbs-accent); stroke-width:2; opacity:.55; }
+    #tool-continuous-batching-scheduler .cbs-hatch-dead{ stroke:var(--cbs-muted); stroke-width:2; opacity:.8; }
+    #tool-continuous-batching-scheduler .cbs-hatch-stall{ stroke:var(--cbs-warn); stroke-width:2; opacity:.85; }
+    /* the finish notch sits ON a decode (good-coloured) cell, so it is drawn in the
+       surface colour: high contrast against green in both light and dark themes. */
+    #tool-continuous-batching-scheduler .cbs-mark-fin{ stroke:var(--cbs-surface); stroke-width:2.5; }
+    #tool-continuous-batching-scheduler .cbs-mark-pre{ stroke:var(--cbs-bad); stroke-width:2.5; }
+    #tool-continuous-batching-scheduler .cbs-mark-hand{ stroke:var(--cbs-ink); stroke-width:1.6; opacity:.9; }
+    #tool-continuous-batching-scheduler .cbs-frame{ fill:none; stroke:var(--cbs-border-2); stroke-width:1; }
+    #tool-continuous-batching-scheduler .cbs-gridline{ stroke:var(--cbs-border); stroke-width:1; }
+
+    #tool-continuous-batching-scheduler .cbs-legend{ margin-top:10px; display:flex; flex-wrap:wrap; gap:6px 14px; font-size:.71rem; color:var(--cbs-ink-soft); }
+    #tool-continuous-batching-scheduler .cbs-legend span{ display:inline-flex; align-items:center; gap:5px; }
+    #tool-continuous-batching-scheduler .cbs-sw{ width:12px; height:11px; border-radius:2px; display:inline-block; flex:none; }
+    #tool-continuous-batching-scheduler .cbs-sw-prefill{ background:var(--cbs-accent); }
+    #tool-continuous-batching-scheduler .cbs-sw-decode{ background:var(--cbs-good); }
+    #tool-continuous-batching-scheduler .cbs-sw-idle{ background:var(--cbs-surface-3); }
+    #tool-continuous-batching-scheduler .cbs-sw-pad{ background:var(--cbs-surface-3); border:1px solid var(--cbs-accent); background-image:repeating-linear-gradient(45deg,var(--cbs-accent) 0 2px,transparent 2px 5px); }
+    #tool-continuous-batching-scheduler .cbs-sw-dead{ background:var(--cbs-surface-3); border:1px solid var(--cbs-muted); background-image:repeating-linear-gradient(45deg,var(--cbs-muted) 0 2px,transparent 2px 5px); }
+    #tool-continuous-batching-scheduler .cbs-sw-stall{ background:var(--cbs-surface-3); border:1px solid var(--cbs-warn); background-image:repeating-linear-gradient(45deg,var(--cbs-warn) 0 2px,transparent 2px 5px); }
+    #tool-continuous-batching-scheduler .cbs-sw-hand{ width:3px; background:var(--cbs-ink); }
+    #tool-continuous-batching-scheduler .cbs-sw-fin{ width:5px; background:var(--cbs-surface); border:1px solid var(--cbs-muted); border-radius:1px; }
+    #tool-continuous-batching-scheduler .cbs-sw-pre{ width:3px; background:var(--cbs-bad); }
+
+    #tool-continuous-batching-scheduler .cbs-panels{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+    #tool-continuous-batching-scheduler .cbs-panel{ border:1px solid var(--cbs-border); border-radius:10px; background:var(--cbs-surface-2); padding:10px 12px; min-width:0; }
+    #tool-continuous-batching-scheduler .cbs-row-label{ font-size:.68rem; color:var(--cbs-muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:7px; }
+    #tool-continuous-batching-scheduler .cbs-mt{ margin-top:12px; }
+
+    #tool-continuous-batching-scheduler .cbs-slotrow{ display:flex; align-items:center; gap:7px; margin-bottom:4px; font-family:var(--mono,monospace); font-size:.66rem; color:var(--cbs-ink-soft); }
+    #tool-continuous-batching-scheduler .cbs-slotid{ width:44px; flex:none; color:var(--cbs-muted); }
+    #tool-continuous-batching-scheduler .cbs-bar{ flex:1 1 auto; min-width:0; height:13px; border-radius:3px; background:var(--cbs-surface-3); display:flex; overflow:hidden; border:1px solid var(--cbs-border); }
+    #tool-continuous-batching-scheduler .cbs-bar i{ display:block; height:100%; }
+    #tool-continuous-batching-scheduler .cbs-b-pre{ background:var(--cbs-accent); }
+    #tool-continuous-batching-scheduler .cbs-b-prerem{ background:var(--cbs-accent); opacity:.22; }
+    #tool-continuous-batching-scheduler .cbs-b-gen{ background:var(--cbs-good); }
+    #tool-continuous-batching-scheduler .cbs-b-genrem{ background:var(--cbs-good); opacity:.18; }
+    #tool-continuous-batching-scheduler .cbs-slotmeta{ width:132px; flex:none; text-align:right; color:var(--cbs-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #tool-continuous-batching-scheduler .cbs-empty{ color:var(--cbs-muted); opacity:.75; }
+
+    #tool-continuous-batching-scheduler .cbs-membar{ height:15px; border-radius:4px; background:var(--cbs-surface-3); border:1px solid var(--cbs-border); overflow:hidden; }
+    #tool-continuous-batching-scheduler .cbs-membar i{ display:block; height:100%; background:var(--cbs-accent); }
+    #tool-continuous-batching-scheduler .cbs-membar i.cbs-hot{ background:var(--cbs-bad); }
+    #tool-continuous-batching-scheduler .cbs-memtext{ margin-top:5px; font-family:var(--mono,monospace); font-size:.68rem; color:var(--cbs-ink); line-height:1.6; }
+    #tool-continuous-batching-scheduler .cbs-chips{ margin-top:7px; display:flex; flex-wrap:wrap; gap:4px; }
+    #tool-continuous-batching-scheduler .cbs-chip{ font-family:var(--mono,monospace); font-size:.6rem; padding:2px 5px; border-radius:4px; border:1px dashed var(--cbs-border-2); color:var(--cbs-muted); background:var(--cbs-surface); }
+
+    #tool-continuous-batching-scheduler .cbs-logline{ font-family:var(--mono,monospace); font-size:.65rem; line-height:1.55; color:var(--cbs-ink-soft); border-left:2px solid var(--cbs-border-2); padding-left:6px; margin-bottom:3px; white-space:normal; }
+    #tool-continuous-batching-scheduler .cbs-logline.cbs-l-finish{ border-left-color:var(--cbs-good); }
+    #tool-continuous-batching-scheduler .cbs-logline.cbs-l-admit{ border-left-color:var(--cbs-accent); }
+    #tool-continuous-batching-scheduler .cbs-logline.cbs-l-preempt{ border-left-color:var(--cbs-bad); color:var(--cbs-ink); }
+    #tool-continuous-batching-scheduler .cbs-logline.cbs-l-prefill{ border-left-color:var(--cbs-warn); }
+    #tool-continuous-batching-scheduler .cbs-logline.cbs-l-reject{ border-left-color:var(--cbs-muted); }
+
+    #tool-continuous-batching-scheduler .cbs-stats{ margin-top:14px; overflow-x:auto; }
+    #tool-continuous-batching-scheduler table{ border-collapse:collapse; width:100%; min-width:420px; font-size:.74rem; }
+    #tool-continuous-batching-scheduler th, #tool-continuous-batching-scheduler td{ border-bottom:1px solid var(--cbs-border); padding:5px 8px; text-align:right; color:var(--cbs-ink); }
+    #tool-continuous-batching-scheduler th{ color:var(--cbs-muted); font-weight:600; font-size:.7rem; text-transform:uppercase; letter-spacing:.03em; }
+    #tool-continuous-batching-scheduler td:first-child, #tool-continuous-batching-scheduler th:first-child{ text-align:left; color:var(--cbs-ink-soft); }
+    #tool-continuous-batching-scheduler td.cbs-num{ font-family:var(--mono,monospace); font-variant-numeric:tabular-nums; }
+    #tool-continuous-batching-scheduler tr.cbs-hi td{ font-weight:700; color:var(--cbs-ink); }
+    #tool-continuous-batching-scheduler .cbs-win{ color:var(--cbs-good); font-weight:700; }
+    #tool-continuous-batching-scheduler .cbs-lose{ color:var(--cbs-bad); font-weight:700; }
+
+    @media (max-width: 620px){
+      #tool-continuous-batching-scheduler .cbs-slotmeta{ width:88px; font-size:.6rem; }
+      #tool-continuous-batching-scheduler .cbs-slotid{ width:34px; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-continuous-batching-scheduler');
+    if (!root) return;
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+
+    // ---------------- device / engine constants (chapter's model) ----------------
+    var BLOCK = 16;      // KV-cache tokens per PagedAttention block
+    var TAU0  = 20;      // ms: fixed per-iteration cost (streaming the weights once)
+    var BETA  = 0.2;     // ms per token processed in the fused forward pass
+    // ms: the baseline may wait this long for its batch to FILL before dispatching.
+    // Generous on purpose -- it is the strongest request-level baseline, so any gap
+    // that remains is due to frozen batch membership, not to a starved batch.
+    var GATHER_WINDOW = 1000;
+    var MAX_ITERS = 1200, INIT_ITERS = 150, VIEW_ITERS = 44;
+    var KEEP_C = 120, KEEP_S = 500, POOL = 1200;
+
+    // ---------------- controls ----------------
+    var elWork   = root.querySelector('#continuous-batching-scheduler-workload');
+    var elRate   = root.querySelector('#continuous-batching-scheduler-rate');
+    var elSeqs   = root.querySelector('#continuous-batching-scheduler-seqs');
+    var elBudget = root.querySelector('#continuous-batching-scheduler-budget');
+    var elBlocks = root.querySelector('#continuous-batching-scheduler-blocks');
+    var elChunk  = root.querySelector('#continuous-batching-scheduler-chunked');
+    var vRate    = root.querySelector('#continuous-batching-scheduler-rateVal');
+    var vSeqs    = root.querySelector('#continuous-batching-scheduler-seqsVal');
+    var vBudget  = root.querySelector('#continuous-batching-scheduler-budgetVal');
+    var vBlocks  = root.querySelector('#continuous-batching-scheduler-blocksVal');
+    var btnPlay  = root.querySelector('#continuous-batching-scheduler-play');
+    var btnStep  = root.querySelector('#continuous-batching-scheduler-step');
+    var btnRun   = root.querySelector('#continuous-batching-scheduler-run');
+    var btnReset = root.querySelector('#continuous-batching-scheduler-reset');
+    var svg      = root.querySelector('#continuous-batching-scheduler-timeline');
+    var elClock  = root.querySelector('#continuous-batching-scheduler-clock');
+    var elBatch  = root.querySelector('#continuous-batching-scheduler-batch');
+    var elMem    = root.querySelector('#continuous-batching-scheduler-mem');
+    var elLog    = root.querySelector('#continuous-batching-scheduler-log');
+    var elStats  = root.querySelector('#continuous-batching-scheduler-stats');
+    var elDesc   = root.querySelector('#continuous-batching-scheduler-tldesc');
+    if (!elWork || !elRate || !elSeqs || !elBudget || !elBlocks || !svg) return;
+
+    // ---------------- seeded PRNG (mulberry32) ----------------
+    function mulberry32(a){
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // ---------------- workloads: (value, weight) pairs ----------------
+    var WORKLOADS = {
+      chat:  { prompts: [[24,3],[48,3],[96,2],[160,2]],
+               outs:    [[16,3],[32,3],[64,2],[256,1],[512,1]] },
+      rag:   { prompts: [[512,2],[900,3],[1600,2],[2400,1]],
+               outs:    [[32,3],[64,3],[128,2],[256,1]] },
+      mixed: { prompts: [[24,3],[96,3],[512,2],[1600,1],[2400,1]],
+               outs:    [[16,2],[64,3],[128,2],[256,2],[512,1]] }
+    };
+    function weightedPick(rng, table){
+      var tot = 0, i;
+      for (i = 0; i < table.length; i++) tot += table[i][1];
+      var u = rng() * tot, acc = 0;
+      for (i = 0; i < table.length; i++){ acc += table[i][1]; if (u < acc) return table[i][0]; }
+      return table[table.length - 1][0];
+    }
+    // Two independent streams so moving the arrival-rate slider never changes the
+    // sequence of prompt/output lengths (and vice versa): comparisons stay clean.
+    function makePool(workloadKey, ratePerSec){
+      var wl = WORKLOADS[workloadKey] || WORKLOADS.chat;
+      var sizeRng = mulberry32(0x5EED1234), arrRng = mulberry32(0x0BADC0DE);
+      var lambdaPerMs = Math.max(1e-4, ratePerSec) / 1000;
+      var pool = [], t = 0;
+      for (var k = 0; k < POOL; k++){
+        // exponential interarrival: dt = -ln(1-u)/lambda  (Poisson arrivals)
+        var u = arrRng();
+        t += -Math.log(1 - (u >= 1 ? 0.999999 : u)) / lambdaPerMs;
+        pool.push({ rid: k, arrival: t,
+                    promptLen: weightedPick(sizeRng, wl.prompts),
+                    outputLen: weightedPick(sizeRng, wl.outs) });
+      }
+      return pool;
+    }
+
+    // ================= continuous (iteration-level) scheduler =================
+    // Real accounting. A request needs KV for `target = promptLen + generated`
+    // tokens before it can decode; kvLen is what is materialized. Preemption drops
+    // kvLen to 0, so those tokens must be RECOMPUTED on resume (counted as waste).
+    function simContinuous(cfg, pool, targetIters){
+      var S = cfg.maxSeqs, i;
+      var slots = [], rows = [], slotMark = [];
+      for (i = 0; i < S; i++){ slots.push(null); rows.push([]); slotMark.push(null); }
+
+      var free = cfg.blocks, waiting = [], running = [];
+      var budget = cfg.budget, tokensThisIter = 0;   // per-iteration, reset each pass
+      var t = 0, ai = 0, iter = 0, guard = 0;
+      var events = [], ttfts = [], served = {};
+      var processed = 0, wasted = 0, outTokens = 0, preemptions = 0, finishedCount = 0;
+      var rejected = 0, sumActive = 0, sumUsedBlocks = 0, totalTime = 0, admitted = 0, maxTau = 0;
+
+      function mk(p){
+        return { rid: p.rid, arrival: p.arrival, promptLen: p.promptLen, outputLen: p.outputLen,
+                 kvLen: 0, generated: 0, blocks: 0, slot: -1, status: 'waiting',
+                 workKind: null, evt: null, preempts: 0,
+                 // tokens SCHEDULED for this (not-yet-run) pass, and of those the ones
+                 // already written into kvLen -- both must be rolled back on preemption.
+                 tokThisIter: 0, preThisIter: 0, preemptedAt: -1 };
+      }
+      function target(r){ return r.promptLen + r.generated; }
+      function nblocks(n){ return Math.ceil(n / BLOCK); }
+      function alloc(r, want){
+        var need = want - r.blocks;
+        if (need <= 0) return true;
+        if (need > free) return false;
+        free -= need; r.blocks = want; return true;
+      }
+      function release(r){ free += r.blocks; r.blocks = 0; }
+      function giveSlot(r){
+        for (var j = 0; j < S; j++) if (slots[j] === null){ slots[j] = r; r.slot = j; return true; }
+        return false;
+      }
+      function dropSlot(r, mark){
+        if (r.slot >= 0){ slots[r.slot] = null; if (mark) slotMark[r.slot] = mark; r.slot = -1; }
+      }
+      function log(kind, text){ events.push({ iter: iter, kind: kind, text: text }); if (events.length > 40) events.shift(); }
+      function pushCells(t0, t1){
+        for (var j = 0; j < S; j++){
+          var r = slots[j], c;
+          if (!r) c = { t0: t0, t1: t1, rid: null, kind: 'idle', split: 1, evt: null };
+          else c = { t0: t0, t1: t1, rid: r.rid, kind: r.workKind || 'stall', split: 1, evt: r.evt };
+          if (slotMark[j]){ c.mark = slotMark[j]; slotMark[j] = null; }
+          rows[j].push(c);
+        }
+        if (rows[0].length > KEEP_C) for (var m = 0; m < S; m++) rows[m].shift();
+      }
+      function evictToWaiting(r, reason){
+        // The victim is dropped DURING scheduling, before the pass runs, so anything it
+        // was tentatively given this iteration is refunded to the budget rather than
+        // charged as recomputed work. Only KV committed by EARLIER passes is real waste.
+        wasted += Math.max(0, r.kvLen - r.preThisIter);
+        budget += r.tokThisIter; tokensThisIter -= r.tokThisIter;
+        r.tokThisIter = 0; r.preThisIter = 0; r.preemptedAt = iter;
+        var lostKv = r.kvLen;
+        release(r); dropSlot(r, 'preempt');
+        r.kvLen = 0; r.status = 'waiting'; r.workKind = null; r.evt = null; r.preempts += 1;
+        waiting.unshift(r);                      // resume soon (front of the queue)
+        preemptions += 1;
+        log('preempt', 'it ' + iter + ': KV full -> PREEMPT R' + r.rid + ' (' + reason + '), ' +
+            'drop ' + lostKv + ' tok of KV (' + r.generated + ' generated), recompute on resume');
+      }
+      // LIFO victim (newest admitted): wastes the least progress, frees the most blocks.
+      function preemptOne(exclude){
+        var cand = null;
+        for (var j = 0; j < running.length; j++){
+          var r = running[j];
+          if (r === exclude || r.status !== 'running') continue;
+          if (cand === null || r.arrival > cand.arrival) cand = r;
+        }
+        if (!cand) return false;
+        running.splice(running.indexOf(cand), 1);
+        evictToWaiting(cand, 'LIFO victim');
+        return true;
+      }
+
+      while (iter < targetIters && guard++ < targetIters * 3 + 64){
+        while (ai < pool.length && pool[ai].arrival <= t){ waiting.push(mk(pool[ai])); ai++; }
+
+        if (waiting.length === 0 && running.length === 0){
+          if (ai >= pool.length) break;
+          var nt = pool[ai].arrival;
+          pushCells(t, nt); totalTime += nt - t; t = nt; continue;   // GPU idle, no work
+        }
+
+        budget = cfg.budget; tokensThisIter = 0;
+        var j2;
+        for (j2 = 0; j2 < running.length; j2++){
+          running[j2].workKind = null; running[j2].evt = null;
+          running[j2].tokThisIter = 0; running[j2].preThisIter = 0;
+        }
+
+        var prefillOnly = false;
+
+        // ---- (0) non-chunked: prefill-prioritizing, decode-blocking (vLLM V0 style) ----
+        if (!cfg.chunked){
+          var adm = [], tk = 0;
+          for (var w = 0; w < waiting.length; w++){
+            var rw = waiting[w];
+            if (running.length + adm.length >= S) break;
+            var need = target(rw) + 1;
+            var wantW = nblocks(need);
+            if (wantW > cfg.blocks) continue;                   // rejected below, skip here
+            if (tk > 0 && tk + target(rw) > budget) break;      // budget: but never split a prompt
+            if (wantW > free) break;                            // head-of-line: FCFS waits
+            var got = target(rw);
+            free -= wantW; rw.blocks = wantW; rw.kvLen = got;
+            rw.status = 'running'; rw.workKind = 'prefill';
+            rw.tokThisIter = got; rw.preThisIter = got;
+            adm.push(rw); tk += got;
+          }
+          if (adm.length > 0){
+            prefillOnly = true; tokensThisIter = tk;
+            for (var a = 0; a < adm.length; a++){
+              var ra = adm[a];
+              waiting.splice(waiting.indexOf(ra), 1);
+              running.push(ra); giveSlot(ra); admitted++;
+              log('admit', 'it ' + iter + ': ADMIT R' + ra.rid + ' -> slot ' + ra.slot +
+                  ' (prefill ' + target(ra) + ' tok in ONE shot)');
+            }
+            log('prefill', 'it ' + iter + ': prefill-only iteration, ' + tk + ' tok -> ' +
+                (TAU0 + BETA * tk).toFixed(0) + ' ms; all ' + (running.length - adm.length) + ' decode(s) STALL');
+          }
+        }
+
+        if (!prefillOnly){
+          // ---- (1) DECODES FIRST: reserve one token + one block per running request ----
+          var survivors = [], snap = running.slice();
+          for (var s2 = 0; s2 < snap.length; s2++){
+            var r1 = snap[s2];
+            if (r1.status !== 'running') continue;              // already someone's victim
+            if (r1.kvLen < target(r1)){ survivors.push(r1); continue; }  // still prefilling
+            if (budget <= 0){ survivors.push(r1); continue; }   // no budget left -> stalls
+            var want1 = nblocks(r1.kvLen + 1), ok = false;
+            while (true){
+              if (alloc(r1, want1)){ ok = true; break; }
+              if (!preemptOne(r1)) break;                       // never self-preempt
+            }
+            if (ok){ survivors.push(r1); r1.workKind = 'decode'; r1.tokThisIter = 1;
+                     budget -= 1; tokensThisIter += 1; }
+            else {
+              running.splice(running.indexOf(r1), 1);
+              evictToWaiting(r1, 'cannot grow its own KV');
+            }
+          }
+          running = [];
+          for (var s3 = 0; s3 < survivors.length; s3++)
+            if (survivors[s3].status === 'running') running.push(survivors[s3]);
+
+          // ---- (2) PREFILL CHUNKS backfill whatever budget the decodes left ----
+          if (cfg.chunked){
+            var queue = [];
+            for (var p1 = 0; p1 < running.length; p1++)
+              if (running[p1].kvLen < target(running[p1])) queue.push(running[p1]);
+            for (var p2 = 0; p2 < waiting.length; p2++) queue.push(waiting[p2]);
+
+            for (var q = 0; q < queue.length; q++){
+              var r2 = queue[q];
+              if (r2.status === 'finished') continue;
+              // a request evicted earlier in THIS pass must not be re-admitted
+              // immediately -- that would just thrash the block it was evicted for.
+              if (r2.preemptedAt === iter) continue;
+              var isNew = (r2.status === 'waiting');
+              if (nblocks(r2.promptLen + r2.outputLen) > cfg.blocks){
+                if (isNew){ waiting.splice(waiting.indexOf(r2), 1); rejected++;
+                  log('reject', 'it ' + iter + ': REJECT R' + r2.rid + ' -- needs ' +
+                      nblocks(r2.promptLen + r2.outputLen) + ' blocks > capacity ' + cfg.blocks); }
+                continue;
+              }
+              if (isNew && running.length >= S) break;          // slot cap reached
+              var rem = target(r2) - r2.kvLen;
+              if (rem <= 0) continue;
+              var chunk = Math.min(rem, budget);
+              if (chunk <= 0) break;                            // budget exhausted
+              var after = r2.kvLen + chunk;
+              var completes = (after >= target(r2));
+              // reserve the block for the token this pass will emit, if it completes
+              var want2 = nblocks(after + (completes ? 1 : 0));
+              if (!alloc(r2, want2)) continue;                  // no KV for this one; try next
+              if (isNew){
+                r2.status = 'running'; waiting.splice(waiting.indexOf(r2), 1);
+                running.push(r2); giveSlot(r2); admitted++;
+                log('admit', 'it ' + iter + ': ADMIT R' + r2.rid + ' -> slot ' + r2.slot +
+                    ' (prompt ' + r2.promptLen + ', chunk ' + chunk + ')');
+              } else if (chunk < rem){
+                log('prefill', 'it ' + iter + ': chunked prefill R' + r2.rid + ' ' +
+                    after + '/' + target(r2) + ' tok');
+              }
+              r2.kvLen = after; r2.workKind = 'prefill';
+              r2.tokThisIter += chunk; r2.preThisIter += chunk;
+              budget -= chunk; tokensThisIter += chunk;
+            }
+          } else {
+            // non-chunked: still reject impossible requests so the queue cannot deadlock
+            for (var p3 = waiting.length - 1; p3 >= 0; p3--){
+              if (nblocks(waiting[p3].promptLen + waiting[p3].outputLen) > cfg.blocks){
+                log('reject', 'it ' + iter + ': REJECT R' + waiting[p3].rid + ' -- needs ' +
+                    nblocks(waiting[p3].promptLen + waiting[p3].outputLen) +
+                    ' blocks > capacity ' + cfg.blocks);
+                waiting.splice(p3, 1); rejected++;
+              }
+            }
+          }
+
+          // Safety valve: if the pass would be completely empty while requests are
+          // still resident, the free blocks are stranded across half-finished prefills
+          // and nobody can grow. Real engines break the tie by preempting; so do we.
+          if (tokensThisIter === 0 && running.length > 1) preemptOne(null);
+        }
+
+        // ---- (3) one fused forward pass ----
+        var tau = TAU0 + BETA * tokensThisIter;
+        var t1 = t + tau;
+        processed += tokensThisIter;
+        if (tau > maxTau) maxTau = tau;   // worst forward pass = worst inter-token latency
+
+        var active = 0, retired = [];
+        for (var m2 = 0; m2 < running.length; m2++){
+          var r3 = running[m2];
+          if (!r3.workKind) continue;
+          active++;
+          if (r3.kvLen < target(r3)) continue;                  // mid-prefill: no token yet
+          if (r3.generated === 0){ ttfts.push(t1 - r3.arrival); served[r3.rid] = 1; }  // TTFT at pass end
+          r3.generated += 1; r3.kvLen += 1; outTokens += 1;      // target() grows in lockstep
+          if (r3.generated >= r3.outputLen){ r3.evt = 'finish'; retired.push(r3); }
+        }
+
+        sumActive += active * tau;
+        sumUsedBlocks += (cfg.blocks - free) * tau;
+        totalTime += tau;
+
+        pushCells(t, t1);                                        // draw BEFORE freeing slots
+
+        // ---- (4) retire finished requests immediately: slot + KV free NOW ----
+        for (var f = 0; f < retired.length; f++){
+          var r4 = retired[f];
+          running.splice(running.indexOf(r4), 1);
+          var freed = r4.blocks;
+          release(r4); dropSlot(r4, null); r4.status = 'finished'; finishedCount++;
+          log('finish', 'it ' + iter + ': R' + r4.rid + ' FINISHED (' + r4.outputLen +
+              ' out tok) -> slot ' + '+' + freed + ' blocks free for the NEXT iteration');
+        }
+
+        t = t1; iter++;
+      }
+
+      // Censored waits: every request that has ARRIVED but has no first token yet has
+      // been waiting at least (t - arrival). Counting them is what stops a system that
+      // simply refuses to admit anyone from posting a flattering mean TTFT.
+      var waits = ttfts.slice(), arrived = 0;
+      for (var v = 0; v < pool.length && pool[v].arrival <= t; v++){
+        arrived++;
+        if (!served[pool[v].rid]) waits.push(t - pool[v].arrival);
+      }
+
+      var snapRun = [];
+      for (var z = 0; z < running.length; z++){
+        var rz = running[z];
+        snapRun.push({ rid: rz.rid, slot: rz.slot, promptLen: rz.promptLen, outputLen: rz.outputLen,
+                       kvLen: rz.kvLen, target: rz.promptLen + rz.generated, generated: rz.generated,
+                       blocks: rz.blocks, phase: rz.kvLen < rz.promptLen + rz.generated ? 'prefill' : 'decode' });
+      }
+      var waitChips = [];
+      for (var y = 0; y < Math.min(waiting.length, 10); y++)
+        waitChips.push({ rid: waiting[y].rid, promptLen: waiting[y].promptLen, preempts: waiting[y].preempts });
+
+      return {
+        rows: rows, events: events, iter: iter, tEnd: t, slots: S,
+        running: snapRun, waiting: waiting.length, waitChips: waitChips,
+        free: free, blocks: cfg.blocks,
+        stats: {
+          outTokens: outTokens, processed: processed, wasted: wasted,
+          finished: finishedCount, rejected: rejected, preemptions: preemptions,
+          admitted: admitted, ttfts: ttfts, waits: waits, arrived: arrived,
+          unserved: arrived - ttfts.length, maxTau: maxTau,
+          meanActive: totalTime > 0 ? sumActive / totalTime : 0,
+          meanKv: totalTime > 0 ? sumUsedBlocks / totalTime : 0,
+          time: t
+        }
+      };
+    }
+
+    // ============ static / dynamic (request-level) batching baseline ============
+    // Membership frozen until every request in the batch finishes. Given the benefit
+    // of a GATHER_WINDOW to fill the batch (i.e. dynamic batching, the stronger baseline).
+    function simStatic(cfg, pool, tEnd){
+      var S = cfg.maxSeqs, i;
+      var rows = []; for (i = 0; i < S; i++) rows.push([]);
+      var t = 0, ai = 0, waiting = [], guard = 0;
+      var processed = 0, useful = 0, outTokens = 0, finishedCount = 0, batches = 0;
+      var ttfts = [], sumActive = 0, served = {}, maxTau = 0;
+
+      function mk(p){ return { rid: p.rid, arrival: p.arrival, promptLen: p.promptLen,
+                               outputLen: p.outputLen, generated: 0 }; }
+      function push(t0, t1, cells){
+        if (!(t1 > t0)) return;
+        for (var j = 0; j < S; j++){
+          var c = cells[j] || { kind: 'idle', rid: null };
+          rows[j].push({ t0: t0, t1: t1, rid: c.rid, kind: c.kind,
+                         split: c.split === undefined ? 1 : c.split, evt: c.evt || null });
+        }
+        if (rows[0].length > KEEP_S) for (var m = 0; m < S; m++) rows[m].shift();
+      }
+      function idle(t0, t1){ push(t0, t1, []); }
+
+      while (t < tEnd && guard++ < 40000){
+        while (ai < pool.length && pool[ai].arrival <= t){ waiting.push(mk(pool[ai])); ai++; }
+        if (waiting.length === 0){
+          if (ai >= pool.length){ idle(t, tEnd); t = tEnd; break; }
+          var nt = Math.min(pool[ai].arrival, tEnd);
+          idle(t, nt); t = pool[ai].arrival; continue;
+        }
+        // gather window: wait a little to fill the batch (this is dynamic batching)
+        if (waiting.length < S && ai < pool.length){
+          var deadline = waiting[0].arrival + GATHER_WINDOW;
+          if (t < deadline){
+            var nt2 = Math.min(deadline, pool[ai].arrival);
+            if (nt2 > t){ idle(t, Math.min(nt2, tEnd)); t = nt2; }
+            else t = deadline;
+            continue;
+          }
+        }
+        // form the batch; KV must hold every member's worst-case prompt+output
+        var batch = [], used = 0;
+        while (batch.length < S && waiting.length > 0){
+          var rc = waiting[0];
+          var nb = Math.ceil((rc.promptLen + rc.outputLen) / BLOCK);
+          if (nb > cfg.blocks){ waiting.shift(); continue; }     // rejected, as in continuous
+          if (batch.length > 0 && used + nb > cfg.blocks) break;
+          batch.push(rc); used += nb; waiting.shift();
+        }
+        if (batch.length === 0){ t += TAU0; continue; }
+        batches++;
+
+        // ---- prefill: one padded rectangular tensor -> Leak 3 ----
+        var maxP = 0, sumP = 0, k;
+        for (k = 0; k < batch.length; k++){ if (batch[k].promptLen > maxP) maxP = batch[k].promptLen; sumP += batch[k].promptLen; }
+        var tokP = batch.length * maxP, tauP = TAU0 + BETA * tokP;
+        processed += tokP; useful += sumP;
+        if (tauP > maxTau) maxTau = tauP;
+        var cellsP = [];
+        for (i = 0; i < S; i++){
+          cellsP[i] = (i < batch.length)
+            ? { kind: 'prefill', rid: batch[i].rid, split: maxP > 0 ? batch[i].promptLen / maxP : 1 }
+            : { kind: 'idle', rid: null };
+        }
+        push(t, t + tauP, cellsP);
+        // only the slice of the pass inside the comparison window counts toward the
+        // time-average, otherwise a 1.6 s padded prefill straddling tEnd skews it.
+        sumActive += batch.length * Math.max(0, Math.min(t + tauP, tEnd) - t);
+        t += tauP;
+        for (k = 0; k < batch.length; k++){
+          batch[k].generated = 1;                                 // prefill emits token 1
+          ttfts.push(t - batch[k].arrival); served[batch[k].rid] = 1;
+          if (t <= tEnd) outTokens += 1;
+        }
+
+        // ---- decode until the LONGEST request finishes: slots stay locked -> Leak 1 ----
+        while (t < tEnd){
+          var alive = 0;
+          for (k = 0; k < batch.length; k++) if (batch[k].generated < batch[k].outputLen) alive++;
+          if (alive === 0) break;
+          var tokD = batch.length, tauD = TAU0 + BETA * tokD;     // full batch width computed
+          processed += tokD; useful += alive;
+          if (tauD > maxTau) maxTau = tauD;
+          var cellsD = [];
+          for (i = 0; i < S; i++){
+            if (i < batch.length){
+              var rb = batch[i];
+              cellsD[i] = { kind: rb.generated < rb.outputLen ? 'decode' : 'dead', rid: rb.rid };
+            } else cellsD[i] = { kind: 'idle', rid: null };
+          }
+          push(t, t + tauD, cellsD);
+          sumActive += alive * Math.max(0, Math.min(t + tauD, tEnd) - t);
+          t += tauD;
+          for (k = 0; k < batch.length; k++){
+            var rd = batch[k];
+            if (rd.generated < rd.outputLen){
+              rd.generated += 1;
+              if (t <= tEnd) outTokens += 1;
+              if (rd.generated >= rd.outputLen && t <= tEnd){ rd.evtDone = true; finishedCount++; }
+            }
+          }
+        }
+      }
+
+      var denom = tEnd > 0 ? tEnd : 1;
+      var waits = ttfts.slice(), arrived = 0;
+      for (var v = 0; v < pool.length && pool[v].arrival <= tEnd; v++){
+        arrived++;
+        if (!served[pool[v].rid]) waits.push(tEnd - pool[v].arrival);
+      }
+      return {
+        rows: rows,
+        stats: { outTokens: outTokens, processed: processed, useful: useful,
+                 finished: finishedCount, batches: batches, ttfts: ttfts,
+                 waits: waits, arrived: arrived, unserved: arrived - ttfts.length,
+                 maxTau: maxTau, meanActive: sumActive / denom, time: tEnd }
+      };
+    }
+
+    // ---------------- state ----------------
+    var iters = INIT_ITERS, timer = null, playing = false, last = null;
+
+    function readCfg(){
+      var rate = parseFloat(elRate.value); if (!isFinite(rate) || rate <= 0) rate = 0.5;
+      var seqs = parseInt(elSeqs.value, 10); if (!isFinite(seqs)) seqs = 8;
+      seqs = Math.min(16, Math.max(1, Math.round(seqs)));
+      var budget = parseInt(elBudget.value, 10); if (!isFinite(budget)) budget = 256;
+      budget = Math.min(1024, Math.max(16, Math.round(budget)));
+      var blocks = parseInt(elBlocks.value, 10); if (!isFinite(blocks)) blocks = 256;
+      blocks = Math.min(2048, Math.max(32, Math.round(blocks)));
+      var wl = elWork.value; if (!WORKLOADS[wl]) wl = 'chat';
+      return { rate: rate, maxSeqs: seqs, budget: budget, blocks: blocks,
+               chunked: !!(elChunk && elChunk.checked), workload: wl };
+    }
+
+    // ---------------- drawing helpers ----------------
+    function el(tag, attrs, parent){
+      var n = document.createElementNS(SVGNS, tag);
+      for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) n.setAttribute(k, attrs[k]);
+      (parent || svg).appendChild(n);
+      return n;
+    }
+    function txt(x, y, cls, s, anchor, parent){
+      var n = el('text', { x: x, y: y, 'class': cls, 'text-anchor': anchor || 'start' }, parent);
+      n.textContent = s;
+      return n;
+    }
+    function fmtT(ms){
+      if (ms < 1000) return ms.toFixed(0) + 'ms';
+      return (ms / 1000).toFixed(2) + 's';
+    }
+    function fmtN(x, d){ if (!isFinite(x)) return '--'; return x.toFixed(d === undefined ? 1 : d); }
+
+    function defsFor(){
+      var defs = el('defs', {});
+      function hatch(id, cls){
+        var p = el('pattern', { id: 'continuous-batching-scheduler-' + id, width: 5, height: 5,
+                                patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
+        el('rect', { width: 5, height: 5, 'class': 'cbs-hatch-bg' }, p);
+        el('line', { x1: 0, y1: 0, x2: 0, y2: 5, 'class': cls }, p);
+      }
+      hatch('pat-pad', 'cbs-hatch-pad');
+      hatch('pat-dead', 'cbs-hatch-dead');
+      hatch('pat-stall', 'cbs-hatch-stall');
+    }
+
+    // Wasted-compute cell kinds are drawn with a hatch pattern; prefill/decode/idle
+    // are solid and get a CSS class instead.
+    var HATCH = { pad: 'pat-pad', dead: 'pat-dead', stall: 'pat-stall' };
+    function fillFor(kind){
+      return HATCH[kind] ? 'url(#continuous-batching-scheduler-' + HATCH[kind] + ')' : 'none';
+    }
+
+    function drawPanel(rows, S, y0, rowH, X, xL, xR, showMarks){
+      for (var i = 0; i < S; i++){
+        var y = y0 + i * rowH, row = rows[i] || [], prevRid = -2;
+        el('rect', { x: xL, y: y, width: xR - xL, height: rowH - 1, 'class': 'cbs-cell-idle', opacity: .45 });
+        for (var c = 0; c < row.length; c++){
+          var cell = row[c];
+          if (cell.t1 <= X.t0 || cell.t0 >= X.t1){ prevRid = cell.rid; continue; }
+          var x0 = Math.max(xL, X.f(cell.t0)), x1 = Math.min(xR, X.f(cell.t1));
+          var w = x1 - x0;
+          if (w <= 0){ prevRid = cell.rid; continue; }
+          var wd = Math.max(0.7, w - 0.5);
+          if (cell.kind !== 'idle'){
+            if (cell.kind === 'prefill' && cell.split < 0.999){
+              var wr = Math.max(0.4, wd * cell.split);
+              el('rect', { x: x0, y: y + 1, width: wr, height: rowH - 3, 'class': 'cbs-cell-prefill' });
+              el('rect', { x: x0 + wr, y: y + 1, width: Math.max(0.4, wd - wr), height: rowH - 3,
+                           fill: fillFor('pad') });
+            } else if (cell.kind === 'prefill'){
+              el('rect', { x: x0, y: y + 1, width: wd, height: rowH - 3, 'class': 'cbs-cell-prefill' });
+            } else if (cell.kind === 'decode'){
+              el('rect', { x: x0, y: y + 1, width: wd, height: rowH - 3, 'class': 'cbs-cell-decode' });
+            } else {
+              el('rect', { x: x0, y: y + 1, width: wd, height: rowH - 3, fill: fillFor(cell.kind) });
+            }
+            if (wd >= 13 && rowH >= 11 && cell.rid !== prevRid)
+              txt(x0 + 2.5, y + rowH / 2 + 2.4, 'cbs-rid', 'R' + cell.rid, 'start');
+          }
+          if (showMarks){
+            if (cell.rid !== null && prevRid !== -2 && cell.rid !== prevRid)
+              el('line', { x1: x0, y1: y + 0.5, x2: x0, y2: y + rowH - 1.5, 'class': 'cbs-mark-hand' });
+            if (cell.mark === 'preempt')
+              el('line', { x1: x0, y1: y + 0.5, x2: x0, y2: y + rowH - 1.5, 'class': 'cbs-mark-pre' });
+            if (cell.evt === 'finish')
+              el('line', { x1: x1 - 0.6, y1: y + 0.5, x2: x1 - 0.6, y2: y + rowH - 1.5, 'class': 'cbs-mark-fin' });
+          }
+          prevRid = cell.rid;
+        }
+      }
+      el('rect', { x: xL, y: y0, width: xR - xL, height: S * rowH - 1, 'class': 'cbs-frame' });
+    }
+
+    function drawTimeline(cont, stat, cfg){
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      defsFor();
+
+      var S = cfg.maxSeqs;
+      var W = 780, mL = 62, mR = 12;
+      var rowH = Math.max(9, Math.min(20, Math.round(150 / S)));
+      var panelH = S * rowH;
+      var yA = 30, yB = yA + panelH + 40, H = yB + panelH + 30;
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      var xL = mL, xR = W - mR, plotW = xR - xL;
+
+      // viewport = the last VIEW_ITERS continuous iterations
+      var row0 = cont.rows[0] || [];
+      var idx = Math.max(0, row0.length - VIEW_ITERS);
+      var t0 = row0.length ? row0[idx].t0 : 0;
+      var t1 = cont.tEnd;
+      if (!(t1 - t0 > 1)) t0 = t1 - 1;
+      var X = { t0: t0, t1: t1, f: function(t){ return xL + (t - t0) / (t1 - t0) * plotW; } };
+
+      txt(xL, 12, 'cbs-panel-title', 'CONTINUOUS BATCHING -- running set re-derived every forward pass');
+      txt(xL, 23, 'cbs-panel-sub', 'slot freed by EOS is backfilled on the NEXT iteration; prefill chunks ride along with decodes');
+      txt(xL, yB - 17, 'cbs-panel-title', 'STATIC / DYNAMIC (REQUEST-LEVEL) BATCHING -- membership frozen until the batch drains');
+      txt(xL, yB - 6, 'cbs-panel-sub', 'padded prefill, then dead slots burn compute until the LONGEST request in the batch finishes');
+
+      for (var i = 0; i < S; i++){
+        if (rowH >= 11 || i % 2 === 0){
+          txt(mL - 6, yA + i * rowH + rowH / 2 + 2.5, 'cbs-slotlab', 'slot ' + i, 'end');
+          txt(mL - 6, yB + i * rowH + rowH / 2 + 2.5, 'cbs-slotlab', 'slot ' + i, 'end');
+        }
+      }
+
+      drawPanel(cont.rows, S, yA, rowH, X, xL, xR, true);
+      drawPanel(stat.rows, S, yB, rowH, X, xL, xR, false);
+
+      // time axis
+      var ticks = 6;
+      for (var k = 0; k <= ticks; k++){
+        var tv = t0 + (t1 - t0) * k / ticks, x = X.f(tv);
+        el('line', { x1: x, y1: yB + panelH, x2: x, y2: yB + panelH + 4, 'class': 'cbs-gridline' });
+        txt(x, yB + panelH + 14, 'cbs-axis', (tv / 1000).toFixed(2) + 's', k === 0 ? 'start' : (k === ticks ? 'end' : 'middle'));
+      }
+      txt(xL + plotW / 2, H - 4, 'cbs-axis', 'simulated wall-clock time (cell width = iteration duration ' +
+          'tau = 20 + 0.2 x tokens, ms)', 'middle');
+
+      if (elDesc){
+        elDesc.textContent = 'Viewport: ' + fmtT(t0) + ' to ' + fmtT(t1) + ' (' +
+          Math.min(VIEW_ITERS, row0.length) + ' of ' + cont.iter + ' continuous iterations). ' +
+          'Each cell is one scheduler iteration in one slot; width is proportional to that iteration\'s duration.';
+      }
+    }
+
+    // ---------------- DOM panels ----------------
+    function renderBatch(cont, cfg){
+      var bySlot = [], i;
+      for (i = 0; i < cfg.maxSeqs; i++) bySlot.push(null);
+      for (i = 0; i < cont.running.length; i++){
+        var r = cont.running[i];
+        if (r.slot >= 0 && r.slot < cfg.maxSeqs) bySlot[r.slot] = r;
+      }
+      var html = '';
+      for (i = 0; i < cfg.maxSeqs; i++){
+        var r2 = bySlot[i];
+        html += '<div class="cbs-slotrow"><span class="cbs-slotid">slot ' + i + '</span>';
+        if (!r2){
+          html += '<span class="cbs-bar"></span><span class="cbs-slotmeta cbs-empty">free</span></div>';
+          continue;
+        }
+        // Bar spans the request's whole lifetime footprint: promptLen + outputLen tokens.
+        var tot = r2.promptLen + r2.outputLen;
+        if (tot <= 0) tot = 1;
+        var u = 100 / tot;
+        var preDone = Math.min(r2.kvLen, r2.promptLen);        // prompt tokens in KV now
+        var seg = [
+          ['cbs-b-pre', preDone * u],                          // prompt materialized
+          ['cbs-b-prerem', (r2.promptLen - preDone) * u],      // prompt still to prefill
+          ['cbs-b-gen', r2.generated * u],                     // tokens emitted so far
+          ['cbs-b-genrem', (r2.outputLen - r2.generated) * u]  // tokens still to come
+        ];
+        html += '<span class="cbs-bar">';
+        for (var sg = 0; sg < seg.length; sg++)
+          if (seg[sg][1] > 0) html += '<i class="' + seg[sg][0] + '" style="width:' + seg[sg][1].toFixed(2) + '%"></i>';
+        html += '</span>';
+        var meta = 'R' + r2.rid + ' ' + (r2.phase === 'prefill'
+          ? ('prefill ' + r2.kvLen + '/' + r2.target)
+          : ('out ' + r2.generated + '/' + r2.outputLen)) + ' ' + r2.blocks + 'blk';
+        html += '<span class="cbs-slotmeta">' + meta + '</span></div>';
+      }
+      elBatch.innerHTML = html;
+    }
+
+    function renderMem(cont, cfg){
+      var used = cfg.blocks - cont.free;
+      var pct = cfg.blocks > 0 ? used / cfg.blocks * 100 : 0;
+      var html = '<div class="cbs-membar"><i class="' + (pct > 92 ? 'cbs-hot' : '') + '" style="width:' +
+                 Math.max(0, Math.min(100, pct)).toFixed(1) + '%"></i></div>';
+      var avgPct = cfg.blocks > 0 ? cont.stats.meanKv / cfg.blocks * 100 : 0;
+      html += '<div class="cbs-memtext">KV: <b>' + used + '</b> / ' + cfg.blocks + ' blocks used (' +
+              pct.toFixed(0) + '%) = ' + (used * BLOCK) + ' / ' + (cfg.blocks * BLOCK) + ' tokens' +
+              '<br>time-average KV in use: <b>' + fmtN(cont.stats.meanKv, 1) + '</b> blocks (' +
+              avgPct.toFixed(0) + '%)' +
+              '<br>WAITING queue: <b>' + cont.waiting + '</b> request' + (cont.waiting === 1 ? '' : 's') +
+              ' &middot; RUNNING: <b>' + cont.running.length + '</b> / ' + cfg.maxSeqs + '</div>';
+      if (cont.waitChips.length){
+        html += '<div class="cbs-chips">';
+        for (var i = 0; i < cont.waitChips.length; i++){
+          var c = cont.waitChips[i];
+          html += '<span class="cbs-chip">R' + c.rid + ' p' + c.promptLen +
+                  (c.preempts ? ' (resume)' : '') + '</span>';
+        }
+        if (cont.waiting > cont.waitChips.length)
+          html += '<span class="cbs-chip">+' + (cont.waiting - cont.waitChips.length) + ' more</span>';
+        html += '</div>';
+      }
+      elMem.innerHTML = html;
+    }
+
+    function renderLog(cont){
+      var out = '', n = 0;
+      for (var i = cont.events.length - 1; i >= 0 && n < 7; i--, n++){
+        var e = cont.events[i];
+        out += '<div class="cbs-logline cbs-l-' + e.kind + '">' + e.text + '</div>';
+      }
+      if (!out) out = '<div class="cbs-logline">(no scheduler events yet -- press Step or Play)</div>';
+      elLog.innerHTML = out;
+    }
+
+    function mean(a){ if (!a.length) return NaN; var s = 0; for (var i = 0; i < a.length; i++) s += a[i]; return s / a.length; }
+    function maxOf(a){ if (!a.length) return NaN; var m = -Infinity; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
+
+    function renderStats(cont, stat, cfg){
+      var T = cont.stats.time / 1000;
+      var cTps = T > 0 ? cont.stats.outTokens / T : 0;
+      var sTps = T > 0 ? stat.stats.outTokens / T : 0;
+      var cUse = cont.stats.processed > 0 ? (cont.stats.processed - cont.stats.wasted) / cont.stats.processed : 1;
+      var sUse = stat.stats.processed > 0 ? stat.stats.useful / stat.stats.processed : 1;
+      var mult = sTps > 0 ? cTps / sTps : Infinity;
+
+      function row(label, a, b, hi){
+        return '<tr' + (hi ? ' class="cbs-hi"' : '') + '><td>' + label + '</td><td class="cbs-num">' + a +
+               '</td><td class="cbs-num">' + b + '</td></tr>';
+      }
+      var html = '<table><thead><tr><th>metric (over ' + fmtT(cont.stats.time) + ' of simulated time)</th>' +
+                 '<th>continuous</th><th>static / dynamic</th></tr></thead><tbody>';
+      html += row('output tokens / sec', fmtN(cTps, 0), fmtN(sTps, 0), true);
+      html += row('mean ACTIVE batch (of ' + cfg.maxSeqs + ' slots)',
+                  fmtN(cont.stats.meanActive, 2) + ' (' + fmtN(cont.stats.meanActive / cfg.maxSeqs * 100, 0) + '%)',
+                  fmtN(stat.stats.meanActive, 2) + ' (' + fmtN(stat.stats.meanActive / cfg.maxSeqs * 100, 0) + '%)');
+      html += row('useful-compute share of tokens', fmtN(cUse * 100, 1) + '%', fmtN(sUse * 100, 1) + '%');
+      html += row('tokens computed (total / wasted)',
+                  cont.stats.processed + ' / ' + cont.stats.wasted + ' recompute',
+                  stat.stats.processed + ' / ' + (stat.stats.processed - stat.stats.useful) + ' pad+dead');
+      html += row('longest forward pass (ITL spike)', fmtT(cont.stats.maxTau), fmtT(stat.stats.maxTau));
+      html += row('mean TTFT (requests served)',
+                  isFinite(mean(cont.stats.ttfts)) ? fmtT(mean(cont.stats.ttfts)) : '--',
+                  isFinite(mean(stat.stats.ttfts)) ? fmtT(mean(stat.stats.ttfts)) : '--');
+      html += row('worst wait so far (unserved counted)',
+                  isFinite(maxOf(cont.stats.waits)) ? fmtT(maxOf(cont.stats.waits)) : '--',
+                  isFinite(maxOf(stat.stats.waits)) ? fmtT(maxOf(stat.stats.waits)) : '--');
+      html += row('served / arrived (' + cont.stats.arrived + ' arrived)',
+                  cont.stats.ttfts.length + ' served, ' + cont.stats.unserved + ' waiting',
+                  stat.stats.ttfts.length + ' served, ' + stat.stats.unserved + ' waiting');
+      html += row('requests finished', cont.stats.finished, stat.stats.finished);
+      html += '</tbody></table>';
+
+      var verdict;
+      if (cTps <= 0 && sTps <= 0){
+        verdict = 'Neither system has emitted a token yet' +
+                  (cont.stats.rejected > 0
+                    ? ': every arrival needs more KV blocks than the device has, so all ' +
+                      cont.stats.rejected + ' were <strong>rejected</strong>. Raise <em>KV blocks</em> ' +
+                      '(or pick a shorter-prompt workload) -- admission control, not scheduling, is binding here.'
+                    : ' -- press Step / Play, or raise the arrival rate.');
+      } else if (sTps <= 0 || !isFinite(mult)){
+        verdict = '<span class="cbs-win">Static batching has not returned a single token yet</span> in this window -- ' +
+                  'its first batch is still gathering or still draining, which is exactly the head-of-line blocking (Leak 2). ' +
+                  'Continuous is already at ' + fmtN(cTps, 0) + ' output tok/s.';
+      } else {
+        var cls = mult >= 1.05 ? 'cbs-win' : (mult < 0.95 ? 'cbs-lose' : '');
+        verdict = 'Throughput multiplier: <span class="' + cls + '">' + fmtN(mult, 2) + 'x</span> ' +
+                  '(' + fmtN(cTps, 0) + ' vs ' + fmtN(sTps, 0) + ' output tok/s). ' +
+                  'Read it against the mean ACTIVE batch row: ' + fmtN(cont.stats.meanActive, 2) + ' vs ' +
+                  fmtN(stat.stats.meanActive, 2) + ' of ' + cfg.maxSeqs + ' slots. Continuous pins that number near ' +
+                  'max_num_seqs by backfilling; static lets it drain toward 1 while the batch waits on its straggler. ' +
+                  (mult < 1.05
+                    ? 'Here the multiplier is small because this setting is prefill-bound (or the slot count is too ' +
+                      'low to leave anything to backfill) -- the win shows up in TTFT and in the ITL-spike row instead.'
+                    : 'That ratio, not any kernel trick, is the whole throughput story.');
+      }
+      html += '<div class="cbs-memtext" style="margin-top:8px">' + verdict + '</div>';
+      elStats.innerHTML = html;
+    }
+
+    function renderClock(cont, cfg){
+      var b = cont.stats;
+      elClock.innerHTML =
+        'iteration <b>' + cont.iter + '</b> &middot; t = <b>' + fmtT(cont.tEnd) + '</b> &middot; ' +
+        'running <b>' + cont.running.length + '</b>/' + cfg.maxSeqs + ' &middot; waiting <b>' + cont.waiting + '</b> &middot; ' +
+        'finished <b>' + b.finished + '</b> &middot; admitted <b>' + b.admitted + '</b> &middot; ' +
+        'preemptions <b>' + b.preemptions + '</b>' + (b.rejected ? (' &middot; rejected <b>' + b.rejected + '</b>') : '') +
+        ' &middot; KV <b>' + (cfg.blocks - cont.free) + '</b>/' + cfg.blocks + ' blk';
+    }
+
+    // ---------------- main render ----------------
+    function render(){
+      var cfg = readCfg();
+      vRate.textContent = cfg.rate.toFixed(1) + ' req/s';
+      vSeqs.textContent = String(cfg.maxSeqs);
+      vBudget.textContent = String(cfg.budget);
+      vBlocks.textContent = cfg.blocks + ' (' + (cfg.blocks * BLOCK) + ' tok)';
+
+      var pool = makePool(cfg.workload, cfg.rate);
+      var cont = simContinuous(cfg, pool, iters);
+      if (cont.iter < iters){ iters = Math.max(1, cont.iter); stop(); }  // stream exhausted
+      var stat = simStatic(cfg, pool, cont.tEnd);
+      last = { cont: cont, stat: stat, cfg: cfg };
+
+      drawTimeline(cont, stat, cfg);
+      renderBatch(cont, cfg);
+      renderMem(cont, cfg);
+      renderLog(cont);
+      renderStats(cont, stat, cfg);
+      renderClock(cont, cfg);
+    }
+
+    function stop(){
+      playing = false;
+      if (timer){ clearInterval(timer); timer = null; }
+      if (btnPlay) btnPlay.innerHTML = '&#9658; Play';
+    }
+    function play(){
+      if (playing) { stop(); return; }
+      playing = true;
+      btnPlay.innerHTML = '&#10074;&#10074; Pause';
+      timer = setInterval(function(){
+        if (iters >= MAX_ITERS){ stop(); return; }
+        iters += 1;
+        render();
+      }, 240);
+    }
+
+    function bind(elem, evt, fn){ if (elem) elem.addEventListener(evt, fn); }
+    bind(elRate, 'input', render);
+    bind(elSeqs, 'input', render);
+    bind(elBudget, 'input', render);
+    bind(elBlocks, 'input', render);
+    bind(elWork, 'change', render);
+    bind(elChunk, 'change', render);
+    bind(btnPlay, 'click', play);
+    bind(btnStep, 'click', function(){ stop(); if (iters < MAX_ITERS){ iters += 1; render(); } });
+    bind(btnRun, 'click', function(){ stop(); iters = Math.min(MAX_ITERS, iters + 25); render(); });
+    bind(btnReset, 'click', function(){ stop(); iters = INIT_ITERS; render(); });
+
+    render();
+  })();</script>
+</div>

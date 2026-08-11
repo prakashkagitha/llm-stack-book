@@ -106,6 +106,8 @@ The curve rises steeply with $B$ at first (you are amortizing the fixed $\tau_0$
 
 {{fig:contbatch-throughput-vs-batchsize}}
 
+{{tool:continuous-batching-scheduler}}
+
 ### Little's Law: the concurrency your traffic actually demands
 
 The throughput curve tells you what a batch size *buys*; **Little's Law** tells you what batch size your traffic *requires*. For any stable queueing system, the mean number of items resident equals arrival rate times mean residence time:

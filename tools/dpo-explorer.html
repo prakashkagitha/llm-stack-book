@@ -1,0 +1,793 @@
+<div class="viz-tool" id="tool-dpo-explorer">
+  <div class="vt-title">DPO explorer: four log-probs, one loss, one gradient step</div>
+
+  <div class="vt-grid">
+    <label for="dpo-explorer-beta-num">&beta; &mdash; KL strength
+      <span class="vt-in">
+        <input id="dpo-explorer-beta-range" type="range" min="0.02" max="1" step="0.01" value="0.1" aria-label="Beta, KL strength (slider)">
+        <input id="dpo-explorer-beta-num" type="number" min="0.02" max="1" step="0.01" value="0.1">
+      </span>
+    </label>
+
+    <label for="dpo-explorer-pw-num">log &pi;<sub>&theta;</sub>(y<sub>w</sub>|x) &mdash; policy, chosen
+      <span class="vt-in">
+        <input id="dpo-explorer-pw-range" type="range" min="-30" max="-0.01" step="0.05" value="-12" aria-label="Policy log-probability of chosen response (slider)">
+        <input id="dpo-explorer-pw-num" type="number" min="-30" max="-0.01" step="0.05" value="-12">
+      </span>
+    </label>
+    <label for="dpo-explorer-rw-num">log &pi;<sub>ref</sub>(y<sub>w</sub>|x) &mdash; reference, chosen
+      <span class="vt-in">
+        <input id="dpo-explorer-rw-range" type="range" min="-30" max="-0.01" step="0.05" value="-12.5" aria-label="Reference log-probability of chosen response (slider)">
+        <input id="dpo-explorer-rw-num" type="number" min="-30" max="-0.01" step="0.05" value="-12.5">
+      </span>
+    </label>
+    <label for="dpo-explorer-pl-num">log &pi;<sub>&theta;</sub>(y<sub>l</sub>|x) &mdash; policy, rejected
+      <span class="vt-in">
+        <input id="dpo-explorer-pl-range" type="range" min="-30" max="-0.01" step="0.05" value="-10" aria-label="Policy log-probability of rejected response (slider)">
+        <input id="dpo-explorer-pl-num" type="number" min="-30" max="-0.01" step="0.05" value="-10">
+      </span>
+    </label>
+    <label for="dpo-explorer-rl-num">log &pi;<sub>ref</sub>(y<sub>l</sub>|x) &mdash; reference, rejected
+      <span class="vt-in">
+        <input id="dpo-explorer-rl-range" type="range" min="-30" max="-0.01" step="0.05" value="-11" aria-label="Reference log-probability of rejected response (slider)">
+        <input id="dpo-explorer-rl-num" type="number" min="-30" max="-0.01" step="0.05" value="-11">
+      </span>
+    </label>
+
+    <label for="dpo-explorer-lr-num">Gradient step size s (&asymp; lr &times; steps)
+      <span class="vt-in">
+        <input id="dpo-explorer-lr-range" type="range" min="0" max="30" step="0.5" value="8" aria-label="Gradient step size (slider)">
+        <input id="dpo-explorer-lr-num" type="number" min="0" max="30" step="0.5" value="8">
+      </span>
+    </label>
+    <label for="dpo-explorer-seed-num">Random-pair seed
+      <input id="dpo-explorer-seed-num" type="number" min="0" max="999999" step="1" value="7">
+    </label>
+  </div>
+
+  <div class="dpoe-actions">
+    <button type="button" id="dpo-explorer-step-btn" class="dpoe-primary">Take a DPO gradient step &rarr;</button>
+    <button type="button" id="dpo-explorer-run-btn">Run 10 steps &raquo;</button>
+    <button type="button" id="dpo-explorer-resetref-btn">Reset: &pi;<sub>&theta;</sub> = &pi;<sub>ref</sub> (start of training)</button>
+    <button type="button" id="dpo-explorer-random-btn">New random pair (seeded)</button>
+    <button type="button" id="dpo-explorer-example-btn">Load worked example</button>
+  </div>
+
+  <div class="dpoe-status" id="dpo-explorer-status" aria-live="polite"></div>
+
+  <div class="dpoe-plots">
+    <div class="dpoe-plot-wrap">
+      <svg id="dpo-explorer-bars-svg" viewBox="0 0 340 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Bar chart of the four log-probabilities: frozen reference versus moving policy, for the chosen and the rejected response">
+        <g id="dpo-explorer-bars-gridlayer"></g>
+        <g id="dpo-explorer-bars-barlayer"></g>
+        <g id="dpo-explorer-bars-axislayer"></g>
+        <g id="dpo-explorer-bars-labellayer"></g>
+      </svg>
+      <div class="dpoe-caption"><b>1. The four numbers.</b> Higher (less negative) = more probable. Dashed line = reference, frozen; solid bar = policy, the only thing that moves.</div>
+    </div>
+
+    <div class="dpoe-plot-wrap">
+      <svg id="dpo-explorer-ratio-svg" viewBox="0 0 340 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Diverging bar chart of the chosen and rejected log-ratios and the margin between them">
+        <g id="dpo-explorer-ratio-gridlayer"></g>
+        <g id="dpo-explorer-ratio-barlayer"></g>
+        <g id="dpo-explorer-ratio-axislayer"></g>
+        <g id="dpo-explorer-ratio-labellayer"></g>
+      </svg>
+      <div class="dpoe-caption"><b>2. What DPO actually optimizes.</b> The two log-ratios log(&pi;<sub>&theta;</sub>/&pi;<sub>ref</sub>) &mdash; the implicit rewards up to the factor &beta;. Only their <i>difference</i> m enters the loss.</div>
+    </div>
+
+    <div class="dpoe-plot-wrap">
+      <svg id="dpo-explorer-curve-svg" viewBox="0 0 340 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Plot of the DPO loss versus the raw preference margin, for several values of beta, with the trajectory of gradient steps">
+        <g id="dpo-explorer-curve-gridlayer"></g>
+        <g id="dpo-explorer-curve-shadelayer"></g>
+        <path id="dpo-explorer-curve-lo" class="dpoe-curve-ref" fill="none"></path>
+        <path id="dpo-explorer-curve-hi" class="dpoe-curve-ref" fill="none"></path>
+        <path id="dpo-explorer-curve-cur" class="dpoe-curve-cur" fill="none"></path>
+        <g id="dpo-explorer-curve-histlayer"></g>
+        <g id="dpo-explorer-curve-axislayer"></g>
+        <g id="dpo-explorer-curve-marklayer"></g>
+      </svg>
+      <div class="dpoe-caption"><b>3. The loss.</b> &minus;log &sigma;(&beta;&middot;m) against the raw margin m. Dashed: &beta;=0.02 (loose trust region) and &beta;=1.0 (tight). Solid: your &beta;. Faded dots are the margins visited by your gradient steps &mdash; each step slides the point right, down the curve.</div>
+    </div>
+  </div>
+
+  <div class="vt-out" id="dpo-explorer-out" aria-live="polite"></div>
+
+  <div class="vt-note">
+    DPO needs exactly these four numbers per pair &mdash; two policy log-probs, two frozen reference log-probs &mdash; and turns preference learning into ordinary binary classification: is the <b>implicit reward</b> r = &beta;&middot;log(&pi;<sub>&theta;</sub>/&pi;<sub>ref</sub>) higher for the chosen response than for the rejected one? Only the <b>difference</b> of the two log-ratios matters, so anything that shifts both equally (a longer prompt, a globally sharper model) cancels out. The gradient's weight &sigma;(&minus;&Delta;) is large exactly when the model still gets the pair wrong, so training automatically focuses on unsolved pairs and fades out solved ones &mdash; run the 10-step button and watch the point slide right while the weight decays: that is the self-curriculum. &beta; is the trust-region dial: push it down and the sigmoid needs a much larger log-ratio swing before the loss (and the gradient weight) relaxes, so the policy is free to drift far from &pi;<sub>ref</sub> &mdash; sharper fit, weaker KL control. Push &beta; up and a tiny swing already saturates the curve, so the policy barely has to move &mdash; strong KL control, potentially underfit preferences. Two honest caveats about this toy: the step here moves the two log-probs as <b>free scalars</b>, while in a real model they share weights and a softmax normalizer, so raising log &pi;<sub>&theta;</sub>(y<sub>w</sub>) usually drags log &pi;<sub>&theta;</sub>(y<sub>l</sub>) along &mdash; which is why real DPO runs often see <i>both</i> log-probs fall while the margin still grows; and nothing here caps the margin, which is exactly the unbounded-drift failure IPO and the margin-based variants were invented to fix. Unlike PPO-RLHF, none of this needs a trained reward model, sampled rollouts, or a value network &mdash; just a sigmoid over four log-probs, backed by the same reward-minus-&beta;-KL objective PPO optimizes explicitly.
+  </div>
+
+  <style>
+    /* Local tokens. Light values first; the media query is a fallback for pages
+       without an explicit theme, and the data-theme rules win in both directions. */
+    #tool-dpo-explorer{
+      --dpoe-chosen:#1f7a52; --dpoe-rejected:#8a6404; --dpoe-on-accent:#ffffff;
+      --dpoe-ref: var(--muted, #6d675d);
+      --dpoe-cur: var(--accent, #c15b39);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#ffffff); font-family:var(--sans,sans-serif); max-width:100%;
+      color:var(--ink,#211f1b);
+    }
+    @media (prefers-color-scheme: dark){
+      html:not([data-theme="light"]) #tool-dpo-explorer{
+        --dpoe-chosen:#6ed3a2; --dpoe-rejected:#e6b450; --dpoe-on-accent:#1b1815;
+      }
+    }
+    html[data-theme="dark"] #tool-dpo-explorer{
+      --dpoe-chosen:#6ed3a2; --dpoe-rejected:#e6b450; --dpoe-on-accent:#1b1815;
+    }
+    html[data-theme="light"] #tool-dpo-explorer{
+      --dpoe-chosen:#1f7a52; --dpoe-rejected:#8a6404; --dpoe-on-accent:#ffffff;
+    }
+
+    #tool-dpo-explorer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-dpo-explorer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px 18px; }
+    #tool-dpo-explorer label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); }
+    #tool-dpo-explorer input{
+      font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border,#e7e1d4);
+      border-radius:7px; background:var(--surface,#ffffff); color:var(--ink,#211f1b); max-width:100%;
+    }
+    #tool-dpo-explorer input[type="range"]{ padding:0; accent-color:var(--dpoe-cur); border:0; background:transparent; }
+    #tool-dpo-explorer input:focus-visible, #tool-dpo-explorer button:focus-visible{
+      outline:2px solid var(--dpoe-cur); outline-offset:2px;
+    }
+    #tool-dpo-explorer .vt-in{ display:flex; gap:6px; align-items:center; }
+    #tool-dpo-explorer .vt-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-dpo-explorer .vt-in input[type="number"]{ flex:1 1 78px; min-width:0; }
+
+    #tool-dpo-explorer .dpoe-actions{ margin-top:14px; display:flex; flex-wrap:wrap; gap:8px; }
+    #tool-dpo-explorer .dpoe-actions button{
+      font:inherit; font-size:.82rem; padding:7px 12px; border-radius:8px; cursor:pointer;
+      border:1px solid var(--border,#e7e1d4); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b);
+    }
+    #tool-dpo-explorer .dpoe-actions button:hover{ background:var(--surface-3,#ece7da); }
+    #tool-dpo-explorer .dpoe-actions button.dpoe-primary{
+      background:var(--dpoe-cur); border-color:var(--dpoe-cur); color:var(--dpoe-on-accent,#fff); font-weight:600;
+    }
+    #tool-dpo-explorer .dpoe-actions button.dpoe-primary:hover{ filter:brightness(1.08); }
+    #tool-dpo-explorer .dpoe-actions button:disabled{ opacity:.55; cursor:default; }
+
+    #tool-dpo-explorer .dpoe-status{
+      margin-top:12px; font-size:.82rem; font-weight:600; padding:7px 11px; border-radius:8px;
+      background:var(--surface-2,#f3efe6); color:var(--ink-soft,#45413a); display:inline-block; line-height:1.45;
+    }
+    #tool-dpo-explorer .dpoe-status.dpoe-good{ color:var(--dpoe-chosen); }
+    #tool-dpo-explorer .dpoe-status.dpoe-warn{ color:var(--dpoe-rejected); }
+
+    #tool-dpo-explorer .dpoe-plots{
+      margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(258px,1fr)); gap:14px;
+    }
+    #tool-dpo-explorer .dpoe-plot-wrap{
+      overflow-x:auto; max-width:100%; background:var(--surface-2,#f3efe6);
+      border:1px solid var(--border,#e7e1d4); border-radius:10px; padding:8px;
+    }
+    #tool-dpo-explorer svg{ display:block; width:100%; height:auto; min-width:240px; }
+    #tool-dpo-explorer .dpoe-caption{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:6px; line-height:1.45; }
+    #tool-dpo-explorer .dpoe-caption b{ color:var(--ink-soft,#45413a); }
+
+    #tool-dpo-explorer .dpoe-grid{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-dpo-explorer .dpoe-axis{ stroke:var(--muted,#6d675d); stroke-width:1; }
+    #tool-dpo-explorer .dpoe-tick{ font-size:9px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-dpo-explorer .dpoe-axislabel{ font-size:10px; fill:var(--ink-soft,#45413a); font-family:var(--sans,sans-serif); }
+
+    #tool-dpo-explorer .dpoe-bar-ref{ fill:var(--dpoe-ref); opacity:.32; stroke:var(--dpoe-ref); stroke-width:1.2; stroke-dasharray:3 2; }
+    #tool-dpo-explorer .dpoe-bar-policy-chosen{ fill:var(--dpoe-chosen); }
+    #tool-dpo-explorer .dpoe-bar-policy-rejected{ fill:var(--dpoe-rejected); }
+    #tool-dpo-explorer .dpoe-anchor{ stroke:var(--dpoe-ref); stroke-width:1.4; stroke-dasharray:5 3; }
+    #tool-dpo-explorer .dpoe-barlabel{
+      font-size:10px; font-family:var(--mono,monospace); fill:var(--ink,#211f1b); text-anchor:middle;
+      stroke:var(--surface-2,#f3efe6); stroke-width:2.6; paint-order:stroke fill; stroke-linejoin:round;
+    }
+    #tool-dpo-explorer .dpoe-grouplabel{ font-size:10.5px; font-family:var(--sans,sans-serif); fill:var(--ink-soft,#45413a); text-anchor:middle; font-weight:600; }
+    #tool-dpo-explorer .dpoe-sublabel{ font-size:9px; font-family:var(--sans,sans-serif); fill:var(--muted,#6d675d); text-anchor:middle; }
+
+    #tool-dpo-explorer .dpoe-zero{ stroke:var(--ink-soft,#45413a); stroke-width:1.2; }
+    #tool-dpo-explorer .dpoe-lr-chosen{ fill:var(--dpoe-chosen); opacity:.85; }
+    #tool-dpo-explorer .dpoe-lr-rejected{ fill:var(--dpoe-rejected); opacity:.85; }
+    #tool-dpo-explorer .dpoe-mspan-good{ stroke:var(--dpoe-chosen); stroke-width:1.8; }
+    #tool-dpo-explorer .dpoe-mspan-bad{ stroke:var(--dpoe-rejected); stroke-width:1.8; }
+    #tool-dpo-explorer .dpoe-mlabel-good{ font-size:10px; font-family:var(--mono,monospace); fill:var(--dpoe-chosen); font-weight:600; }
+    #tool-dpo-explorer .dpoe-mlabel-bad{ font-size:10px; font-family:var(--mono,monospace); fill:var(--dpoe-rejected); font-weight:600; }
+
+    #tool-dpo-explorer .dpoe-curve-ref{ stroke:var(--dpoe-ref); stroke-width:1.6; stroke-dasharray:6 4; }
+    #tool-dpo-explorer .dpoe-curve-cur{ stroke:var(--dpoe-cur); stroke-width:2.4; stroke-linejoin:round; }
+    #tool-dpo-explorer .dpoe-mark{ stroke:var(--muted,#6d675d); stroke-width:1; stroke-dasharray:2 2; }
+    #tool-dpo-explorer .dpoe-marklabel{ font-size:9px; fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+    #tool-dpo-explorer .dpoe-shade{ fill:var(--dpoe-rejected); opacity:.09; }
+    #tool-dpo-explorer .dpoe-point{ fill:var(--dpoe-cur); stroke:var(--surface-2,#f3efe6); stroke-width:1.4; }
+    #tool-dpo-explorer .dpoe-histpoint{ fill:var(--dpoe-cur); opacity:.4; }
+
+    #tool-dpo-explorer .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
+    #tool-dpo-explorer .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:9px 12px; font-size:.8rem; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; }
+    #tool-dpo-explorer .vt-stat b{ color:var(--dpoe-cur); font-variant-numeric:tabular-nums; }
+    #tool-dpo-explorer .vt-stat .l{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:2px; line-height:1.35; }
+
+    #tool-dpo-explorer .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-dpo-explorer .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-dpo-explorer');
+    if(!root) return;
+
+    function q(id){ return root.querySelector('#dpo-explorer-' + id); }
+
+    var elBetaRange = q('beta-range'), elBetaNum = q('beta-num');
+    var elPwRange   = q('pw-range'),   elPwNum   = q('pw-num');
+    var elRwRange   = q('rw-range'),   elRwNum   = q('rw-num');
+    var elPlRange   = q('pl-range'),   elPlNum   = q('pl-num');
+    var elRlRange   = q('rl-range'),   elRlNum   = q('rl-num');
+    var elLrRange   = q('lr-range'),   elLrNum   = q('lr-num');
+    var elSeedNum   = q('seed-num');
+
+    var btnStep     = q('step-btn');
+    var btnRun      = q('run-btn');
+    var btnResetRef = q('resetref-btn');
+    var btnRandom   = q('random-btn');
+    var btnExample  = q('example-btn');
+    var statusBox   = q('status');
+    var outBox      = q('out');
+
+    var barsSvg   = q('bars-svg');
+    var barsGrid  = q('bars-gridlayer');
+    var barsBar   = q('bars-barlayer');
+    var barsAxis  = q('bars-axislayer');
+    var barsLabel = q('bars-labellayer');
+
+    var ratioSvg   = q('ratio-svg');
+    var ratioGrid  = q('ratio-gridlayer');
+    var ratioBar   = q('ratio-barlayer');
+    var ratioAxis  = q('ratio-axislayer');
+    var ratioLabel = q('ratio-labellayer');
+
+    var curveSvg   = q('curve-svg');
+    var curveGrid  = q('curve-gridlayer');
+    var curveShade = q('curve-shadelayer');
+    var curveLo    = q('curve-lo');
+    var curveHi    = q('curve-hi');
+    var curveCur   = q('curve-cur');
+    var curveHist  = q('curve-histlayer');
+    var curveAxis  = q('curve-axislayer');
+    var curveMark  = q('curve-marklayer');
+
+    if(!elBetaNum || !elPwNum || !elRwNum || !elPlNum || !elRlNum || !elLrNum || !elSeedNum) return;
+    if(!barsSvg || !ratioSvg || !curveSvg || !outBox || !statusBox) return;
+    if(!btnStep || !btnRun || !btnResetRef || !btnRandom || !btnExample) return;
+
+    var NS = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs){
+      var e = document.createElementNS(NS, tag);
+      for(var k in attrs){ if(Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]); }
+      return e;
+    }
+    function txt(layer, cls, x, y, s, anchor, extra){
+      var t = el('text', { class: cls, x: x, y: y });
+      if(anchor) t.setAttribute('text-anchor', anchor);
+      if(extra){ for(var k in extra){ if(Object.prototype.hasOwnProperty.call(extra, k)) t.setAttribute(k, extra[k]); } }
+      t.textContent = s;
+      layer.appendChild(t);
+      return t;
+    }
+    function clearLayer(layer){ while(layer && layer.firstChild) layer.removeChild(layer.firstChild); }
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+    // Log-probs live in [LP_MIN, LP_MAX]; a log-prob must be <= 0, and we keep a
+    // hair of headroom so bars never degenerate to zero height.
+    var LP_MIN = -30, LP_MAX = -0.01;
+
+    // ------------------------------------------------------------- seeded PRNG
+    // mulberry32 -- small, fast, fully deterministic given an integer seed.
+    function mulberry32(seed){
+      var s = seed >>> 0;
+      return function(){
+        s = (s + 0x6D2B79F5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // ------------------------------------------------------------------ math
+    // Numerically stable softplus(x) = log(1 + e^x)  ( = -log sigma(-x) ).
+    function softplus(x){
+      if(x > 30) return x;
+      if(x < -30) return Math.exp(x);
+      return Math.log1p(Math.exp(x));
+    }
+    // Numerically stable logistic sigmoid.
+    function sigmoid(z){
+      if(z >= 0){ var e = Math.exp(-z); return 1 / (1 + e); }
+      var e2 = Math.exp(z); return e2 / (1 + e2);
+    }
+    // DPO on one pair:
+    //   h  = [log pi_t(y_w) - log pi_ref(y_w)] - [log pi_t(y_l) - log pi_ref(y_l)]   (raw margin m)
+    //   L  = -log sigma(beta * m) = softplus(-beta * m)
+    //   dL/d(beta*m) = -sigma(-beta*m)  =>  gradient weight w = sigma(-beta*m)
+    //   implicit reward r = beta * log(pi_t / pi_ref)   (the partition term cancels in r_w - r_l)
+    function derive(pw, pl, rw, rl, beta){
+      var chosenLR   = pw - rw;
+      var rejectedLR = pl - rl;
+      var m     = chosenLR - rejectedLR;
+      var Delta = beta * m;
+      return {
+        chosenLR: chosenLR, rejectedLR: rejectedLR, m: m, Delta: Delta,
+        rW: beta * chosenLR, rL: beta * rejectedLR,
+        loss: softplus(-Delta),
+        weight: sigmoid(-Delta)
+      };
+    }
+
+    // --------------------------------------------------------------- formatting
+    function fmt(x, d){
+      if(typeof x !== 'number' || !isFinite(x)) return '-';
+      var v = x.toFixed(d == null ? 3 : d);
+      return v === '-0.000' || v === '-0.00' || v === '-0.0000' ? v.slice(1) : v;
+    }
+
+    // --------------------------------------------------------------- input I/O
+    function num(elm, fallback){
+      if(!elm) return fallback;
+      var v = parseFloat(elm.value);
+      return isFinite(v) ? v : fallback;
+    }
+
+    function readParams(){
+      return {
+        beta: clamp(num(elBetaNum, 0.1), 0.02, 1),
+        pw:   clamp(num(elPwNum, -12),   LP_MIN, LP_MAX),
+        rw:   clamp(num(elRwNum, -12.5), LP_MIN, LP_MAX),
+        pl:   clamp(num(elPlNum, -10),   LP_MIN, LP_MAX),
+        rl:   clamp(num(elRlNum, -11),   LP_MIN, LP_MAX),
+        lr:   clamp(num(elLrNum, 8), 0, 30)
+      };
+    }
+
+    function safe(v, fallback){ return (typeof v === 'number' && isFinite(v)) ? v : fallback; }
+    function setVals(pw, pl, rw, rl){
+      elPwNum.value = clamp(safe(pw, -12),   LP_MIN, LP_MAX).toFixed(3);
+      elPlNum.value = clamp(safe(pl, -10),   LP_MIN, LP_MAX).toFixed(3);
+      elRwNum.value = clamp(safe(rw, -12.5), LP_MIN, LP_MAX).toFixed(3);
+      elRlNum.value = clamp(safe(rl, -11),   LP_MIN, LP_MAX).toFixed(3);
+    }
+
+    // Trajectory of raw margins produced by gradient steps (cleared on any edit).
+    var hist = [];
+    function clearHist(){ hist = []; }
+    function recordStep(mBefore, mAfter){
+      if(hist.length === 0) hist.push(mBefore);
+      hist.push(mAfter);
+      if(hist.length > 200) hist = hist.slice(hist.length - 200);
+    }
+
+    // -------------------------------------------------------- panel 1: log-probs
+    var BW = { VB_W: 340, VB_H: 300, PAD_L: 50, PAD_R: 14, PAD_T: 30, PAD_B: 70 };
+    BW.PLOT_W = BW.VB_W - BW.PAD_L - BW.PAD_R;   // 276
+    BW.PLOT_H = BW.VB_H - BW.PAD_T - BW.PAD_B;   // 200
+    var GROUP_W = 120, GROUP_GAP = BW.PLOT_W - 2 * GROUP_W;  // 36
+    var G1X = BW.PAD_L, G2X = BW.PAD_L + GROUP_W + GROUP_GAP;
+    var BAR_W = 32, BAR_GAP = 16;
+    var LEFT_MARGIN = (GROUP_W - (2 * BAR_W + BAR_GAP)) / 2;
+
+    function renderBars(p){
+      clearLayer(barsGrid); clearLayer(barsBar); clearLayer(barsAxis); clearLayer(barsLabel);
+
+      // Zero-based scale (bar charts must start at 0), but the floor tracks the
+      // data instead of being pinned at -20, so realistic pairs fill the panel.
+      var lowest = Math.min(p.pw, p.pl, p.rw, p.rl);
+      var span = Math.max(10, Math.ceil((-lowest + 1.5) / 5) * 5);
+      var yMin = -span;
+      var tickStep = span > 20 ? 10 : 5;
+      var baseline = BW.PAD_T + BW.PLOT_H;
+      function yScale(v){ return BW.PAD_T + (clamp(v, yMin, 0) / yMin) * BW.PLOT_H; }
+
+      for(var g = 0; g >= yMin; g -= tickStep){
+        var yy = yScale(g);
+        barsGrid.appendChild(el('line', { class: 'dpoe-grid', x1: BW.PAD_L, y1: yy, x2: BW.PAD_L + BW.PLOT_W, y2: yy }));
+        txt(barsAxis, 'dpoe-tick', BW.PAD_L - 6, yy + 3, g.toFixed(0), 'end');
+      }
+      barsAxis.appendChild(el('line', { class: 'dpoe-axis', x1: BW.PAD_L, y1: BW.PAD_T, x2: BW.PAD_L, y2: baseline }));
+      barsAxis.appendChild(el('line', { class: 'dpoe-axis', x1: BW.PAD_L, y1: baseline, x2: BW.PAD_L + BW.PLOT_W, y2: baseline }));
+
+      function drawGroup(gx, refVal, polVal, polClass, groupLabel){
+        var refX = gx + LEFT_MARGIN;
+        var polX = refX + BAR_W + BAR_GAP;
+        var refY = yScale(refVal), polY = yScale(polVal);
+
+        barsBar.appendChild(el('rect', { class: 'dpoe-bar-ref', x: refX, y: refY, width: BAR_W, height: Math.max(0, baseline - refY) }));
+        barsBar.appendChild(el('rect', { class: polClass, x: polX, y: polY, width: BAR_W, height: Math.max(0, baseline - polY) }));
+        // Frozen-reference anchor: stays put while the policy bar moves.
+        barsBar.appendChild(el('line', { class: 'dpoe-anchor', x1: refX - 4, y1: refY, x2: polX + BAR_W + 4, y2: refY }));
+
+        // Keep the two value labels from colliding when the bars are close.
+        var refLabelY = Math.max(BW.PAD_T + 9, refY - 5);
+        var polLabelY = Math.max(BW.PAD_T + 9, polY - 5);
+        if(Math.abs(refLabelY - polLabelY) < 11){
+          if(polVal >= refVal) refLabelY = Math.max(BW.PAD_T + 9, polLabelY + 11);
+          else                 polLabelY = Math.max(BW.PAD_T + 9, refLabelY + 11);
+        }
+        txt(barsLabel, 'dpoe-barlabel', refX + BAR_W / 2, refLabelY, refVal.toFixed(2));
+        txt(barsLabel, 'dpoe-barlabel', polX + BAR_W / 2, polLabelY, polVal.toFixed(2));
+        txt(barsLabel, 'dpoe-sublabel', refX + BAR_W / 2, baseline + 13, 'ref (frozen)');
+        txt(barsLabel, 'dpoe-sublabel', polX + BAR_W / 2, baseline + 13, 'policy');
+        txt(barsLabel, 'dpoe-grouplabel', gx + GROUP_W / 2, baseline + 30, groupLabel);
+      }
+
+      drawGroup(G1X, p.rw, p.pw, 'dpoe-bar-policy-chosen',  'chosen  y_w');
+      drawGroup(G2X, p.rl, p.pl, 'dpoe-bar-policy-rejected', 'rejected  y_l');
+
+      var ycy = BW.PAD_T + BW.PLOT_H / 2;
+      txt(barsAxis, 'dpoe-axislabel', 12, ycy, 'log-probability', 'middle', { transform: 'rotate(-90 12 ' + ycy + ')' });
+      txt(barsLabel, 'dpoe-axislabel', BW.PAD_L + BW.PLOT_W / 2, BW.VB_H - 8, 'summed over response tokens', 'middle');
+    }
+
+    // ------------------------------------------------------- panel 2: log-ratios
+    var RT = { VB_W: 340, VB_H: 300, PAD_L: 52, PAD_R: 16, PAD_T: 26, PAD_B: 58 };
+    RT.PLOT_W = RT.VB_W - RT.PAD_L - RT.PAD_R;
+    RT.PLOT_H = RT.VB_H - RT.PAD_T - RT.PAD_B;
+
+    function renderRatios(p, d){
+      clearLayer(ratioGrid); clearLayer(ratioBar); clearLayer(ratioAxis); clearLayer(ratioLabel);
+
+      var maxAbs = Math.max(Math.abs(d.chosenLR), Math.abs(d.rejectedLR), 0.2);
+      var R = maxAbs * 1.35;
+      var zeroY = RT.PAD_T + RT.PLOT_H / 2;
+      function yScale(v){ return zeroY - (clamp(v, -R, R) / R) * (RT.PLOT_H / 2); }
+
+      var NT = 4, i;
+      for(i = -NT; i <= NT; i++){
+        var v = R * i / NT, yy = yScale(v);
+        ratioGrid.appendChild(el('line', { class: 'dpoe-grid', x1: RT.PAD_L, y1: yy, x2: RT.PAD_L + RT.PLOT_W, y2: yy }));
+        txt(ratioAxis, 'dpoe-tick', RT.PAD_L - 6, yy + 3, v.toFixed(2), 'end');
+      }
+      ratioAxis.appendChild(el('line', { class: 'dpoe-axis', x1: RT.PAD_L, y1: RT.PAD_T, x2: RT.PAD_L, y2: RT.PAD_T + RT.PLOT_H }));
+      ratioAxis.appendChild(el('line', { class: 'dpoe-zero', x1: RT.PAD_L, y1: zeroY, x2: RT.PAD_L + RT.PLOT_W, y2: zeroY }));
+      txt(ratioAxis, 'dpoe-marklabel', RT.PAD_L + RT.PLOT_W, zeroY - 4, 'log-ratio = 0  (policy = reference)', 'end');
+
+      var BW2 = 54;
+      var cx1 = RT.PAD_L + RT.PLOT_W * 0.24, cx2 = RT.PAD_L + RT.PLOT_W * 0.72;
+      function drawLR(cx, v, cls, label){
+        var y = yScale(v);
+        var top = Math.min(y, zeroY), h = Math.abs(y - zeroY);
+        ratioBar.appendChild(el('rect', { class: cls, x: cx - BW2 / 2, y: top, width: BW2, height: Math.max(1, h) }));
+        var ly = v >= 0 ? y - 6 : y + 12;
+        txt(ratioLabel, 'dpoe-barlabel', cx, clamp(ly, RT.PAD_T + 9, RT.PAD_T + RT.PLOT_H - 2), (v >= 0 ? '+' : '') + v.toFixed(3));
+        txt(ratioLabel, 'dpoe-grouplabel', cx, RT.PAD_T + RT.PLOT_H + 16, label);
+      }
+      drawLR(cx1, d.chosenLR, 'dpoe-lr-chosen', 'chosen');
+      drawLR(cx2, d.rejectedLR, 'dpoe-lr-rejected', 'rejected');
+
+      // The margin: vertical span from the rejected level up to the chosen level.
+      var mx = (cx1 + cx2) / 2;
+      var yC = yScale(d.chosenLR), yL = yScale(d.rejectedLR);
+      var good = d.m > 0;
+      var cls = good ? 'dpoe-mspan-good' : 'dpoe-mspan-bad';
+      ratioBar.appendChild(el('line', { class: 'dpoe-mark', x1: cx1, y1: yL, x2: cx2, y2: yL }));
+      ratioBar.appendChild(el('line', { class: cls, x1: mx, y1: yC, x2: mx, y2: yL }));
+      ratioBar.appendChild(el('line', { class: cls, x1: mx - 6, y1: yC, x2: mx + 6, y2: yC }));
+      ratioBar.appendChild(el('line', { class: cls, x1: mx - 6, y1: yL, x2: mx + 6, y2: yL }));
+      var midY = clamp((yC + yL) / 2, RT.PAD_T + 10, RT.PAD_T + RT.PLOT_H - 4);
+      txt(ratioLabel, good ? 'dpoe-mlabel-good' : 'dpoe-mlabel-bad', mx + 9, midY,
+          'm = ' + (d.m >= 0 ? '+' : '') + d.m.toFixed(3));
+
+      var ycy = RT.PAD_T + RT.PLOT_H / 2;
+      txt(ratioAxis, 'dpoe-axislabel', 12, ycy, 'log(policy / reference)', 'middle', { transform: 'rotate(-90 12 ' + ycy + ')' });
+      txt(ratioAxis, 'dpoe-axislabel', RT.PAD_L + RT.PLOT_W / 2, RT.VB_H - 22,
+          'implicit reward r = beta x log-ratio', 'middle');
+      txt(ratioAxis, 'dpoe-axislabel', RT.PAD_L + RT.PLOT_W / 2, RT.VB_H - 8,
+          'r_w = ' + fmt(d.rW, 3) + '   r_l = ' + fmt(d.rL, 3), 'middle');
+    }
+
+    // ------------------------------------------------------- panel 3: loss curve
+    var CV = { VB_W: 340, VB_H: 300, PAD_L: 50, PAD_R: 14, PAD_T: 16, PAD_B: 46 };
+    CV.PLOT_W = CV.VB_W - CV.PAD_L - CV.PAD_R;
+    CV.PLOT_H = CV.VB_H - CV.PAD_T - CV.PAD_B;
+    var LN2 = Math.LN2;
+    var BETA_LO = 0.02, BETA_HI = 1.0;
+
+    function sampleLossCurve(beta, mMin, mMax, N){
+      var pts = [];
+      for(var i = 0; i <= N; i++){
+        var m = mMin + (mMax - mMin) * (i / N);
+        pts.push({ m: m, loss: softplus(-beta * m) });
+      }
+      return pts;
+    }
+    // Emit only the parts of the curve inside [0, yMax], interpolating the
+    // crossing so the steep reference curves leave the frame cleanly instead of
+    // forcing the y-axis to a scale that flattens everything else.
+    function pathClipped(pts, yMax, xScale, yScale){
+      var d = '', pen = false, i, a, b, t, mCross;
+      for(i = 0; i < pts.length; i++){
+        var inside = pts[i].loss <= yMax;
+        if(inside){
+          if(!pen && i > 0){
+            a = pts[i - 1]; b = pts[i];
+            t = (yMax - a.loss) / (b.loss - a.loss);
+            mCross = a.m + (b.m - a.m) * t;
+            d += 'M' + xScale(mCross).toFixed(2) + ',' + yScale(yMax).toFixed(2) + ' ';
+            pen = true;
+            d += 'L' + xScale(pts[i].m).toFixed(2) + ',' + yScale(pts[i].loss).toFixed(2) + ' ';
+            continue;
+          }
+          d += (pen ? 'L' : 'M') + xScale(pts[i].m).toFixed(2) + ',' + yScale(pts[i].loss).toFixed(2) + ' ';
+          pen = true;
+        } else {
+          if(pen && i > 0){
+            a = pts[i - 1]; b = pts[i];
+            t = (yMax - a.loss) / (b.loss - a.loss);
+            mCross = a.m + (b.m - a.m) * t;
+            d += 'L' + xScale(mCross).toFixed(2) + ',' + yScale(yMax).toFixed(2) + ' ';
+          }
+          pen = false;
+        }
+      }
+      return d.trim();
+    }
+
+    function renderCurve(p, d){
+      clearLayer(curveGrid); clearLayer(curveShade); clearLayer(curveAxis);
+      clearLayer(curveMark); clearLayer(curveHist);
+
+      var reach = Math.abs(d.m);
+      for(var h = 0; h < hist.length; h++){ if(Math.abs(hist[h]) > reach) reach = Math.abs(hist[h]); }
+      var domHalf = Math.max(8, reach * 1.15 + 1);
+      var mMin = -domHalf, mMax = domHalf;
+      var N = 160;
+
+      var ptsCur = sampleLossCurve(p.beta, mMin, mMax, N);
+      var ptsLo  = sampleLossCurve(BETA_LO, mMin, mMax, N);
+      var ptsHi  = sampleLossCurve(BETA_HI, mMin, mMax, N);
+
+      // Scale to the CURRENT beta's curve (plus a coin-flip floor) so the user's
+      // curve is always legible; the reference curves are clipped to the frame.
+      var curMax = 0;
+      ptsCur.forEach(function(pt){ if(pt.loss > curMax) curMax = pt.loss; });
+      var yMax = Math.max(curMax * 1.10, LN2 * 1.6, Math.max(d.loss, 0) * 1.15, 0.1);
+
+      function xScale(m){ return CV.PAD_L + ((m - mMin) / (mMax - mMin)) * CV.PLOT_W; }
+      function yScale(loss){ return CV.PAD_T + CV.PLOT_H - (clamp(loss, 0, yMax) / yMax) * CV.PLOT_H; }
+
+      curveCur.setAttribute('d', pathClipped(ptsCur, yMax, xScale, yScale));
+      curveLo.setAttribute('d',  pathClipped(ptsLo,  yMax, xScale, yScale));
+      curveHi.setAttribute('d',  pathClipped(ptsHi,  yMax, xScale, yScale));
+
+      // mis-ranked half-plane
+      var x0 = xScale(0);
+      curveShade.appendChild(el('rect', { class: 'dpoe-shade', x: CV.PAD_L, y: CV.PAD_T,
+        width: Math.max(0, x0 - CV.PAD_L), height: CV.PLOT_H }));
+
+      var NX = 4, NY = 4, i;
+      for(i = 0; i <= NX; i++){
+        var mg = mMin + (mMax - mMin) * i / NX, xg = xScale(mg);
+        curveGrid.appendChild(el('line', { class: 'dpoe-grid', x1: xg, y1: CV.PAD_T, x2: xg, y2: CV.PAD_T + CV.PLOT_H }));
+        txt(curveAxis, 'dpoe-tick', xg, CV.PAD_T + CV.PLOT_H + 13, mg.toFixed(1), 'middle');
+      }
+      for(i = 0; i <= NY; i++){
+        var lg = yMax * i / NY, yg = yScale(lg);
+        curveGrid.appendChild(el('line', { class: 'dpoe-grid', x1: CV.PAD_L, y1: yg, x2: CV.PAD_L + CV.PLOT_W, y2: yg }));
+        txt(curveAxis, 'dpoe-tick', CV.PAD_L - 6, yg + 3, lg.toFixed(2), 'end');
+      }
+      curveAxis.appendChild(el('line', { class: 'dpoe-axis', x1: CV.PAD_L, y1: CV.PAD_T, x2: CV.PAD_L, y2: CV.PAD_T + CV.PLOT_H }));
+      curveAxis.appendChild(el('line', { class: 'dpoe-axis', x1: CV.PAD_L, y1: CV.PAD_T + CV.PLOT_H, x2: CV.PAD_L + CV.PLOT_W, y2: CV.PAD_T + CV.PLOT_H }));
+      txt(curveAxis, 'dpoe-axislabel', CV.PAD_L + CV.PLOT_W / 2, CV.VB_H - 6,
+          'margin m = chosen log-ratio - rejected log-ratio', 'middle');
+      var ycy = CV.PAD_T + CV.PLOT_H / 2;
+      txt(curveAxis, 'dpoe-axislabel', 12, ycy, 'DPO loss (nats)', 'middle', { transform: 'rotate(-90 12 ' + ycy + ')' });
+
+      curveMark.appendChild(el('line', { class: 'dpoe-mark', x1: x0, y1: CV.PAD_T, x2: x0, y2: CV.PAD_T + CV.PLOT_H }));
+      txt(curveMark, 'dpoe-marklabel', x0 - 4, CV.PAD_T + 10, 'mis-ranked', 'end');
+
+      if(LN2 < yMax){
+        var yln2 = yScale(LN2);
+        curveMark.appendChild(el('line', { class: 'dpoe-mark', x1: CV.PAD_L, y1: yln2, x2: CV.PAD_L + CV.PLOT_W, y2: yln2 }));
+        txt(curveMark, 'dpoe-marklabel', CV.PAD_L + CV.PLOT_W - 4, yln2 - 3, 'ln 2 (coin flip)', 'end');
+      }
+
+      // trajectory of visited margins, all evaluated on the CURRENT beta curve
+      for(i = 0; i < hist.length; i++){
+        var mh = hist[i];
+        if(mh < mMin || mh > mMax) continue;
+        curveHist.appendChild(el('circle', { class: 'dpoe-histpoint', r: 2.6,
+          cx: xScale(mh), cy: yScale(softplus(-p.beta * mh)) }));
+      }
+
+      curveMark.appendChild(el('circle', { class: 'dpoe-point', r: 4.4,
+        cx: xScale(clamp(d.m, mMin, mMax)), cy: yScale(d.loss) }));
+
+      // Label each reference curve at its last point inside the frame.
+      function labelRef(pts, name, dy){
+        var j = pts.length - 1;
+        while(j > 0 && pts[j].loss > yMax) j--;
+        while(j > 0 && pts[j].loss > yMax * 0.98) j--;
+        txt(curveMark, 'dpoe-marklabel', xScale(pts[j].m) - 4, yScale(pts[j].loss) + dy, name, 'end');
+      }
+      labelRef(ptsLo, 'beta=' + BETA_LO.toFixed(2), -4);
+      labelRef(ptsHi, 'beta=' + BETA_HI.toFixed(2), 12);
+    }
+
+    // ---------------------------------------------------------------- readout
+    function renderOut(p, d){
+      var tie = Math.abs(d.m) < 1e-9;
+      var correct = d.m > 0;
+      statusBox.className = 'dpoe-status ' + (tie ? '' : (correct ? 'dpoe-good' : 'dpoe-warn'));
+      var steps = hist.length > 0 ? (hist.length - 1) : 0;
+      var suffix = steps > 0 ? '  |  ' + steps + ' gradient step' + (steps === 1 ? '' : 's') + ' taken' : '';
+      var msg;
+      if(tie){
+        msg = 'Policy is indifferent (r_w = r_l): loss = ln 2 = ' + fmt(d.loss, 3)
+            + ' nats exactly, gradient weight ' + fmt(d.weight, 3) + ' -- the maximum. This is where every pair starts when pi_theta = pi_ref.';
+      } else if(correct){
+        msg = 'Policy ranks this pair CORRECTLY (r_w > r_l): loss ' + fmt(d.loss, 3)
+            + ' nats < ln 2, gradient weight ' + fmt(d.weight, 3) + '.';
+      } else {
+        msg = 'Policy MIS-RANKS this pair (r_l > r_w): loss ' + fmt(d.loss, 3)
+            + ' nats > ln 2, gradient weight ' + fmt(d.weight, 3) + ' -- a strong corrective push.';
+      }
+      statusBox.textContent = msg + suffix;
+
+      var stats = [
+        ['<b>' + fmt(d.chosenLR, 3) + '</b>', 'Chosen log-ratio: log &pi;<sub>&theta;</sub>(y<sub>w</sub>) &minus; log &pi;<sub>ref</sub>(y<sub>w</sub>)'],
+        ['<b>' + fmt(d.rejectedLR, 3) + '</b>', 'Rejected log-ratio: log &pi;<sub>&theta;</sub>(y<sub>l</sub>) &minus; log &pi;<sub>ref</sub>(y<sub>l</sub>)'],
+        ['<b>' + fmt(d.m, 3) + '</b>', 'Raw margin m = chosen log-ratio &minus; rejected log-ratio'],
+        ['&Delta; = <b>' + fmt(d.Delta, 4) + '</b>', 'Scaled margin &beta;&middot;m = r<sub>w</sub> &minus; r<sub>l</sub>, fed to the sigmoid'],
+        ['r<sub>w</sub> = <b>' + fmt(d.rW, 4) + '</b>, r<sub>l</sub> = <b>' + fmt(d.rL, 4) + '</b>', 'Implicit rewards r = &beta;&middot;log(&pi;<sub>&theta;</sub>/&pi;<sub>ref</sub>)'],
+        ['<b>' + fmt(d.loss, 4) + '</b> nats', 'DPO loss = &minus;log &sigma;(&Delta;) = softplus(&minus;&Delta;); ln 2 &asymp; 0.6931 is chance'],
+        ['<b>' + fmt(d.weight, 4) + '</b>', 'Gradient weight &sigma;(&minus;&Delta;) &mdash; how hard this pair pushes'],
+        ['&plusmn;<b>' + fmt(p.lr * p.beta * d.weight, 4) + '</b>', 'Next step on each log-prob: s&middot;&beta;&middot;&sigma;(&minus;&Delta;), up for y<sub>w</sub>, down for y<sub>l</sub>']
+      ];
+      var html = '';
+      for(var i = 0; i < stats.length; i++){
+        html += '<div class="vt-stat">' + stats[i][0] + '<div class="l">' + stats[i][1] + '</div></div>';
+      }
+      outBox.innerHTML = html;
+    }
+
+    // ------------------------------------------------------------------ render
+    function syncRange(rangeEl, numEl, fallback, lo, hi){
+      if(document.activeElement === rangeEl) return;
+      rangeEl.value = clamp(num(numEl, fallback), lo, hi);
+    }
+    function syncPairs(){
+      syncRange(elBetaRange, elBetaNum, 0.1, 0.02, 1);
+      syncRange(elLrRange, elLrNum, 8, 0, 30);
+      syncRange(elPwRange, elPwNum, -12,   LP_MIN, LP_MAX);
+      syncRange(elPlRange, elPlNum, -10,   LP_MIN, LP_MAX);
+      syncRange(elRwRange, elRwNum, -12.5, LP_MIN, LP_MAX);
+      syncRange(elRlRange, elRlNum, -11,   LP_MIN, LP_MAX);
+    }
+
+    function render(){
+      syncPairs();
+      var p = readParams();
+      var d = derive(p.pw, p.pl, p.rw, p.rl, p.beta);
+      renderBars(p);
+      renderRatios(p, d);
+      renderCurve(p, d);
+      renderOut(p, d);
+    }
+
+    // ------------------------------------------------------------ gradient step
+    var animId = null;
+    function setButtonsDisabled(dis){
+      btnStep.disabled = dis; btnRun.disabled = dis;
+      btnResetRef.disabled = dis; btnRandom.disabled = dis; btnExample.disabled = dis;
+    }
+    function cancelAnim(){
+      if(animId !== null){
+        if(typeof cancelAnimationFrame === 'function') cancelAnimationFrame(animId);
+        animId = null;
+        setButtonsDisabled(false);
+      }
+    }
+
+    function animateTo(fromPw, toPw, fromPl, toPl, duration){
+      cancelAnim();
+      if(typeof requestAnimationFrame !== 'function'){
+        setVals(toPw, toPl, num(elRwNum, -12.5), num(elRlNum, -11));
+        render();
+        return;
+      }
+      setButtonsDisabled(true);
+      var t0 = null;
+      function frame(ts){
+        if(t0 === null) t0 = ts;
+        var t = duration > 0 ? Math.min(1, (ts - t0) / duration) : 1;
+        var e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOutQuad
+        setVals(fromPw + (toPw - fromPw) * e, fromPl + (toPl - fromPl) * e,
+                num(elRwNum, -12.5), num(elRlNum, -11));
+        render();
+        if(t < 1){
+          animId = requestAnimationFrame(frame);
+        } else {
+          animId = null;
+          setVals(toPw, toPl, num(elRwNum, -12.5), num(elRlNum, -11));
+          render();
+          setButtonsDisabled(false);
+        }
+      }
+      animId = requestAnimationFrame(frame);
+    }
+
+    // One exact DPO step on a toy scalar model:
+    //   dL/d log pi_t(y_w) = -beta * sigma(-Delta),  dL/d log pi_t(y_l) = +beta * sigma(-Delta)
+    // Gradient DESCENT therefore RAISES the chosen log-prob and LOWERS the rejected one
+    // by the same amount s * beta * sigma(-Delta).
+    function oneStep(p){
+      var d = derive(p.pw, p.pl, p.rw, p.rl, p.beta);
+      var step = p.lr * p.beta * d.weight;
+      return {
+        m: d.m,
+        pw: clamp(p.pw + step, LP_MIN, LP_MAX),
+        pl: clamp(p.pl - step, LP_MIN, LP_MAX)
+      };
+    }
+
+    // ------------------------------------------------------------ interaction
+    function onManualEdit(){ cancelAnim(); clearHist(); render(); }
+    function bindPair(rangeEl, numEl){
+      rangeEl.addEventListener('input', function(){ numEl.value = rangeEl.value; onManualEdit(); });
+      numEl.addEventListener('input', onManualEdit);
+      numEl.addEventListener('change', onManualEdit);
+    }
+    bindPair(elBetaRange, elBetaNum);
+    bindPair(elPwRange, elPwNum);
+    bindPair(elRwRange, elRwNum);
+    bindPair(elPlRange, elPlNum);
+    bindPair(elRlRange, elRlNum);
+    bindPair(elLrRange, elLrNum);
+
+    btnStep.addEventListener('click', function(){
+      var p = readParams();
+      var r = oneStep(p);
+      recordStep(r.m, derive(r.pw, r.pl, p.rw, p.rl, p.beta).m);
+      animateTo(p.pw, r.pw, p.pl, r.pl, 550);
+    });
+
+    btnRun.addEventListener('click', function(){
+      cancelAnim();
+      var p = readParams();
+      for(var i = 0; i < 10; i++){
+        var r = oneStep(p);
+        p.pw = r.pw; p.pl = r.pl;
+        recordStep(r.m, derive(p.pw, p.pl, p.rw, p.rl, p.beta).m);
+      }
+      setVals(p.pw, p.pl, p.rw, p.rl);
+      render();
+    });
+
+    btnResetRef.addEventListener('click', function(){
+      cancelAnim(); clearHist();
+      var p = readParams();
+      setVals(p.rw, p.rl, p.rw, p.rl);
+      render();
+    });
+
+    btnExample.addEventListener('click', function(){
+      cancelAnim(); clearHist();
+      elBetaNum.value = '0.1';
+      elLrNum.value = '8';
+      setVals(-12, -10, -12.5, -11);
+      render();
+    });
+
+    btnRandom.addEventListener('click', function(){
+      cancelAnim(); clearHist();
+      var seed = clamp(Math.round(num(elSeedNum, 7)), 0, 999999);
+      if(!isFinite(seed)) seed = 7;
+      var rnd = mulberry32(seed);
+      // Reference log-probs: plausible summed sequence log-probs in [-14, -2].
+      var rw = -(2 + 12 * rnd());
+      var rl = -(2 + 12 * rnd());
+      // Policy starts near the reference plus a seeded drift, so some seeds land
+      // already-correct and some land mis-ranked. Kept inside a plausible band so
+      // the draw never piles up on the clamp.
+      var pw = clamp(rw + (rnd() - 0.5) * 4, -18, -1);
+      var pl = clamp(rl + (rnd() - 0.5) * 4, -18, -1);
+      setVals(pw, pl, rw, rl);
+      elSeedNum.value = String(seed + 1);
+      render();
+    });
+
+    render();
+  })();</script>
+</div>

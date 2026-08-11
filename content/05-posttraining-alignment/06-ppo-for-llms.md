@@ -500,6 +500,8 @@ def ppo_update(buf):
 
     Interpretation: the optimizer already moved this token's probability up by $40\%$ since rollout — past the $20\%$ trust region. PPO refuses to reward going further this epoch. The token will get another chance after the *next* rollout, when $\pi_{\text{old}}$ is reset to the current policy and the ratio starts back at $1.0$. This is the trust region in action: bounded, incremental, safe steps. The `clipfrac` diagnostic counts what fraction of tokens hit this clip; a healthy run sits around $0.1$–$0.3$. A `clipfrac` near $0$ means your learning rate or advantages are tiny (no movement); near $1$ means you're taking wild steps and should lower the LR or $\epsilon$.
 
+{{tool:rlhf-ppo-pipeline}}
+
 ### The same loop in a real library
 
 You write the loop above once, to understand it; in production you use a library that has already fixed the fifty details (padding, EOS handling, sharding, generation offload). In HuggingFace **TRL** the whole two-phase rhythm is one object, and every constructor argument is a symbol derived above — which is the fastest way to check your mental model:

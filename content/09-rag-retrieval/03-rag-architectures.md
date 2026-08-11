@@ -105,6 +105,8 @@ Context:
 User: {query}
 ```
 
+{{tool:rag-pipeline}}
+
 ## A Minimal RAG Implementation
 
 The following implementation is self-contained and runnable. It uses `sentence-transformers` for embedding, `faiss-cpu` for indexing, and the `openai` client for generation. Every design decision is annotated.

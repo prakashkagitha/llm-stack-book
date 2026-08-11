@@ -1,0 +1,868 @@
+<div class="viz-tool" id="tool-parallelism-visualizer">
+  <div class="vt-title">How a model is split across GPUs: DP, TP, PP, FSDP</div>
+
+  <div class="pv-strat" role="radiogroup" aria-label="Parallelism strategy">
+    <span class="pv-strat-lab">Strategy</span>
+    <label class="pv-seg"><input type="radio" name="parallelism-visualizer-strat" id="parallelism-visualizer-strat-dp" value="dp" checked><span>Data Parallel (DDP)</span></label>
+    <label class="pv-seg"><input type="radio" name="parallelism-visualizer-strat" id="parallelism-visualizer-strat-fsdp" value="fsdp"><span>FSDP / ZeRO-3</span></label>
+    <label class="pv-seg"><input type="radio" name="parallelism-visualizer-strat" id="parallelism-visualizer-strat-tp" value="tp"><span>Tensor Parallel</span></label>
+    <label class="pv-seg"><input type="radio" name="parallelism-visualizer-strat" id="parallelism-visualizer-strat-pp" value="pp"><span>Pipeline Parallel</span></label>
+  </div>
+
+  <div class="vt-grid">
+    <label for="parallelism-visualizer-G"><span class="pv-lab">GPUs G = <b id="parallelism-visualizer-Gval">4</b></span>
+      <input id="parallelism-visualizer-G" type="range" min="0" max="3" step="1" value="2" aria-label="Number of GPUs (powers of two: 1, 2, 4, 8)">
+    </label>
+    <label for="parallelism-visualizer-model">Model
+      <select id="parallelism-visualizer-model" aria-label="Model size preset">
+        <option value="0">0.13B &mdash; Stack-100M scale</option>
+        <option value="1">1.3B &mdash; 24 layers</option>
+        <option value="2" selected>7B &mdash; Llama-2-7B shape</option>
+        <option value="3">13B &mdash; Llama-2-13B shape</option>
+        <option value="4">70B &mdash; Llama-2-70B shape (GQA)</option>
+      </select>
+    </label>
+    <label for="parallelism-visualizer-seq">Sequence length s
+      <select id="parallelism-visualizer-seq" aria-label="Sequence length in tokens">
+        <option value="512">512</option>
+        <option value="1024">1024</option>
+        <option value="2048" selected>2048</option>
+        <option value="4096">4096</option>
+        <option value="8192">8192</option>
+      </select>
+    </label>
+    <label for="parallelism-visualizer-B"><span class="pv-lab">Global batch = <b id="parallelism-visualizer-Bval">16</b> seq</span>
+      <input id="parallelism-visualizer-B" type="range" min="0" max="7" step="1" value="4" aria-label="Global batch size in sequences per optimizer step (powers of two: 1 to 128)">
+    </label>
+    <label for="parallelism-visualizer-hbm">GPU memory
+      <select id="parallelism-visualizer-hbm" aria-label="Per-GPU HBM capacity">
+        <option value="24">24 GB &mdash; RTX 4090</option>
+        <option value="40">40 GB &mdash; A100-40</option>
+        <option value="80" selected>80 GB &mdash; A100/H100</option>
+        <option value="141">141 GB &mdash; H200</option>
+      </select>
+    </label>
+    <label for="parallelism-visualizer-recomp">Activation recompute
+      <select id="parallelism-visualizer-recomp" aria-label="Activation recomputation mode">
+        <option value="none" selected>none (store everything)</option>
+        <option value="sel">selective (Megatron)</option>
+        <option value="full">full (checkpoint each layer)</option>
+      </select>
+    </label>
+    <label for="parallelism-visualizer-sp" class="pv-check">Sequence parallelism
+      <span class="pv-checkline"><input id="parallelism-visualizer-sp" type="checkbox" aria-describedby="parallelism-visualizer-sphint"> <span class="pv-checktxt" id="parallelism-visualizer-sphint">affects Tensor Parallel only</span></span>
+    </label>
+  </div>
+
+  <div class="pv-transport">
+    <button type="button" id="parallelism-visualizer-prev" aria-label="Previous phase of the training step">&larr; Prev</button>
+    <button type="button" id="parallelism-visualizer-next" aria-label="Next phase of the training step">Next &rarr;</button>
+    <button type="button" id="parallelism-visualizer-play" aria-label="Play the training step animation" aria-pressed="false">Play</button>
+    <button type="button" id="parallelism-visualizer-reset" aria-label="Reset to the first phase">Reset</button>
+    <span class="pv-phasechip" id="parallelism-visualizer-phasechip">1 / 5</span>
+  </div>
+
+  <div class="pv-phasebox">
+    <div class="pv-phase-title" id="parallelism-visualizer-phasetitle" aria-live="polite">&mdash;</div>
+    <div class="pv-phase-detail" id="parallelism-visualizer-phasedetail">&mdash;</div>
+  </div>
+
+  <div class="pv-scroll">
+    <svg id="parallelism-visualizer-grid" class="pv-svg" viewBox="0 0 1000 280" role="img" aria-label="Grid of GPUs showing what each one holds and the communication between them"></svg>
+  </div>
+
+  <div class="pv-legend" id="parallelism-visualizer-gridlegend">
+    <span><i class="pv-sw pv-sw-own"></i> held / processed by this GPU</span>
+    <span><i class="pv-sw pv-sw-none"></i> not held here</span>
+    <span><i class="pv-sw pv-sw-gath"></i> temporarily all-gathered</span>
+    <span><i class="pv-sw pv-sw-act"></i> active this phase</span>
+  </div>
+
+  <div class="pv-subtitle">Per-GPU memory (bf16 weights + bf16 grads + fp32 Adam master/m/v = 16 bytes/param)</div>
+  <div class="pv-scroll">
+    <svg id="parallelism-visualizer-mem" class="pv-svg" viewBox="0 0 1000 200" role="img" aria-label="Stacked memory bar for each GPU broken into parameters, gradients, optimizer state, activations and communication buffers"></svg>
+  </div>
+
+  <div class="pv-legend">
+    <span><i class="pv-sw pv-sw-p"></i> params (2 B/p)</span>
+    <span><i class="pv-sw pv-sw-g"></i> grads (2 B/p)</span>
+    <span><i class="pv-sw pv-sw-o"></i> Adam state (12 B/p)</span>
+    <span><i class="pv-sw pv-sw-a"></i> activations</span>
+    <span><i class="pv-sw pv-sw-b"></i> all-gather buffer</span>
+  </div>
+
+  <div id="parallelism-visualizer-schedwrap" class="pv-schedwrap" hidden>
+    <div class="pv-subtitle">1F1B pipeline schedule (rows = stages, columns = time slots; F = forward, B = backward, blank = <b>bubble</b>)</div>
+    <div class="pv-scroll">
+      <svg id="parallelism-visualizer-sched" class="pv-svg pv-svg-auto" role="img" aria-label="Pipeline schedule showing forward and backward microbatches per stage and the idle bubble"></svg>
+    </div>
+    <div class="pv-legend">
+      <span><i class="pv-sw pv-sw-f"></i> forward</span>
+      <span><i class="pv-sw pv-sw-bw"></i> backward</span>
+      <span><i class="pv-sw pv-sw-none"></i> bubble (idle)</span>
+    </div>
+    <div class="pv-schedcap" id="parallelism-visualizer-schedcap"></div>
+  </div>
+
+  <div class="pv-readout" id="parallelism-visualizer-readout"></div>
+
+  <div class="pv-subtitle">All four strategies, same settings</div>
+  <div class="pv-scroll">
+    <table class="pv-table" id="parallelism-visualizer-table"></table>
+  </div>
+  <div class="pv-schedcap" id="parallelism-visualizer-tablecap"></div>
+
+  <div class="vt-note"><b>The takeaway.</b> Training state is <b>16 bytes/param</b> (2 bf16 weights + 2 bf16 grads + 12 bytes of fp32 Adam master/momentum/variance), and activations are a separate, often larger, pile. <b>DP</b> replicates all 16 bytes on every GPU and splits only the batch &mdash; it buys throughput, never memory, and pays one gradient all-reduce per step. <b>FSDP/ZeRO-3</b> divides those 16 bytes by G and pays ~1.5&times; DP's volume <i>per microbatch</i> (all-gather forward, all-gather backward, reduce-scatter grads) &mdash; cheap memory, expensive wire. <b>TP</b> also divides model state by G <i>and</i> is the only axis that shrinks activations, but it all-reduces an s&times;b&times;h activation tensor 4&times; per layer, so it must stay inside one NVLink node. <b>PP</b> divides state by the number of stages with almost no bandwidth cost (point-to-point activations at stage boundaries only) but pays the <i>bubble</i>, (p&minus;1)/(m+p&minus;1), and under 1F1B stage 0 still holds p microbatches in flight &times; L/p layers &asymp; a full model's worth of activations. That is why real runs compose them: TP inside the node, PP across nodes, FSDP/DP outermost. <b>Memory model:</b> parameter counts are exact for the Llama-shaped presets (GQA-aware; 7B/13B/70B reproduce 6.74B / 13.02B / 68.98B). Activation bytes use the Megatron formula s&middot;b&middot;h(10 + 24/t + 5as/(ht)) with the published sequence-parallel (everything /t) and selective (drop the 5as&sup2;b term) / full (2sbh only) recompute variants. The microbatch is fixed at 1 sequence, all-reduce traffic is costed at the ring value 2(G&minus;1)/G &times; payload, and the output-logit tensor (s&middot;b&middot;V) plus the tiny replicated norm weights are excluded.</div>
+
+  <style>
+    #tool-parallelism-visualizer{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); font-family:var(--sans,sans-serif); }
+    #tool-parallelism-visualizer .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-parallelism-visualizer .pv-strat{ display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:14px; }
+    #tool-parallelism-visualizer .pv-strat-lab{ font-size:.8rem; color:var(--muted,#6d675d); margin-right:4px; }
+    #tool-parallelism-visualizer .pv-seg input{ position:absolute; opacity:0; width:1px; height:1px; }
+    #tool-parallelism-visualizer .pv-seg span{ display:inline-block; padding:6px 11px; font-size:.8rem; border:1px solid var(--border-2,#d8d1c0); border-radius:999px; cursor:pointer; color:var(--ink-soft,#45413a); background:var(--surface-2,#f3efe6); }
+    #tool-parallelism-visualizer .pv-seg input:checked + span{ background:var(--accent,#c15b39); border-color:var(--accent,#c15b39); color:var(--surface,#fff); font-weight:600; }
+    #tool-parallelism-visualizer .pv-seg input:focus-visible + span{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-parallelism-visualizer .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:12px 16px; }
+    #tool-parallelism-visualizer label{ display:flex; flex-direction:column; gap:5px; font-size:.8rem; color:var(--ink-soft,#45413a); }
+    #tool-parallelism-visualizer input[type=range]{ accent-color:var(--accent,#c15b39); width:100%; }
+    #tool-parallelism-visualizer input[type=range]:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-parallelism-visualizer select{ font:inherit; font-size:.86rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-parallelism-visualizer select:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:1px; }
+    #tool-parallelism-visualizer .pv-checkline{ display:flex; align-items:center; gap:7px; min-height:31px; }
+    #tool-parallelism-visualizer .pv-checkline input{ accent-color:var(--accent,#c15b39); width:15px; height:15px; flex:none; }
+    #tool-parallelism-visualizer .pv-checktxt{ font-size:.72rem; color:var(--muted,#6d675d); line-height:1.3; }
+    #tool-parallelism-visualizer .pv-lab{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #tool-parallelism-visualizer .pv-lab b{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; }
+    #tool-parallelism-visualizer .pv-schedcap{ font-size:.73rem; color:var(--muted,#6d675d); line-height:1.5; margin-top:6px; }
+    #tool-parallelism-visualizer .pv-transport{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:16px 0 10px; }
+    #tool-parallelism-visualizer button{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-parallelism-visualizer button:hover{ background:var(--surface-3,#ece7da); }
+    #tool-parallelism-visualizer button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-parallelism-visualizer .pv-phasechip{ font-family:var(--mono,monospace); font-size:.74rem; color:var(--muted,#6d675d); font-variant-numeric:tabular-nums; }
+    #tool-parallelism-visualizer .pv-phasebox{ background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); border-radius:9px; padding:10px 13px; margin-bottom:12px; }
+    #tool-parallelism-visualizer .pv-phase-title{ font-size:.86rem; font-weight:700; color:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-phase-detail{ font-size:.78rem; line-height:1.5; color:var(--ink-soft,#45413a); margin-top:4px; }
+    #tool-parallelism-visualizer .pv-warn{ font-weight:700; color:var(--bad,#a13333); }
+    #tool-parallelism-visualizer .pv-scroll{ overflow-x:auto; max-width:100%; }
+    #tool-parallelism-visualizer .pv-svg{ display:block; width:100%; min-width:600px; height:auto; }
+    #tool-parallelism-visualizer .pv-svg-auto{ min-width:0; }
+    #tool-parallelism-visualizer .pv-subtitle{ font-size:.78rem; font-weight:600; color:var(--ink-soft,#45413a); margin:14px 0 6px; }
+    #tool-parallelism-visualizer .pv-legend{ display:flex; flex-wrap:wrap; gap:6px 16px; font-size:.72rem; color:var(--muted,#6d675d); margin-top:7px; align-items:center; }
+    #tool-parallelism-visualizer .pv-sw{ display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:-1px; margin-right:3px; border:1px solid var(--border-2,#d8d1c0); }
+    #tool-parallelism-visualizer .pv-sw-own{ background:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-sw-none{ background:var(--surface-3,#ece7da); }
+    #tool-parallelism-visualizer .pv-sw-gath{ background:var(--accent,#c15b39); opacity:.34; border-style:dashed; }
+    #tool-parallelism-visualizer .pv-sw-act{ background:transparent; border:2px solid var(--warn,#e0a106); }
+    #tool-parallelism-visualizer .pv-sw-p{ background:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-sw-g{ background:var(--accent,#c15b39); opacity:.62; }
+    #tool-parallelism-visualizer .pv-sw-o{ background:var(--accent,#c15b39); opacity:.3; }
+    #tool-parallelism-visualizer .pv-sw-a{ background:var(--warn,#e0a106); }
+    #tool-parallelism-visualizer .pv-sw-b{ background:var(--good,#3f9142); }
+    #tool-parallelism-visualizer .pv-sw-f{ background:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-sw-bw{ background:var(--accent,#c15b39); opacity:.45; }
+    #tool-parallelism-visualizer .pv-readout{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
+    #tool-parallelism-visualizer .pv-stat{ background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); border-radius:9px; padding:9px 12px; }
+    #tool-parallelism-visualizer .pv-stat .k{ font-size:.7rem; color:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.03em; }
+    #tool-parallelism-visualizer .pv-stat .v{ font-size:1.02rem; font-weight:700; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; margin-top:2px; }
+    #tool-parallelism-visualizer .pv-stat .s{ font-size:.71rem; color:var(--muted,#6d675d); margin-top:2px; line-height:1.4; }
+    #tool-parallelism-visualizer .pv-stat.ok .v{ color:var(--good,#2c6e2f); }
+    #tool-parallelism-visualizer .pv-stat.bad .v{ color:var(--bad,#a13333); }
+    #tool-parallelism-visualizer .pv-table{ border-collapse:collapse; width:100%; min-width:600px; font-size:.76rem; margin-top:2px; }
+    #tool-parallelism-visualizer .pv-table th, #tool-parallelism-visualizer .pv-table td{ border:1px solid var(--border,#e7e1d4); padding:5px 8px; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink,#211f1b); }
+    #tool-parallelism-visualizer .pv-table th{ background:var(--surface-3,#ece7da); font-weight:600; color:var(--ink-soft,#45413a); text-align:right; }
+    #tool-parallelism-visualizer .pv-table th:first-child, #tool-parallelism-visualizer .pv-table td:first-child{ text-align:left; }
+    #tool-parallelism-visualizer .pv-table tbody tr.sel{ background:var(--surface-2,#f3efe6); }
+    #tool-parallelism-visualizer .pv-table tbody tr.sel td{ font-weight:600; }
+    #tool-parallelism-visualizer .pv-table td.oom{ color:var(--bad,#a13333); font-weight:700; }
+    #tool-parallelism-visualizer .pv-table td.fit{ color:var(--good,#2c6e2f); font-weight:600; }
+    #tool-parallelism-visualizer .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    /* --- SVG classes --- */
+    #tool-parallelism-visualizer .pv-card{ fill:var(--surface-2,#f3efe6); stroke:var(--border-2,#d8d1c0); }
+    #tool-parallelism-visualizer .pv-card.on{ stroke:var(--warn,#e0a106); stroke-width:2; }
+    #tool-parallelism-visualizer .pv-t{ fill:var(--ink,#211f1b); font-family:var(--sans,sans-serif); }
+    #tool-parallelism-visualizer .pv-tm{ fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+    #tool-parallelism-visualizer .pv-tmono{ fill:var(--ink-soft,#45413a); font-family:var(--mono,monospace); }
+    #tool-parallelism-visualizer .pv-tmono.over{ fill:var(--bad,#a13333); font-weight:700; }
+    #tool-parallelism-visualizer .pv-slot{ fill:var(--surface-3,#ece7da); stroke:var(--border,#e7e1d4); stroke-width:.6; }
+    #tool-parallelism-visualizer .pv-frame{ fill:none; stroke:var(--border-2,#d8d1c0); stroke-width:.8; }
+    #tool-parallelism-visualizer .pv-own{ fill:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-gath{ fill:var(--accent,#c15b39); opacity:.34; stroke:var(--accent,#c15b39); stroke-dasharray:3 2; }
+    #tool-parallelism-visualizer .pv-grid-l{ stroke:var(--surface,#fff); stroke-width:.7; opacity:.5; }
+    #tool-parallelism-visualizer .pv-tick{ stroke:var(--surface,#fff); stroke-width:.8; opacity:.7; }
+    #tool-parallelism-visualizer .pv-seg-p{ fill:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-seg-g{ fill:var(--accent,#c15b39); opacity:.62; }
+    #tool-parallelism-visualizer .pv-seg-o{ fill:var(--accent,#c15b39); opacity:.3; }
+    #tool-parallelism-visualizer .pv-seg-a{ fill:var(--warn,#e0a106); }
+    #tool-parallelism-visualizer .pv-seg-b{ fill:var(--good,#3f9142); }
+    #tool-parallelism-visualizer .pv-track{ fill:var(--surface-3,#ece7da); }
+    #tool-parallelism-visualizer .pv-cap{ stroke:var(--bad,#c94f4f); stroke-width:1.4; stroke-dasharray:4 3; }
+    #tool-parallelism-visualizer .pv-arrow{ stroke:var(--accent,#c15b39); stroke-width:2; fill:none; }
+    #tool-parallelism-visualizer .pv-arrow.p2p{ stroke:var(--good,#3f9142); }
+    #tool-parallelism-visualizer .pv-head{ fill:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-head-p2p{ fill:var(--good,#3f9142); }
+    #tool-parallelism-visualizer .pv-flow{ stroke-dasharray:7 5; animation:parallelism-visualizer-dash 1.1s linear infinite; }
+    @keyframes parallelism-visualizer-dash{ to{ stroke-dashoffset:-24; } }
+    @media (prefers-reduced-motion:reduce){ #tool-parallelism-visualizer .pv-flow{ animation:none; } }
+    #tool-parallelism-visualizer .pv-comm-lab{ fill:var(--accent,#c15b39); font-family:var(--mono,monospace); font-weight:700; }
+    #tool-parallelism-visualizer .pv-comm-lab.p2p{ fill:var(--good,#2c6e2f); }
+    #tool-parallelism-visualizer .pv-cellF{ fill:var(--accent,#c15b39); }
+    #tool-parallelism-visualizer .pv-cellB{ fill:var(--accent,#c15b39); fill-opacity:.45; }
+    #tool-parallelism-visualizer .pv-cellBub{ fill:var(--surface-3,#ece7da); stroke:var(--border,#e7e1d4); stroke-width:.5; }
+    #tool-parallelism-visualizer .pv-cellTxtF{ fill:var(--surface,#fff); font-family:var(--mono,monospace); }
+    #tool-parallelism-visualizer .pv-cellTxtB{ fill:var(--ink,#211f1b); font-family:var(--mono,monospace); }
+    #tool-parallelism-visualizer .pv-hl{ fill:var(--warn,#e0a106); opacity:.16; }
+    /* semantic colors are not theme tokens in this book: pin readable values per scheme */
+    @media (prefers-color-scheme:dark){
+      #tool-parallelism-visualizer .pv-stat.ok .v{ color:var(--good,#7ee08a); }
+      #tool-parallelism-visualizer .pv-stat.bad .v{ color:var(--bad,#f0a3a3); }
+      #tool-parallelism-visualizer .pv-table td.oom{ color:var(--bad,#f0a3a3); }
+      #tool-parallelism-visualizer .pv-table td.fit{ color:var(--good,#7ee08a); }
+      #tool-parallelism-visualizer .pv-warn{ color:var(--bad,#f0a3a3); }
+      #tool-parallelism-visualizer .pv-comm-lab.p2p{ fill:var(--good,#7ee08a); }
+      #tool-parallelism-visualizer .pv-tmono.over{ fill:var(--bad,#f0a3a3); }
+    }
+    :root[data-theme="dark"] #tool-parallelism-visualizer .pv-stat.ok .v{ color:var(--good,#7ee08a); }
+    :root[data-theme="dark"] #tool-parallelism-visualizer .pv-stat.bad .v{ color:var(--bad,#f0a3a3); }
+    :root[data-theme="dark"] #tool-parallelism-visualizer .pv-table td.oom{ color:var(--bad,#f0a3a3); }
+    :root[data-theme="dark"] #tool-parallelism-visualizer .pv-table td.fit{ color:var(--good,#7ee08a); }
+    :root[data-theme="dark"] #tool-parallelism-visualizer .pv-warn{ color:var(--bad,#f0a3a3); }
+    :root[data-theme="dark"] #tool-parallelism-visualizer .pv-comm-lab.p2p{ fill:var(--good,#7ee08a); }
+    :root[data-theme="dark"] #tool-parallelism-visualizer .pv-tmono.over{ fill:var(--bad,#f0a3a3); }
+    :root[data-theme="light"] #tool-parallelism-visualizer .pv-stat.ok .v{ color:var(--good,#2c6e2f); }
+    :root[data-theme="light"] #tool-parallelism-visualizer .pv-stat.bad .v{ color:var(--bad,#a13333); }
+    :root[data-theme="light"] #tool-parallelism-visualizer .pv-table td.oom{ color:var(--bad,#a13333); }
+    :root[data-theme="light"] #tool-parallelism-visualizer .pv-table td.fit{ color:var(--good,#2c6e2f); }
+    :root[data-theme="light"] #tool-parallelism-visualizer .pv-warn{ color:var(--bad,#a13333); }
+    :root[data-theme="light"] #tool-parallelism-visualizer .pv-comm-lab.p2p{ fill:var(--good,#2c6e2f); }
+    :root[data-theme="light"] #tool-parallelism-visualizer .pv-tmono.over{ fill:var(--bad,#a13333); }
+    @media (max-width:560px){ #tool-parallelism-visualizer{ padding:13px 12px; } }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-parallelism-visualizer');
+    if(!root) return;
+    var PFX = 'parallelism-visualizer-';
+    function $(id){ return root.querySelector('#' + PFX + id); }
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    var GIB = 1073741824;
+
+    /* ---------------- model presets (exact Llama-shaped parameter counts) --------------- */
+    var PRESETS = [
+      { nm:'0.13B',  L:12, h:768,  a:12, kv:12, ff:2048,  V:32000 },
+      { nm:'1.3B',   L:24, h:2048, a:16, kv:16, ff:5504,  V:32000 },
+      { nm:'7B',     L:32, h:4096, a:32, kv:32, ff:11008, V:32000 },
+      { nm:'13B',    L:40, h:5120, a:40, kv:40, ff:13824, V:32000 },
+      { nm:'70B',    L:80, h:8192, a:64, kv:8,  ff:28672, V:32000 }
+    ];
+    // Per layer: W_q (h*h) + W_k,W_v (h*kv*dh each) + W_o (h*h) + SwiGLU gate/up/down (3*h*ff)
+    // + 2 RMSNorm vectors (2*h).  Plus tied-free embedding + LM head + final norm.
+    function counts(P){
+      var dh = P.h / P.a;
+      var per = 2*P.h*P.h + 2*P.h*(P.kv*dh) + 3*P.h*P.ff + 2*P.h;
+      var emb = P.V*P.h, head = P.V*P.h;
+      return { per:per, emb:emb, head:head, N: P.L*per + emb + head + P.h };
+    }
+
+    /* -------- activation bytes for ONE layer, microbatch b, TP degree t (Megatron) ------ */
+    // Korthikanti et al. 2022, eq. (2)-(5):
+    //   no recompute, t=1        : s*b*h*(34 + 5*a*s/h)
+    //   no recompute, TP = t     : s*b*h*(10 + 24/t + 5*a*s/(h*t))
+    //   + sequence parallelism   : the replicated 10*s*b*h term is divided by t as well
+    //   selective recompute      : the 5*a*s^2*b softmax/dropout/QK^T term disappears
+    //   full recompute           : only the layer input is stored -> 2*s*b*h (÷t under SP)
+    function actLayer(s,b,P,t,sp,rec){
+      var h = P.h, a = P.a;
+      if(rec === 'full') return 2*s*b*h / (sp ? t : 1);
+      var softmax = (rec === 'sel') ? 0 : 5*a*s*s*b/t;
+      return 10*s*b*h/(sp?t:1) + 24*s*b*h/t + softmax;
+    }
+
+    /* ------------------------------ 1F1B pipeline schedule -----------------------------
+       Stage j does min(m, p-j) warm-up forwards, then strictly alternates B,F until it
+       runs out of work.  A greedy list-schedule with unit-cost F and B and the true data
+       dependencies (F_j needs F_{j-1}; B_j needs B_{j+1}, or its own F on the last stage)
+       reproduces the textbook makespan 2(m+p-1) and bubble (p-1)/(m+p-1) exactly.        */
+    function schedule1f1b(p, m){
+      if(!(p >= 1) || !(m >= 1)) return null;
+      var order = [], j, i;
+      for(j=0;j<p;j++){
+        var w = Math.min(m, p - j), seq = [], nf = w, nb = 0;
+        for(i=1;i<=w;i++) seq.push({t:'F', m:i});
+        while(nb < m){
+          seq.push({t:'B', m:nb+1}); nb++;
+          if(nf < m){ seq.push({t:'F', m:nf+1}); nf++; }
+        }
+        order.push(seq);
+      }
+      var fD = {}, bD = {}, free = [], idx = [], placed = [];
+      for(j=0;j<p;j++){ free.push(0); idx.push(0); placed.push([]); }
+      var left = p*2*m, guard = 0, cap = p*2*m + 10;
+      while(left > 0 && guard < cap){
+        guard++;
+        var best = -1, bestT = Infinity;
+        for(j=0;j<p;j++){
+          if(idx[j] >= order[j].length) continue;
+          var op = order[j][idx[j]], dep = 0, d;
+          if(op.t === 'F'){
+            if(j > 0){ d = fD[(j-1)+'|'+op.m]; if(d === undefined) continue; dep = d; }
+          } else {
+            if(j < p-1){ d = bD[(j+1)+'|'+op.m]; if(d === undefined) continue; dep = d; }
+            else { d = fD[j+'|'+op.m]; if(d === undefined) continue; dep = d; }
+          }
+          var st = Math.max(free[j], dep);
+          if(st < bestT){ bestT = st; best = j; }
+        }
+        if(best < 0) break;
+        var o = order[best][idx[best]];
+        placed[best].push({ t:o.t, m:o.m, start:bestT });
+        free[best] = bestT + 1;
+        if(o.t === 'F') fD[best+'|'+o.m] = bestT + 1; else bD[best+'|'+o.m] = bestT + 1;
+        idx[best]++; left--;
+      }
+      var T = 0;
+      for(j=0;j<p;j++) if(free[j] > T) T = free[j];
+      return { placed:placed, T:T, bubble: T > 0 ? (T - 2*m)/T : 0 };
+    }
+
+    /* ---------------------------------- state ------------------------------------------ */
+    var GVALS = [1,2,4,8];
+    var BVALS = [1,2,4,8,16,32,64,128];
+    var phase = 0, timer = null;
+
+    function pick(arr, raw){
+      var i = parseInt(raw, 10);
+      if(!isFinite(i) || i < 0) i = 0;
+      if(i > arr.length - 1) i = arr.length - 1;
+      return arr[i];
+    }
+    function cfg(){
+      var mi = parseInt($('model').value, 10);
+      if(!isFinite(mi) || mi < 0 || mi >= PRESETS.length) mi = 0;
+      var P = PRESETS[mi];
+      var G = pick(GVALS, $('G').value);
+      var B = pick(BVALS, $('B').value);
+      var s = parseInt($('seq').value, 10); if(!isFinite(s) || s <= 0) s = 2048;
+      var hbm = parseFloat($('hbm').value); if(!isFinite(hbm) || hbm <= 0) hbm = 80;
+      var rec = $('recomp').value; if(rec !== 'sel' && rec !== 'full') rec = 'none';
+      var sp = !!$('sp').checked;
+      var strat = 'dp';
+      var r = root.querySelector('input[name="' + PFX + 'strat"]:checked');
+      if(r && /^(dp|fsdp|tp|pp)$/.test(r.value)) strat = r.value;
+      return { P:P, G:G, B:B, s:s, hbm:hbm, rec:rec, sp:sp, strat:strat, C:counts(P) };
+    }
+
+    /* ------------- per-GPU memory + comm for one strategy (bytes) ---------------------- */
+    function layersOfStage(L, p, j){
+      var base = Math.floor(L/p), extra = L % p;
+      return base + (j < extra ? 1 : 0);
+    }
+    function firstLayerOfStage(L, p, j){
+      var y = 0;
+      for(var k=0;k<j;k++) y += layersOfStage(L,p,k);
+      return y;
+    }
+    function model(c, strat){
+      var P = c.P, C = c.C, G = c.G, L = P.L, s = c.s, B = c.B;
+      var gpus = [], k, f = G > 1 ? (G-1)/G : 0, comm = 0, commKind = '-', extra = {};
+      var one = G <= 1;
+      if(strat === 'dp'){
+        var actD = actLayer(s,1,P,1,false,c.rec)*L;
+        for(k=0;k<G;k++) gpus.push({ p:2*C.N, g:2*C.N, o:12*C.N, a:actD, b:0,
+          role:'replica', sub:'all ' + L + ' layers' });
+        // ring all-reduce of the 2N-byte bf16 gradient buffer, ONCE per optimizer step
+        comm = 2*f*(2*C.N);
+        commKind = one ? 'none (single GPU)' : 'all-reduce, 1x per step';
+        extra.accum = B/G;
+      } else if(strat === 'fsdp'){
+        var actF = actLayer(s,1,P,1,false,c.rec)*L;
+        var buf = 2*C.per*2; // current + prefetched next layer, gathered in bf16
+        for(k=0;k<G;k++) gpus.push({ p:2*C.N/G, g:2*C.N/G, o:12*C.N/G, a:actF, b:(one?0:buf),
+          role:'shard ' + k + '/' + G, sub:'1/' + G + ' of every layer' });
+        // per microbatch: all-gather (fwd) + all-gather (bwd) + reduce-scatter (grads)
+        comm = (B/G) * 3*f*(2*C.N);
+        commKind = one ? 'none (single GPU)' : 'AG x2 + RS, per microbatch';
+        extra.accum = B/G;
+      } else if(strat === 'tp'){
+        var actT = actLayer(s,1,P,G,c.sp,c.rec)*L;
+        for(k=0;k<G;k++) gpus.push({ p:2*C.N/G, g:2*C.N/G, o:12*C.N/G, a:actT, b:0,
+          role:'shard ' + k + '/' + G, sub:'slice of every matrix' });
+        // 4 all-reduces of an s x b x h bf16 tensor per layer (2 fwd + 2 bwd), every microbatch
+        comm = B * L * 4 * (2*f) * (s*P.h*2);
+        commKind = one ? 'none (single GPU)' : 'all-reduce x4 per layer';
+        extra.accum = B;
+      } else { // pp
+        var p = G, m = B;
+        for(k=0;k<p;k++){
+          var nl = layersOfStage(L,p,k), l0 = firstLayerOfStage(L,p,k);
+          var Pk = nl*C.per + (k === 0 ? C.emb : 0) + (k === p-1 ? C.head + P.h : 0);
+          var inflight = Math.min(p - k, m);
+          gpus.push({ p:2*Pk, g:2*Pk, o:12*Pk, a: actLayer(s,1,P,1,false,c.rec)*nl*inflight, b:0,
+            role:'stage ' + k, sub: nl > 0 ? ('layers ' + l0 + '-' + (l0+nl-1)) : 'no layers',
+            lo:l0, hi:l0+nl, inflight:inflight });
+        }
+        // worst-case stage: recv act + send act + recv grad + send grad, per microbatch
+        comm = one ? 0 : m * (p > 2 ? 4 : 2) * (s*P.h*2);
+        commKind = one ? 'none (single GPU)' : 'P2P send/recv at boundaries';
+        var sc = schedule1f1b(p, m);
+        extra.sched = sc; extra.bubble = sc ? sc.bubble : 0;
+        extra.accum = m;
+      }
+      var peak = 0, tot;
+      for(k=0;k<gpus.length;k++){
+        tot = gpus[k].p + gpus[k].g + gpus[k].o + gpus[k].a + gpus[k].b;
+        gpus[k].tot = tot;
+        if(tot > peak) peak = tot;
+      }
+      return { gpus:gpus, peak:peak, comm:comm, commKind:commKind, extra:extra };
+    }
+
+    /* ------------------------------- phase scripts ------------------------------------- */
+    function phases(c, M){
+      var G = c.G, L = c.P.L, st = c.strat, all = [], k;
+      function allOn(){ var v = []; for(k=0;k<G;k++) v.push(true); return v; }
+      function noneOn(){ var v = []; for(k=0;k<G;k++) v.push(false); return v; }
+      var perStep = fmtBytes(M.comm), solo = G <= 1;
+      if(st === 'dp'){
+        all = [
+          { t:'1. Scatter the global batch',
+            d:'Each of the ' + G + ' GPU(s) takes ' + fmtNum(c.B/G) + ' of the ' + c.B + ' sequences. Every GPU already holds a <b>full copy</b> of the model, its gradients and its Adam state &mdash; nothing about the model is split.',
+            on:allOn(), comm:null },
+          { t:'2. Forward pass (no communication)',
+            d:'Every GPU runs all ' + L + ' layers on its own slice of the batch. DP is embarrassingly parallel in the forward pass: zero collectives.',
+            on:allOn(), comm:null, band:[0,1] },
+          { t:'3. Backward pass (no communication)',
+            d:'Local gradients for <b>every</b> parameter on <b>every</b> GPU. With gradient accumulation this repeats ' + fmtNum(c.B/G) + ' time(s) with communication suppressed.',
+            on:allOn(), comm:null, band:[0,1] },
+          { t:'4. All-reduce gradients',
+            d: solo
+              ? 'With G = 1 there is nothing to reduce. With G &gt; 1 this is one ring all-reduce over the whole 2N-byte gradient buffer, <b>once per optimizer step</b>: 2(G&minus;1)/G &times; 2N bytes per GPU.'
+              : 'One ring all-reduce over the whole 2N-byte gradient buffer, <b>once per optimizer step</b>. Per-GPU wire traffic is 2(G&minus;1)/G &times; 2N = ' + perStep + '. This is the only collective DP pays, which is why it survives on slow inter-node fabric.',
+            on:allOn(), comm: solo ? null : { kind:'ring', label:'all-reduce  ' + perStep } },
+          { t:'5. Optimizer step (redundantly, G times)',
+            d:'Every GPU runs the <b>same</b> Adam update on the <b>same</b> full parameter set. ' + (G-1) + ' of those ' + G + ' updates are wasted work, and the 12 bytes/param of optimizer state is replicated ' + G + '&times;. Removing exactly that redundancy is what ZeRO/FSDP does.',
+            on:allOn(), comm:null }
+        ];
+      } else if(st === 'fsdp'){
+        var frac = 1/Math.max(L,1);
+        all = [
+          { t:'1. All-gather the parameters of layer 0',
+            d:'At rest each GPU holds only 1/' + G + ' of every tensor. To compute layer 0 the ranks all-gather its shards so the full layer exists <b>momentarily</b> on each GPU (the dashed band).',
+            on:allOn(), comm: solo ? null : { kind:'ring', label:'all-gather (params of 1 layer)' }, band:[0,frac], gather:true },
+          { t:'2. Forward layer 0, then FREE the gathered copy',
+            d:'The full layer lives for the duration of one matmul and is then dropped: each rank falls back to its 1/' + G + ' shard. Peak memory is therefore <i>sharded state + one or two layers of buffer</i>, not the whole model.',
+            on:allOn(), comm:null, band:[0,frac], gather:false },
+          { t:'3. Repeat for layers 1 .. ' + (L-1),
+            d:'Gather &rarr; compute &rarr; free, layer by layer, with the next layer&rsquo;s all-gather prefetched to overlap with the current layer&rsquo;s compute. Communication is now on the critical path of <b>every</b> layer, not just the step boundary.',
+            on:allOn(), comm: solo ? null : { kind:'ring', label:'all-gather (prefetch next layer)' }, band:[0.42,0.42+frac], gather:true },
+          { t:'4. Backward: all-gather again, compute gradients',
+            d:'The parameters were freed after the forward pass, so backward has to gather them a <b>second</b> time. That is why FSDP moves ~1.5&times; DP&rsquo;s bytes per microbatch.',
+            on:allOn(), comm: solo ? null : { kind:'ring', label:'all-gather (backward)' }, band:[0.62,0.62+frac], gather:true },
+          { t:'5. Reduce-scatter the gradients',
+            d:'Instead of all-reduce, a <b>reduce-scatter</b>: gradients are summed and each rank keeps only the 1/' + G + ' slice it owns. Half an all-reduce&rsquo;s bytes, and the result is already sharded.',
+            on:allOn(), comm: solo ? null : { kind:'ring', label:'reduce-scatter (grads)' } },
+          { t:'6. Optimizer step on the local 1/' + G + ' shard',
+            d:'Each rank updates only its own slice: grads, fp32 master weights, momentum and variance are all 1/' + G + '. Per-GPU model state is 16N/' + G + ' = ' + fmtBytes(16*c.C.N/G) + ' instead of ' + fmtBytes(16*c.C.N) + '. Total wire traffic this step: ' + perStep + ' (three collectives &times; ' + fmtNum(c.B/G) + ' microbatch(es)).',
+            on:allOn(), comm:null }
+        ];
+      } else if(st === 'tp'){
+        all = [
+          { t:'1. The same batch goes to every rank',
+            d:'TP does <b>not</b> split the batch &mdash; all ' + G + ' rank(s) see the identical ' + c.B + ' sequences. What is split is every weight matrix inside a layer.',
+            on:allOn(), comm:null },
+          { t:'2. Column-parallel matmul (Q,K,V and W_gate/W_up)',
+            d:'A is split by <b>columns</b>: rank k computes Y_k = X A_k, its own slice of the hidden activations. No communication &mdash; each rank simply owns different output columns, and the nonlinearity is elementwise so it acts on sharded features happily.',
+            on:allOn(), comm:null, band:[0.2,0.25] },
+          { t:'3. Row-parallel matmul (W_o, W_down) &rarr; all-reduce',
+            d:'B is split by <b>rows</b>, so each rank produces a <i>partial sum</i> Y_k B_k. An all-reduce turns the ' + G + ' partials into the true output. That is 2 all-reduces per layer in the forward pass, on an s&times;b&times;h activation tensor (' + fmtBytes(c.s*c.P.h*2) + ' per microbatch).',
+            on:allOn(), comm: solo ? null : { kind:'ring', label:'all-reduce (activations)' }, band:[0.2,0.25] },
+          { t:'4. Repeat for all ' + L + ' layers; backward adds 2 more per layer',
+            d:'4 all-reduces per layer per microbatch &times; ' + L + ' layers &times; ' + c.B + ' microbatches = ' + perStep + ' of traffic per GPU per step, all of it <b>on the critical path</b>. This is why TP is confined to one NVLink node.',
+            on:allOn(), comm: solo ? null : { kind:'ring', label:'all-reduce x4 per layer' }, band:[0,1] },
+          { t:'5. Optimizer step: no communication at all',
+            d:'The ranks own <b>disjoint</b> parameters, so each updates its shard alone. Model state per GPU is 16N/' + G + ' = ' + fmtBytes(16*c.C.N/G) + ', and TP is the only axis here that also shrinks <b>activation</b> memory' + (c.sp ? ' (sequence parallelism is on, so the LayerNorm/dropout activations are split along s too &mdash; the whole 34&middot;s&middot;b&middot;h is divided by t).' : ' &mdash; though the 10&middot;s&middot;b&middot;h replicated part stays until you turn on sequence parallelism.'),
+            on:allOn(), comm:null }
+        ];
+      } else {
+        var p = G, m = c.B, sc = M.extra.sched, T = sc ? sc.T : 1;
+        var warm = Math.min(p-1, T);
+        var on1 = noneOn(); on1[0] = true;
+        all = [
+          { t:'1. Cut the batch into ' + m + ' microbatch(es)',
+            d:'The ' + L + ' layers are cut into ' + p + ' contiguous <b>stage(s)</b>; stage 0 also owns the embedding and stage ' + (p-1) + ' the LM head. Each GPU stores only its stage: 16 bytes/param over its own layers.',
+            on:allOn(), comm:null },
+          { t:'2. Warm-up: fill the pipe',
+            d: solo
+              ? 'With p = 1 there is no pipe to fill: the single GPU holds all ' + L + ' layers and runs every microbatch end to end. Raise G to see the warm-up bubble appear.'
+              : 'Stage 0 runs microbatch 1 and sends the s&times;b&times;h activation tensor (' + fmtBytes(c.s*c.P.h*2) + ') to stage 1 by plain <b>point-to-point</b> send/recv. Stages 1..' + (p-1) + ' sit <b>idle</b> &mdash; that is the leading half of the bubble.',
+            on: solo ? allOn() : on1, comm: solo ? null : { kind:'p2p-f', label:'P2P send activations ->' }, sched:[0, warm] },
+          { t:'3. Steady state: 1 forward, 1 backward',
+            d:'Every stage alternates one forward and one backward, so at most p&minus;k microbatches are in flight at stage k. Stage 0 holds ' + Math.min(p, m) + ' microbatch(es) &times; ' + layersOfStage(L,p,0) + ' layers of activations &mdash; roughly a whole model&rsquo;s worth. <b>PP shrinks parameters, not activations.</b>',
+            on:allOn(), comm: solo ? null : { kind:'p2p-b', label:'P2P activations -> / gradients <-' }, sched:[warm, Math.max(warm, T - (p-1))] },
+          { t:'4. Drain: the trailing bubble',
+            d:'The last backwards ripple back up the pipe while earlier stages have nothing left to do. Total idle fraction = (p&minus;1)/(m+p&minus;1) = ' + (M.extra.bubble*100).toFixed(1) + '%. Raise the global batch (more microbatches) or use interleaved 1F1B to shrink it.',
+            on:allOn(), comm: solo ? null : { kind:'p2p-b', label:'P2P gradients <-' }, sched:[Math.max(warm, T-(p-1)), T] },
+          { t:'5. Optimizer step: purely local',
+            d:'Each stage updates only its own layers &mdash; no collective at all. Total wire traffic per GPU this step is just ' + perStep + ', which is why PP is the axis you stretch <b>across</b> nodes.',
+            on:allOn(), comm:null }
+        ];
+      }
+      return all;
+    }
+
+    /* --------------------------------- formatting -------------------------------------- */
+    function fmtBytes(b){
+      if(!isFinite(b)) return 'n/a';
+      if(b <= 0) return '0';
+      var g = b/GIB;
+      if(g >= 1000) return (g/1024).toFixed(2) + ' TiB';
+      if(g >= 100) return g.toFixed(0) + ' GiB';
+      if(g >= 10) return g.toFixed(1) + ' GiB';
+      if(g >= 1) return g.toFixed(2) + ' GiB';
+      var mb = b/1048576;
+      if(mb >= 1) return mb.toFixed(0) + ' MiB';
+      return (b/1024).toFixed(0) + ' KiB';
+    }
+    function fmtNum(x){
+      if(!isFinite(x)) return 'n/a';
+      return (Math.abs(x - Math.round(x)) < 1e-9) ? String(Math.round(x)) : x.toFixed(2);
+    }
+    function fmtParams(n){
+      if(n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+      if(n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+      return String(Math.round(n));
+    }
+    function esc(t){ return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function el(tag, attrs, txt){
+      var n = document.createElementNS(SVGNS, tag), key;
+      for(key in attrs) if(Object.prototype.hasOwnProperty.call(attrs,key)) n.setAttribute(key, attrs[key]);
+      if(txt !== undefined && txt !== null) n.textContent = txt;
+      return n;
+    }
+    function clear(n){ while(n.firstChild) n.removeChild(n.firstChild); }
+    function fitTxt(t, n){ t = String(t); return t.length > n ? t.slice(0, Math.max(n-1,1)) + '…' : t; }
+
+    /* ------------------------------- GPU grid render ----------------------------------- */
+    function drawGrid(c, M, ph){
+      var svg = $('grid'); clear(svg);
+      var W = 1000, padX = 14, gap = 10, G = c.G;
+      var bandH = 78, cardY = bandH + 4, cardH = 190, H = cardY + cardH + 8;
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      var cw = (W - 2*padX - (G-1)*gap) / G;
+      var defs = el('defs', {});
+      defs.appendChild(mkMarker(PFX + 'ah', 'pv-head'));
+      defs.appendChild(mkMarker(PFX + 'ah2', 'pv-head-p2p'));
+      svg.appendChild(defs);
+      var small = G >= 8, fsT = small ? 10 : 11.5, fsS = small ? 8 : 9.5;
+      var maxCh = Math.max(Math.floor(cw/(fsS*0.58)), 6);
+      var k;
+      for(k=0;k<G;k++){
+        var cx = padX + k*(cw + gap), g = M.gpus[k];
+        var active = (ph && ph.on) ? !!ph.on[k] : true;
+        svg.appendChild(el('rect', { x:cx, y:cardY, width:cw, height:cardH, rx:8,
+          'class':'pv-card' + (active ? ' on' : ''), 'stroke-width': active ? 2 : 1 }));
+        svg.appendChild(el('text', { x:cx+8, y:cardY+16, 'class':'pv-t', 'font-size':fsT, 'font-weight':'700' }, 'GPU ' + k));
+        svg.appendChild(el('text', { x:cx+cw-8, y:cardY+16, 'class':'pv-tm', 'font-size':fsS, 'text-anchor':'end' },
+          fitTxt(g.role, maxCh)));
+        if(!active){
+          svg.appendChild(el('text', { x:cx+cw/2, y:cardY+cardH/2, 'class':'pv-tm', 'font-size':fsT,
+            'text-anchor':'middle', 'font-style':'italic' }, 'idle (bubble)'));
+        }
+        // ---- layer strip: y maps layer 0 (top) .. L (bottom)
+        var sx = cx + 10, sy = cardY + 26, sw = cw - 20, sh = 112;
+        svg.appendChild(el('rect', { x:sx, y:sy, width:sw, height:sh, 'class':'pv-slot', rx:3 }));
+        var L = c.P.L;
+        if(c.strat === 'dp'){
+          svg.appendChild(el('rect', { x:sx, y:sy, width:sw, height:sh, 'class':'pv-own', rx:3 }));
+        } else if(c.strat === 'tp' || c.strat === 'fsdp'){
+          var slw = sw/G;
+          svg.appendChild(el('rect', { x:sx + k*slw, y:sy, width:Math.max(slw-0.8,1), height:sh, 'class':'pv-own' }));
+          if(c.strat === 'fsdp' && ph && ph.gather && ph.band){
+            var y1 = sy + ph.band[0]*sh, y2 = sy + Math.max(ph.band[1]*sh, ph.band[0]*sh + 9);
+            svg.appendChild(el('rect', { x:sx, y:y1, width:sw, height:y2-y1, 'class':'pv-gath' }));
+          }
+        } else {
+          var yA = sy + (g.lo/L)*sh, yB = sy + (g.hi/L)*sh;
+          if(g.hi > g.lo) svg.appendChild(el('rect', { x:sx, y:yA, width:sw, height:yB-yA, 'class':'pv-own' }));
+        }
+        // faint layer gridlines
+        var nlines = Math.min(L, 16), q;
+        for(q=1;q<nlines;q++){
+          var yy = sy + (q/nlines)*sh;
+          svg.appendChild(el('line', { x1:sx, y1:yy, x2:sx+sw, y2:yy, 'class':'pv-grid-l' }));
+        }
+        svg.appendChild(el('rect', { x:sx, y:sy, width:sw, height:sh, rx:3, 'class':'pv-frame' }));
+        svg.appendChild(el('text', { x:cx+cw/2, y:sy+sh+12, 'class':'pv-tmono', 'font-size':fsS, 'text-anchor':'middle' },
+          fitTxt(g.sub, maxCh)));
+        // ---- batch strip: which sequences of the global batch this GPU processes
+        var bx = cx + 10, by = cardY + 152, bw2 = cw - 20, bh = 13;
+        svg.appendChild(el('rect', { x:bx, y:by, width:bw2, height:bh, rx:3, 'class':'pv-slot' }));
+        var own0 = 0, own1 = c.B;
+        if(c.strat === 'dp' || c.strat === 'fsdp'){ own0 = k*(c.B/G); own1 = (k+1)*(c.B/G); }
+        var fx = bx + (own0/c.B)*bw2, fw = ((own1-own0)/c.B)*bw2;
+        svg.appendChild(el('rect', { x:fx, y:by, width:Math.max(fw,2), height:bh, rx:3, 'class':'pv-own' }));
+        if(c.B <= 32){
+          var i;
+          for(i=1;i<c.B;i++){
+            var xx = bx + (i/c.B)*bw2;
+            svg.appendChild(el('line', { x1:xx, y1:by, x2:xx, y2:by+bh, 'class':'pv-tick' }));
+          }
+        }
+        var blab;
+        if(c.strat === 'dp' || c.strat === 'fsdp') blab = fmtNum(c.B/G) + ' of ' + c.B + ' seq';
+        else if(c.strat === 'tp') blab = 'all ' + c.B + ' seq (same data)';
+        else blab = 'all ' + c.B + ' microbatches';
+        svg.appendChild(el('text', { x:cx+cw/2, y:by+bh+12, 'class':'pv-tm', 'font-size':fsS, 'text-anchor':'middle' },
+          fitTxt(blab, maxCh)));
+      }
+      // ---- communication band
+      if(ph && ph.comm && G > 1){
+        var kind = ph.comm.kind, isP2P = kind.indexOf('p2p') === 0;
+        var cls = 'pv-arrow pv-flow' + (isP2P ? ' p2p' : '');
+        var mk = 'url(#' + PFX + (isP2P ? 'ah2' : 'ah') + ')';
+        var cxs = [];
+        for(k=0;k<G;k++) cxs.push(padX + k*(cw+gap) + cw/2);
+        var top = cardY;
+        if(kind === 'ring'){
+          for(k=0;k<G;k++){
+            if(G === 2 && k === 1) continue; // avoid drawing the same curve twice
+            var a1 = cxs[k], b1 = cxs[(k+1)%G];
+            var yb = (k === G-1 && G > 2) ? 18 : 44;
+            var d = 'M ' + a1 + ' ' + top + ' C ' + a1 + ' ' + yb + ', ' + b1 + ' ' + yb + ', ' + b1 + ' ' + top;
+            var pth = el('path', { d:d, 'class':cls, 'marker-end':mk });
+            if(G === 2) pth.setAttribute('marker-start', mk);
+            svg.appendChild(pth);
+          }
+        } else {
+          for(k=0;k<G-1;k++){
+            var s1 = cxs[k], s2 = cxs[k+1];
+            svg.appendChild(el('path', { d:'M ' + s1 + ' ' + top + ' C ' + s1 + ' 46, ' + s2 + ' 46, ' + s2 + ' ' + top,
+              'class':cls, 'marker-end':mk }));
+            if(kind === 'p2p-b'){
+              svg.appendChild(el('path', { d:'M ' + s2 + ' ' + top + ' C ' + s2 + ' 20, ' + s1 + ' 20, ' + s1 + ' ' + top,
+                'class':cls, 'marker-end':mk }));
+            }
+          }
+        }
+        svg.appendChild(el('text', { x:W/2, y:11, 'class':'pv-comm-lab' + (isP2P ? ' p2p' : ''),
+          'font-size':12, 'text-anchor':'middle' }, ph.comm.label));
+      } else {
+        svg.appendChild(el('text', { x:W/2, y:44, 'class':'pv-tm', 'font-size':12, 'text-anchor':'middle',
+          'font-style':'italic' }, G > 1 ? 'no communication in this phase' : 'single GPU: nothing to communicate'));
+      }
+    }
+    function mkMarker(id, cls){
+      var m = el('marker', { id:id, viewBox:'0 0 10 10', refX:'8.5', refY:'5',
+        markerWidth:'6', markerHeight:'6', orient:'auto-start-reverse' });
+      m.appendChild(el('path', { d:'M 0 1 L 10 5 L 0 9 z', 'class':cls }));
+      return m;
+    }
+
+    /* ------------------------------- memory bars --------------------------------------- */
+    function drawMem(c, M){
+      var svg = $('mem'); clear(svg);
+      var W = 1000, labW = 66, x0 = labW + 6, rightW = 104, barW = W - x0 - rightW;
+      var rowH = 28, topPad = 6, gpus = M.gpus;
+      var H = topPad + gpus.length*rowH + 26;
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      var cap = c.hbm*1e9; // vendor GB (decimal), matching how HBM is marketed
+      var maxTot = 0, k;
+      for(k=0;k<gpus.length;k++) if(gpus[k].tot > maxTot) maxTot = gpus[k].tot;
+      var xmax = Math.max(cap, maxTot, 1)*1.06;
+      var segs = [ ['p','pv-seg-p','params'], ['g','pv-seg-g','grads'], ['o','pv-seg-o','Adam state'],
+                   ['a','pv-seg-a','activations'], ['b','pv-seg-b','all-gather buffer'] ];
+      for(k=0;k<gpus.length;k++){
+        var y = topPad + k*rowH, g = gpus[k], bh = 17;
+        svg.appendChild(el('text', { x:labW, y:y+13, 'class':'pv-tmono', 'font-size':10.5, 'text-anchor':'end' }, 'GPU ' + k));
+        svg.appendChild(el('rect', { x:x0, y:y, width:barW, height:bh, rx:4, 'class':'pv-track' }));
+        var acc = 0, i;
+        for(i=0;i<segs.length;i++){
+          var v = g[segs[i][0]];
+          if(!(v > 0)) continue;
+          var sx = x0 + (acc/xmax)*barW, sw = (v/xmax)*barW;
+          if(sw < 0.6){ acc += v; continue; }
+          var r = el('rect', { x:sx, y:y, width:Math.max(sw-2, 0.8), height:bh,
+            'class':segs[i][1], rx: (acc === 0 ? 4 : 0) });
+          r.appendChild(el('title', {}, segs[i][2] + ': ' + fmtBytes(v)));
+          svg.appendChild(r);
+          acc += v;
+        }
+        var over = g.tot > cap;
+        svg.appendChild(el('text', { x:x0+barW+7, y:y+13, 'class':'pv-tmono' + (over ? ' over' : ''), 'font-size':10.5 },
+          fmtBytes(g.tot) + (over ? '  OOM' : '')));
+      }
+      var capX = x0 + (cap/xmax)*barW;
+      svg.appendChild(el('line', { x1:capX, y1:topPad-4, x2:capX, y2:topPad + gpus.length*rowH - 6, 'class':'pv-cap' }));
+      svg.appendChild(el('text', { x:capX, y:topPad + gpus.length*rowH + 10, 'class':'pv-tm', 'font-size':10,
+        'text-anchor':'middle' }, c.hbm + ' GB HBM'));
+      svg.appendChild(el('text', { x:x0, y:topPad + gpus.length*rowH + 10, 'class':'pv-tm', 'font-size':10 }, '0'));
+    }
+
+    /* ------------------------------ pipeline schedule ---------------------------------- */
+    function drawSched(c, M, ph){
+      var wrap = $('schedwrap'), svg = $('sched');
+      if(c.strat !== 'pp' || !M.extra.sched){ wrap.hidden = true; return; }
+      wrap.hidden = false;
+      clear(svg);
+      var sc = M.extra.sched, p = c.G, T = sc.T;
+      var cw = T <= 34 ? 20 : (T <= 70 ? 12 : 7);
+      var labW = 54, rowH = 20, W = labW + T*cw + 10, H = 16 + p*rowH + 6;
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      svg.style.minWidth = Math.min(Math.round(W), 1200) + 'px';
+      var j, t, i;
+      if(ph && ph.sched){
+        var t0 = ph.sched[0], t1 = ph.sched[1];
+        if(t1 > t0) svg.appendChild(el('rect', { x:labW + t0*cw, y:10, width:(t1-t0)*cw, height:p*rowH + 4, 'class':'pv-hl' }));
+      }
+      for(j=0;j<p;j++){
+        var y = 14 + j*rowH;
+        svg.appendChild(el('text', { x:labW-6, y:y+12, 'class':'pv-tmono', 'font-size':10, 'text-anchor':'end' }, 'stage ' + j));
+        for(t=0;t<T;t++) svg.appendChild(el('rect', { x:labW + t*cw, y:y, width:cw-1.5, height:rowH-3.5, 'class':'pv-cellBub', rx:2 }));
+        var ops = sc.placed[j];
+        for(i=0;i<ops.length;i++){
+          var o = ops[i];
+          var r2 = el('rect', { x:labW + o.start*cw, y:y, width:cw-1.5, height:rowH-3.5, rx:2,
+            'class': o.t === 'F' ? 'pv-cellF' : 'pv-cellB' });
+          r2.appendChild(el('title', {}, o.t + ' microbatch ' + o.m + ' on stage ' + j + ' at t=' + o.start));
+          svg.appendChild(r2);
+          if(cw >= 20) svg.appendChild(el('text', { x:labW + o.start*cw + cw/2 - 0.7, y:y+11.5,
+            'class': o.t === 'F' ? 'pv-cellTxtF' : 'pv-cellTxtB', 'font-size':9, 'text-anchor':'middle' }, o.t + o.m));
+        }
+      }
+      $('schedcap').innerHTML = 'Makespan <b>' + T + '</b> slots vs ' + (2*c.B) +
+        ' slots of real work per stage &rarr; bubble <b>' + (sc.bubble*100).toFixed(1) +
+        '%</b>, which is exactly (p&minus;1)/(m+p&minus;1) with p = ' + p + ' stage(s) and m = ' + c.B +
+        ' microbatch(es). (A backward is costed as 1 slot here; in reality it is closer to 2, which does not change the bubble <i>fraction</i>.)';
+    }
+
+    /* ---------------------------------- readout ---------------------------------------- */
+    function drawReadout(c, M){
+      var cap = c.hbm*1e9, fits = M.peak <= cap;
+      var stateB = 0, actB = 0, k;
+      for(k=0;k<M.gpus.length;k++){
+        var g = M.gpus[k];
+        if(g.p + g.g + g.o + g.b > stateB) stateB = g.p + g.g + g.o + g.b;
+        if(g.a > actB) actB = g.a;
+      }
+      var names = { dp:'Data Parallel', fsdp:'FSDP / ZeRO-3', tp:'Tensor Parallel', pp:'Pipeline Parallel' };
+      var html = '';
+      html += stat('Model N', fmtParams(c.C.N) + ' params',
+        'L=' + c.P.L + ', h=' + c.P.h + ', a=' + c.P.a + (c.P.kv < c.P.a ? ' (GQA kv=' + c.P.kv + ')' : '') +
+        '; full 16 B/param state = ' + fmtBytes(16*c.C.N), '');
+      html += stat('Peak per-GPU memory', fmtBytes(M.peak),
+        (100*M.peak/cap).toFixed(0) + '% of ' + c.hbm + ' GB &mdash; ' + (fits ? 'fits' : 'does NOT fit'),
+        fits ? 'ok' : 'bad');
+      html += stat('Model state / GPU', fmtBytes(stateB),
+        'params + grads + Adam' + (c.strat === 'fsdp' ? ' + gather buffer' : '') + ', worst GPU', '');
+      html += stat('Activations / GPU', fmtBytes(actB),
+        'microbatch = 1 seq, s = ' + c.s + ', recompute: ' + c.recLabel +
+        (c.strat === 'tp' && c.sp ? ' + SP' : ''), '');
+      html += stat('Comm / GPU / step', fmtBytes(M.comm), M.commKind, '');
+      var extraV, extraS;
+      if(c.strat === 'pp'){ extraV = (M.extra.bubble*100).toFixed(1) + '%'; extraS = 'pipeline bubble with m=' + c.B + ' microbatches, p=' + c.G + ' stages'; }
+      else if(c.strat === 'dp'){ extraV = fmtNum(M.extra.accum) + ' microbatch(es)'; extraS = 'per GPU per step (B/G) &mdash; DP buys throughput, not memory'; }
+      else if(c.strat === 'fsdp'){ extraV = fmtNum(M.extra.accum) + ' microbatch(es)'; extraS = 'per GPU per step; params are re-gathered on every one of them'; }
+      else { extraV = c.B + ' microbatch(es)'; extraS = 'every rank sees every microbatch; TP splits the math, not the data'; }
+      html += stat(names[c.strat], extraV, extraS, '');
+      $('readout').innerHTML = html;
+    }
+    function stat(k, v, s, cls){
+      return '<div class="pv-stat' + (cls ? ' ' + cls : '') + '"><div class="k">' + k +
+        '</div><div class="v">' + v + '</div><div class="s">' + s + '</div></div>';
+    }
+
+    /* -------------------------------- comparison table --------------------------------- */
+    function drawTable(c){
+      var order = ['dp','fsdp','tp','pp'];
+      var names = { dp:'Data Parallel (DDP)', fsdp:'FSDP / ZeRO-3', tp:'Tensor Parallel', pp:'Pipeline Parallel (1F1B)' };
+      var cap = c.hbm*1e9;
+      var h = '<thead><tr><th scope="col">Strategy</th><th scope="col">Model state / GPU</th><th scope="col">Activations / GPU</th>' +
+              '<th scope="col">Peak / GPU</th><th scope="col">Comm / GPU / step</th><th scope="col">Fits ' + c.hbm + ' GB?</th></tr></thead><tbody>';
+      var ppBub = 0;
+      for(var i=0;i<order.length;i++){
+        var st = order[i], M = model(c, st), k, sB = 0, aB = 0;
+        for(k=0;k<M.gpus.length;k++){
+          var g = M.gpus[k];
+          if(g.p+g.g+g.o+g.b > sB) sB = g.p+g.g+g.o+g.b;
+          if(g.a > aB) aB = g.a;
+        }
+        if(st === 'pp') ppBub = M.extra.bubble || 0;
+        var ok = M.peak <= cap;
+        h += '<tr' + (st === c.strat ? ' class="sel"' : '') + '><td>' + names[st] + '</td><td>' +
+          fmtBytes(sB) + '</td><td>' + fmtBytes(aB) + '</td><td>' + fmtBytes(M.peak) + '</td><td>' +
+          fmtBytes(M.comm) + '</td><td class="' + (ok ? 'fit' : 'oom') + '">' + (ok ? 'yes' : 'OOM') + '</td></tr>';
+      }
+      h += '</tbody>';
+      $('table').innerHTML = h;
+      $('tablecap').innerHTML = 'Same model, same global batch, same G = ' + c.G +
+        '. Read it as a trade: DP is the cheapest on the wire and the most expensive in memory; FSDP and TP buy the same 1/G model-state reduction at very different bandwidth prices; ' +
+        'PP is nearly free on the wire but additionally idles ' + (ppBub*100).toFixed(1) +
+        '% of every GPU-second in the bubble, a cost no memory column can show.' +
+        (c.G === 1 ? ' (With G = 1 every strategy degenerates to the same single-GPU run.)' : '');
+    }
+
+    /* ---------------------------------- main render ------------------------------------ */
+    var RECLAB = { none:'none', sel:'selective', full:'full' };
+    function render(){
+      var c = cfg();
+      c.recLabel = RECLAB[c.rec] || 'none';
+      $('Gval').textContent = c.G;
+      $('Bval').textContent = c.B;
+
+      var warn = '';
+      if((c.strat === 'dp' || c.strat === 'fsdp') && c.B < c.G){
+        warn = 'Global batch ' + c.B + ' < G = ' + c.G + ': some GPUs would get no data. Raise the batch.';
+      } else if(c.strat === 'pp' && c.B < c.G){
+        warn = 'Only ' + c.B + ' microbatch(es) for ' + c.G + ' stages: the pipeline never fills, so the bubble is enormous.';
+      } else if(c.strat === 'tp' && c.G > 8){
+        warn = 'TP beyond 8 ranks leaves the NVLink domain and is almost never worth it.';
+      }
+      $('sphint').textContent = (c.strat === 'tp')
+        ? (c.sp ? 'on: the replicated 10 s b h term is split too' : 'off: 10 s b h stays replicated on every rank')
+        : 'affects Tensor Parallel only (see the TP row below)';
+
+      var M = model(c, c.strat);
+      var ps = phases(c, M);
+      if(!ps.length) return;
+      phase = ((phase % ps.length) + ps.length) % ps.length;
+      var ph = ps[phase];
+      $('phasechip').textContent = (phase+1) + ' / ' + ps.length;
+      $('phasetitle').innerHTML = ph.t;
+      $('phasedetail').innerHTML = ph.d + (warn ? ' <b class="pv-warn">' + esc(warn) + '</b>' : '');
+
+      drawGrid(c, M, ph);
+      drawMem(c, M);
+      drawSched(c, M, ph);
+      drawReadout(c, M);
+      drawTable(c);
+    }
+
+    /* ------------------------------------ wiring --------------------------------------- */
+    function stop(){
+      if(timer){ clearInterval(timer); timer = null; }
+      var b = $('play');
+      b.textContent = 'Play';
+      b.setAttribute('aria-pressed', 'false');
+      b.setAttribute('aria-label', 'Play the training step animation');
+    }
+    $('next').addEventListener('click', function(){ stop(); phase++; render(); });
+    $('prev').addEventListener('click', function(){ stop(); phase--; render(); });
+    $('reset').addEventListener('click', function(){ stop(); phase = 0; render(); });
+    $('play').addEventListener('click', function(){
+      if(timer){ stop(); return; }
+      var b = $('play');
+      b.textContent = 'Pause';
+      b.setAttribute('aria-pressed', 'true');
+      b.setAttribute('aria-label', 'Pause the training step animation');
+      timer = setInterval(function(){ phase++; render(); }, 2200);
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('input,select'), function(e){
+      var evt = (e.type === 'range') ? 'input' : 'change';
+      e.addEventListener(evt, function(){
+        if(e.name === PFX + 'strat'){ stop(); phase = 0; }
+        render();
+      });
+    });
+    render();
+  })();</script>
+</div>

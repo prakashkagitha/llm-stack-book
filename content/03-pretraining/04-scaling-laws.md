@@ -422,6 +422,8 @@ A few engineering notes that separate a real fit from a toy one:
 - **Exclude under-converged runs.** A run whose LR schedule did not finish, or that hit a loss spike (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)), pollutes the fit. This is exactly the failure mode that biased Kaplan.
 - **Sanity-check extrapolation, not interpolation.** The whole value is predicting *outside* your grid. Hold out your largest run, fit on the rest, and verify the prediction lands within a percent or two.
 
+{{tool:scaling-law-fit}}
+
 ### The IsoFLOP Method (Chinchilla Approach 2)
 
 The parametric fit above is Chinchilla's Approach 3 — fit the full surface $L(N,D)$ and differentiate. Approach 2, the **IsoFLOP method**, is more robust to misspecification of that parametric form because it never commits to it directly. Instead, at each of several *fixed* compute budgets $C$ you sweep $N$ (forcing $D = C/(6N)$ so every run in the slice costs exactly $C$), fit a quadratic (parabola) in $\log N$ to the resulting losses, and read off the valley — the loss-minimizing $N_{\text{opt}}(C)$ — for that slice. Repeat across several budgets and fit a power law through the valleys to recover the allocation exponent $a$ directly. This is the isoFLOP-slice picture illustrated in {{fig:scaling-kaplan-vs-chinchilla}} above.

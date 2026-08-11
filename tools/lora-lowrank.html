@@ -1,0 +1,462 @@
+<div class="viz-tool" id="tool-lora-lowrank">
+  <div class="vt-title">LoRA: adapting a weight with a low-rank update</div>
+  <div class="vt-hint">A frozen d &times; d projection <b>W</b> is never touched. LoRA trains two thin factors, <b>B</b> (d &times; r) and <b>A</b> (r &times; d), and adds their product back in: <span class="ll-code">W' = W + (&alpha;/r)&middot;BA</span>. The picture is a fixed 32 &times; 32 stand-in so individual rows and columns stay visible; the real <b>d</b> you pick drives only the parameter and memory arithmetic, which is reported <b>per adapted d &times; d projection</b> (a 7B model has ~7 of these per layer &times; 32 layers). The right-hand square is a synthetic "target update" &Delta;W* whose singular values decay geometrically &ndash; a stylized version of the low effective rank that Aghajanyan et al. and the LoRA paper report for real fine-tuning deltas. The overlay is the <i>exact</i> best rank-r fit to it (truncated SVD, Eckart&ndash;Young), scaled by &alpha;/r.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="lora-lowrank-d">Hidden size d <span class="vt-val" id="lora-lowrank-dval">4096</span>
+      <select id="lora-lowrank-d">
+        <option value="512">512 (small transformer)</option>
+        <option value="1024">1024 (small LM)</option>
+        <option value="2048">2048 (~1-3B class)</option>
+        <option value="4096" selected>4096 (~7-8B class, e.g. Llama-2/3 7B)</option>
+        <option value="8192">8192 (~30-70B class)</option>
+        <option value="16384">16384 (70B+ / wide MoE experts)</option>
+      </select>
+    </label>
+    <label for="lora-lowrank-r">Rank r <span class="vt-val" id="lora-lowrank-rval">16</span> of 32 shown
+      <input id="lora-lowrank-r" type="range" min="1" max="32" step="1" value="16">
+    </label>
+    <label for="lora-lowrank-alpha">Alpha &alpha; <span class="vt-val" id="lora-lowrank-alphaval">32</span>
+      <input id="lora-lowrank-alpha" type="range" min="1" max="64" step="1" value="32">
+    </label>
+    <label class="ll-check" for="lora-lowrank-lock">
+      <input id="lora-lowrank-lock" type="checkbox" checked>
+      <span>Lock &alpha; = 2&times;r (scale 2, the common convention)</span>
+    </label>
+    <label class="ll-check" for="lora-lowrank-qlora">
+      <input id="lora-lowrank-qlora" type="checkbox">
+      <span>QLoRA: store the frozen W in NF4 (4-bit)</span>
+    </label>
+  </div>
+  <div class="vt-actions"><button class="vt-reset" id="lora-lowrank-reset" type="button">Reset</button></div>
+
+  <div class="vt-out" id="lora-lowrank-out" aria-live="polite"></div>
+
+  <div class="ll-svg-wrap">
+    <svg id="lora-lowrank-svg" viewBox="0 0 900 556" preserveAspectRatio="xMidYMid meet" role="img" focusable="false"
+         aria-label="Diagram of the frozen weight matrix W with the scaled low-rank product B A overlaid, the thin trainable A and B strips attached to it, the synthetic full-rank target update, the residual left over, and the singular-value energy spectrum with a marker at the chosen rank."></svg>
+  </div>
+  <div class="ll-caption" id="lora-lowrank-caption"></div>
+
+  <div class="vt-note" id="lora-lowrank-note"></div>
+
+  <style>
+    #tool-lora-lowrank{
+      --ll-pos:#1f6fb2;
+      --ll-neg:#c0442c;
+      --ll-mark:var(--warn,#8a6404);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#ffffff); color:var(--ink,#211f1b); font-family:var(--sans,sans-serif);
+      max-width:100%;
+    }
+    html[data-theme="dark"] #tool-lora-lowrank{ --ll-pos:#63a8e0; --ll-neg:#ea7a5c; --ll-mark:#e6b450; }
+    @media (prefers-color-scheme: dark){
+      html:not([data-theme="light"]) #tool-lora-lowrank{ --ll-pos:#63a8e0; --ll-neg:#ea7a5c; --ll-mark:#e6b450; }
+    }
+
+    #tool-lora-lowrank .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-lora-lowrank .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.6; }
+    #tool-lora-lowrank .ll-code{ font-family:var(--mono,monospace); font-size:.92em; color:var(--ink-soft,#45413a); white-space:nowrap; }
+
+    #tool-lora-lowrank .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px 18px; align-items:end; }
+    #tool-lora-lowrank label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--muted,#6d675d); min-width:0; }
+    #tool-lora-lowrank .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; font-family:var(--mono,monospace); }
+    #tool-lora-lowrank select{ font:inherit; font-size:.84rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); max-width:100%; }
+    #tool-lora-lowrank input[type="range"]{ width:100%; accent-color:var(--accent,#c15b39); }
+    #tool-lora-lowrank input[type="checkbox"]{ accent-color:var(--accent,#c15b39); width:15px; height:15px; flex:none; }
+    #tool-lora-lowrank input:disabled{ opacity:.5; cursor:not-allowed; }
+    #tool-lora-lowrank .ll-check{ flex-direction:row; align-items:center; gap:8px; font-size:.82rem; color:var(--ink-soft,#45413a); cursor:pointer; }
+    #tool-lora-lowrank select:focus-visible,
+    #tool-lora-lowrank input:focus-visible,
+    #tool-lora-lowrank button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-lora-lowrank .vt-actions{ margin:12px 0 0; }
+    #tool-lora-lowrank .vt-reset{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-lora-lowrank .vt-reset:hover{ background:var(--surface-3,#ece7da); }
+
+    #tool-lora-lowrank .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(164px,1fr)); gap:10px; }
+    #tool-lora-lowrank .vt-stat{ border:1px solid var(--border,#e7e1d4); border-radius:8px; padding:8px 10px; background:var(--surface-2,#f3efe6); }
+    #tool-lora-lowrank .vt-stat .n{ font-size:1rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; font-family:var(--mono,monospace); }
+    #tool-lora-lowrank .vt-stat .l{ font-size:.66rem; color:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.03em; margin-top:3px; line-height:1.35; }
+    #tool-lora-lowrank .vt-stat.is-good .n{ color:var(--good,#1f7a52); }
+    #tool-lora-lowrank .vt-stat.is-warn .n{ color:var(--ll-mark); }
+    html[data-theme="dark"] #tool-lora-lowrank .vt-stat.is-good .n{ color:var(--good,#6ed3a2); }
+    @media (prefers-color-scheme: dark){
+      html:not([data-theme="light"]) #tool-lora-lowrank .vt-stat.is-good .n{ color:var(--good,#6ed3a2); }
+    }
+
+    #tool-lora-lowrank .ll-svg-wrap{ width:100%; overflow-x:auto; margin-top:14px; }
+    #tool-lora-lowrank svg{ width:100%; height:auto; min-width:430px; display:block; }
+    #tool-lora-lowrank .ll-lbl{ fill:var(--ink-soft,#45413a); font-size:11px; font-family:var(--sans,sans-serif); }
+    #tool-lora-lowrank .ll-lbl.b{ font-weight:700; fill:var(--ink,#211f1b); }
+    #tool-lora-lowrank .ll-axis{ fill:var(--muted,#6d675d); font-size:9.5px; font-family:var(--mono,monospace); }
+    #tool-lora-lowrank .ll-frame{ fill:none; stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-lora-lowrank .ll-rframe{ fill:none; stroke:var(--accent,#c15b39); stroke-width:1.4; }
+    #tool-lora-lowrank .ll-baseline{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-lora-lowrank .ll-marker{ stroke:var(--ll-mark); stroke-width:1.4; stroke-dasharray:3 2; }
+    #tool-lora-lowrank .ll-spec-cap{ fill:var(--ll-mark); font-size:10px; font-family:var(--mono,monospace); font-weight:700; }
+
+    #tool-lora-lowrank .ll-caption{ margin-top:8px; font-size:.76rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-lora-lowrank .vt-note{ margin-top:12px; font-size:.82rem; color:var(--ink-soft,#45413a); line-height:1.65; }
+    #tool-lora-lowrank .vt-note b{ color:var(--ink,#211f1b); }
+  </style>
+
+  <script>(function(){
+    var NS='http://www.w3.org/2000/svg';
+    var root=document.getElementById('tool-lora-lowrank');
+    if(!root) return;
+    var svg=root.querySelector('#lora-lowrank-svg');
+    if(!svg) return;
+
+    var VN=32;                    /* fixed visual grid resolution (stand-in for the real d) */
+
+    /* ---------------- seeded PRNG + Gaussian sampler (identical on every load) ------------- */
+    function mulberry32(seed){
+      var s=seed|0;
+      return function(){
+        s=(s+0x6D2B79F5)|0;
+        var t=Math.imul(s^(s>>>15),1|s);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+    function gauss(rng){
+      var u=0,w=0;
+      while(u<=1e-12) u=rng();
+      while(w<=1e-12) w=rng();
+      return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*w);
+    }
+    function gaussVec(rng,n){
+      var v=new Float64Array(n);
+      for(var i=0;i<n;i++) v[i]=gauss(rng);
+      return v;
+    }
+    /* n orthonormal columns of R^n: modified Gram-Schmidt, run twice for a clean basis
+       (so the factorisation below really is an SVD to ~1e-15). */
+    function randomOrthonormal(seed,n){
+      var rng=mulberry32(seed), cols=[], i,k,p,pass,dot,norm;
+      for(k=0;k<n;k++) cols.push(gaussVec(rng,n));
+      for(k=0;k<n;k++){
+        for(pass=0;pass<2;pass++){
+          for(p=0;p<k;p++){
+            dot=0;
+            for(i=0;i<n;i++) dot+=cols[k][i]*cols[p][i];
+            for(i=0;i<n;i++) cols[k][i]-=dot*cols[p][i];
+          }
+        }
+        norm=0;
+        for(i=0;i<n;i++) norm+=cols[k][i]*cols[k][i];
+        norm=Math.sqrt(norm)||1e-9;
+        for(i=0;i<n;i++) cols[k][i]/=norm;
+      }
+      return cols;               /* cols[k][i] = entry i of the k-th orthonormal column */
+    }
+
+    /* ------------- the synthetic full-rank "target update" DW* = U diag(sigma) V^T -------- */
+    var U=randomOrthonormal(0x9E3779B9,VN);      /* U[k] = k-th left singular vector  */
+    var V=randomOrthonormal(0x2545F491,VN);      /* V[k] = k-th right singular vector */
+    var SIGMA=new Float64Array(VN), SIGSQ=new Float64Array(VN), k0;
+    for(k0=0;k0<VN;k0++){ SIGMA[k0]=Math.exp(-k0/6); SIGSQ[k0]=SIGMA[k0]*SIGMA[k0]; }
+    var ECUM=new Float64Array(VN+1);
+    for(k0=0;k0<VN;k0++) ECUM[k0+1]=ECUM[k0]+SIGSQ[k0];
+    var ETOT=ECUM[VN];
+
+    /* PARTIAL[r*VN*VN + i*VN + j] = entry (i,j) of the best rank-r fit (truncated SVD).
+       Eckart-Young: this is the minimiser of ||DW* - X||_F over all rank-r X. */
+    var PARTIAL=new Float64Array((VN+1)*VN*VN);
+    (function(){
+      var r,i,j,base,prev,c;
+      for(r=1;r<=VN;r++){
+        base=r*VN*VN; prev=(r-1)*VN*VN; c=r-1;
+        for(i=0;i<VN;i++) for(j=0;j<VN;j++)
+          PARTIAL[base+i*VN+j]=PARTIAL[prev+i*VN+j]+U[c][i]*SIGMA[c]*V[c][j];
+      }
+    })();
+    var TBASE=VN*VN*VN;           /* offset of the full-rank (r = VN) reconstruction = DW* */
+    var TMAX=1e-9;
+    for(k0=0;k0<VN*VN;k0++){ var av=Math.abs(PARTIAL[TBASE+k0]); if(av>TMAX) TMAX=av; }
+
+    /* frozen-W background texture: an independent seeded Gaussian matrix, purely illustrative */
+    var WBASE=new Float64Array(VN*VN), WMAX=1e-9;
+    (function(){
+      var rng=mulberry32(0x1234ABCD);
+      for(var i=0;i<VN*VN;i++){ WBASE[i]=gauss(rng); if(Math.abs(WBASE[i])>WMAX) WMAX=Math.abs(WBASE[i]); }
+    })();
+
+    /* ---------------- geometry ---------------- */
+    var CW=900, CH=556, C=6, S=VN*C;                 /* S = 192 */
+    var SPEC_X=44, SPEC_Y=20, SPEC_W=812, SPEC_H=64, SPEC_BASE=SPEC_Y+SPEC_H;
+    var GX=212, GY=310;                               /* top-left of the W square */
+    var TX=GX+S+44, RX=TX+S+44;                       /* target square, residual square */
+    var LBL_Y=GY+S+16, LEG_Y=GY+S+30;
+
+    function el(tag,attrs,text){
+      var e=document.createElementNS(NS,tag),k;
+      for(k in attrs) if(Object.prototype.hasOwnProperty.call(attrs,k)) e.setAttribute(k,attrs[k]);
+      if(text!==undefined) e.textContent=text;
+      return e;
+    }
+    function fmtNum(n){
+      if(!isFinite(n)) return '--';
+      var a=Math.abs(n);
+      if(a>=1e9) return (n/1e9).toFixed(2)+'B';
+      if(a>=1e6) return (n/1e6).toFixed(2)+'M';
+      if(a>=1e3) return (n/1e3).toFixed(1)+'K';
+      return n.toFixed(0);
+    }
+    function fmtBytes(b){
+      if(!isFinite(b)) return '--';
+      var u=['B','KB','MB','GB','TB'], i=0;
+      while(b>=1024 && i<u.length-1){ b/=1024; i++; }
+      return b.toFixed(b<10&&i>0?2:1)+' '+u[i];
+    }
+    function op(frac,lo,hi,gamma){ return (lo+(hi-lo)*Math.pow(Math.min(1,Math.max(0,frac)),gamma)).toFixed(3); }
+
+    svg.setAttribute('viewBox','0 0 '+CW+' '+CH);
+    while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+    /* ---- spectrum: bar height proportional to sigma_k^2, so shaded AREA = captured energy ---- */
+    var specBars=[], bw=SPEC_W/VN;
+    (function(){
+      var g=el('g',{}),k,h,rc;
+      for(k=0;k<VN;k++){
+        h=Math.max(0.8,(SIGSQ[k]/SIGSQ[0])*SPEC_H);
+        rc=el('rect',{ x:(SPEC_X+k*bw+0.6).toFixed(1), y:(SPEC_BASE-h).toFixed(1),
+                       width:Math.max(0.6,bw-1.2).toFixed(1), height:h.toFixed(1) });
+        g.appendChild(rc); specBars.push(rc);
+      }
+      svg.appendChild(g);
+    })();
+    svg.appendChild(el('line',{ x1:SPEC_X, y1:SPEC_BASE, x2:SPEC_X+SPEC_W, y2:SPEC_BASE, class:'ll-baseline' }));
+    svg.appendChild(el('text',{ x:SPEC_X, y:SPEC_Y-6, class:'ll-lbl b' },
+      'Squared singular values of the target update (bar area left of the marker = energy kept)'));
+    var specCap=el('text',{ x:SPEC_X+SPEC_W, y:SPEC_Y-6, class:'ll-spec-cap', 'text-anchor':'end' });
+    svg.appendChild(specCap);
+    var specMarker=el('line',{ class:'ll-marker', y1:SPEC_Y-2, y2:SPEC_BASE+3 });
+    svg.appendChild(specMarker);
+    svg.appendChild(el('text',{ x:SPEC_X, y:SPEC_BASE+14, class:'ll-axis' }, 'k = 0 (largest)'));
+    svg.appendChild(el('text',{ x:SPEC_X+SPEC_W, y:SPEC_BASE+14, class:'ll-axis', 'text-anchor':'end' }, 'k = 31 (smallest)'));
+
+    /* ---- frozen W texture (static, neutral: it is never updated) ---- */
+    (function(){
+      var g=el('g',{}),i,j;
+      for(i=0;i<VN;i++) for(j=0;j<VN;j++)
+        g.appendChild(el('rect',{ x:(GX+j*C).toFixed(1), y:(GY+i*C).toFixed(1), width:C, height:C,
+          fill:'var(--ink,#211f1b)', 'fill-opacity':op(Math.abs(WBASE[i*VN+j])/WMAX,0.04,0.16,1) }));
+      svg.appendChild(g);
+    })();
+
+    /* ---- dynamic cells: applied update over W, and the residual ---- */
+    function cellGrid(x0,y0){
+      var g=el('g',{}), cells=[], i,j,rc;
+      for(i=0;i<VN;i++) for(j=0;j<VN;j++){
+        rc=el('rect',{ x:(x0+j*C).toFixed(1), y:(y0+i*C).toFixed(1), width:C, height:C });
+        g.appendChild(rc); cells.push(rc);
+      }
+      svg.appendChild(g);
+      return cells;
+    }
+    var applyCells=cellGrid(GX,GY);
+    svg.appendChild(el('rect',{ x:GX, y:GY, width:S, height:S, class:'ll-frame' }));
+
+    /* ---- target square (static) ---- */
+    (function(){
+      var g=el('g',{}),i,j,v;
+      for(i=0;i<VN;i++) for(j=0;j<VN;j++){
+        v=PARTIAL[TBASE+i*VN+j];
+        g.appendChild(el('rect',{ x:(TX+j*C).toFixed(1), y:(GY+i*C).toFixed(1), width:C, height:C,
+          fill:v>=0?'var(--ll-pos)':'var(--ll-neg)', 'fill-opacity':op(Math.abs(v)/TMAX,0.04,0.94,1) }));
+      }
+      svg.appendChild(g);
+    })();
+    svg.appendChild(el('rect',{ x:TX, y:GY, width:S, height:S, class:'ll-frame' }));
+
+    var residCells=cellGrid(RX,GY);
+    svg.appendChild(el('rect',{ x:RX, y:GY, width:S, height:S, class:'ll-frame' }));
+
+    /* ---- A strip (r x d): row for component k sits k rows above the W square ----
+       A[k, :] = sqrt(sigma_k) * v_k     so that (BA)_{ij} = sum_{k<r} sigma_k u_k[i] v_k[j].  */
+    var aRows=[], bCols=[], aMax=1e-9, bMax=1e-9, aVals=[], bVals=[], idx,i2,j2;
+    for(idx=0;idx<VN;idx++){
+      var sq=Math.sqrt(SIGMA[idx]);
+      var rowv=new Float64Array(VN), colv=new Float64Array(VN);
+      for(j2=0;j2<VN;j2++){ rowv[j2]=sq*V[idx][j2]; if(Math.abs(rowv[j2])>aMax) aMax=Math.abs(rowv[j2]); }
+      for(i2=0;i2<VN;i2++){ colv[i2]=sq*U[idx][i2]; if(Math.abs(colv[i2])>bMax) bMax=Math.abs(colv[i2]); }
+      aVals.push(rowv); bVals.push(colv);
+    }
+    (function(){
+      var gA=el('g',{}), gB=el('g',{}), k,g,i,j,v,y,x;
+      for(k=0;k<VN;k++){                 /* component k -> the (k+1)-th strip line out from W */
+        y=GY-(k+1)*C; g=el('g',{});
+        for(j=0;j<VN;j++){
+          v=aVals[k][j];
+          g.appendChild(el('rect',{ x:(GX+j*C).toFixed(1), y:y.toFixed(1), width:C, height:C,
+            fill:v>=0?'var(--ll-pos)':'var(--ll-neg)', 'fill-opacity':op(Math.abs(v)/aMax,0.06,0.92,0.5) }));
+        }
+        gA.appendChild(g); aRows.push(g);
+
+        x=GX-(k+1)*C; g=el('g',{});
+        for(i=0;i<VN;i++){
+          v=bVals[k][i];
+          g.appendChild(el('rect',{ x:x.toFixed(1), y:(GY+i*C).toFixed(1), width:C, height:C,
+            fill:v>=0?'var(--ll-pos)':'var(--ll-neg)', 'fill-opacity':op(Math.abs(v)/bMax,0.06,0.92,0.5) }));
+        }
+        gB.appendChild(g); bCols.push(g);
+      }
+      svg.appendChild(gA); svg.appendChild(gB);
+    })();
+    var aFrame=el('rect',{ class:'ll-rframe' }), bFrame=el('rect',{ class:'ll-rframe' });
+    svg.appendChild(aFrame); svg.appendChild(bFrame);
+
+    /* ---- labels ---- */
+    var aLabel=el('text',{ x:GX+S/2, class:'ll-lbl', 'text-anchor':'middle' });
+    var bLabel=el('text',{ class:'ll-lbl', 'text-anchor':'middle' });
+    svg.appendChild(aLabel); svg.appendChild(bLabel);
+    var wLabel=el('text',{ x:GX+S/2, y:LBL_Y, class:'ll-lbl b', 'text-anchor':'middle' });
+    svg.appendChild(wLabel);
+    svg.appendChild(el('text',{ x:TX+S/2, y:LBL_Y, class:'ll-lbl b', 'text-anchor':'middle' },
+      'target update \u0394W* (fixed, full rank)'));
+    var rLabel=el('text',{ x:RX+S/2, y:LBL_Y, class:'ll-lbl b', 'text-anchor':'middle' });
+    svg.appendChild(rLabel);
+
+    svg.appendChild(el('rect',{ x:GX, y:LEG_Y, width:11, height:11, fill:'var(--ll-pos)', 'fill-opacity':'0.9' }));
+    svg.appendChild(el('text',{ x:GX+16, y:LEG_Y+9, class:'ll-lbl' }, 'positive'));
+    svg.appendChild(el('rect',{ x:GX+72, y:LEG_Y, width:11, height:11, fill:'var(--ll-neg)', 'fill-opacity':'0.9' }));
+    svg.appendChild(el('text',{ x:GX+88, y:LEG_Y+9, class:'ll-lbl' }, 'negative'));
+    svg.appendChild(el('text',{ x:GX+150, y:LEG_Y+9, class:'ll-lbl' },
+      'opacity = |value|; the three squares share one colour scale, the A/B strips another.'));
+
+    /* ---------------- controls ---------------- */
+    function q(id){ return root.querySelector('#lora-lowrank-'+id); }
+    var dIn=q('d'), dVal=q('dval'), rIn=q('r'), rVal=q('rval'),
+        alphaIn=q('alpha'), alphaVal=q('alphaval'), lockIn=q('lock'), qloraIn=q('qlora'),
+        resetBtn=q('reset'), outEl=q('out'), capEl=q('caption'), noteEl=q('note');
+    if(!dIn||!dVal||!rIn||!rVal||!alphaIn||!alphaVal||!lockIn||!qloraIn||!outEl||!capEl||!noteEl) return;
+
+    var NF4_BITS=4+8/64+32/(64*256);   /* NF4 codes + fp8 block scales (64) + fp32 second-level (256) */
+    var ADAM_BYTES=16;                 /* bf16 weight 2 + bf16 grad 2 + fp32 master 4 + 2 fp32 moments 8 */
+
+    function update(){
+      var d=parseInt(dIn.value,10); if(!isFinite(d)||d<1) d=4096;
+      var r=parseInt(rIn.value,10); if(!isFinite(r)||r<1) r=1; if(r>VN) r=VN;
+      var aMaxAllowed=parseInt(alphaIn.max,10); if(!isFinite(aMaxAllowed)||aMaxAllowed<1) aMaxAllowed=64;
+      if(lockIn.checked) alphaIn.value=String(Math.min(2*r,aMaxAllowed));
+      alphaIn.disabled=lockIn.checked;
+      var alpha=parseFloat(alphaIn.value); if(!isFinite(alpha)||alpha<=0) alpha=1;
+      var s=alpha/r;
+
+      dVal.textContent=String(d);
+      rVal.textContent=String(r);
+      alphaVal.textContent=alpha.toFixed(0);
+
+      /* --- strips: show exactly the r components that A and B actually hold --- */
+      var i,j,c=0,base=r*VN*VN,v;
+      for(i=0;i<VN;i++){
+        aRows[i].setAttribute('display', i<r?'inline':'none');
+        bCols[i].setAttribute('display', i<r?'inline':'none');
+      }
+      aFrame.setAttribute('x',GX); aFrame.setAttribute('y',GY-r*C);
+      aFrame.setAttribute('width',S); aFrame.setAttribute('height',r*C);
+      bFrame.setAttribute('x',GX-r*C); bFrame.setAttribute('y',GY);
+      bFrame.setAttribute('width',r*C); bFrame.setAttribute('height',S);
+
+      /* --- applied update (alpha/r)*B A  and the residual DW* - applied --- */
+      for(i=0;i<VN;i++) for(j=0;j<VN;j++){
+        var fit=PARTIAL[base+i*VN+j];
+        var applied=s*fit;
+        var res=PARTIAL[TBASE+i*VN+j]-applied;
+        var ce=applyCells[c], re=residCells[c]; c++;
+        ce.setAttribute('fill', applied>=0?'var(--ll-pos)':'var(--ll-neg)');
+        ce.setAttribute('fill-opacity', op(Math.abs(applied)/TMAX,0.04,0.94,1));
+        re.setAttribute('fill', res>=0?'var(--ll-pos)':'var(--ll-neg)');
+        re.setAttribute('fill-opacity', op(Math.abs(res)/TMAX,0.02,0.94,1));
+      }
+
+      /* --- spectrum marker: energy kept = sum_{k<r} sigma_k^2 / sum_k sigma_k^2 --- */
+      var energyFrac=ECUM[r]/ETOT;
+      var mx=SPEC_X+r*bw;
+      specMarker.setAttribute('x1',mx.toFixed(1)); specMarker.setAttribute('x2',mx.toFixed(1));
+      specCap.textContent='r = '+r+' keeps '+(100*energyFrac).toFixed(1)+'% of the energy';
+      for(i=0;i<VN;i++){
+        specBars[i].setAttribute('fill', i<r?'var(--accent,#c15b39)':'var(--muted,#6d675d)');
+        specBars[i].setAttribute('fill-opacity', i<r?'0.92':'0.3');
+      }
+
+      /* --- relative Frobenius error of the APPLIED update, exactly:
+             ||s*X_r - DW*||_F^2 = (s-1)^2 * sum_{k<r} sigma_k^2 + sum_{k>=r} sigma_k^2   --- */
+      var errSq=(s-1)*(s-1)*ECUM[r]+(ETOT-ECUM[r]);
+      var relErr=Math.sqrt(errSq/ETOT);
+
+      aLabel.setAttribute('y',(GY-r*C-6).toFixed(1));
+      aLabel.textContent='A: r x d = '+r+' x d';
+      var bx=GX-r*C-7, by=GY+S/2;
+      bLabel.setAttribute('x',bx.toFixed(1)); bLabel.setAttribute('y',by.toFixed(1));
+      bLabel.setAttribute('transform','rotate(-90 '+bx.toFixed(1)+' '+by.toFixed(1)+')');
+      bLabel.textContent='B: d x r = d x '+r;
+      wLabel.textContent='frozen W  +  ('+String(alpha)+'/'+r+')\u00b7BA';
+      rLabel.textContent='residual \u0394W* \u2212 applied ('+(100*relErr).toFixed(0)+'%)';
+
+      /* --- parameter and memory arithmetic, per adapted d x d projection --- */
+      var trainable=2*r*d, full=d*d, ratio=full/trainable;      /* = d / (2r) */
+      var qlora=!!qloraIn.checked;
+      var frozenBytes=qlora ? full*NF4_BITS/8 : full*2;
+      var adapterState=trainable*ADAM_BYTES;
+      var ckpt=trainable*2;
+      var loraTotal=frozenBytes+adapterState;
+      var fullFT=full*ADAM_BYTES;
+      var savings=fullFT/loraTotal;
+
+      var stats=[
+        ['', fmtNum(trainable), 'Trainable params (2&middot;r&middot;d)'],
+        ['', fmtNum(full), 'Full fine-tune params (d&sup2;)'],
+        ['is-good', ratio.toFixed(1)+'&times;', 'Fewer trainable params (d/2r)'],
+        ['', s.toFixed(2), 'Effective scale &alpha;/r'],
+        ['is-good', (100*energyFrac).toFixed(1)+'%', 'Energy in the top-r directions'],
+        [relErr<=0.15?'is-good':'is-warn', (100*relErr).toFixed(1)+'%', 'Relative error of applied update'],
+        [qlora?'is-good':'', fmtBytes(frozenBytes), qlora?'Frozen W (NF4, '+NF4_BITS.toFixed(2)+' bits/param)':'Frozen W (bf16, 16 bits/param)'],
+        ['', fmtBytes(adapterState), 'Adapter train state (Adam, 16 B/param)'],
+        ['', fmtBytes(ckpt), 'Adapter checkpoint (bf16)'],
+        ['is-good', savings.toFixed(1)+'&times;', 'Smaller train footprint vs full FT']
+      ];
+      outEl.innerHTML=stats.map(function(o){
+        return '<div class="vt-stat '+o[0]+'"><div class="n">'+o[1]+'</div><div class="l">'+o[2]+'</div></div>';
+      }).join('');
+
+      capEl.innerHTML='The strips are drawn at r/'+VN+' = '+(100*r/VN).toFixed(1)+'% of the square so they stay visible. '+
+        'At the d you picked the true aspect is r/d = '+r+'/'+d+' = '+(100*r/d).toFixed(3)+'% &mdash; the real A and B would be far '+
+        'thinner slivers than drawn. Only the numbers above use the real d, and they are <b>per adapted d &times; d projection</b>.';
+
+      var msg='';
+      msg+='<b>Rank is the capacity knob.</b> At r = '+r+', A and B span the top '+r+' singular directions of &Delta;W*, which hold <b>'+
+           (100*energyFrac).toFixed(1)+'%</b> of its energy, for <b>'+fmtNum(trainable)+'</b> trainable parameters instead of <b>'+fmtNum(full)+
+           '</b> &mdash; <b>'+ratio.toFixed(1)+'&times;</b> fewer. That only pays off because real fine-tuning deltas behave like this: '+
+           'low effective rank (Hu et al., 2021; Aghajanyan et al. on intrinsic dimension). Note the energy fraction flatters you &mdash; the '+
+           'relative <i>error</i> is the square root of the missing energy, so 99% energy still leaves ~10% error. ';
+      msg+='<b>&alpha; is not a capacity knob.</b> With B and A held fixed at the best rank-r fit, &alpha;/r = <b>'+s.toFixed(2)+
+           '</b> simply rescales the whole update, so the residual panel is '+
+           (Math.abs(s-1)<1e-9
+              ? 'as dark as the rank allows &mdash; this is the pure truncation error.'
+              : 'dominated by over/under-scaling, not by truncation. Uncheck the lock and drag &alpha; down to r: the applied square then snaps onto the target and only the truncation error is left.')+
+           ' In real training the optimiser refits B and A, so a larger &alpha; is absorbed by proportionally smaller factors: &alpha;/r acts as an '+
+           'effective step size while training, and as a strength dial when you merge or scale a finished adapter. ';
+      msg+=qlora
+        ? '<b>QLoRA is on:</b> the frozen W is stored in 4-bit <b>NF4</b> ('+NF4_BITS.toFixed(3)+' bits/param including double-quantised block scales) '+
+          'while A and B stay bf16. The frozen weights carry no gradient, no Adam moments and no fp32 master copy &mdash; only the thin strips do.'
+        : 'Toggle <b>QLoRA</b> to store the frozen W in 4-bit <b>NF4</b> ('+NF4_BITS.toFixed(2)+' bits/param with double quantisation) instead of bf16, '+
+          'while A and B still train in bf16 on top.';
+      noteEl.innerHTML=msg;
+    }
+
+    [dIn,rIn,alphaIn,lockIn,qloraIn].forEach(function(c){
+      c.addEventListener('input',update);
+      c.addEventListener('change',update);
+    });
+    if(resetBtn) resetBtn.addEventListener('click',function(){
+      dIn.value='4096'; rIn.value='16'; alphaIn.value='32';
+      lockIn.checked=true; qloraIn.checked=false;
+      update();
+    });
+
+    update();
+  })();</script>
+</div>

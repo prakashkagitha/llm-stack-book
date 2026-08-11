@@ -97,6 +97,8 @@ So the push on the scores is proportional to *how wrong the model currently is*:
 
 {{fig:bradley-terry-loss-shape}}
 
+{{tool:reward-model-preference}}
+
 !!! note "Aside: the ranking generalization (Plackett–Luce)"
 
     When labelers produce a full ranking of $K$ items rather than a single pair, you *can* train on all $\binom{K}{2}$ pairs (InstructGPT does — and crucially treats all pairs from one prompt as **one batch element** to avoid overfitting, see below). The principled multi-item generalization of Bradley–Terry is the **Plackett–Luce** model, whose likelihood for a ranking $y_1 \succ y_2 \succ \dots \succ y_K$ is a product of softmaxes, "choose the best, remove it, choose the next best, …". For most LLM RM training the simple pairwise decomposition is used because it is trivially batchable.

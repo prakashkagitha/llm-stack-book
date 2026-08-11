@@ -1,0 +1,642 @@
+<div class="viz-tool" id="tool-react-agent-loop">
+  <div class="vt-title">A ReAct agent loop: Thought, Action, Observation &mdash; and the three ways it can stop</div>
+
+  <div class="vt-grid">
+    <label for="react-agent-loop-task">Preset task
+      <select id="react-agent-loop-task">
+        <option value="pop" selected>Population ratio (search x2 -&gt; calculator)</option>
+        <option value="light">Speed of light in km/s (search -&gt; calculator)</option>
+        <option value="days">Days left in the year (get_date -&gt; calculator)</option>
+      </select>
+    </label>
+
+    <label for="react-agent-loop-maxsteps">Step limit T<sub>max</sub>
+      <span class="ral-in">
+        <input id="react-agent-loop-maxsteps" type="range" min="1" max="8" step="1" value="6">
+        <span id="react-agent-loop-maxsteps-val" class="ral-val">6</span>
+      </span>
+    </label>
+
+    <label for="react-agent-loop-budget">Toy context window (tokens)
+      <span class="ral-in">
+        <input id="react-agent-loop-budget" type="range" min="120" max="600" step="20" value="480">
+        <span id="react-agent-loop-budget-val" class="ral-val">480</span>
+      </span>
+    </label>
+
+    <label class="ral-toggle" for="react-agent-loop-badtoggle">
+      <input id="react-agent-loop-badtoggle" type="checkbox">
+      Something goes wrong (inject a failing tool call)
+    </label>
+  </div>
+
+  <div class="ral-buttons">
+    <button type="button" id="react-agent-loop-next">Next phase -&gt;</button>
+    <button type="button" id="react-agent-loop-run">Run to end</button>
+    <button type="button" id="react-agent-loop-reset">Reset</button>
+  </div>
+
+  <div class="ral-main">
+    <div class="ral-loopwrap">
+      <svg id="react-agent-loop-svg" viewBox="0 0 480 234" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Loop diagram: the LLM emits an action, the tool layer dispatches it, the environment runs it and returns an observation that is appended back into the LLM context.">
+        <defs>
+          <marker id="react-agent-loop-mk-neutral" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+            <path class="ral-arrowhead-neutral" d="M0,0 L8,4 L0,8 Z"></path>
+          </marker>
+          <marker id="react-agent-loop-mk-active" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+            <path class="ral-arrowhead-active" d="M0,0 L8,4 L0,8 Z"></path>
+          </marker>
+          <marker id="react-agent-loop-mk-error" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+            <path class="ral-arrowhead-error" d="M0,0 L8,4 L0,8 Z"></path>
+          </marker>
+        </defs>
+
+        <path id="react-agent-loop-arrow-la" class="ral-arrow" d="M205,58 C165,85 130,105 108,138" fill="none" marker-end="url(#react-agent-loop-mk-neutral)"></path>
+        <path id="react-agent-loop-arrow-te" class="ral-arrow" d="M174,165 L302,165" fill="none" marker-end="url(#react-agent-loop-mk-neutral)"></path>
+        <path id="react-agent-loop-arrow-el" class="ral-arrow" d="M373,138 C352,105 315,85 276,58" fill="none" marker-end="url(#react-agent-loop-mk-neutral)"></path>
+
+        <text class="ral-arrowlabel" x="130" y="100" text-anchor="middle">Action</text>
+        <text class="ral-arrowlabel" x="238" y="157" text-anchor="middle">execute</text>
+        <text class="ral-arrowlabel" x="352" y="100" text-anchor="middle">Observation</text>
+
+        <g id="react-agent-loop-node-llm">
+          <rect x="170" y="14" width="140" height="52" rx="12"></rect>
+          <text x="240" y="35" text-anchor="middle" class="ral-nodetitle">LLM</text>
+          <text x="240" y="52" text-anchor="middle" class="ral-nodesub">Thought -&gt; Action</text>
+        </g>
+        <g id="react-agent-loop-node-tools">
+          <rect x="20" y="139" width="152" height="52" rx="12"></rect>
+          <text x="96" y="160" text-anchor="middle" class="ral-nodetitle">Tools</text>
+          <text x="96" y="177" text-anchor="middle" class="ral-nodesub">parse + dispatch</text>
+        </g>
+        <g id="react-agent-loop-node-env">
+          <rect x="306" y="139" width="152" height="52" rx="12"></rect>
+          <text x="382" y="160" text-anchor="middle" class="ral-nodetitle">Environment</text>
+          <text x="382" y="177" text-anchor="middle" class="ral-nodesub">runs it, returns result</text>
+        </g>
+
+        <text id="react-agent-loop-phaselabel" x="240" y="219" text-anchor="middle" class="ral-phaselabel">ready</text>
+      </svg>
+    </div>
+
+    <div class="ral-sidebar">
+      <div class="ral-ctxbar-wrap">
+        <div class="ral-ctxbar-label">
+          <span>Context (system + task + scratchpad)</span>
+          <span id="react-agent-loop-ctxtext">0 tok</span>
+        </div>
+        <div class="ral-ctxbar-track">
+          <div id="react-agent-loop-ctxfill" class="ral-ctxbar-fill" style="width:0%"></div>
+          <div class="ral-ctxbar-mark"></div>
+        </div>
+        <div class="ral-ctxbar-foot"><span id="react-agent-loop-guardtext">guard: context_full() at 85%</span></div>
+      </div>
+
+      <div class="vt-out" id="react-agent-loop-out" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="ral-transcript-wrap" id="react-agent-loop-transcript-wrap" tabindex="0" role="log" aria-label="Agent transcript">
+    <div class="ral-transcript" id="react-agent-loop-transcript"></div>
+  </div>
+
+  <div class="vt-note">
+    Each click reveals one <b>phase</b> &mdash; a Thought, an Action, or the Observation the harness injects &mdash; and
+    lights up the node doing the work: the <b>LLM</b> thinks and emits <code>Action: tool(args)</code>, the <b>tool
+    layer</b> parses and dispatches it, the <b>environment</b> runs it and hands back an observation that is appended to
+    the context for the next Thought. The context bar only ever <i>grows</i>: after <i>k</i> steps it is O(<i>k</i>&middot;<i>s</i>)
+    tokens, estimated the same crude way the chapter does it (<code>total_chars / 4</code>). That gives the loop exactly
+    three exits, and you can trigger all three here: the model calls <code>finish(...)</code>; the step counter hits
+    <b>T<sub>max</sub></b>; or <code>context_full()</code> trips at 85&#37; of the window. On the defaults the agent just
+    finishes &mdash; drop T<sub>max</sub> to 3 to make the step ceiling bite, or shrink the window to about 200 tokens to
+    make the token guard fire first. Toggle &ldquo;something goes wrong&rdquo; to watch a call fail exactly the way this
+    chapter's own <code>calculator</code>, <code>search</code> and <code>_parse_action</code> really would &mdash; a
+    character-class rejection, an empty <code>fake_db</code> hit, and a <code>TypeError</code> from the regex splitting
+    <code>"299,792,458 / 1000"</code> on its thousands separators (the exact bug native tool-calling removes). Each
+    failure costs a full extra iteration, and the next Thought can only recover because the failed observation is
+    sitting in the context: the context window is the agent's only memory of its own mistakes.
+  </div>
+
+  <style>
+    #tool-react-agent-loop{
+      --ral-accent: var(--accent,#c15b39);
+      --ral-good:   var(--good,#17784e);
+      --ral-warn:   var(--warn,#a8620a);
+      --ral-onwarn: #ffffff;
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); max-width:100%; color:var(--ink,#211f1b);
+    }
+    html[data-theme="dark"] #tool-react-agent-loop{
+      --ral-good:   var(--good,#4fc48f);
+      --ral-warn:   var(--warn,#e8b451);
+      --ral-onwarn: #1c1a17;
+    }
+
+    #tool-react-agent-loop .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-react-agent-loop .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:12px 18px; }
+    #tool-react-agent-loop label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); }
+    #tool-react-agent-loop select{
+      font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border,#e7e1d4);
+      border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); max-width:100%;
+    }
+    #tool-react-agent-loop select:focus-visible,
+    #tool-react-agent-loop input:focus-visible,
+    #tool-react-agent-loop button:focus-visible,
+    #tool-react-agent-loop .ral-transcript-wrap:focus-visible{
+      outline:2px solid var(--ral-accent); outline-offset:2px;
+    }
+    #tool-react-agent-loop .ral-in{ display:flex; gap:8px; align-items:center; }
+    #tool-react-agent-loop .ral-in input[type="range"]{ flex:1 1 auto; min-width:0; accent-color:var(--ral-accent); }
+    #tool-react-agent-loop .ral-val{ font-family:var(--mono,monospace); font-size:.85rem; min-width:2.6em; text-align:right; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; }
+    #tool-react-agent-loop .ral-toggle{ flex-direction:row; align-items:center; gap:8px; font-size:.82rem; color:var(--ink-soft,#45413a); align-self:end; }
+    #tool-react-agent-loop .ral-toggle input{ accent-color:var(--ral-warn); width:16px; height:16px; flex:0 0 auto; }
+
+    #tool-react-agent-loop .ral-buttons{ margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; }
+    #tool-react-agent-loop button{
+      font:inherit; font-size:.85rem; font-weight:600; padding:8px 14px; border-radius:8px; cursor:pointer;
+      border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b);
+    }
+    #tool-react-agent-loop #react-agent-loop-next{ background:var(--ral-accent); border-color:var(--ral-accent); color:#fff; }
+    #tool-react-agent-loop button:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-react-agent-loop button:hover:not(:disabled){ filter:brightness(1.07); }
+
+    #tool-react-agent-loop .ral-main{
+      margin-top:16px; display:grid; grid-template-columns:minmax(260px,1.3fr) minmax(200px,1fr); gap:16px; align-items:start;
+    }
+    @media (max-width:640px){ #tool-react-agent-loop .ral-main{ grid-template-columns:1fr; } }
+
+    #tool-react-agent-loop .ral-loopwrap{
+      background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); border-radius:10px; padding:8px;
+      overflow-x:auto; max-width:100%; min-width:0;
+    }
+    #tool-react-agent-loop svg{ display:block; width:100%; height:auto; min-width:290px; }
+    #tool-react-agent-loop .ral-arrow{ stroke:var(--muted,#6d675d); stroke-width:2; fill:none; transition:stroke .2s ease, stroke-width .2s ease; }
+    #tool-react-agent-loop .ral-arrow.ral-active{ stroke:var(--ral-accent); stroke-width:3; }
+    #tool-react-agent-loop .ral-arrow.ral-error{ stroke:var(--ral-warn); stroke-width:3; }
+    #tool-react-agent-loop .ral-arrowhead-neutral{ fill:var(--muted,#6d675d); }
+    #tool-react-agent-loop .ral-arrowhead-active{ fill:var(--ral-accent); }
+    #tool-react-agent-loop .ral-arrowhead-error{ fill:var(--ral-warn); }
+    #tool-react-agent-loop .ral-arrowlabel{ font-size:10px; fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+
+    #tool-react-agent-loop #react-agent-loop-node-llm rect,
+    #tool-react-agent-loop #react-agent-loop-node-tools rect,
+    #tool-react-agent-loop #react-agent-loop-node-env rect{
+      fill:var(--surface-3,#ece7da); stroke:var(--border-2,#d8d1c0); stroke-width:1.4;
+      transition:fill .2s ease, stroke .2s ease;
+    }
+    #tool-react-agent-loop .ral-nodetitle{ font-size:13px; font-weight:700; fill:var(--ink,#211f1b); font-family:var(--sans,sans-serif); }
+    #tool-react-agent-loop .ral-nodesub{ font-size:9.5px; fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+    #tool-react-agent-loop g.ral-active rect{ fill:var(--ral-accent); stroke:var(--ral-accent); }
+    #tool-react-agent-loop g.ral-active .ral-nodetitle, #tool-react-agent-loop g.ral-active .ral-nodesub{ fill:#fff; }
+    #tool-react-agent-loop g.ral-error rect{ fill:var(--ral-warn); stroke:var(--ral-warn); }
+    #tool-react-agent-loop g.ral-error .ral-nodetitle, #tool-react-agent-loop g.ral-error .ral-nodesub{ fill:var(--ral-onwarn); }
+    #tool-react-agent-loop .ral-phaselabel{ font-size:11px; fill:var(--ink-soft,#45413a); font-family:var(--mono,monospace); }
+
+    #tool-react-agent-loop .ral-sidebar{ display:flex; flex-direction:column; gap:12px; min-width:0; }
+    #tool-react-agent-loop .ral-ctxbar-wrap{ background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); border-radius:10px; padding:10px 12px; }
+    #tool-react-agent-loop .ral-ctxbar-label{ display:flex; justify-content:space-between; gap:8px; font-size:.74rem; color:var(--ink-soft,#45413a); margin-bottom:6px; }
+    #tool-react-agent-loop #react-agent-loop-ctxtext{ font-family:var(--mono,monospace); font-variant-numeric:tabular-nums; white-space:nowrap; }
+    #tool-react-agent-loop .ral-ctxbar-track{ position:relative; height:12px; border-radius:6px; background:var(--surface-3,#ece7da); overflow:hidden; }
+    #tool-react-agent-loop .ral-ctxbar-fill{ height:100%; background:var(--ral-good); transition:width .25s ease, background .25s ease; }
+    #tool-react-agent-loop .ral-ctxbar-fill.ral-ctx-warn{ background:var(--ral-warn); }
+    #tool-react-agent-loop .ral-ctxbar-mark{ position:absolute; top:0; bottom:0; width:2px; background:var(--ink-soft,#45413a); opacity:.6; left:85%; }
+    #tool-react-agent-loop .ral-ctxbar-foot{ margin-top:5px; font-size:.68rem; color:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+
+    #tool-react-agent-loop .vt-out{ display:grid; grid-template-columns:1fr; gap:8px; }
+    #tool-react-agent-loop .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:8px 11px; font-size:.78rem; color:var(--ink,#211f1b); }
+    #tool-react-agent-loop .vt-stat b{ color:var(--ral-accent); font-variant-numeric:tabular-nums; }
+    #tool-react-agent-loop .vt-stat .l{ font-size:.71rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-react-agent-loop .vt-stat.ral-stat-done b{ color:var(--ral-good); }
+    #tool-react-agent-loop .vt-stat.ral-stat-stopped b{ color:var(--ral-warn); }
+
+    #tool-react-agent-loop .ral-transcript-wrap{
+      margin-top:14px; border:1px solid var(--border,#e7e1d4); border-radius:10px; background:var(--surface-2,#f3efe6);
+      max-height:340px; overflow-y:auto; overflow-x:auto; max-width:100%;
+    }
+    #tool-react-agent-loop .ral-transcript{ padding:12px 14px; font-family:var(--mono,monospace); font-size:.78rem; line-height:1.55; color:var(--ink,#211f1b); }
+    #tool-react-agent-loop .ral-line{ white-space:pre-wrap; word-break:break-word; margin-bottom:2px; }
+    #tool-react-agent-loop .ral-sys{ color:var(--muted,#6d675d); font-style:italic; margin-bottom:6px; }
+    #tool-react-agent-loop .ral-stepnum{ color:var(--muted,#6d675d); font-weight:700; display:block; margin-top:10px; }
+    #tool-react-agent-loop .ral-thought{ color:var(--ink-soft,#45413a); }
+    #tool-react-agent-loop .ral-thought b, #tool-react-agent-loop .ral-action b,
+    #tool-react-agent-loop .ral-obs b, #tool-react-agent-loop .ral-final b{ color:var(--ink,#211f1b); }
+    #tool-react-agent-loop .ral-action{ color:var(--ral-accent); }
+    #tool-react-agent-loop .ral-obs{ color:var(--ink,#211f1b); }
+    #tool-react-agent-loop .ral-obs.ral-obs-error{ color:var(--ral-warn); }
+    #tool-react-agent-loop .ral-final{ color:var(--ral-good); font-weight:600; }
+    #tool-react-agent-loop .ral-stopped{ color:var(--ral-warn); font-weight:600; }
+    #tool-react-agent-loop .ral-halt{ margin-top:10px; }
+
+    #tool-react-agent-loop .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-react-agent-loop .vt-note b{ color:var(--ink-soft,#45413a); }
+    #tool-react-agent-loop .vt-note code{ font-family:var(--mono,monospace); background:var(--surface-3,#ece7da); border-radius:4px; padding:0 4px; }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-react-agent-loop');
+    if(!root) return;
+
+    function q(id){ return root.querySelector('#react-agent-loop-' + id); }
+
+    var elTask    = q('task');
+    var elMax     = q('maxsteps');
+    var elMaxVal  = q('maxsteps-val');
+    var elBudget  = q('budget');
+    var elBudVal  = q('budget-val');
+    var elBad     = q('badtoggle');
+    var elNext    = q('next');
+    var elRun     = q('run');
+    var elReset   = q('reset');
+    var elTrans   = q('transcript');
+    var elTransWrap = q('transcript-wrap');
+    var elOut     = q('out');
+    var elCtxFill = q('ctxfill');
+    var elCtxText = q('ctxtext');
+    var elGuard   = q('guardtext');
+    var elPhase   = q('phaselabel');
+
+    var nodeLLM   = q('node-llm');
+    var nodeTools = q('node-tools');
+    var nodeEnv   = q('node-env');
+    var arrows    = [q('arrow-la'), q('arrow-te'), q('arrow-el')];
+    var nodes     = [nodeLLM, nodeTools, nodeEnv];
+
+    if(!elTask || !elMax || !elBudget || !elBad || !elNext || !elRun || !elReset ||
+       !elTrans || !elOut || !elCtxFill || !elCtxText || !elPhase ||
+       nodes.indexOf(null) !== -1 || arrows.indexOf(null) !== -1) return;
+
+    // ------------------------------------------------------------ constants
+    // MAX_CONTEXT_FRACTION and the 4-chars-per-token estimator are exactly the
+    // ones in the chapter's context_full() helper.
+    var MAX_FRACTION  = 0.85;
+    var CHARS_PER_TOK = 4;
+
+    var SYSTEM_PROMPT =
+      "You are a helpful AI assistant that solves tasks by alternating between " +
+      "Thought, Action, and Observation steps. Format: Thought / Action: tool(args) / " +
+      "Observation (filled in by the harness). Call finish(answer) when done.";
+
+    // ------------------------------------------------------------ today (deterministic per day)
+    // Mirrors the chapter's get_date() -> datetime.date.today().isoformat(), so the
+    // "days left in the year" trace stays arithmetically true forever. There is no
+    // randomness anywhere in this widget: every trajectory below is fully scripted.
+    function pad2(n){ return (n < 10 ? '0' : '') + n; }
+    function todayInfo(){
+      var d = new Date();
+      var y = d.getFullYear(), mo = d.getMonth(), da = d.getDate();
+      var leap = (y % 4 === 0 && y % 100 !== 0) || (y % 400 === 0);
+      var yearDays = leap ? 366 : 365;
+      var doy = Math.round((Date.UTC(y, mo, da) - Date.UTC(y, 0, 1)) / 86400000) + 1;
+      return { iso: y + '-' + pad2(mo + 1) + '-' + pad2(da), year: y, leap: leap,
+               yearDays: yearDays, doy: doy, remaining: yearDays - doy };
+    }
+
+    // ------------------------------------------------------------ task data
+    // Each step: { thought, tool, args, obs, isFinal, isError }.
+    // `obs` is null only for the final finish() step: the harness never generates
+    // an observation for finish(), it returns the answer and breaks out of the loop.
+    //
+    // Every error observation below is the string the chapter's OWN tool really
+    // returns for that input -- no invented error messages:
+    //   calculator(): rejects any char outside "0123456789+-*/()., " with
+    //                 "Error: only arithmetic expressions allowed.", otherwise evals.
+    //   search():     falls through to f"No results found for: {query}".
+    function buildTasks(){
+      var T = todayInfo();
+      var rem = T.remaining;
+      return {
+        pop: {
+          task: "How many times larger is Tokyo's metro population than New York's? Give the ratio to 2 decimal places.",
+          normal: [
+            { thought: "I need Tokyo's metro population before I can compute any ratio.",
+              tool: "search", args: '"Tokyo population"', obs: "Tokyo metro ~37 million (2024)." },
+            { thought: "Now I need New York's metro population to compare against.",
+              tool: "search", args: '"New York population"', obs: "NYC metro ~20 million (2024)." },
+            { thought: "I have both figures. Divide Tokyo's by New York's to get the ratio.",
+              tool: "calculator", args: '"37 / 20"', obs: "1.85" },
+            { thought: "1.85 is already at two decimal places. Time to answer.",
+              tool: "finish", args: '"Tokyo\'s metro area is approximately 1.85x larger than New York\'s."',
+              obs: null, isFinal: true }
+          ],
+          errorAt: 2,
+          // Letters are outside calculator()'s allowed character set, so the tool
+          // rejects the call before eval() ever runs.
+          errorStep: { thought: "I have both figures. Divide Tokyo's by New York's to get the ratio.",
+            tool: "calculator", args: '"37 million / 20 million"',
+            obs: "Error: only arithmetic expressions allowed.", isError: true },
+          recovery: "The calculator only accepts arithmetic characters, and \"million\" is not one. The units cancel anyway, so retry with the bare numbers."
+        },
+        light: {
+          task: "What is the speed of light in kilometres per second, to 2 decimal places?",
+          normal: [
+            { thought: "I need the speed of light in SI units first.",
+              tool: "search", args: '"speed of light"', obs: "299,792,458 metres per second." },
+            { thought: "Convert metres per second to kilometres per second: divide by 1000.",
+              tool: "calculator", args: '"299792458 / 1000"', obs: "299792.458" },
+            { thought: "Round 299792.458 to two decimals and answer.",
+              tool: "finish", args: '"299792.46 km/s"', obs: null, isFinal: true }
+          ],
+          errorAt: 1,
+          // A harness bug, not a model bug: _parse_action() splits the arg string on
+          // commas, so "299,792,458 / 1000" arrives as THREE positional args and the
+          // one-parameter calculator() raises TypeError, which the harness turns into
+          // an observation. Exactly the class of bug native tool-calling removes.
+          errorStep: { thought: "Convert metres per second to kilometres per second: divide by 1000.",
+            tool: "calculator", args: '"299,792,458 / 1000"',
+            obs: "Error calling calculator: calculator() takes 1 positional argument but 3 were given",
+            isError: true },
+          recovery: "The harness split my argument on its thousands separators and passed three arguments. Drop the commas so the expression survives parsing."
+        },
+        days: {
+          task: "Using today's date, how many full days remain until the end of the year?",
+          normal: [
+            { thought: "I need today's date before I can compute the days remaining.",
+              tool: "get_date", args: "", obs: T.iso },
+            { thought: T.iso + " is day " + T.doy + " of a " + T.yearDays + "-day year (" + T.year +
+                       " is " + (T.leap ? "a leap year" : "not a leap year") + "), so remaining = " +
+                       T.yearDays + " - " + T.doy + ".",
+              tool: "calculator", args: '"' + T.yearDays + ' - ' + T.doy + '"', obs: String(rem) },
+            { thought: rem + " days remain. Time to answer.",
+              tool: "finish", args: '"' + rem + ' days remain until the end of ' + T.year + '."',
+              obs: null, isFinal: true }
+          ],
+          errorAt: 1,
+          // search()'s fake_db has no matching key, so it returns its fallback verbatim.
+          errorStep: { thought: "Maybe I can just look up how many days are left.",
+            tool: "search", args: '"days remaining in year"',
+            obs: "No results found for: days remaining in year", isError: true },
+          recovery: "Search has no coverage for this, and it is arithmetic anyway. I already have today's date, so compute " + T.yearDays + " - " + T.doy + " directly."
+        }
+      };
+    }
+
+    var TASKS = buildTasks();
+
+    // --------------------------------------------------------- build steps
+    function buildSteps(taskKey, injectBad){
+      var t = TASKS[taskKey];
+      if(!t) return [];
+      if(!injectBad) return t.normal.slice();
+      var before = t.normal.slice(0, t.errorAt);
+      var after  = t.normal.slice(t.errorAt);
+      // The retry repeats the SAME intended action, but its thought now reasons
+      // about the failed observation sitting in the context.
+      var retry  = Object.assign({}, after[0], { thought: t.recovery });
+      return before.concat([t.errorStep, retry], after.slice(1));
+    }
+
+    // Flatten steps into atomic phases: Thought -> Action -> (Observation, unless final).
+    function buildPhases(steps){
+      var phases = [], i, s, n;
+      for(i = 0; i < steps.length; i++){
+        s = steps[i]; n = i + 1;
+        phases.push({ stepNum: n, kind: 'thought',  text: s.thought, isError: false, isFinal: !!s.isFinal });
+        phases.push({ stepNum: n, kind: 'action',   tool: s.tool, args: s.args, isError: !!s.isError, isFinal: !!s.isFinal });
+        if(!s.isFinal){
+          phases.push({ stepNum: n, kind: 'observation', text: s.obs, isError: !!s.isError, isFinal: false });
+        }
+      }
+      return phases;
+    }
+
+    // ------------------------------------------------------------- state
+    var S = {
+      taskKey: 'pop', maxSteps: 6, budget: 480, injectBad: false,
+      steps: [], phases: [], phaseIdx: 0,
+      halt: null,        // null | 'tmax' | 'context'
+      ctxChars: 0
+    };
+    var runTimer = null;
+
+    function tokens(){ return S.ctxChars / CHARS_PER_TOK; }          // chapter: total_chars / 4
+    function contextFull(){ return tokens() > MAX_FRACTION * S.budget; }
+    function actionText(tool, args){ return tool + '(' + args + ')'; }
+    function escapeHtml(s){
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    function clampInt(el, lo, hi, dflt){
+      var v = parseInt(el.value, 10);
+      if(!isFinite(v)) return dflt;
+      return Math.min(hi, Math.max(lo, v));
+    }
+
+    function stopRunning(){
+      if(runTimer !== null){ clearTimeout(runTimer); runTimer = null; }
+    }
+
+    // ------------------------------------------------------------- reset
+    function reset(){
+      stopRunning();
+      S.taskKey  = TASKS[elTask.value] ? elTask.value : 'pop';
+      S.injectBad = !!elBad.checked;
+      S.maxSteps = clampInt(elMax, 1, 8, 6);
+      S.budget   = clampInt(elBudget, 120, 600, 480);
+      S.steps    = buildSteps(S.taskKey, S.injectBad);
+      S.phases   = buildPhases(S.steps);
+      S.phaseIdx = 0;
+      S.halt     = null;
+
+      var t = TASKS[S.taskKey];
+      // messages = [system, user task]; context_full() sums len(m["content"]).
+      S.ctxChars = SYSTEM_PROMPT.length + t.task.length;
+
+      elTrans.innerHTML =
+        '<div class="ral-line ral-sys">System: ' + escapeHtml(SYSTEM_PROMPT) + '</div>' +
+        '<div class="ral-line ral-sys">Task: '   + escapeHtml(t.task) + '</div>';
+
+      setLoopPhase(null);
+      renderCtx();
+      renderOut();
+      updateButtons();
+    }
+
+    function appendLine(html, cls){
+      var div = document.createElement('div');
+      div.className = 'ral-line' + (cls ? ' ' + cls : '');
+      div.innerHTML = html;
+      elTrans.appendChild(div);
+      if(elTransWrap) elTransWrap.scrollTop = elTransWrap.scrollHeight;
+    }
+
+    // ------------------------------------------------------ loop diagram
+    function clearLoop(){
+      nodes.forEach(function(n){ n.classList.remove('ral-active','ral-error'); });
+      arrows.forEach(function(a){
+        a.classList.remove('ral-active','ral-error');
+        a.setAttribute('marker-end', 'url(#react-agent-loop-mk-neutral)');
+      });
+    }
+    function activateArrow(a, err){
+      a.classList.add(err ? 'ral-error' : 'ral-active');
+      a.setAttribute('marker-end', 'url(#react-agent-loop-mk-' + (err ? 'error' : 'active') + ')');
+    }
+
+    function setLoopPhase(phase){
+      clearLoop();
+      if(!phase){
+        elPhase.textContent = S.halt ? 'halted' : 'ready';
+        return;
+      }
+      var err = !!phase.isError;
+      if(phase.kind === 'thought'){
+        nodeLLM.classList.add('ral-active');
+        elPhase.textContent = 'step ' + phase.stepNum + ': Thought (LLM generates)';
+      } else if(phase.kind === 'action'){
+        nodeLLM.classList.add('ral-active');
+        nodeTools.classList.add(err ? 'ral-error' : 'ral-active');
+        activateArrow(arrows[0], err);
+        elPhase.textContent = 'step ' + phase.stepNum + ': Action -> ' +
+          (phase.isFinal ? 'finish() [pseudo-tool]' : phase.tool + '()');
+      } else {
+        nodeTools.classList.add(err ? 'ral-error' : 'ral-active');
+        nodeEnv.classList.add(err ? 'ral-error' : 'ral-active');
+        activateArrow(arrows[1], err);
+        activateArrow(arrows[2], err);
+        elPhase.textContent = 'step ' + phase.stepNum + ': Observation -> appended to context';
+      }
+    }
+
+    // ------------------------------------------------------ context bar
+    function renderCtx(){
+      var tok  = tokens();
+      var frac = S.budget > 0 ? tok / S.budget : 0;
+      var shown = Math.min(1, Math.max(0, frac));
+      elCtxFill.style.width = (shown * 100).toFixed(1) + '%';
+      elCtxFill.classList.toggle('ral-ctx-warn', frac >= MAX_FRACTION);
+      elCtxText.textContent = '~' + Math.round(tok) + ' / ' + S.budget + ' tok';
+      if(elGuard){
+        elGuard.textContent = 'context_full() at ' + Math.round(MAX_FRACTION * 100) + '% = ' +
+                              Math.round(MAX_FRACTION * S.budget) + ' tok' + (contextFull() ? '  [TRIPPED]' : '');
+      }
+    }
+
+    // ---------------------------------------------------------- readout
+    function renderOut(){
+      var total = S.steps.length;
+      var done  = S.phaseIdx > 0 ? S.phases[S.phaseIdx - 1].stepNum : 0;
+      var isDone = !S.halt && S.phaseIdx >= S.phases.length;
+      var status = S.halt === 'tmax'    ? 'STOPPED (T_max)'
+                 : S.halt === 'context' ? 'STOPPED (context)'
+                 : isDone               ? 'DONE (finish called)'
+                 : 'running';
+      var cls = S.halt ? 'ral-stat-stopped' : (isDone ? 'ral-stat-done' : '');
+
+      var html = '';
+      html += '<div class="vt-stat ' + cls + '"><b>' + escapeHtml(status) + '</b><div class="l">Termination status</div></div>';
+      html += '<div class="vt-stat"><b>' + done + ' / ' + total + '</b><div class="l">Steps taken / steps this trajectory needs</div></div>';
+      html += '<div class="vt-stat"><b>' + S.maxSteps + '</b><div class="l">T<sub>max</sub> &mdash; hard step ceiling</div></div>';
+      html += '<div class="vt-stat"><b>' + Math.round(tokens()) + ' tok</b><div class="l">Context after ' + done + ' step(s); grows monotonically</div></div>';
+      if(S.injectBad){
+        html += '<div class="vt-stat"><b>+1 step</b><div class="l">Cost of the bad tool call (retry burns a whole iteration)</div></div>';
+      }
+      elOut.innerHTML = html;
+    }
+
+    // --------------------------------------------------------- stepping
+    function finishedOrHalted(){ return !!S.halt || S.phaseIdx >= S.phases.length; }
+
+    function updateButtons(){
+      var over = finishedOrHalted();
+      elNext.disabled = over;
+      elRun.disabled  = over;
+      elNext.textContent = over ? 'Next phase (done)' : 'Next phase ->';
+      elRun.textContent  = runTimer !== null ? 'Running...' : 'Run to end';
+      if(over) stopRunning();
+    }
+
+    function halt(kind, msg){
+      S.halt = kind;
+      stopRunning();
+      appendLine('<span class="ral-stopped">' + escapeHtml(msg) + '</span>', 'ral-halt');
+      setLoopPhase(null);
+      renderCtx();
+      renderOut();
+      updateButtons();
+    }
+
+    function nextPhase(){
+      if(finishedOrHalted()) return false;
+      var phase = S.phases[S.phaseIdx];
+
+      // Both guards are checked where the chapter checks them: at the top of a new
+      // loop iteration, i.e. just before the model is asked for the next Thought.
+      if(phase.kind === 'thought'){
+        // `for step in range(MAX_STEPS)`: iterations 1..MAX_STEPS may run, so an
+        // iteration numbered MAX_STEPS+1 is exactly the one that never starts.
+        if(phase.stepNum > S.maxSteps){
+          halt('tmax', 'Error: agent exceeded maximum steps (T_max = ' + S.maxSteps + ') without finishing.');
+          return false;
+        }
+        if(contextFull()){
+          halt('context', 'Error: context_full() -> ~' + Math.round(tokens()) + ' tok > ' +
+                          Math.round(MAX_FRACTION * S.budget) + ' tok (85% of ' + S.budget + '). Halting before step ' + phase.stepNum + '.');
+          return false;
+        }
+        appendLine('<span class="ral-stepnum">Step ' + phase.stepNum + '</span>');
+        appendLine('<span class="ral-thought"><b>Thought:</b> ' + escapeHtml(phase.text) + '</span>');
+        S.ctxChars += ('Thought: ' + phase.text).length;
+      } else if(phase.kind === 'action'){
+        var act = phase.isFinal ? actionText('finish', phase.args) : actionText(phase.tool, phase.args);
+        appendLine('<span class="ral-action"><b>Action:</b> ' + escapeHtml(act) + '</span>');
+        S.ctxChars += ('\nAction: ' + act).length;
+        if(phase.isFinal){
+          // finish() is a pseudo-tool: the harness extracts the argument and returns.
+          // Nothing is appended to the context, and no observation is ever produced.
+          appendLine('<span class="ral-final"><b>Final Answer:</b> ' +
+                     escapeHtml(phase.args.replace(/^"/, '').replace(/"$/, '')) + '</span>');
+        }
+      } else {
+        appendLine('<span class="ral-obs' + (phase.isError ? ' ral-obs-error' : '') +
+                   '"><b>Observation:</b> ' + escapeHtml(phase.text) + '</span>');
+        S.ctxChars += ('Observation: ' + phase.text).length;
+      }
+
+      setLoopPhase(phase);
+      S.phaseIdx++;
+      renderCtx();
+      renderOut();
+      updateButtons();
+      return true;
+    }
+
+    function runToEnd(){
+      if(finishedOrHalted() || runTimer !== null) return;
+      var tick = function(){
+        runTimer = null;
+        var advanced = nextPhase();
+        if(advanced && !finishedOrHalted()){
+          runTimer = setTimeout(tick, 620);
+        }
+        updateButtons();
+      };
+      runTimer = setTimeout(tick, 0);
+      updateButtons();
+    }
+
+    // ------------------------------------------------------------ wiring
+    elNext.addEventListener('click', function(){ stopRunning(); nextPhase(); updateButtons(); });
+    elRun.addEventListener('click', runToEnd);
+    elReset.addEventListener('click', reset);
+    elTask.addEventListener('change', reset);
+    elBad.addEventListener('change', reset);
+
+    // Both sliders retune the live run without rewriting history: the transcript
+    // already shown is honest, and the new limits are enforced from the next
+    // iteration onward (so you can lower T_max mid-run and watch it bite).
+    elMax.addEventListener('input', function(){
+      S.maxSteps = clampInt(elMax, 1, 8, 6);
+      elMaxVal.textContent = String(S.maxSteps);
+      renderOut();
+    });
+    elBudget.addEventListener('input', function(){
+      S.budget = clampInt(elBudget, 120, 600, 480);
+      elBudVal.textContent = String(S.budget);
+      renderCtx();
+      renderOut();
+    });
+
+    elMaxVal.textContent = elMax.value;
+    elBudVal.textContent = elBudget.value;
+    reset();
+  })();</script>
+</div>

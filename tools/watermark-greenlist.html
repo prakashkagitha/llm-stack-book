@@ -1,0 +1,648 @@
+<div class="viz-tool" id="tool-watermark-greenlist">
+  <div class="vt-title">Green-list watermarking: bias the logits, then count green tokens</div>
+
+  <div class="vt-grid">
+    <label for="watermark-greenlist-gamma-num">Green fraction &gamma;
+      <span class="wmg-in">
+        <input id="watermark-greenlist-gamma-range" type="range" min="0.05" max="0.95" step="0.05" value="0.5" aria-label="Green-list fraction gamma, slider">
+        <input id="watermark-greenlist-gamma-num" type="number" min="0.05" max="0.95" step="0.05" value="0.5" aria-label="Green-list fraction gamma, number">
+      </span>
+    </label>
+    <label for="watermark-greenlist-delta-num">Logit bias &delta; (strength)
+      <span class="wmg-in">
+        <input id="watermark-greenlist-delta-range" type="range" min="0" max="8" step="0.25" value="2" aria-label="Green-list logit bias delta, slider">
+        <input id="watermark-greenlist-delta-num" type="number" min="0" max="8" step="0.25" value="2" aria-label="Green-list logit bias delta, number">
+      </span>
+    </label>
+    <label for="watermark-greenlist-sigma-num">Logit spread &sigma; (model confidence)
+      <span class="wmg-in">
+        <input id="watermark-greenlist-sigma-range" type="range" min="0.5" max="16" step="0.5" value="5" aria-label="Logit spread sigma controlling next-token entropy, slider">
+        <input id="watermark-greenlist-sigma-num" type="number" min="0.5" max="16" step="0.5" value="5" aria-label="Logit spread sigma controlling next-token entropy, number">
+      </span>
+    </label>
+    <label for="watermark-greenlist-seq-num">Scored tokens T
+      <span class="wmg-in">
+        <input id="watermark-greenlist-seq-range" type="range" min="20" max="400" step="10" value="200" aria-label="Number of scored tokens T, slider">
+        <input id="watermark-greenlist-seq-num" type="number" min="20" max="400" step="10" value="200" aria-label="Number of scored tokens T, number">
+      </span>
+    </label>
+    <label for="watermark-greenlist-step-num">Inspect step t
+      <span class="wmg-in">
+        <input id="watermark-greenlist-step-range" type="range" min="1" max="400" step="1" value="1" aria-label="Inspected generation step t, slider">
+        <input id="watermark-greenlist-step-num" type="number" min="1" max="400" step="1" value="1" aria-label="Inspected generation step t, number">
+      </span>
+    </label>
+    <label for="watermark-greenlist-stream">Vocabulary view shows
+      <select id="watermark-greenlist-stream">
+        <option value="wm" selected>Watermarked generation</option>
+        <option value="human">Human text (null / chance)</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="wmg-legend">
+    <span><i class="wmg-sw wmg-sw-green"></i>green list (gets +&delta;)</span>
+    <span><i class="wmg-sw wmg-sw-red"></i>red list</span>
+    <span><i class="wmg-sw wmg-sw-sel"></i>sampled token</span>
+    <span><i class="wmg-sw wmg-sw-base"></i>left bar = p<sub>v</sub> before boost</span>
+    <span>right bar = p<sub>v</sub> after boost</span>
+  </div>
+
+  <div class="wmg-scroll">
+    <svg id="watermark-greenlist-vocab-svg" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
+  </div>
+  <div class="wmg-caption" id="watermark-greenlist-vocab-caption"></div>
+
+  <div class="wmg-readout" id="watermark-greenlist-readout"></div>
+
+  <div class="wmg-cmp-heading">Detector z-score vs. number of scored tokens t</div>
+  <div class="wmg-scroll">
+    <svg id="watermark-greenlist-chart-svg" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
+  </div>
+
+  <div class="wmg-stats" id="watermark-greenlist-stats"></div>
+
+  <div class="vt-note" id="watermark-greenlist-note">
+    <b>The mechanism.</b> At every step the previous token is hashed (with a secret key) into a pseudo-random split of
+    the vocabulary: a &gamma;-fraction <i>green list</i> gets its logits raised by +&delta; before the softmax, so the
+    model samples green tokens more often than chance with no change to its weights. The grid shows one step: each cell
+    is a vocabulary entry with its probability <i>before</i> the boost (grey bar) next to its probability <i>after</i>
+    (coloured bar) &mdash; &delta; visibly pushes mass from the red cells onto the green ones.
+    <b>Detection</b> replays the same hash on a candidate text, counts observed green tokens g out of T, and forms
+    z = (g &minus; &gamma;T) / &radic;(T&thinsp;&gamma;(1&minus;&gamma;)). Under the null each token is green
+    independently with probability &gamma;, so human z wanders around 0 like a random walk, while watermarked text with
+    green rate p&nbsp;&gt;&nbsp;&gamma; gives z &asymp; (p&nbsp;&minus;&nbsp;&gamma;)&thinsp;&radic;T&thinsp;/&thinsp;&radic;(&gamma;(1&minus;&gamma;)) &mdash;
+    it grows like <b>&radic;T, not linearly</b>, which is why detection needs a few hundred tokens rather than a few dozen.
+    <b>Three tradeoffs to play with.</b> (1) Raising &delta; raises p and reaches z* = 4 in fewer tokens, but the
+    KL(boosted&nbsp;&#8214;&nbsp;original) statistic below shows exactly how much distribution you paid for it. (2)
+    &sigma; controls how peaked the model's own distribution is: crank it up (low entropy, near-greedy text like code or
+    a quoted fact) and a fixed &delta; can no longer move the argmax &mdash; the green rate collapses toward &gamma; and z
+    stalls below threshold. That entropy ceiling, not the statistics, is the real limit of logit-bias watermarks.
+    (3) &gamma; is not monotone: a small green list makes each green hit more surprising (more z per green token) but
+    also leaves &delta; fewer good tokens to promote, so for a fixed &delta; the z-score peaks at an intermediate
+    &gamma; (try &gamma; &asymp; 0.25, the KGW paper's recommendation) and collapses as &gamma; &rarr; 1, where green is
+    nearly free and the test is powerless. Note that the null variance &gamma;(1&minus;&gamma;) is <i>largest</i> at
+    &gamma; = 0.5, so &gamma; trades surprise-per-token against the width of the null &mdash; it is not a
+    "more green is better" dial.
+  </div>
+
+  <style>
+    #tool-watermark-greenlist{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif);
+      --wmg-green:#2f9e6e; --wmg-red:#b4344a; --wmg-sel:#3b82f6; --wmg-warn:#c08a06;
+      --wmg-base:var(--faint,#908a7e); --wmg-cell:var(--surface,#fff); }
+    html[data-theme="dark"] #tool-watermark-greenlist{
+      --wmg-green:#4fbf8d; --wmg-red:#e8697f; --wmg-sel:#7dabf8; --wmg-warn:#e0a106; }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-watermark-greenlist{
+        --wmg-green:#4fbf8d; --wmg-red:#e8697f; --wmg-sel:#7dabf8; --wmg-warn:#e0a106; } }
+
+    #tool-watermark-greenlist .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-watermark-greenlist .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px 18px; }
+    #tool-watermark-greenlist label{ display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted,#6d675d); }
+    #tool-watermark-greenlist input, #tool-watermark-greenlist select{
+      font:inherit; font-size:.88rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-watermark-greenlist input[type="range"]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-watermark-greenlist :focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-watermark-greenlist .wmg-in{ display:flex; gap:6px; align-items:center; }
+    #tool-watermark-greenlist .wmg-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-watermark-greenlist .wmg-in input[type="number"]{ flex:1 1 66px; min-width:0; }
+
+    #tool-watermark-greenlist .wmg-legend{ display:flex; flex-wrap:wrap; gap:8px 16px; margin:14px 0 4px;
+      font-size:.72rem; color:var(--muted,#6d675d); }
+    #tool-watermark-greenlist .wmg-legend span{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-watermark-greenlist .wmg-sw{ display:inline-block; width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+    #tool-watermark-greenlist .wmg-sw-green{ background:var(--wmg-green); }
+    #tool-watermark-greenlist .wmg-sw-red{ background:var(--wmg-red); }
+    #tool-watermark-greenlist .wmg-sw-sel{ background:transparent; border:2px solid var(--wmg-sel); }
+    #tool-watermark-greenlist .wmg-sw-base{ background:var(--wmg-base); }
+
+    #tool-watermark-greenlist .wmg-scroll{ margin-top:8px; overflow-x:auto; max-width:100%; border-radius:9px;
+      background:var(--surface-2,#f3efe6); padding:2px; }
+    #tool-watermark-greenlist .wmg-scroll svg{ display:block; margin:0 auto; max-width:100%; height:auto; }
+    #tool-watermark-greenlist .wmg-caption{ margin-top:6px; font-size:.72rem; color:var(--muted,#6d675d); text-align:center; }
+
+    #tool-watermark-greenlist .wmg-cellbg{ fill:var(--wmg-cell); fill-opacity:.55; stroke-width:1.1; }
+    #tool-watermark-greenlist .wmg-cell-green{ stroke:var(--wmg-green); }
+    #tool-watermark-greenlist .wmg-cell-red{ stroke:var(--wmg-red); stroke-dasharray:3 2; }
+    #tool-watermark-greenlist .wmg-bar-base{ fill:var(--wmg-base); }
+    #tool-watermark-greenlist .wmg-bar-green{ fill:var(--wmg-green); }
+    #tool-watermark-greenlist .wmg-bar-red{ fill:var(--wmg-red); }
+    #tool-watermark-greenlist .wmg-selring{ fill:none; stroke:var(--wmg-sel); stroke-width:2.4; }
+    #tool-watermark-greenlist .wmg-hdr{ font-size:9px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-watermark-greenlist .wmg-masslabel{ font-size:10px; fill:var(--ink-soft,#45413a); font-family:var(--sans,sans-serif); }
+    #tool-watermark-greenlist .wmg-massrail{ fill:var(--wmg-red); fill-opacity:.30; stroke:var(--wmg-red); stroke-width:.8; }
+    #tool-watermark-greenlist .wmg-massgreen{ fill:var(--wmg-green); fill-opacity:.85; }
+
+    #tool-watermark-greenlist .wmg-readout{ margin-top:12px; font-size:.78rem; color:var(--ink-soft,#45413a); line-height:1.6;
+      font-variant-numeric:tabular-nums; }
+    #tool-watermark-greenlist .wmg-readout b{ color:var(--ink,#211f1b); }
+    #tool-watermark-greenlist .wmg-tag-green{ color:var(--wmg-green); font-weight:700; }
+    #tool-watermark-greenlist .wmg-tag-red{ color:var(--wmg-red); font-weight:700; }
+
+    #tool-watermark-greenlist .wmg-cmp-heading{ margin-top:18px; font-size:.72rem; letter-spacing:.04em;
+      color:var(--muted,#6d675d); text-transform:uppercase; }
+
+    #tool-watermark-greenlist .wmg-axis{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-watermark-greenlist .wmg-grid{ stroke:var(--border,#e7e1d4); stroke-width:1; }
+    #tool-watermark-greenlist .wmg-zero{ stroke:var(--muted,#6d675d); stroke-width:1; stroke-dasharray:2 3; opacity:.7; }
+    #tool-watermark-greenlist .wmg-axis-label{ font-size:9.5px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-watermark-greenlist .wmg-axis-title{ font-size:10px; fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+    #tool-watermark-greenlist .wmg-thresh{ stroke:var(--wmg-warn); stroke-width:1.3; stroke-dasharray:5 3; }
+    #tool-watermark-greenlist .wmg-thresh-label{ font-size:9.5px; fill:var(--wmg-warn); font-family:var(--mono,monospace); }
+    #tool-watermark-greenlist .wmg-detect{ stroke:var(--wmg-green); stroke-width:1.2; stroke-dasharray:3 3; }
+    #tool-watermark-greenlist .wmg-detect-label{ font-size:9.5px; fill:var(--wmg-green); font-family:var(--mono,monospace); }
+    #tool-watermark-greenlist .wmg-line-wm{ fill:none; stroke:var(--wmg-green); stroke-width:2; stroke-linejoin:round; }
+    #tool-watermark-greenlist .wmg-line-human{ fill:none; stroke:var(--muted,#6d675d); stroke-width:1.6; stroke-linejoin:round; }
+    #tool-watermark-greenlist .wmg-dot-wm{ fill:var(--wmg-green); }
+    #tool-watermark-greenlist .wmg-dot-human{ fill:var(--muted,#6d675d); }
+    #tool-watermark-greenlist .wmg-chart-legend{ font-size:10px; fill:var(--ink-soft,#45413a); font-family:var(--sans,sans-serif); }
+
+    #tool-watermark-greenlist .wmg-stats{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:8px; }
+    #tool-watermark-greenlist .wmg-stat{ padding:8px 10px; border-radius:8px; background:var(--surface-2,#f3efe6);
+      border:1px solid var(--border,#e7e1d4); }
+    #tool-watermark-greenlist .wmg-stat-label{ font-size:.66rem; letter-spacing:.03em; text-transform:uppercase; color:var(--muted,#6d675d); }
+    #tool-watermark-greenlist .wmg-stat-val{ font-size:.98rem; font-weight:700; color:var(--ink,#211f1b);
+      font-variant-numeric:tabular-nums; margin-top:2px; }
+    #tool-watermark-greenlist .wmg-stat-val.wmg-good{ color:var(--wmg-green); }
+    #tool-watermark-greenlist .wmg-stat-val.wmg-bad{ color:var(--wmg-red); }
+
+    #tool-watermark-greenlist .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-watermark-greenlist .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-watermark-greenlist');
+    if (!root) return;
+    function $(id){ return root.querySelector('#watermark-greenlist-' + id); }
+
+    var elGammaR = $('gamma-range'), elGammaN = $('gamma-num');
+    var elDeltaR = $('delta-range'), elDeltaN = $('delta-num');
+    var elSigR   = $('sigma-range'), elSigN   = $('sigma-num');
+    var elSeqR   = $('seq-range'),   elSeqN   = $('seq-num');
+    var elStepR  = $('step-range'),  elStepN  = $('step-num');
+    var elStream = $('stream');
+    var elVocabSvg = $('vocab-svg'), elVocabCap = $('vocab-caption');
+    var elChartSvg = $('chart-svg');
+    var elReadout = $('readout'), elStats = $('stats');
+    if (!elGammaR || !elGammaN || !elDeltaR || !elDeltaN || !elSigR || !elSigN) return;
+    if (!elSeqR || !elSeqN || !elStepR || !elStepN || !elStream) return;
+    if (!elVocabSvg || !elChartSvg || !elReadout || !elStats || !elVocabCap) return;
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, attrs){
+      var e = document.createElementNS(SVGNS, tag);
+      for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    function txt(tag, attrs, content){ var e = mk(tag, attrs); e.textContent = content; return e; }
+    function paint(svg, kids, w, h, label){
+      svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+      svg.setAttribute('width', w);
+      svg.setAttribute('height', h);
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      svg.setAttribute('aria-label', label);
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      for (var i = 0; i < kids.length; i++) svg.appendChild(kids[i]);
+    }
+
+    // ------------------------------------------------------------------
+    // Deterministic PRNG (mulberry32) + 32-bit integer mix (murmur3-style
+    // finalizer). Seeded and reproducible: there is no Math.random and no
+    // Date anywhere in this file, so every control setting maps to exactly
+    // one picture, the same on every machine and every reload.
+    // ------------------------------------------------------------------
+    function mulberry32(seed){
+      var s = seed >>> 0;
+      return function(){
+        s = (s + 0x6D2B79F5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function hash32(a, b){
+      var h = ((a >>> 0) ^ 0x9E3779B9) >>> 0;
+      h = Math.imul(h ^ (b >>> 0), 0x85EBCA6B) >>> 0;
+      h ^= h >>> 13;
+      h = Math.imul(h, 0xC2B2AE35) >>> 0;
+      h ^= h >>> 16;
+      return h >>> 0;
+    }
+    function gaussian(rng){ // Box-Muller: standard normal from two uniforms
+      var u1 = Math.max(rng(), 1e-12), u2 = rng();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+    function softmax(logits){
+      var m = -Infinity, i;
+      for (i = 0; i < logits.length; i++) if (logits[i] > m) m = logits[i];
+      var exps = new Array(logits.length), s = 0;
+      for (i = 0; i < logits.length; i++){ exps[i] = Math.exp(logits[i] - m); s += exps[i]; }
+      for (i = 0; i < exps.length; i++) exps[i] /= s;
+      return exps;
+    }
+
+    var V = 100;             // toy vocabulary (real schemes: |V| ~ 32k-256k)
+    var MAXT = 400;          // pre-generate this many steps; T slices into it
+    var SEED_TOKEN = 7;      // fixed context token preceding generation
+    var ZSTAR = 4.0;         // detection threshold; matches the chapter's z* ~ 4
+    var UNIFORM = (function(){ var a = new Array(V); for (var i = 0; i < V; i++) a[i] = 1 / V; return a; })();
+
+    // Green list = TopGamma(Hash(k, w_{t-1})): score every vocab entry by
+    // hashing (key ^ previous token, token id) and keep the k = round(gamma*V)
+    // lowest scores. |V| = 100 and gamma steps of 0.05 make k/V *exactly*
+    // gamma, so the binomial null below is exact rather than approximate.
+    var greenCache = Object.create(null);
+    function computeGreenMask(prevToken, gamma){
+      var key = prevToken + '|' + gamma;
+      var cached = greenCache[key];
+      if (cached) return cached;
+      var pairs = new Array(V), v;
+      for (v = 0; v < V; v++) pairs[v] = [hash32((prevToken >>> 0) ^ 0x2545F491, v), v];
+      pairs.sort(function(a, b){ return a[0] - b[0] || a[1] - b[1]; });
+      var k = Math.round(gamma * V);
+      var mask = new Array(V);
+      for (v = 0; v < V; v++) mask[v] = false;
+      for (v = 0; v < k; v++) mask[pairs[v][1]] = true;
+      greenCache[key] = mask;
+      return mask;
+    }
+
+    // Base (unwatermarked) logits: a stand-in for a real LM forward pass,
+    // deterministic in (context, step). sigma scales the logit spread, i.e.
+    // it is the model's confidence knob: large sigma => peaked, low-entropy
+    // next-token distribution, which is exactly where logit-bias watermarks
+    // run out of room.
+    function stepLogits(prevToken, step, sigma){
+      var rng = mulberry32(hash32(prevToken >>> 0, (step * 2654435761) >>> 0));
+      var logits = new Array(V);
+      for (var v = 0; v < V; v++) logits[v] = sigma * gaussian(rng);
+      return logits;
+    }
+    // Inverse-CDF sampling from a fixed key-derived uniform: using the same
+    // uniform for every (prev, step) couples the runs, so moving delta shows
+    // the effect of the bias rather than fresh sampling noise.
+    function sampleIndex(probs, prevToken, step){
+      var rng = mulberry32(hash32((prevToken >>> 0) ^ 0x9E3779B1, (step * 40503) >>> 0));
+      var r = rng(), cum = 0;
+      for (var v = 0; v < probs.length; v++){ cum += probs[v]; if (r < cum) return v; }
+      return probs.length - 1;
+    }
+
+    // Everything the inspected step needs, recomputed on demand (cheap).
+    function stepDetail(prevToken, step, gamma, delta, sigma, isHuman){
+      var mask = computeGreenMask(prevToken, gamma), v;
+      if (isHuman){
+        var pg = 0;
+        for (v = 0; v < V; v++) if (mask[v]) pg += UNIFORM[v];
+        return { mask: mask, pOrig: UNIFORM, pBoost: UNIFORM, pGreenOrig: pg, pGreenBoost: pg, kl: 0, entropy: Math.log(V) };
+      }
+      var logits = stepLogits(prevToken, step, sigma);
+      var boosted = logits.slice();
+      for (v = 0; v < V; v++) if (mask[v]) boosted[v] += delta;
+      var pOrig = softmax(logits), pBoost = softmax(boosted);
+      var gO = 0, gB = 0, kl = 0, H = 0;
+      for (v = 0; v < V; v++){
+        if (mask[v]){ gO += pOrig[v]; gB += pBoost[v]; }
+        if (pBoost[v] > 1e-15) kl += pBoost[v] * Math.log(pBoost[v] / Math.max(pOrig[v], 1e-300));
+        if (pOrig[v] > 1e-15) H -= pOrig[v] * Math.log(pOrig[v]);
+      }
+      return { mask: mask, pOrig: pOrig, pBoost: pBoost, pGreenOrig: gO, pGreenBoost: gB, kl: kl, entropy: H };
+    }
+
+    // Watermarked generation: boost green logits by delta, softmax, sample.
+    // Records the exact KL(boosted || original) and the base entropy per step.
+    function generateWatermarked(gamma, delta, sigma){
+      var prev = SEED_TOKEN;
+      var tokens = [], green = [], ctx = [], kl = [], ent = [];
+      for (var t = 1; t <= MAXT; t++){
+        var d = stepDetail(prev, t, gamma, delta, sigma, false);
+        var tok = sampleIndex(d.pBoost, prev, t);
+        ctx.push(prev); tokens.push(tok); green.push(d.mask[tok]); kl.push(d.kl); ent.push(d.entropy);
+        prev = tok;
+      }
+      return { tokens: tokens, green: green, ctx: ctx, kl: kl, ent: ent };
+    }
+
+    // Human (null) baseline: tokens drawn uniformly, independent of the key.
+    // Conditioned on the previous token the green list is a fixed set of
+    // exactly k = gamma*V ids, so each token is green with probability
+    // exactly gamma, independently -- the binomial null the z-test assumes.
+    var humanTokensCache = null;
+    function humanTokens(){
+      if (humanTokensCache) return humanTokensCache;
+      var prev = SEED_TOKEN, tokens = [], ctx = [];
+      for (var t = 1; t <= MAXT; t++){
+        var rng = mulberry32(hash32((prev >>> 0) ^ 0x1B873593, (t * 2246822519) >>> 0));
+        var tok = Math.min(V - 1, Math.floor(rng() * V));
+        ctx.push(prev); tokens.push(tok);
+        prev = tok;
+      }
+      humanTokensCache = { tokens: tokens, ctx: ctx };
+      return humanTokensCache;
+    }
+    function generateHuman(gamma){
+      var h = humanTokens(), green = new Array(MAXT);
+      for (var t = 0; t < MAXT; t++) green[t] = computeGreenMask(h.ctx[t], gamma)[h.tokens[t]];
+      return { tokens: h.tokens, green: green, ctx: h.ctx };
+    }
+
+    function cumulativeGreen(arr){
+      var out = new Array(arr.length), s = 0;
+      for (var i = 0; i < arr.length; i++){ s += arr[i] ? 1 : 0; out[i] = s; }
+      return out;
+    }
+    // z = (g - gamma*T) / sqrt(T * gamma * (1 - gamma))
+    function zScore(g, t, gamma){
+      var sigma = Math.sqrt(t * gamma * (1 - gamma));
+      return sigma > 1e-12 ? (g - gamma * t) / sigma : 0;
+    }
+
+    function clampNum(v, lo, hi, fb, step, dec){
+      v = parseFloat(v);
+      if (!isFinite(v)) v = fb;
+      v = Math.max(lo, Math.min(hi, v));
+      if (step > 0) v = Math.round(v / step) * step;
+      var p = Math.pow(10, dec || 0);
+      v = Math.round(v * p) / p;
+      return Math.max(lo, Math.min(hi, v));
+    }
+    function setVal(inp, v){
+      if (document.activeElement !== inp && inp.value !== String(v)) inp.value = v;
+    }
+    function fmt(n, d){
+      if (!isFinite(n)) return '--';
+      return n.toFixed(d);
+    }
+
+    // ---------------------------- state cache ----------------------------
+    var cache = { gamma: null, delta: null, sigma: null };
+    function ensureGenerated(gamma, delta, sigma){
+      if (cache.gamma === gamma && cache.delta === delta && cache.sigma === sigma) return;
+      cache.gamma = gamma; cache.delta = delta; cache.sigma = sigma;
+      cache.wm = generateWatermarked(gamma, delta, sigma);
+      cache.human = generateHuman(gamma);
+      cache.cumWm = cumulativeGreen(cache.wm.green);
+      cache.cumHuman = cumulativeGreen(cache.human.green);
+    }
+
+    // ---------------------------- vocabulary grid ----------------------------
+    var COLS = 10, ROWS = 10, CELL = 30, GAP = 5, PAD = 8, HDR_L = 22, HDR_T = 13;
+    var GRID_W = COLS * CELL + (COLS - 1) * GAP, GRID_H = ROWS * CELL + (ROWS - 1) * GAP;
+    var GX = PAD + HDR_L, GY = PAD + HDR_T;
+    var MASS_H = 62;
+    var VOCAB_W = GX + GRID_W + PAD, VOCAB_H = GY + GRID_H + MASS_H + PAD;
+
+    function drawVocab(gamma, delta, sigma, stream, step){
+      var isHuman = stream === 'human';
+      var data = isHuman ? cache.human : cache.wm;
+      var idx = step - 1;
+      var prevTok = data.ctx[idx], sampledTok = data.tokens[idx];
+      var det = stepDetail(prevTok, step, gamma, delta, sigma, isHuman);
+      var mask = det.mask, pO = det.pOrig, pB = det.pBoost;
+
+      var pmax = 1e-9, v;
+      for (v = 0; v < V; v++){ if (pO[v] > pmax) pmax = pO[v]; if (pB[v] > pmax) pmax = pB[v]; }
+
+      var kids = [], i;
+      // column / row headers so every cell's token id stays readable
+      for (i = 0; i < COLS; i++){
+        kids.push(txt('text', { x: (GX + i * (CELL + GAP) + CELL / 2).toFixed(1), y: GY - 4,
+          'class': 'wmg-hdr', 'text-anchor': 'middle' }, String(i)));
+      }
+      for (i = 0; i < ROWS; i++){
+        kids.push(txt('text', { x: GX - 5, y: (GY + i * (CELL + GAP) + CELL / 2 + 3).toFixed(1),
+          'class': 'wmg-hdr', 'text-anchor': 'end' }, String(i * COLS)));
+      }
+
+      var BAR_MAX = 22, BAR_W = 10, BASE_PAD = 3;
+      for (v = 0; v < V; v++){
+        var col = v % COLS, row = (v / COLS) | 0;
+        var x = GX + col * (CELL + GAP), y = GY + row * (CELL + GAP);
+        var isGreen = mask[v];
+        kids.push(mk('rect', { x: x.toFixed(1), y: y.toFixed(1), width: CELL, height: CELL, rx: 4,
+          'class': 'wmg-cellbg ' + (isGreen ? 'wmg-cell-green' : 'wmg-cell-red') }));
+        var baseY = y + CELL - BASE_PAD;
+        var hO = Math.max(0.7, BAR_MAX * (pO[v] / pmax));
+        var hB = Math.max(0.7, BAR_MAX * (pB[v] / pmax));
+        kids.push(mk('rect', { x: (x + 4).toFixed(1), y: (baseY - hO).toFixed(2), width: BAR_W,
+          height: hO.toFixed(2), 'class': 'wmg-bar-base' }));
+        kids.push(mk('rect', { x: (x + 4 + BAR_W + 2).toFixed(1), y: (baseY - hB).toFixed(2), width: BAR_W,
+          height: hB.toFixed(2), 'class': isGreen ? 'wmg-bar-green' : 'wmg-bar-red' }));
+        if (v === sampledTok){
+          kids.push(mk('rect', { x: (x - 1.6).toFixed(1), y: (y - 1.6).toFixed(1),
+            width: CELL + 3.2, height: CELL + 3.2, rx: 5.5, 'class': 'wmg-selring' }));
+        }
+      }
+
+      // probability-mass rails: green share of the distribution before / after
+      var my = GY + GRID_H + 14;
+      function rail(label, frac, yy){
+        kids.push(txt('text', { x: GX, y: yy, 'class': 'wmg-masslabel' },
+          label + ' P(green) = ' + fmt(frac, 3)));
+        kids.push(mk('rect', { x: GX, y: yy + 4, width: GRID_W, height: 11, rx: 3, 'class': 'wmg-massrail' }));
+        kids.push(mk('rect', { x: GX, y: yy + 4, width: Math.max(0, GRID_W * frac).toFixed(2),
+          height: 11, rx: 3, 'class': 'wmg-massgreen' }));
+      }
+      rail('Before the boost:', det.pGreenOrig, my);
+      rail('After the boost:', det.pGreenBoost, my + 30);
+
+      var k = Math.round(gamma * V);
+      var caption = 'step t=' + step + ': context token ' + prevTok + ' hashes to a ' + k + '/' + V +
+        ' green split; sampled token ' + sampledTok + ' is ' + (mask[sampledTok] ? 'GREEN' : 'RED') +
+        '. Bar heights are probabilities relative to the largest one at this step. Green probability mass ' +
+        fmt(det.pGreenOrig, 3) + ' before the boost, ' + fmt(det.pGreenBoost, 3) + ' after.';
+      paint(elVocabSvg, kids, VOCAB_W, VOCAB_H, caption);
+      elVocabCap.textContent = caption;
+      return det;
+    }
+
+    // ---------------------------- z-score chart ----------------------------
+    var CW = 660, CH = 250, CM = { l: 42, r: 16, t: 20, b: 30 };
+    function niceTicks(lo, hi){
+      var span = hi - lo;
+      if (!(span > 0)) return [lo];
+      var raw = span / 5;
+      var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+      var norm = raw / mag;
+      var st = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+      var out = [];
+      for (var x = Math.ceil(lo / st) * st; x <= hi + st * 1e-9 && out.length < 24; x += st){
+        out.push(Math.round(x / st) * st);
+      }
+      return out;
+    }
+    function drawChart(gamma, T, step){
+      var zw = new Array(T), zh = new Array(T), t;
+      for (t = 1; t <= T; t++){
+        zw[t - 1] = zScore(cache.cumWm[t - 1], t, gamma);
+        zh[t - 1] = zScore(cache.cumHuman[t - 1], t, gamma);
+      }
+      // first t after which the watermarked z stays above z* through T
+      var detectAt = 0;
+      for (t = T; t >= 1; t--){ if (zw[t - 1] < ZSTAR){ detectAt = (t < T) ? t + 1 : 0; break; } if (t === 1) detectAt = 1; }
+
+      var minV = -1.5, maxV = ZSTAR + 1;
+      for (t = 0; t < T; t++){
+        if (zw[t] < minV) minV = zw[t];
+        if (zw[t] > maxV) maxV = zw[t];
+        if (zh[t] < minV) minV = zh[t];
+        if (zh[t] > maxV) maxV = zh[t];
+      }
+      minV -= 0.6; maxV += 0.6;
+      var plotW = CW - CM.l - CM.r, plotH = CH - CM.t - CM.b;
+      function xOf(tt){ return CM.l + ((tt - 1) / Math.max(1, T - 1)) * plotW; }
+      function yOf(z){ return CM.t + plotH - ((z - minV) / (maxV - minV)) * plotH; }
+
+      var kids = [], i;
+      var ticks = niceTicks(minV, maxV);
+      for (i = 0; i < ticks.length; i++){
+        var yy = yOf(ticks[i]);
+        kids.push(mk('line', { x1: CM.l, y1: yy.toFixed(2), x2: CM.l + plotW, y2: yy.toFixed(2), 'class': 'wmg-grid' }));
+        kids.push(txt('text', { x: CM.l - 5, y: (yy + 3).toFixed(2), 'class': 'wmg-axis-label', 'text-anchor': 'end' },
+          fmt(ticks[i], Math.abs(ticks[i]) < 1 && ticks[i] !== 0 ? 1 : 0)));
+      }
+      kids.push(mk('line', { x1: CM.l, y1: yOf(0).toFixed(2), x2: CM.l + plotW, y2: yOf(0).toFixed(2), 'class': 'wmg-zero' }));
+      kids.push(mk('line', { x1: CM.l, y1: CM.t, x2: CM.l, y2: CM.t + plotH, 'class': 'wmg-axis' }));
+      kids.push(mk('line', { x1: CM.l, y1: CM.t + plotH, x2: CM.l + plotW, y2: CM.t + plotH, 'class': 'wmg-axis' }));
+      kids.push(txt('text', { x: 10, y: CM.t + 8, 'class': 'wmg-axis-title' }, 'z'));
+      kids.push(txt('text', { x: CM.l, y: CH - 8, 'class': 'wmg-axis-label' }, 't = 1'));
+      kids.push(txt('text', { x: CM.l + plotW, y: CH - 8, 'class': 'wmg-axis-label', 'text-anchor': 'end' }, 't = ' + T));
+      kids.push(txt('text', { x: CM.l + plotW / 2, y: CH - 8, 'class': 'wmg-axis-title', 'text-anchor': 'middle' },
+        'tokens scored'));
+
+      if (ZSTAR >= minV && ZSTAR <= maxV){
+        var yth = yOf(ZSTAR);
+        kids.push(mk('line', { x1: CM.l, y1: yth.toFixed(2), x2: CM.l + plotW, y2: yth.toFixed(2), 'class': 'wmg-thresh' }));
+        kids.push(txt('text', { x: CM.l + 4, y: (yth - 4).toFixed(2), 'class': 'wmg-thresh-label' },
+          'z* = ' + fmt(ZSTAR, 1) + ' (flag)'));
+      }
+      if (detectAt >= 1 && detectAt <= T){
+        var dx = xOf(detectAt);
+        kids.push(mk('line', { x1: dx.toFixed(2), y1: CM.t, x2: dx.toFixed(2), y2: CM.t + plotH, 'class': 'wmg-detect' }));
+        kids.push(txt('text', { x: Math.min(dx + 4, CM.l + plotW - 4).toFixed(2), y: CM.t + plotH - 5,
+          'class': 'wmg-detect-label', 'text-anchor': dx > CM.l + plotW - 100 ? 'end' : 'start' },
+          'detected @ t=' + detectAt));
+      }
+
+      function poly(arr, cls){
+        var d = '', j;
+        for (j = 0; j < arr.length; j++){
+          d += (j === 0 ? 'M' : 'L') + xOf(j + 1).toFixed(2) + ',' + yOf(arr[j]).toFixed(2) + ' ';
+        }
+        kids.push(mk('path', { d: d, 'class': cls }));
+      }
+      poly(zh, 'wmg-line-human');
+      poly(zw, 'wmg-line-wm');
+
+      var sx = xOf(step);
+      kids.push(mk('circle', { cx: sx.toFixed(2), cy: yOf(zw[step - 1]).toFixed(2), r: 3.6, 'class': 'wmg-dot-wm' }));
+      kids.push(mk('circle', { cx: sx.toFixed(2), cy: yOf(zh[step - 1]).toFixed(2), r: 3.6, 'class': 'wmg-dot-human' }));
+
+      kids.push(mk('circle', { cx: CM.l + 10, cy: CM.t - 8, r: 4, 'class': 'wmg-dot-wm' }));
+      kids.push(txt('text', { x: CM.l + 18, y: CM.t - 5, 'class': 'wmg-chart-legend' }, 'watermarked'));
+      kids.push(mk('circle', { cx: CM.l + 110, cy: CM.t - 8, r: 4, 'class': 'wmg-dot-human' }));
+      kids.push(txt('text', { x: CM.l + 118, y: CM.t - 5, 'class': 'wmg-chart-legend' }, 'human (null)'));
+
+      paint(elChartSvg, kids, CW, CH,
+        'Detector z-score against number of scored tokens. Watermarked text reaches z of ' + fmt(zw[T - 1], 2) +
+        ' at t=' + T + '; human text reaches ' + fmt(zh[T - 1], 2) + '. Threshold z* = 4.');
+      return { zw: zw, zh: zh, detectAt: detectAt };
+    }
+
+    // ---------------------------- readout + stats ----------------------------
+    function stat(label, val, cls){
+      return '<div class="wmg-stat"><div class="wmg-stat-label">' + label + '</div>' +
+        '<div class="wmg-stat-val' + (cls ? ' ' + cls : '') + '">' + val + '</div></div>';
+    }
+    function drawReadout(gamma, delta, sigma, T, step, stream, z, det){
+      var isHuman = stream === 'human';
+      var data = isHuman ? cache.human : cache.wm;
+      var idx = step - 1;
+      var prevTok = data.ctx[idx], sampledTok = data.tokens[idx], isGreen = data.green[idx];
+      var gSoFar = (isHuman ? cache.cumHuman : cache.cumWm)[idx];
+      var zHere = zScore(gSoFar, step, gamma);
+
+      elReadout.innerHTML =
+        '<b>Step ' + step + ' of ' + T + '</b> &middot; ' + (isHuman ? 'human / null stream' : 'watermarked stream') +
+        ' &nbsp;|&nbsp; context token <b>' + prevTok + '</b> &rarr; green list of <b>' + Math.round(gamma * V) +
+        '</b> ids &nbsp;|&nbsp; sampled token <b>' + sampledTok + '</b> is ' +
+        (isGreen ? '<span class="wmg-tag-green">GREEN</span>' : '<span class="wmg-tag-red">RED</span>') +
+        ' &nbsp;|&nbsp; green so far <b>' + gSoFar + '/' + step + '</b> = ' + fmt(gSoFar / step, 3) +
+        ' (vs &gamma; = ' + fmt(gamma, 2) + ') &nbsp;|&nbsp; z(t=' + step + ') = <b>' + fmt(zHere, 2) + '</b>' +
+        ' &nbsp;|&nbsp; this step: P(green) ' + fmt(det.pGreenOrig, 3) + ' &rarr; ' + fmt(det.pGreenBoost, 3) +
+        ', KL = ' + fmt(det.kl, 3) + ' nats';
+
+      var zWm = z.zw[T - 1], zH = z.zh[T - 1];
+      var klSum = 0, entSum = 0;
+      for (var i = 0; i < T; i++){ klSum += cache.wm.kl[i]; entSum += cache.wm.ent[i]; }
+      var greenWm = cache.cumWm[T - 1] / T;
+      var flaggedWm = zWm > ZSTAR, flaggedH = zH > ZSTAR;
+
+      elStats.innerHTML =
+        stat('Watermarked z at t=T', fmt(zWm, 2), flaggedWm ? 'wmg-good' : 'wmg-bad') +
+        stat('Watermark detected?', flaggedWm ? 'YES (z &gt; z*)' : 'NO (missed)', flaggedWm ? 'wmg-good' : 'wmg-bad') +
+        stat('Tokens needed to detect', z.detectAt >= 1 ? z.detectAt + ' of ' + T : '> ' + T,
+          z.detectAt >= 1 ? 'wmg-good' : 'wmg-bad') +
+        stat('Human z at t=T', fmt(zH, 2), flaggedH ? 'wmg-bad' : 'wmg-good') +
+        stat('False positive?', flaggedH ? 'YES' : 'no', flaggedH ? 'wmg-bad' : 'wmg-good') +
+        stat('Green rate (watermarked)', fmt(greenWm, 3) + ' vs &gamma; ' + fmt(gamma, 2), '') +
+        stat('Distortion KL(boost&#8214;orig)', fmt(klSum / T, 3) + ' nats/tok', '') +
+        stat('Base entropy H(p)', fmt(entSum / T, 2) + ' nats/tok', '');
+    }
+
+    // ---------------------------- render ----------------------------
+    function render(){
+      var gamma = clampNum(elGammaN.value, 0.05, 0.95, 0.5, 0.05, 2);
+      var delta = clampNum(elDeltaN.value, 0, 8, 2, 0.25, 2);
+      var sigma = clampNum(elSigN.value, 0.5, 16, 5, 0.5, 1);
+      var T = clampNum(elSeqN.value, 20, MAXT, 200, 10, 0);
+
+      elStepR.max = T; elStepN.max = T;
+      var step = clampNum(elStepN.value, 1, T, 1, 1, 0);
+
+      setVal(elGammaR, gamma); setVal(elGammaN, gamma);
+      setVal(elDeltaR, delta); setVal(elDeltaN, delta);
+      setVal(elSigR, sigma);   setVal(elSigN, sigma);
+      setVal(elSeqR, T);       setVal(elSeqN, T);
+      setVal(elStepR, step);   setVal(elStepN, step);
+
+      var stream = elStream.value === 'human' ? 'human' : 'wm';
+
+      ensureGenerated(gamma, delta, sigma);
+      var det = drawVocab(gamma, delta, sigma, stream, step);
+      var z = drawChart(gamma, T, step);
+      drawReadout(gamma, delta, sigma, T, step, stream, z, det);
+    }
+
+    var pending = false;
+    function schedule(){
+      if (pending) return;
+      pending = true;
+      var raf = window.requestAnimationFrame || function(f){ return setTimeout(f, 16); };
+      raf(function(){ pending = false; try { render(); } catch (e) { /* keep the page alive */ } });
+    }
+
+    // ---------------------------- events ----------------------------
+    function bind(rangeEl, numEl, lo, hi, fb, st, dec){
+      rangeEl.addEventListener('input', function(){ numEl.value = rangeEl.value; schedule(); });
+      numEl.addEventListener('input', function(){
+        rangeEl.value = clampNum(numEl.value, lo, hi, fb, st, dec);
+        schedule();
+      });
+      numEl.addEventListener('change', function(){
+        numEl.value = clampNum(numEl.value, lo, hi, fb, st, dec);
+        schedule();
+      });
+    }
+    bind(elGammaR, elGammaN, 0.05, 0.95, 0.5, 0.05, 2);
+    bind(elDeltaR, elDeltaN, 0, 8, 2, 0.25, 2);
+    bind(elSigR, elSigN, 0.5, 16, 5, 0.5, 1);
+    bind(elSeqR, elSeqN, 20, MAXT, 200, 10, 0);
+    bind(elStepR, elStepN, 1, MAXT, 1, 1, 0);
+    elStream.addEventListener('change', schedule);
+
+    render();
+  })();</script>
+</div>

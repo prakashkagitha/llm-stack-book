@@ -347,6 +347,8 @@ The key implementation details to notice:
 
     Total steps: 4. Total tokens: roughly 600 input + 200 output across all calls. At gpt-4o-mini pricing (~\$0.15/M input, ~\$0.60/M output), this trace costs on the order of USD 0.0002 — essentially free per query, but note that a 50-step agent task at similar density would approach USD 0.01.
 
+{{tool:react-agent-loop}}
+
 ### The Native Tool-Calling Variant
 
 The raw-text loop above makes the mechanism visible, but every production harness in 2026 uses the provider's *native tool-calling* API instead: you pass JSON schemas for the tools, the chat template renders them, and the model emits structured tool calls that the SDK parses for you. The Thought/Action/Observation convention then lives in the chat template (see [Tool Use & Function Calling](../08-agents-harness/01-tool-use-function-calling.html)) rather than in your regex.

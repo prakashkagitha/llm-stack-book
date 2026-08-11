@@ -25,6 +25,8 @@ The **residual stream** is the central object. A vector of width `n_embd` enters
 !!! note "Aside: why decoder-only, and why this is the dominant design"
     A GPT is the *decoder-only* member of the Transformer family: one stack, causal masking, trained on plain next-token prediction. It has no encoder and no cross-attention. The competing designs — encoder-only (BERT) and encoder–decoder (T5) — are covered in [Architecture Variants](../02-transformer/08-architecture-variants.html). Decoder-only won the scaling race because it is the simplest thing that does *everything*: the same next-token objective subsumes generation, in-context learning, and (after [post-training](../05-posttraining-alignment/01-sft-instruction-tuning.html)) instruction following, all without architectural specialization.
 
+{{tool:transformer-forward-pass}}
+
 ## The Config: Naming Every Knob
 
 A model is a few hyperparameters plus a fixed wiring. Putting every architectural choice into one `dataclass` is not bureaucracy — it is the difference between a script and a *system*. The config is what you serialize into a checkpoint, what you sweep over in experiments, and what a teammate reads to understand your model in thirty seconds. We will mirror GPT-2's parameterization.

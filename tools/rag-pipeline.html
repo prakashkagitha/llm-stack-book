@@ -1,0 +1,903 @@
+<div class="viz-tool" id="tool-rag-pipeline">
+  <div class="vt-title">RAG pipeline: retrieve &rarr; augment &rarr; generate</div>
+
+  <div class="vt-grid">
+    <label for="rag-pipeline-query">Question
+      <select id="rag-pipeline-query" aria-label="Choose the question the RAG system must answer"></select>
+    </label>
+    <label for="rag-pipeline-k">ANN top-k = <span id="rag-pipeline-k-val">3</span>
+      <input id="rag-pipeline-k" type="range" min="1" max="12" step="1" value="3" aria-label="Top-k: how many candidate chunks the ANN index returns">
+    </label>
+    <label for="rag-pipeline-threshold">Similarity gate cos&thinsp;&theta; &ge; <span id="rag-pipeline-threshold-val">0.30</span>
+      <input id="rag-pipeline-threshold" type="range" min="-1" max="1" step="0.05" value="0.3" aria-label="Minimum cosine similarity a candidate must clear to be kept">
+    </label>
+    <label for="rag-pipeline-budget">Prompt token budget = <span id="rag-pipeline-budget-val">160</span>
+      <input id="rag-pipeline-budget" type="range" min="60" max="360" step="10" value="160" aria-label="Token budget for the whole assembled prompt">
+    </label>
+    <label class="rp-check-label" for="rag-pipeline-rerank">
+      <span class="rp-lbl-spacer">&nbsp;</span>
+      <span class="rp-check-row">
+        <input id="rag-pipeline-rerank" type="checkbox">
+        <span>Rerank: fuse dense + lexical ranks with RRF</span>
+      </span>
+    </label>
+    <label class="rp-btn-label">
+      <span class="rp-lbl-spacer">&nbsp;</span>
+      <span class="vt-in"><button id="rag-pipeline-reset-btn" type="button">Reset query point</button></span>
+    </label>
+  </div>
+
+  <div class="rp-layout">
+    <div class="rp-svg-wrap">
+      <svg id="rag-pipeline-svg" viewBox="0 0 480 380" role="group" aria-label="Two-dimensional embedding plane holding twelve fixed document-chunk points in four topic clusters plus one draggable query point">
+        <g id="rag-pipeline-rings-g"></g>
+        <g id="rag-pipeline-wedge-g"></g>
+        <g id="rag-pipeline-lines-g"></g>
+        <g id="rag-pipeline-chunks-g"></g>
+        <g id="rag-pipeline-query-g"></g>
+      </svg>
+      <div class="rp-hint">Drag the query diamond &mdash; or tab to it and use the arrow keys (hold Shift for big steps) &mdash; to move the query embedding and watch every downstream stage update.</div>
+      <div class="rp-legend" id="rag-pipeline-legend"></div>
+    </div>
+
+    <div class="rp-readout" id="rag-pipeline-readout" aria-live="polite"></div>
+  </div>
+
+  <div class="rp-stage-title">2. Augment &mdash; the prompt actually sent to the model</div>
+  <div class="rp-stack" id="rag-pipeline-stack"></div>
+  <div class="rp-budget-wrap">
+    <div class="rp-budget-bar" id="rag-pipeline-budget-bar" role="img" aria-label="Token budget usage bar"></div>
+    <div class="rp-budget-caption" id="rag-pipeline-budget-caption"></div>
+  </div>
+
+  <div class="rp-stage-title">3. Generate &mdash; grounded, cited answer</div>
+  <div class="rp-answer" id="rag-pipeline-answer" aria-live="polite"></div>
+
+  <div class="vt-note">Every stage of RAG is a filter, and the answer is only as good as what survives all of them. <b>Retrieve:</b> chunks and query share one embedding space, and <b>cos&thinsp;&theta; = (q&middot;c)&thinsp;/&thinsp;(|q||c|)</b> ranks by <em>direction alone</em> &ndash; drag the query straight out along its own ray and not one number in the table moves, exactly the length-invariance from the embeddings tool. Two independent gates then apply: <b>top-k</b> caps how many candidates the ANN index hands back, and the <b>similarity gate</b> throws away candidates that are not actually close (drag the query into the empty space between clusters and retrieved chunks vanish although k never changed). <b>Rerank:</b> each question has one chunk that genuinely answers it (ringed &#9678;), and for two of the four questions the bi-encoder does <em>not</em> rank it first &ndash; turn on the reranker and Reciprocal Rank Fusion, <b>RRF(d) = &Sigma;<sub>r</sub> 1/(60 + rank<sub>r</sub>(d))</b>, promotes it, because a chunk both retrievers like beats a chunk only one of them likes; a chunk that shares no query term is simply absent from the lexical list and contributes nothing from that term, and the large constant 60 keeps any single first place from running away with the fusion. On the INT8 question this decides the answer outright: the bi-encoder ranks the right chunk third, the budget then evicts it and the model refuses &ndash; switch the reranker on and the same settings produce a correctly cited answer. <b>Augment:</b> the budget is a hard wall &ndash; system prompt and question are paid first, chunks are appended in final rank order, and the tail that no longer fits is dropped before the model ever sees it. <b>Generate:</b> the answer cites only chunks that reached the prompt, so when the answering chunk is filtered out the model is forced into "I don't know" &ndash; the readout names which gate dropped it. That failure chain (good corpus, bad k / threshold / budget &rarr; refusal) is why chunk size, top-k and context budget must be tuned together, not one at a time.</div>
+
+  <style>
+    #tool-rag-pipeline{
+      --rp-c-attn: #1f6f8b;
+      --rp-c-rag:  var(--accent,#c15b39);
+      --rp-c-opt:  #276b51;
+      --rp-c-qnt:  #7a4bb0;
+      --rp-c-query: var(--ink,#211f1b);
+      --rp-c-warn: #a8620a;
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); color:var(--ink,#211f1b);
+    }
+    html[data-theme="dark"] #tool-rag-pipeline{ --rp-c-attn:#6fc3dc; --rp-c-opt:#69c79a; --rp-c-qnt:#b795e8; --rp-c-warn:#e0a106; }
+
+    #tool-rag-pipeline .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-rag-pipeline .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-rag-pipeline label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-rag-pipeline select,
+    #tool-rag-pipeline button{ font:inherit; font-size:.86rem; padding:7px 9px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); max-width:100%; }
+    #tool-rag-pipeline input[type="range"]{ width:100%; accent-color:var(--rp-c-rag); }
+    #tool-rag-pipeline input[type="checkbox"]{ accent-color:var(--rp-c-rag); width:15px; height:15px; flex:none; }
+    #tool-rag-pipeline .vt-in{ display:flex; gap:6px; align-items:center; }
+    #tool-rag-pipeline button{ cursor:pointer; width:100%; font-weight:600; }
+    #tool-rag-pipeline select:focus-visible,
+    #tool-rag-pipeline button:focus-visible,
+    #tool-rag-pipeline input:focus-visible{ outline:2px solid var(--rp-c-rag); outline-offset:2px; }
+    #tool-rag-pipeline .rp-check-row{ display:flex; align-items:center; gap:7px; font-size:.82rem; color:var(--ink,#211f1b); }
+    #tool-rag-pipeline .rp-lbl-spacer{ font-size:.82rem; }
+
+    #tool-rag-pipeline .rp-layout{ display:flex; flex-wrap:wrap; gap:16px; margin-top:14px; align-items:flex-start; }
+    #tool-rag-pipeline .rp-svg-wrap{ flex:3 1 340px; min-width:0; max-width:100%; }
+    #tool-rag-pipeline .rp-svg-wrap svg{ display:block; width:100%; height:auto; background:var(--surface-2,#f3efe6);
+      border:1px solid var(--border,#e7e1d4); border-radius:10px; touch-action:none; overflow:hidden; }
+    #tool-rag-pipeline .rp-hint{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:6px; line-height:1.5; }
+    #tool-rag-pipeline .rp-legend{ display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:8px; font-size:.71rem; color:var(--ink-soft,#45413a); }
+    #tool-rag-pipeline .rp-legend-item{ display:inline-flex; align-items:center; gap:5px; }
+    #tool-rag-pipeline .rp-legend-swatch{ width:9px; height:9px; border-radius:50%; display:inline-block; flex:none; }
+
+    #tool-rag-pipeline .rp-readout{ flex:2 1 300px; min-width:0; }
+    #tool-rag-pipeline .rp-summary{ background:var(--surface-3,#ece7da); border-radius:9px; padding:9px 11px; font-size:.77rem;
+      color:var(--ink,#211f1b); line-height:1.6; margin-bottom:10px; }
+    #tool-rag-pipeline .rp-scroll{ overflow-x:auto; max-width:100%; }
+    #tool-rag-pipeline table.rp-table{ border-collapse:collapse; width:100%; font-size:.73rem; min-width:340px; }
+    #tool-rag-pipeline table.rp-table th,
+    #tool-rag-pipeline table.rp-table td{ padding:4px 6px; text-align:left; border-bottom:1px solid var(--border,#e7e1d4); white-space:nowrap; }
+    #tool-rag-pipeline table.rp-table th{ color:var(--muted,#6d675d); font-weight:600; }
+    #tool-rag-pipeline table.rp-table td.rp-num{ font-family:var(--mono,monospace); font-variant-numeric:tabular-nums; }
+    #tool-rag-pipeline .rp-dot{ width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:5px; vertical-align:middle; }
+    #tool-rag-pipeline tr.rp-row-dropped td{ color:var(--muted,#6d675d); }
+    #tool-rag-pipeline tr.rp-row-dropped td.rp-name{ text-decoration:line-through; }
+    #tool-rag-pipeline .rp-gold-mark{ color:var(--rp-c-warn); font-weight:700; }
+    #tool-rag-pipeline .rp-up{ color:var(--rp-c-opt); font-weight:700; }
+    #tool-rag-pipeline .rp-down{ color:var(--muted,#6d675d); font-weight:700; }
+    #tool-rag-pipeline .rp-empty{ font-size:.79rem; color:var(--muted,#6d675d); font-style:italic; padding:6px 2px; line-height:1.55; }
+
+    #tool-rag-pipeline .rp-stage-title{ font-weight:700; font-size:.86rem; margin:16px 0 8px; color:var(--ink,#211f1b); }
+
+    #tool-rag-pipeline .rp-stack{ display:flex; flex-direction:column; gap:6px; }
+    #tool-rag-pipeline .rp-block{ border:1px solid var(--border,#e7e1d4); border-left-width:4px; border-radius:7px;
+      padding:7px 10px; background:var(--surface-2,#f3efe6); font-size:.76rem; line-height:1.5; }
+    #tool-rag-pipeline .rp-block-head{ display:flex; justify-content:space-between; gap:10px; font-weight:700; color:var(--ink,#211f1b); }
+    #tool-rag-pipeline .rp-block-tok{ font-family:var(--mono,monospace); color:var(--muted,#6d675d); font-weight:400; white-space:nowrap; }
+    #tool-rag-pipeline .rp-block-body{ color:var(--ink-soft,#45413a); margin-top:3px; }
+    #tool-rag-pipeline .rp-block.rp-block-sys{ border-left-color:var(--ink-soft,#45413a); }
+    #tool-rag-pipeline .rp-block.rp-block-query{ border-left-color:var(--rp-c-query); }
+    #tool-rag-pipeline .rp-block.rp-block-dropped{ opacity:.6; border-style:dashed; }
+    #tool-rag-pipeline .rp-block.rp-block-dropped .rp-block-body{ text-decoration:line-through; }
+
+    #tool-rag-pipeline .rp-budget-wrap{ margin-top:10px; }
+    #tool-rag-pipeline .rp-budget-bar{ position:relative; display:flex; height:16px; border-radius:5px; overflow:hidden;
+      background:var(--surface-3,#ece7da); border:1px solid var(--border,#e7e1d4); }
+    #tool-rag-pipeline .rp-budget-seg{ height:100%; flex:none; min-width:0; }
+    #tool-rag-pipeline .rp-budget-seg.rp-seg-over{
+      background:repeating-linear-gradient(45deg, var(--rp-c-warn), var(--rp-c-warn) 3px, transparent 3px, transparent 7px); }
+    #tool-rag-pipeline .rp-budget-mark{ position:absolute; top:0; bottom:0; width:2px; background:var(--ink,#211f1b); opacity:.85; }
+    #tool-rag-pipeline .rp-budget-caption{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:5px; line-height:1.5; }
+    #tool-rag-pipeline .rp-budget-caption.rp-over{ color:var(--rp-c-warn); font-weight:600; }
+
+    #tool-rag-pipeline .rp-answer{ background:var(--surface-3,#ece7da); border-radius:9px; padding:10px 12px; font-size:.79rem;
+      line-height:1.65; color:var(--ink,#211f1b); border-left:4px solid var(--border-2,#d8d1c0); }
+    #tool-rag-pipeline .rp-answer.rp-ans-good{ border-left-color:var(--rp-c-opt); }
+    #tool-rag-pipeline .rp-answer.rp-ans-bad{ border-left-color:var(--rp-c-warn); }
+    #tool-rag-pipeline .rp-answer .rp-cite{ font-weight:700; color:var(--rp-c-rag); }
+    #tool-rag-pipeline .rp-verdict{ font-weight:700; }
+    #tool-rag-pipeline .rp-answer-refs{ margin-top:8px; padding-top:7px; border-top:1px dashed var(--border-2,#d8d1c0);
+      font-size:.72rem; color:var(--muted,#6d675d); }
+    #tool-rag-pipeline .rp-answer-refs div{ margin-top:2px; }
+
+    #tool-rag-pipeline .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-rag-pipeline .vt-note b{ color:var(--ink-soft,#45413a); }
+
+    #tool-rag-pipeline .rp-ring{ fill:none; stroke:var(--border-2,#d8d1c0); stroke-width:1; stroke-dasharray:3 3; }
+    #tool-rag-pipeline .rp-origin{ fill:var(--muted,#6d675d); }
+    #tool-rag-pipeline .rp-wedge{ fill:var(--rp-c-rag); opacity:.10; stroke:var(--rp-c-rag); stroke-width:1; stroke-opacity:.45; }
+
+    #tool-rag-pipeline .rp-line{ stroke-linecap:round; }
+    #tool-rag-pipeline .rp-line-label{ font-size:8.5px; font-family:var(--mono,monospace); font-weight:700; fill:var(--ink-soft,#45413a); }
+    #tool-rag-pipeline .rp-line-label-halo{ font-size:8.5px; font-family:var(--mono,monospace); font-weight:700; fill:none;
+      stroke:var(--surface-2,#f3efe6); stroke-width:3; stroke-linejoin:round; }
+
+    #tool-rag-pipeline .rp-chunk-dot{ stroke-width:1.4; }
+    #tool-rag-pipeline .rp-chunk-dot.rp-state-retrieved{ stroke:var(--ink,#211f1b); }
+    #tool-rag-pipeline .rp-chunk-dot.rp-state-cut{ fill:var(--surface-2,#f3efe6); stroke-dasharray:2.5 2; }
+    #tool-rag-pipeline .rp-chunk-dot.rp-state-outside{ fill:var(--surface-2,#f3efe6); opacity:.6; }
+    #tool-rag-pipeline .rp-gold-ring{ fill:none; stroke:var(--rp-c-warn); stroke-width:1.3; }
+    #tool-rag-pipeline .rp-chunk-label{ font-size:8px; font-family:var(--sans,sans-serif); fill:var(--ink-soft,#45413a); pointer-events:none; }
+    #tool-rag-pipeline .rp-chunk-label-halo{ font-size:8px; font-family:var(--sans,sans-serif); fill:none;
+      stroke:var(--surface-2,#f3efe6); stroke-width:3; stroke-linejoin:round; pointer-events:none; }
+    #tool-rag-pipeline .rp-rank-badge{ font-size:8px; font-weight:700; font-family:var(--mono,monospace);
+      fill:var(--surface,#fff); text-anchor:middle; pointer-events:none; }
+
+    #tool-rag-pipeline .rp-query-shape{ fill:var(--rp-c-query); stroke:var(--surface,#fff); stroke-width:1.6; cursor:grab; }
+    #tool-rag-pipeline .rp-query-halo{ fill:none; stroke:var(--rp-c-rag); stroke-width:2; opacity:0; }
+    #tool-rag-pipeline .rp-query-g{ outline:none; }
+    #tool-rag-pipeline .rp-query-g:hover .rp-query-shape{ stroke-width:2.2; }
+    #tool-rag-pipeline .rp-query-g:focus .rp-query-halo{ opacity:1; }
+    #tool-rag-pipeline .rp-query-g.rp-dragging .rp-query-shape{ cursor:grabbing; }
+    #tool-rag-pipeline .rp-query-label{ font-size:9.5px; font-weight:700; font-family:var(--sans,sans-serif); fill:var(--rp-c-query); }
+    #tool-rag-pipeline .rp-query-label-halo{ font-size:9.5px; font-weight:700; font-family:var(--sans,sans-serif); fill:none;
+      stroke:var(--surface-2,#f3efe6); stroke-width:3; stroke-linejoin:round; }
+
+    @media (max-width:560px){
+      #tool-rag-pipeline{ padding:14px 12px; }
+      #tool-rag-pipeline .vt-grid{ grid-template-columns:1fr; }
+      #tool-rag-pipeline table.rp-table{ min-width:320px; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-rag-pipeline');
+    if (!root) return;
+    function q(suffix){ return root.querySelector('#rag-pipeline-' + suffix); }
+
+    var svg        = q('svg');
+    var gRings     = q('rings-g');
+    var gWedge     = q('wedge-g');
+    var gLines     = q('lines-g');
+    var gChunks    = q('chunks-g');
+    var gQuery     = q('query-g');
+    var legendEl   = q('legend');
+    var readoutEl  = q('readout');
+    var stackEl    = q('stack');
+    var budgetBar  = q('budget-bar');
+    var budgetCap  = q('budget-caption');
+    var answerEl   = q('answer');
+
+    var querySel   = q('query');
+    var kEl        = q('k');
+    var kValEl     = q('k-val');
+    var threshEl   = q('threshold');
+    var threshValEl= q('threshold-val');
+    var budgetEl   = q('budget');
+    var budgetValEl= q('budget-val');
+    var rerankEl   = q('rerank');
+    var resetBtn   = q('reset-btn');
+
+    if (!svg || !gRings || !gWedge || !gLines || !gChunks || !gQuery || !legendEl || !readoutEl ||
+        !stackEl || !budgetBar || !budgetCap || !answerEl || !querySel ||
+        !kEl || !kValEl || !threshEl || !threshValEl || !budgetEl || !budgetValEl) return;
+
+    // ---------------- deterministic seeded PRNG (mulberry32) ----------------
+    function mulberry32(a){
+      return function(){
+        a |= 0; a = a + 0x6D2B79F5 | 0;
+        var t = Math.imul(a ^ a >>> 15, 1 | a);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+    var rng = mulberry32(20240917);
+    function jitter(range){ return (rng() * 2 - 1) * range; }
+
+    // ---------------- plane geometry ----------------
+    var ORIGIN_X = 240, ORIGIN_Y = 195, SCALE = 26;
+    var CLAMP = 6.0;             // draggable domain for the query point (plane units)
+    var WEDGE_R = 6.0;           // radius used to draw the similarity-gate wedge
+    var VIEW_W = 480, VIEW_H = 380;
+    var EPS = 1e-9;
+    var RRF_K = 60;              // RRF smoothing constant used throughout the chapter
+
+    function svgNS(tag){ return document.createElementNS('http://www.w3.org/2000/svg', tag); }
+    function el(parent, tag, attrs){
+      var n = svgNS(tag);
+      for (var k in attrs){ if (Object.prototype.hasOwnProperty.call(attrs, k)) n.setAttribute(k, attrs[k]); }
+      parent.appendChild(n);
+      return n;
+    }
+    function toScreen(x, y){ return { x: ORIGIN_X + SCALE * x, y: ORIGIN_Y - SCALE * y }; }
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function esc(s){
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ---------------- exact vector math ----------------
+    function dot(a, b){ return a.x * b.x + a.y * b.y; }
+    function norm(a){ return Math.sqrt(a.x * a.x + a.y * a.y); }
+    function cosine(a, b){                          // cos(theta) = (a.b) / (|a| |b|)
+      var na = norm(a), nb = norm(b);
+      if (na < EPS || nb < EPS) return 0;
+      return clamp(dot(a, b) / (na * nb), -1, 1);
+    }
+    function fmt(n, d){ var v = (Math.abs(n) < 0.5 * Math.pow(10, -d)) ? 0 : n; return v.toFixed(d); }
+
+    // ---------------- corpus: 12 chunks in 4 topic clusters ----------------
+    var CLUSTERS = [
+      { key:'attn', name:'Attention',    cx:20,  cssVar:'--rp-c-attn' },
+      { key:'rag',  name:'Retrieval',    cx:110, cssVar:'--rp-c-rag'  },
+      { key:'opt',  name:'Optimization', cx:200, cssVar:'--rp-c-opt'  },
+      { key:'qnt',  name:'Quantization', cx:290, cssVar:'--rp-c-qnt'  }
+    ];
+    var byKey = {};
+    CLUSTERS.forEach(function(c){ byKey[c.key] = c; });
+
+    // Within a cluster the three chunks sit at centre +22 / +0 / -22 degrees, all at
+    // roughly the same radius: cosine ignores radius, and an even angular fan keeps
+    // every label legible without overlap.
+    var OFFSETS = [22, 0, -22];
+    var BASE_R = 3.1;
+
+    var CHUNK_TEXT = {
+      attn: [
+        { label:'FlashAttention tiling', text:'FlashAttention tiles the Q, K, and V matrices into SRAM-sized blocks and computes attention without ever materializing the full N-by-N score matrix, cutting memory from O(N^2) to O(N).' },
+        { label:'Multi-head attention',  text:'Multi-head attention runs several attention computations in parallel subspaces, then concatenates the results before the output projection.' },
+        { label:'KV-cache',              text:"The KV-cache stores every past token's key and value projections so autoregressive decoding never recomputes attention over the whole prefix." }
+      ],
+      rag: [
+        { label:'RAG retrieval',        text:'Retrieval-augmented generation embeds the query and retrieves the top-k nearest chunks from a vector index before the model generates its answer.' },
+        { label:'RRF fusion',           text:'Reciprocal Rank Fusion adds 1/(k+rank) from a BM25 ranking and a dense ranking to fuse sparse and dense retrieval into one score.' },
+        { label:'Cross-encoder rerank', text:'A cross-encoder reranker scores the query jointly with each candidate chunk, which is slower than a bi-encoder but far more accurate at judging relevance.' }
+      ],
+      opt: [
+        { label:'Adam moments',     text:"Adam keeps a running estimate of the first moment (mean) and second moment (variance) of each parameter's gradient." },
+        { label:'Chinchilla ratio', text:'The Chinchilla scaling law recommends scaling training tokens roughly one-to-one with model parameters for a fixed compute budget.' },
+        { label:'LR warmup',        text:'Learning-rate warmup linearly ramps the step size up for the first few hundred steps before the main cosine decay schedule takes over.' }
+      ],
+      qnt: [
+        { label:'INT8 scale factor',    text:"INT8 post-training quantization computes a scale factor from a tensor's maximum absolute value, then rounds every value to one of 256 integer levels." },
+        { label:'Mixed precision',      text:'Mixed-precision training keeps a float32 master copy of the weights while the forward and backward passes run in bfloat16.' },
+        { label:'Quant-aware training', text:'Quantization-aware training simulates the rounding error during the forward pass so the model learns weights that tolerate low precision.' }
+      ]
+    };
+
+    // ---------------- tiny lexical (BM25-flavoured) scorer ----------------
+    var STOPWORDS = {
+      how:1, does:1, the:1, a:1, an:1, is:1, are:1, to:1, of:1, and:1, or:1, for:1, on:1, in:1,
+      with:1, into:1, from:1, by:1, what:1, per:1, its:1, it:1, be:1, this:1, that:1, not:1,
+      so:1, each:1, one:1, than:1, which:1, when:1, then:1, they:1, you:1
+    };
+    function terms(text){
+      var words = String(text).toLowerCase().match(/[a-z0-9]+/g) || [];
+      var set = {};
+      words.forEach(function(w){ if (w.length >= 4 && !STOPWORDS[w]) set[w] = true; });
+      return set;
+    }
+
+    var chunks = [];
+    var cid = 0;
+    CLUSTERS.forEach(function(cl){
+      CHUNK_TEXT[cl.key].forEach(function(def, i){
+        var angDeg = cl.cx + OFFSETS[i] + jitter(2.2);
+        var rad = BASE_R + jitter(0.12);
+        var ang = angDeg * Math.PI / 180;
+        chunks.push({
+          id: 'c' + (cid++),
+          idx: cid,                       // 1-based display index
+          cluster: cl.key,
+          label: def.label,
+          text: def.text,
+          terms: terms(def.text),
+          x: rad * Math.cos(ang),
+          y: rad * Math.sin(ang)
+        });
+      });
+    });
+    var chunkById = {};
+    chunks.forEach(function(c){ chunkById[c.id] = c; });
+
+    // Inverse document frequency over the 12-chunk corpus: idf(w) = ln(1 + N/df(w)).
+    var N_DOCS = chunks.length;
+    var DF = {};
+    chunks.forEach(function(c){
+      for (var w in c.terms){ if (Object.prototype.hasOwnProperty.call(c.terms, w)) DF[w] = (DF[w] || 0) + 1; }
+    });
+    function idf(w){ var df = DF[w] || 0; return df > 0 ? Math.log(1 + N_DOCS / df) : 0; }
+    // Sum of idf over the query terms the chunk actually contains (a stripped-down BM25:
+    // no length normalisation, no term-frequency saturation, but the same idf weighting).
+    function lexScore(qTerms, c){
+      var s = 0;
+      for (var w in qTerms){
+        if (Object.prototype.hasOwnProperty.call(qTerms, w) && c.terms[w]) s += idf(w);
+      }
+      return s;
+    }
+    function lexMatches(qTerms, c){
+      var out = [];
+      for (var w in qTerms){
+        if (Object.prototype.hasOwnProperty.call(qTerms, w) && c.terms[w]) out.push(w);
+      }
+      return out.sort();
+    }
+
+    // ---------------- questions (each has exactly one chunk that answers it) ----------------
+    var QUERIES = [
+      { id:'flash', text:'How does FlashAttention avoid materializing the full attention matrix?',
+        angleDeg:38, radius:2.1, gold:'c0',
+        answer:'it tiles Q, K and V into SRAM-sized blocks and never materializes the full N&times;N score matrix, so attention memory is O(N) instead of O(N&sup2;)' },
+      { id:'rag', text:'How does BM25 ranking combine with a dense ranking into one score?',
+        angleDeg:96, radius:2.0, gold:'c4',
+        answer:'Reciprocal Rank Fusion adds 1/(k+rank) from each ranking, so the two lists are combined on rank ordinals alone and no score normalization is needed' },
+      { id:'opt', text:'What per-parameter moment statistics does the Adam optimizer track?',
+        angleDeg:214, radius:4.3, gold:'c6',
+        answer:'Adam keeps a running first moment (the mean) and second moment (the uncentered variance) of every parameter&rsquo;s gradient' },
+      { id:'qnt', text:'How is the scale factor chosen for INT8 quantization?',
+        angleDeg:282, radius:2.2, gold:'c9',
+        answer:'the scale factor is derived from the tensor&rsquo;s maximum absolute value, which maps its range onto the 256 available integer levels' }
+    ];
+    var queryById = {};
+    QUERIES.forEach(function(qq){ queryById[qq.id] = qq; });
+
+    function presetPos(preset){
+      var ang = preset.angleDeg * Math.PI / 180;
+      return { x: preset.radius * Math.cos(ang), y: preset.radius * Math.sin(ang) };
+    }
+
+    var state = { queryId: QUERIES[0].id, qx: 0, qy: 0 };
+    (function initQueryPos(){
+      var p = presetPos(queryById[state.queryId]);
+      state.qx = p.x; state.qy = p.y;
+    })();
+
+    var SYSTEM_PROMPT = 'You are a helpful assistant. Answer the question using ONLY the retrieved context below and cite each supporting chunk as [n]. If the context does not contain the answer, say "I don\'t know."';
+    function tok(s){                                   // ~4 characters per token, the usual BPE rule of thumb
+      var t = String(s).trim().replace(/\s+/g, ' ');
+      return Math.max(1, Math.ceil(t.length / 4));
+    }
+    var SYS_TOK = tok(SYSTEM_PROMPT);
+
+    // ---------------- populate the question select ----------------
+    querySel.innerHTML = '';
+    QUERIES.forEach(function(qq){
+      var opt = document.createElement('option');
+      opt.value = qq.id;
+      opt.textContent = qq.text;
+      if (qq.id === state.queryId) opt.selected = true;
+      querySel.appendChild(opt);
+    });
+
+    // ---------------- legend ----------------
+    (function buildLegend(){
+      var html = '';
+      CLUSTERS.forEach(function(cl){
+        html += '<span class="rp-legend-item"><span class="rp-legend-swatch" style="background:var(' + cl.cssVar + ')"></span>' + esc(cl.name) + '</span>';
+      });
+      html += '<span class="rp-legend-item"><span class="rp-legend-swatch" style="background:var(--rp-c-query)"></span>query</span>';
+      html += '<span class="rp-legend-item">filled + numbered = retrieved &middot; dashed = returned by top-k but cut by the gate &middot; faded = never returned &middot; ' +
+              '<span class="rp-gold-mark">&#9678;</span> = the chunk that answers this question</span>';
+      legendEl.innerHTML = html;
+    })();
+
+    // ---------------- static rings (cosine ignores radius; the rings make that visible) ----------------
+    (function buildRings(){
+      gRings.innerHTML = '';
+      var o = toScreen(0, 0);
+      [2, 4, 6].forEach(function(r){
+        el(gRings, 'circle', { 'class':'rp-ring', cx:o.x, cy:o.y, r:(r * SCALE) });
+      });
+      el(gRings, 'circle', { 'class':'rp-origin', cx:o.x, cy:o.y, r:2.2 });
+    })();
+
+    // ---------------- static chunk points ----------------
+    // Labels radiate outward from the origin so they point away from the cloud; a small
+    // de-collision pass then pushes same-side labels apart so no two ever overlap.
+    var chunkEls = {};
+    (function buildChunks(){
+      gChunks.innerHTML = '';
+      var LBL_GAP = 12;
+      var placed = chunks.map(function(c){
+        var s = toScreen(c.x, c.y);
+        var r = Math.sqrt(c.x * c.x + c.y * c.y) || 1;
+        var ux = c.x / r, uy = c.y / r;                        // outward unit vector, plane coords
+        return { c:c, s:s, lx: 12 * ux, ly: -12 * uy + 3, side: ux >= 0 ? 'start' : 'end' };
+      });
+      ['start', 'end'].forEach(function(side){
+        var group = placed.filter(function(p){ return p.side === side; })
+                          .sort(function(a, b){ return (a.s.y + a.ly) - (b.s.y + b.ly); });
+        for (var i = 1; i < group.length; i++){
+          var prevAbs = group[i - 1].s.y + group[i - 1].ly;
+          var absY = group[i].s.y + group[i].ly;
+          if (absY - prevAbs < LBL_GAP) group[i].ly += (prevAbs + LBL_GAP) - absY;
+        }
+      });
+
+      placed.forEach(function(p){
+        var c = p.c;
+        var g = svgNS('g');
+        g.setAttribute('transform', 'translate(' + p.s.x.toFixed(2) + ',' + p.s.y.toFixed(2) + ')');
+        var gold = el(g, 'circle', { 'class':'rp-gold-ring', r:11, opacity:0 });
+        var dotEl = el(g, 'circle', { 'class':'rp-chunk-dot', r:6,
+          fill:'var(' + byKey[c.cluster].cssVar + ')', stroke:'var(' + byKey[c.cluster].cssVar + ')' });
+        var titleEl = el(g, 'title', {});
+        titleEl.textContent = c.label + ' — ' + c.text;
+        var halo = el(g, 'text', { 'class':'rp-chunk-label-halo', 'text-anchor':p.side, x:p.lx.toFixed(1), y:p.ly.toFixed(1) });
+        halo.textContent = c.label;
+        var label = el(g, 'text', { 'class':'rp-chunk-label', 'text-anchor':p.side, x:p.lx.toFixed(1), y:p.ly.toFixed(1) });
+        label.textContent = c.label;
+        var badge = el(g, 'text', { 'class':'rp-rank-badge', y:3 });
+        gChunks.appendChild(g);
+        chunkEls[c.id] = { g:g, dot:dotEl, badge:badge, gold:gold, labelY: p.s.y + p.ly };
+      });
+    })();
+
+    // ---------------- draggable query point ----------------
+    var dragging = false;
+    var qGroup, qShape, qHalo, qLabel, qLabelHalo;
+    (function buildQuery(){
+      gQuery.innerHTML = '';
+      qGroup = svgNS('g');
+      qGroup.setAttribute('class', 'rp-query-g');
+      qGroup.setAttribute('tabindex', '0');
+      qGroup.setAttribute('role', 'button');
+      qHalo = el(qGroup, 'circle', { 'class':'rp-query-halo', r:14 });
+      qShape = el(qGroup, 'path', { 'class':'rp-query-shape', d:'M0,-8 L8,0 L0,8 L-8,0 Z' });
+      qLabelHalo = el(qGroup, 'text', { 'class':'rp-query-label-halo', y:19, 'text-anchor':'middle' });
+      qLabel = el(qGroup, 'text', { 'class':'rp-query-label', y:19, 'text-anchor':'middle' });
+      qLabelHalo.textContent = 'query';
+      qLabel.textContent = 'query';
+      gQuery.appendChild(qGroup);
+
+      qGroup.addEventListener('pointerdown', function(evt){
+        evt.preventDefault();
+        dragging = true;
+        qGroup.classList.add('rp-dragging');
+        try { qGroup.setPointerCapture(evt.pointerId); } catch (e) {}
+        try { qGroup.focus(); } catch (e) {}
+      });
+      qGroup.addEventListener('keydown', function(evt){
+        var step = evt.shiftKey ? 1 : 0.2;
+        var handled = true;
+        if (evt.key === 'ArrowLeft')       state.qx = clamp(state.qx - step, -CLAMP, CLAMP);
+        else if (evt.key === 'ArrowRight') state.qx = clamp(state.qx + step, -CLAMP, CLAMP);
+        else if (evt.key === 'ArrowUp')    state.qy = clamp(state.qy + step, -CLAMP, CLAMP);
+        else if (evt.key === 'ArrowDown')  state.qy = clamp(state.qy - step, -CLAMP, CLAMP);
+        else handled = false;
+        if (handled){ evt.preventDefault(); render(); }
+      });
+    })();
+
+    function clientToPlane(clientX, clientY){
+      var loc = null;
+      if (svg.createSVGPoint && svg.getScreenCTM){
+        var ctm = svg.getScreenCTM();
+        if (ctm){
+          var pt = svg.createSVGPoint();
+          pt.x = clientX; pt.y = clientY;
+          loc = pt.matrixTransform(ctm.inverse());
+        }
+      }
+      if (!loc){
+        var box = svg.getBoundingClientRect();
+        if (!box || !box.width || !box.height) return null;
+        loc = { x:(clientX - box.left) * VIEW_W / box.width, y:(clientY - box.top) * VIEW_H / box.height };
+      }
+      if (!isFinite(loc.x) || !isFinite(loc.y)) return null;
+      return { x:clamp((loc.x - ORIGIN_X) / SCALE, -CLAMP, CLAMP), y:clamp((ORIGIN_Y - loc.y) / SCALE, -CLAMP, CLAMP) };
+    }
+    document.addEventListener('pointermove', function(evt){
+      if (!dragging) return;
+      var loc = clientToPlane(evt.clientX, evt.clientY);
+      if (!loc) return;
+      state.qx = loc.x; state.qy = loc.y;
+      render();
+    });
+    function endDrag(){
+      if (!dragging) return;
+      dragging = false;
+      qGroup.classList.remove('rp-dragging');
+    }
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
+
+    // ---------------- control readers (all guarded against blank/invalid input) ----------------
+    function getK(){ var v = parseInt(kEl.value, 10); return isFinite(v) ? clamp(v, 1, chunks.length) : 3; }
+    function getThreshold(){ var v = parseFloat(threshEl.value); return isFinite(v) ? clamp(v, -1, 1) : 0.3; }
+    function getBudget(){ var v = parseInt(budgetEl.value, 10); return (isFinite(v) && v > 0) ? v : 160; }
+    function getRerank(){ return !!(rerankEl && rerankEl.checked); }
+    function currentQuery(){ return queryById[state.queryId] || QUERIES[0]; }
+
+    // ---------------- the pipeline itself ----------------
+    function computePipeline(){
+      var preset = currentQuery();
+      var query = { x: state.qx, y: state.qy };
+      var qTerms = terms(preset.text);
+
+      // Stage 1a: dense scoring, cos(theta) = (q.c)/(|q||c|), ranked descending.
+      var scored = chunks.map(function(c){
+        return { c:c, cos: cosine(query, c), lex: lexScore(qTerms, c), matches: lexMatches(qTerms, c) };
+      });
+      var denseSorted = scored.slice().sort(function(a, b){
+        if (b.cos !== a.cos) return b.cos - a.cos;
+        return a.c.idx - b.c.idx;
+      });
+      var denseRankById = {};
+      denseSorted.forEach(function(r, i){ denseRankById[r.c.id] = i + 1; });
+
+      // Stage 1b: the ANN index returns the top-k; Stage 1c: the similarity gate drops the rest.
+      var k = getK();
+      var threshold = getThreshold();
+      var topK = denseSorted.slice(0, k);
+      var kept = topK.filter(function(r){ return r.cos >= threshold; });
+
+      // Stage 1d (optional): rerank the kept candidates by fusing the dense ranking with a
+      // lexical ranking using RRF, score = sum_r 1/(60 + rank_r). A candidate the lexical
+      // ranker never scores is simply absent from that list and contributes nothing.
+      var rerankOn = getRerank();
+      var finalOrder;
+      if (rerankOn){
+        var cand = kept.map(function(r, i){
+          return { c:r.c, cos:r.cos, lex:r.lex, matches:r.matches, denseRank: i + 1, lexRank: 0, rrf: 0 };
+        });
+        var lexList = cand.filter(function(r){ return r.lex > 0; }).sort(function(a, b){
+          if (b.lex !== a.lex) return b.lex - a.lex;
+          if (b.cos !== a.cos) return b.cos - a.cos;
+          return a.c.idx - b.c.idx;
+        });
+        lexList.forEach(function(r, i){ r.lexRank = i + 1; });
+        cand.forEach(function(r){
+          r.rrf = 1 / (RRF_K + r.denseRank) + (r.lexRank > 0 ? 1 / (RRF_K + r.lexRank) : 0);
+        });
+        finalOrder = cand.slice().sort(function(a, b){
+          if (b.rrf !== a.rrf) return b.rrf - a.rrf;
+          if (b.cos !== a.cos) return b.cos - a.cos;
+          return a.c.idx - b.c.idx;
+        });
+      } else {
+        finalOrder = kept.map(function(r, i){
+          return { c:r.c, cos:r.cos, lex:r.lex, matches:r.matches, denseRank: i + 1, lexRank: 0, rrf: 0 };
+        });
+      }
+      finalOrder.forEach(function(r, i){ r.finalRank = i + 1; });
+
+      // Stage 2: pack the prompt. System prompt and question are paid first; chunks are then
+      // appended in final rank order until the next one no longer fits, and the tail is dropped.
+      var budget = getBudget();
+      var queryTok = tok(preset.text);
+      var fixedTok = SYS_TOK + queryTok;
+      var room = budget - fixedTok;
+      var included = [], dropped = [], chunkTok = 0, full = false;
+      finalOrder.forEach(function(r){
+        var t = tok(r.c.text);
+        if (!full && room >= 0 && chunkTok + t <= room){
+          chunkTok += t;
+          included.push(r);
+        } else {
+          full = true;
+          dropped.push(r);
+        }
+      });
+      included.forEach(function(r, i){ r.citation = i + 1; });
+
+      var goldId = preset.gold;
+      var goldRow = null;
+      scored.forEach(function(r){ if (r.c.id === goldId) goldRow = r; });
+
+      return {
+        preset: preset, query: query, qTerms: qTerms,
+        scored: scored, denseSorted: denseSorted, denseRankById: denseRankById,
+        topK: topK, kept: kept, finalOrder: finalOrder, included: included, dropped: dropped,
+        sysTok: SYS_TOK, queryTok: queryTok, chunkTok: chunkTok, budget: budget,
+        totalTok: fixedTok + chunkTok, droppedTok: dropped.reduce(function(s, r){ return s + tok(r.c.text); }, 0),
+        k: k, threshold: threshold, rerankOn: rerankOn, goldId: goldId, goldRow: goldRow
+      };
+    }
+
+    // ---------------- drawing ----------------
+    function drawWedge(query, threshold){
+      gWedge.innerHTML = '';
+      var nq = norm(query);
+      if (nq < EPS) return;
+      var o = toScreen(0, 0);
+      if (threshold <= -1 + 1e-9){
+        // every direction clears the gate: a full disc, not a degenerate wedge
+        el(gWedge, 'circle', { 'class':'rp-wedge', cx:o.x, cy:o.y, r:(WEDGE_R * SCALE) });
+        return;
+      }
+      var halfAngle = Math.acos(clamp(threshold, -1, 1));   // cos(theta) >= T  <=>  |angle to q| <= acos(T)
+      if (halfAngle < 1e-3) return;                         // T ~ 1: the wedge collapses to a ray
+      var qAngle = Math.atan2(query.y, query.x);
+      var a1 = qAngle - halfAngle, a2 = qAngle + halfAngle;
+      var p1 = toScreen(WEDGE_R * Math.cos(a1), WEDGE_R * Math.sin(a1));
+      var p2 = toScreen(WEDGE_R * Math.cos(a2), WEDGE_R * Math.sin(a2));
+      var largeArc = (2 * halfAngle > Math.PI) ? 1 : 0;
+      var rr = (WEDGE_R * SCALE).toFixed(2);
+      // screen y is flipped, so increasing plane angle sweeps counter-clockwise: sweep flag 0
+      var d = 'M ' + o.x.toFixed(2) + ' ' + o.y.toFixed(2) +
+              ' L ' + p1.x.toFixed(2) + ' ' + p1.y.toFixed(2) +
+              ' A ' + rr + ' ' + rr + ' 0 ' + largeArc + ' 0 ' + p2.x.toFixed(2) + ' ' + p2.y.toFixed(2) + ' Z';
+      el(gWedge, 'path', { 'class':'rp-wedge', d:d });
+    }
+
+    function drawChunks(pipe){
+      var finalById = {}, topKById = {};
+      pipe.finalOrder.forEach(function(r){ finalById[r.c.id] = r; });
+      pipe.topK.forEach(function(r){ topKById[r.c.id] = true; });
+
+      chunks.forEach(function(c){
+        var e = chunkEls[c.id];
+        var r = finalById[c.id];
+        var st = r ? 'retrieved' : (topKById[c.id] ? 'cut' : 'outside');
+        e.dot.setAttribute('class', 'rp-chunk-dot rp-state-' + st);
+        e.gold.setAttribute('opacity', c.id === pipe.goldId ? '1' : '0');
+        if (r){
+          e.badge.textContent = String(r.finalRank);
+          e.dot.setAttribute('r', '7.5');
+        } else {
+          e.badge.textContent = '';
+          e.dot.setAttribute('r', st === 'cut' ? '6.5' : '5');
+        }
+      });
+    }
+
+    function drawLines(pipe){
+      gLines.innerHTML = '';
+      var qs = toScreen(pipe.query.x, pipe.query.y);
+      pipe.finalOrder.forEach(function(r, i){
+        var cs = toScreen(r.c.x, r.c.y);
+        el(gLines, 'line', {
+          'class':'rp-line', x1:qs.x.toFixed(2), y1:qs.y.toFixed(2), x2:cs.x.toFixed(2), y2:cs.y.toFixed(2),
+          stroke:'var(' + byKey[r.c.cluster].cssVar + ')',
+          'stroke-width': (1 + 2.2 * Math.max(0, r.cos)).toFixed(2), opacity: 0.75
+        });
+        if (i >= 5) return;                       // label only the top few, else the plane gets noisy
+        var mx = (qs.x + cs.x) / 2, my = (qs.y + cs.y) / 2;
+        var halo = el(gLines, 'text', { 'class':'rp-line-label-halo', x:mx.toFixed(2), y:my.toFixed(2), 'text-anchor':'middle' });
+        halo.textContent = fmt(r.cos, 2);
+        var lab = el(gLines, 'text', { 'class':'rp-line-label', x:mx.toFixed(2), y:my.toFixed(2), 'text-anchor':'middle' });
+        lab.textContent = fmt(r.cos, 2);
+      });
+    }
+
+    function drawQuery(pipe){
+      var s = toScreen(pipe.query.x, pipe.query.y);
+      // keep the caption on the outward side of the plane so it clears the chunk labels
+      var ly = pipe.query.y >= 0 ? 19 : -13;
+      qLabel.setAttribute('y', ly);
+      qLabelHalo.setAttribute('y', ly);
+      qGroup.setAttribute('transform', 'translate(' + s.x.toFixed(2) + ',' + s.y.toFixed(2) + ')');
+      qGroup.setAttribute('aria-label', 'Query embedding at (' + fmt(pipe.query.x, 2) + ', ' + fmt(pipe.query.y, 2) +
+        '); ' + pipe.finalOrder.length + ' of ' + chunks.length + ' chunks retrieved. Drag it or use the arrow keys to move it.');
+    }
+
+    // ---------------- readout ----------------
+    function renderReadout(pipe){
+      var nq = norm(pipe.query);
+      var qDeg = nq < EPS ? 0 : Math.atan2(pipe.query.y, pipe.query.x) * 180 / Math.PI;
+      if (qDeg < 0) qDeg += 360;
+
+      var html = '';
+      html += '<div class="rp-summary">' +
+        'Query direction <b>' + fmt(qDeg, 0) + '&deg;</b>, |q| = <b>' + fmt(nq, 2) + '</b> ' +
+        '(cosine ignores |q| &ndash; slide the query along its own ray and no score changes).<br>' +
+        'ANN returned top-<b>' + pipe.k + '</b>; <b>' + pipe.kept.length + '</b> cleared cos&thinsp;&theta;&thinsp;&ge;&thinsp;<b>' + fmt(pipe.threshold, 2) + '</b>' +
+        (pipe.rerankOn ? ', then reranked by <b>RRF</b> (dense &oplus; lexical, k=' + RRF_K + ').' : ' (reranker off &ndash; order is pure cosine).') +
+        '</div>';
+
+      if (pipe.finalOrder.length === 0){
+        html += '<div class="rp-empty">Nothing retrieved &ndash; every candidate the index returned fell below the similarity gate. ' +
+          'Lower the gate, raise top-k, or drag the query back toward a cluster.</div>';
+        readoutEl.innerHTML = html;
+        return;
+      }
+
+      html += '<div class="rp-scroll"><table class="rp-table"><thead><tr>' +
+        '<th>#</th><th>chunk</th><th title="cosine similarity to the query">cos&thinsp;&theta;</th>' +
+        (pipe.rerankOn ? '<th title="rank in the dense list">d</th><th title="rank in the lexical list; a dash means the chunk shares no query term">l</th><th title="Reciprocal Rank Fusion score">RRF</th>' : '') +
+        '<th title="approximate tokens">tok</th><th>prompt</th></tr></thead><tbody>';
+
+      pipe.finalOrder.forEach(function(r){
+        var isIn = r.citation > 0;
+        var moved = pipe.rerankOn ? (r.denseRank - r.finalRank) : 0;
+        var arrow = moved > 0 ? ' <span class="rp-up" title="promoted by the reranker">&uarr;' + moved + '</span>'
+                  : (moved < 0 ? ' <span class="rp-down" title="demoted by the reranker">&darr;' + (-moved) + '</span>' : '');
+        html += '<tr class="' + (isIn ? '' : 'rp-row-dropped') + '">' +
+          '<td>' + r.finalRank + '</td>' +
+          '<td class="rp-name" title="' + esc(r.c.text) + '"><span class="rp-dot" style="background:var(' + byKey[r.c.cluster].cssVar + ')"></span>' +
+            esc(r.c.label) + (r.c.id === pipe.goldId ? ' <span class="rp-gold-mark" title="this chunk answers the question">&#9678;</span>' : '') + arrow + '</td>' +
+          '<td class="rp-num">' + fmt(r.cos, 3) + '</td>' +
+          (pipe.rerankOn
+            ? '<td class="rp-num">' + r.denseRank + '</td>' +
+              '<td class="rp-num" title="' + (r.matches.length ? 'shares: ' + esc(r.matches.join(', ')) : 'no shared query term') + '">' +
+                (r.lexRank > 0 ? r.lexRank : '&ndash;') + '</td>' +
+              '<td class="rp-num">' + r.rrf.toFixed(5) + '</td>'
+            : '') +
+          '<td class="rp-num">' + tok(r.c.text) + '</td>' +
+          '<td>' + (isIn ? 'in' : 'over budget') + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table></div>';
+      readoutEl.innerHTML = html;
+    }
+
+    // ---------------- augment ----------------
+    function renderStack(pipe){
+      var html = '';
+      html += '<div class="rp-block rp-block-sys"><div class="rp-block-head"><span>System</span>' +
+        '<span class="rp-block-tok">' + pipe.sysTok + ' tok</span></div>' +
+        '<div class="rp-block-body">' + esc(SYSTEM_PROMPT) + '</div></div>';
+
+      pipe.finalOrder.forEach(function(r){
+        var isIn = r.citation > 0;
+        html += '<div class="rp-block' + (isIn ? '' : ' rp-block-dropped') +
+          '" style="border-left-color:var(' + byKey[r.c.cluster].cssVar + ')">' +
+          '<div class="rp-block-head"><span>' + (isIn ? '[' + r.citation + '] ' : '') + esc(r.c.label) +
+          (isIn ? '' : ' &ndash; dropped, over budget') + '</span>' +
+          '<span class="rp-block-tok">' + tok(r.c.text) + ' tok</span></div>' +
+          '<div class="rp-block-body">' + esc(r.c.text) + '</div></div>';
+      });
+
+      html += '<div class="rp-block rp-block-query"><div class="rp-block-head"><span>Question</span>' +
+        '<span class="rp-block-tok">' + pipe.queryTok + ' tok</span></div>' +
+        '<div class="rp-block-body">' + esc(pipe.preset.text) + '</div></div>';
+      stackEl.innerHTML = html;
+
+      // budget bar: system + included chunks + question, plus a hatched overflow tail
+      var segs = [{ label:'system prompt', tok:pipe.sysTok, color:'var(--ink-soft,#45413a)' }];
+      pipe.included.forEach(function(r){
+        segs.push({ label:r.c.label, tok:tok(r.c.text), color:'var(' + byKey[r.c.cluster].cssVar + ')' });
+      });
+      segs.push({ label:'question', tok:pipe.queryTok, color:'var(--rp-c-query)' });
+
+      var denom = Math.max(pipe.budget, pipe.totalTok + pipe.droppedTok, 1);
+      var barHtml = '';
+      segs.forEach(function(s){
+        barHtml += '<div class="rp-budget-seg" title="' + esc(s.label) + ': ' + s.tok + ' tok" style="width:' +
+          ((s.tok / denom) * 100).toFixed(2) + '%; background:' + s.color + '"></div>';
+      });
+      if (pipe.droppedTok > 0){
+        barHtml += '<div class="rp-budget-seg rp-seg-over" title="' + pipe.droppedTok +
+          ' tok of retrieved context that would not fit" style="width:' + ((pipe.droppedTok / denom) * 100).toFixed(2) + '%"></div>';
+      }
+      if (pipe.budget < denom){
+        barHtml += '<div class="rp-budget-mark" title="budget = ' + pipe.budget + ' tok" style="left:' +
+          ((pipe.budget / denom) * 100).toFixed(2) + '%"></div>';
+      }
+      budgetBar.innerHTML = barHtml;
+
+      var over = pipe.totalTok > pipe.budget || pipe.droppedTok > 0;
+      budgetCap.className = 'rp-budget-caption' + (over ? ' rp-over' : '');
+      var cap = pipe.totalTok + ' / ' + pipe.budget + ' tokens used';
+      if (pipe.sysTok + pipe.queryTok > pipe.budget){
+        cap += ' &ndash; the system prompt plus the question already exceed the budget, so no context fits at all';
+      } else if (pipe.droppedTok > 0){
+        cap += ' &ndash; ' + pipe.dropped.length + ' retrieved chunk' + (pipe.dropped.length === 1 ? '' : 's') +
+          ' (' + pipe.droppedTok + ' tok) dropped to fit';
+      } else {
+        cap += ' &ndash; everything retrieved fits (' + (pipe.budget - pipe.totalTok) + ' tok spare)';
+      }
+      budgetCap.innerHTML = cap;
+    }
+
+    // ---------------- generate ----------------
+    function diagnoseMiss(pipe){
+      var gold = pipe.goldRow;
+      if (!gold) return 'it is not in the corpus';
+      var dRank = pipe.denseRankById[pipe.goldId];
+      if (dRank > pipe.k){
+        return '<b>' + esc(chunkById[pipe.goldId].label) + '</b> sits at dense rank ' + dRank + ' of ' + chunks.length +
+          ', outside the top-' + pipe.k + ' the index returned &ndash; raise top-k or move the query closer to it';
+      }
+      if (gold.cos < pipe.threshold){
+        return '<b>' + esc(chunkById[pipe.goldId].label) + '</b> was returned by the index but its cos&thinsp;&theta; = ' +
+          fmt(gold.cos, 3) + ' falls under the gate of ' + fmt(pipe.threshold, 2) + ' &ndash; lower the gate';
+      }
+      return '<b>' + esc(chunkById[pipe.goldId].label) + '</b> was retrieved but did not fit the token budget &ndash; ' +
+        'raise the budget or lower top-k so it is not pushed out by less relevant context';
+    }
+
+    function renderAnswer(pipe){
+      var goldCite = 0;
+      pipe.included.forEach(function(r){ if (r.c.id === pipe.goldId) goldCite = r.citation; });
+
+      if (goldCite > 0){
+        answerEl.className = 'rp-answer rp-ans-good';
+        var html = '<span class="rp-verdict">Grounded:</span> ' + pipe.preset.answer +
+          ' <span class="rp-cite">[' + goldCite + ']</span>.';
+        html += '<div class="rp-answer-refs">Context the model could cite:';
+        pipe.included.forEach(function(r){
+          html += '<div>[' + r.citation + '] ' + esc(r.c.label) + ' &middot; cos&thinsp;&theta; = ' + fmt(r.cos, 3) + '</div>';
+        });
+        html += '</div>';
+        answerEl.innerHTML = html;
+        return;
+      }
+
+      answerEl.className = 'rp-answer rp-ans-bad';
+      if (pipe.included.length === 0){
+        answerEl.innerHTML = '<span class="rp-verdict">"I don\'t know."</span> &ndash; no chunk reached the prompt at all, ' +
+          'so the grounding instruction forces a refusal instead of an answer from parametric memory. ' +
+          'The chunk that would have answered it: ' + diagnoseMiss(pipe) + '.';
+        return;
+      }
+      var html2 = '<span class="rp-verdict">"I don\'t know."</span> &ndash; ' + pipe.included.length +
+        ' chunk' + (pipe.included.length === 1 ? '' : 's') + ' reached the prompt, but none of them contains the answer, ' +
+        'so a faithful model must refuse rather than improvise. Retrieval miss: ' + diagnoseMiss(pipe) + '.';
+      html2 += '<div class="rp-answer-refs">Context the model actually got:';
+      pipe.included.forEach(function(r){
+        html2 += '<div>[' + r.citation + '] ' + esc(r.c.label) + ' &middot; cos&thinsp;&theta; = ' + fmt(r.cos, 3) + '</div>';
+      });
+      html2 += '</div>';
+      answerEl.innerHTML = html2;
+    }
+
+    // ---------------- master render ----------------
+    function render(){
+      var pipe = computePipeline();
+      drawWedge(pipe.query, pipe.threshold);
+      drawChunks(pipe);
+      drawLines(pipe);
+      drawQuery(pipe);
+      renderReadout(pipe);
+      renderStack(pipe);
+      renderAnswer(pipe);
+    }
+
+    // ---------------- wire up ----------------
+    function resetQueryPoint(){
+      var p = presetPos(currentQuery());
+      state.qx = p.x; state.qy = p.y;
+    }
+    querySel.addEventListener('change', function(){
+      if (queryById[querySel.value]) state.queryId = querySel.value;
+      resetQueryPoint();
+      render();
+    });
+    kEl.addEventListener('input', function(){ kValEl.textContent = String(getK()); render(); });
+    threshEl.addEventListener('input', function(){ threshValEl.textContent = fmt(getThreshold(), 2); render(); });
+    budgetEl.addEventListener('input', function(){ budgetValEl.textContent = String(getBudget()); render(); });
+    if (rerankEl) rerankEl.addEventListener('change', render);
+    if (resetBtn) resetBtn.addEventListener('click', function(){ resetQueryPoint(); render(); });
+
+    kValEl.textContent = String(getK());
+    threshValEl.textContent = fmt(getThreshold(), 2);
+    budgetValEl.textContent = String(getBudget());
+
+    render();
+  })();</script>
+</div>

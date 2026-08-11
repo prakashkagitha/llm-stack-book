@@ -1,0 +1,747 @@
+<div class="viz-tool" id="tool-induction-head">
+  <div class="vt-title">An induction head, mechanistically</div>
+  <div class="vt-hint">Edit the sequence below (or repeat it, as in the standard <code>[X X]</code> probe) and watch a two-head, two-layer circuit predict the next token by copying from context. Every attention weight is a real <code>softmax(scores)</code> under a causal mask, computed live &mdash; nothing is hand-drawn, and nothing is random.</div>
+
+  <div class="vt-grid">
+    <label for="induction-head-seq">Token sequence (space-separated, 2&ndash;10 tokens)
+      <input id="induction-head-seq" type="text" value="A D E B C F D" autocomplete="off" spellcheck="false" aria-describedby="induction-head-msg">
+    </label>
+    <label for="induction-head-sharp">Match sharpness <span class="ihx-mono">S</span> = <span id="induction-head-sharp-val">5</span> (score of a matching key; every non-matching key scores 0)
+      <input id="induction-head-sharp" type="range" min="0" max="12" step="0.5" value="5">
+    </label>
+    <div class="ihx-stage-field" role="group" aria-label="Animation stage">
+      <span class="ihx-stage-legend">Animation stage</span>
+      <div class="ihx-stage-btns">
+        <button type="button" id="induction-head-stage1-btn" class="ihx-stagebtn" aria-pressed="true">1. Prev-token head writes</button>
+        <button type="button" id="induction-head-stage2-btn" class="ihx-stagebtn" aria-pressed="false">2. Induction attends &amp; copies</button>
+      </div>
+    </div>
+    <div class="ihx-btnrow">
+      <button type="button" id="induction-head-play-btn" class="ihx-actionbtn">Play animation</button>
+      <button type="button" id="induction-head-repeat-btn" class="ihx-actionbtn ihx-secondary">Repeat as [X X]</button>
+      <button type="button" id="induction-head-reset-btn" class="ihx-actionbtn ihx-secondary">Reset example</button>
+    </div>
+  </div>
+
+  <div class="ihx-msg" id="induction-head-msg" role="status" aria-live="polite"></div>
+
+  <div class="ihx-diagram-block">
+    <div class="ihx-block-caption">Stage 1 (gray arcs below): at every position <em>i</em>&nbsp;&gt;&nbsp;0 the previous-token head attends to position <em>i&minus;1</em> and copies that token into the residual stream at <em>i</em> &mdash; it <em>writes</em> &ldquo;the token before me was&nbsp;X&rdquo; everywhere. Stage 2 (colored arcs above): the induction head at the final query position reads that written signal as its <b>key</b>, so it lands on the position <em>right after</em> an earlier copy of the current token, and copies <em>that</em> token forward.</div>
+    <div class="ihx-diagram-wrap" id="induction-head-diagram-wrap">
+      <svg id="induction-head-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Circuit diagram: a row of tokens with previous-token-head write arcs below and induction-head attention arcs above"></svg>
+    </div>
+    <div class="ihx-legend">
+      <span class="ihx-lg-swatch ihx-lg-prev" aria-hidden="true"></span> prev-token head writes token[i&minus;1] into position i
+      <span class="ihx-lg-swatch ihx-lg-ind" aria-hidden="true"></span> induction-head attention (opacity &prop; softmax weight)
+      <span class="ihx-lg-swatch ihx-lg-pred" aria-hidden="true"></span> induction-matching keys (solid) and the earlier occurrences that produced them (dashed)
+    </div>
+  </div>
+
+  <div class="ihx-readout" id="induction-head-readout" aria-live="polite"></div>
+
+  <div class="ihx-dist-block">
+    <div class="ihx-block-caption">Next-token distribution written by the induction head, assuming its OV circuit is a pure copy: <span class="ihx-mono">p(t) = &Sigma;<sub>j</sub> &alpha;<sub>qj</sub>&thinsp;&middot;&thinsp;1[token<sub>j</sub> = t]</span>. Attention mass is aggregated <em>by token identity</em>, so two different source positions carrying the same token add up.</div>
+    <div class="ihx-dist" id="induction-head-dist"></div>
+  </div>
+
+  <div class="ihx-heat-block">
+    <div class="ihx-block-caption">Both heads&rsquo; full attention patterns (row = query position <em>i</em>, column = key position <em>j</em>; causal mask applied, so the upper triangle is greyed out; opacity = softmax weight). The induction pattern is computed for <em>every</em> query position, not just the final one &mdash; that is what makes it a reusable in-context copying circuit rather than a one-off trick.</div>
+    <div class="ihx-heat-grid">
+      <div class="ihx-heat-cell">
+        <div class="ihx-heat-title">Previous-token head</div>
+        <div class="ihx-heat-wrap" id="induction-head-heat-prev-wrap">
+          <svg id="induction-head-heat-prev-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Previous-token head attention heatmap: a sub-diagonal stripe"></svg>
+        </div>
+      </div>
+      <div class="ihx-heat-cell">
+        <div class="ihx-heat-title">Induction head</div>
+        <div class="ihx-heat-wrap" id="induction-head-heat-ind-wrap">
+          <svg id="induction-head-heat-ind-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Induction head attention heatmap"></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="vt-note">This is a <b>K-composition</b> circuit, not a Q-composition one: the induction head&rsquo;s <b>key</b> at position <em>j</em> is built from what the previous-token head wrote there (the identity of token <em>j&minus;1</em>), while its <b>query</b> at the final position just reads the current token directly &mdash; no composition needed on the query side. The score spikes exactly where token[j&minus;1] equals the query token, which is precisely &ldquo;the position right after the earlier occurrence.&rdquo; Three things to try. (1) Make the last token something that never appeared before: the induction row goes exactly uniform over the causal history &mdash; a fan of faint arcs, no confident copy &mdash; because the circuit has no signal to key off. (2) Drag sharpness to <span class="ihx-mono">S = 0</span>: matched and unmatched keys score identically and the head degenerates to uniform averaging; that is the softmax-saturation trade-off from the self-attention explorer, and it is why the QK circuit has to <em>learn</em> a large effective score gap. (3) Hit <b>Repeat as [X X]</b>: every position in the second copy becomes predictable from the first, the prefix-matching score jumps toward 1, and you are looking at exactly the synthetic probe used to find induction heads in a real model in the code below. This deterministic toy is the mechanism real induction heads implement (Olsson et al., 2022); its emergence during training is one of the most reproducible phase changes in mechanistic interpretability, and it is the textbook explanation for why in-context learning works at all.</div>
+
+  <style>
+    #tool-induction-head{
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff);
+      /* local semantic colors: the site theme defines no --good/--warn, so scope our own */
+      --ihx-good:#17805a;
+      --ihx-warn:#8a5a06;
+    }
+    html[data-theme="dark"] #tool-induction-head{ --ihx-good:#5fc79c; --ihx-warn:#e0b452; }
+    #tool-induction-head .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-induction-head .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.55; }
+    #tool-induction-head .ihx-mono, #tool-induction-head .vt-hint code{
+      font-family:var(--mono,monospace); font-size:.94em; color:var(--ink,#211f1b);
+    }
+    #tool-induction-head .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px 18px; align-items:end; }
+    #tool-induction-head label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-induction-head input[type="text"]{
+      font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); max-width:100%; min-width:0;
+    }
+    #tool-induction-head input[type="range"]{ accent-color:var(--accent,#c15b39); width:100%; min-width:0; }
+    #tool-induction-head #induction-head-sharp-val{ font-family:var(--mono,monospace); color:var(--ink,#211f1b); font-weight:700; }
+    #tool-induction-head :focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-induction-head .ihx-stage-field{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--muted,#6d675d); }
+    #tool-induction-head .ihx-stage-btns{ display:flex; gap:6px; flex-wrap:wrap; }
+    #tool-induction-head .ihx-stagebtn{
+      font:inherit; font-size:.78rem; padding:6px 10px; border-radius:7px; cursor:pointer;
+      border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b);
+    }
+    #tool-induction-head .ihx-stagebtn[aria-pressed="true"]{ background:var(--accent,#c15b39); border-color:var(--accent,#c15b39); color:#fff; }
+    #tool-induction-head .ihx-btnrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; }
+    #tool-induction-head .ihx-actionbtn{
+      font:inherit; font-size:.8rem; padding:7px 12px; border-radius:7px; cursor:pointer;
+      border:1px solid var(--accent,#c15b39); background:var(--accent,#c15b39); color:#fff; font-weight:600;
+    }
+    #tool-induction-head .ihx-actionbtn.ihx-secondary{ background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); border-color:var(--border-2,#d8d1c0); font-weight:500; }
+    #tool-induction-head .ihx-actionbtn:disabled{ opacity:.55; cursor:default; }
+
+    #tool-induction-head .ihx-msg{ margin-top:8px; font-size:.75rem; color:var(--ihx-warn); }
+    #tool-induction-head .ihx-msg:empty{ display:none; }
+
+    #tool-induction-head .ihx-block-caption{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-induction-head .ihx-diagram-wrap{ margin-top:8px; overflow-x:auto; }
+    #tool-induction-head svg{ display:block; }
+    #tool-induction-head #induction-head-svg{ width:100%; height:auto; }
+
+    #tool-induction-head .ihx-tokbox{ fill:var(--surface-2,#f3efe6); stroke:var(--border-2,#d8d1c0); stroke-width:1.25; }
+    #tool-induction-head .ihx-tokbox.ihx-qpos{ stroke:var(--accent,#c15b39); stroke-width:2; }
+    #tool-induction-head .ihx-tokbox.ihx-match{ stroke:var(--ihx-good); stroke-width:2; }
+    #tool-induction-head .ihx-tokbox.ihx-src{ stroke:var(--ihx-good); stroke-width:1.6; stroke-dasharray:3 2.5; }
+    #tool-induction-head .ihx-predbox{ fill:var(--surface,#fff); stroke:var(--muted,#6d675d); stroke-width:1.25; stroke-dasharray:4 3; transition:stroke .35s ease; }
+    #tool-induction-head.ihx-stage2 .ihx-predbox.ihx-predbox-hasmatch{ stroke:var(--ihx-good); stroke-dasharray:none; stroke-width:2; }
+    #tool-induction-head .ihx-toktext{ font-size:14px; font-weight:700; font-family:var(--mono,monospace); fill:var(--ink,#211f1b); text-anchor:middle; }
+    #tool-induction-head .ihx-idxtext{ font-size:9px; font-family:var(--sans,sans-serif); fill:var(--muted,#6d675d); text-anchor:middle; }
+    #tool-induction-head .ihx-chiptext{ font-size:9.5px; font-family:var(--mono,monospace); fill:var(--ink-soft,#45413a); text-anchor:middle; }
+
+    #tool-induction-head .ihx-prevlayer{ opacity:1; transition:opacity .35s ease; }
+    #tool-induction-head .ihx-indlayer{ opacity:.12; transition:opacity .35s ease; }
+    #tool-induction-head.ihx-stage2 .ihx-prevlayer{ opacity:.34; }
+    #tool-induction-head.ihx-stage2 .ihx-indlayer{ opacity:1; }
+    #tool-induction-head .ihx-predfill{ opacity:0; transition:opacity .35s ease .15s; }
+    #tool-induction-head.ihx-stage2 .ihx-predfill{ opacity:1; }
+    #tool-induction-head .ihx-qmark{ opacity:1; transition:opacity .35s ease; }
+    #tool-induction-head.ihx-stage2 .ihx-qmark{ opacity:0; }
+
+    #tool-induction-head .ihx-arc-prev{ fill:none; stroke:var(--ink-soft,#45413a); stroke-width:1.5; }
+    #tool-induction-head .ihx-arc-ind{ fill:none; stroke:var(--accent,#c15b39); stroke-width:2.25; }
+    #tool-induction-head .ihx-mk-prev{ fill:var(--ink-soft,#45413a); }
+    #tool-induction-head .ihx-mk-ind{ fill:var(--accent,#c15b39); }
+
+    #tool-induction-head .ihx-legend{ margin-top:10px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:.76rem; color:var(--muted,#6d675d); }
+    #tool-induction-head .ihx-lg-swatch{ display:inline-block; width:20px; height:3px; border-radius:2px; margin-left:14px; vertical-align:2px; }
+    #tool-induction-head .ihx-lg-swatch:first-of-type{ margin-left:0; }
+    #tool-induction-head .ihx-lg-prev{ background:var(--ink-soft,#45413a); }
+    #tool-induction-head .ihx-lg-ind{ background:var(--accent,#c15b39); }
+    #tool-induction-head .ihx-lg-pred{ background:var(--ihx-good); }
+
+    #tool-induction-head .ihx-readout{ margin-top:14px; font-size:.82rem; color:var(--ink,#211f1b); line-height:1.6; font-variant-numeric:tabular-nums;
+      background:var(--surface-3,#ece7da); border-radius:8px; padding:10px 13px; }
+    #tool-induction-head .ihx-readout b{ color:var(--accent,#c15b39); }
+    #tool-induction-head .ihx-readout .ihx-warnline{ color:var(--ihx-warn); }
+    #tool-induction-head .ihx-readout .ihx-scoreline{ display:block; margin-top:6px; color:var(--ink-soft,#45413a); font-size:.95em; }
+
+    #tool-induction-head .ihx-dist{ margin-top:8px; display:flex; flex-direction:column; gap:4px; }
+    #tool-induction-head .ihx-distrow{ display:grid; grid-template-columns:minmax(46px,auto) 1fr minmax(46px,auto); gap:8px; align-items:center; font-size:.76rem; color:var(--muted,#6d675d); }
+    #tool-induction-head .ihx-distname{ font-family:var(--mono,monospace); color:var(--ink,#211f1b); text-align:right; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #tool-induction-head .ihx-distbarwrap{ background:var(--surface-3,#ece7da); border-radius:4px; height:12px; overflow:hidden; }
+    #tool-induction-head .ihx-distbar{ height:100%; background:var(--accent,#c15b39); border-radius:4px; }
+    #tool-induction-head .ihx-distrow.ihx-distwin .ihx-distbar{ background:var(--ihx-good); }
+    #tool-induction-head .ihx-distval{ font-variant-numeric:tabular-nums; font-family:var(--mono,monospace); }
+
+    #tool-induction-head .ihx-heat-block{ margin-top:6px; }
+    #tool-induction-head .ihx-heat-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; margin-top:8px; }
+    #tool-induction-head .ihx-heat-title{ font-size:.78rem; font-weight:600; color:var(--ink,#211f1b); margin-bottom:4px; }
+    #tool-induction-head .ihx-heat-wrap{ overflow-x:auto; }
+    #tool-induction-head .ihx-heat-wrap svg{ width:100%; height:auto; max-width:340px; }
+    #tool-induction-head .ihx-hcell{ stroke:var(--surface,#fff); stroke-width:1; fill:var(--accent,#c15b39); }
+    #tool-induction-head .ihx-hcell.ihx-hmasked{ fill:var(--surface-3,#ece7da); fill-opacity:1; }
+    #tool-induction-head .ihx-hlab{ font-size:8.5px; fill:var(--muted,#6d675d); font-family:var(--sans,sans-serif); }
+    #tool-induction-head .ihx-hlab.ihx-hlabhi{ fill:var(--accent,#c15b39); font-weight:700; }
+    #tool-induction-head .ihx-hrowhi{ fill:none; stroke:var(--accent,#c15b39); stroke-width:1.5; pointer-events:none; }
+    #tool-induction-head .ihx-hcolhi{ fill:none; stroke:var(--ihx-good); stroke-width:1.5; pointer-events:none; }
+
+    #tool-induction-head .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+
+    @media (max-width:520px){
+      #tool-induction-head .ihx-heat-grid{ grid-template-columns:1fr; }
+    }
+    @media (prefers-reduced-motion: reduce){
+      #tool-induction-head .ihx-prevlayer,
+      #tool-induction-head .ihx-indlayer,
+      #tool-induction-head .ihx-predfill,
+      #tool-induction-head .ihx-qmark,
+      #tool-induction-head .ihx-predbox{ transition:none; }
+    }
+  </style>
+
+  <script>(function(){
+    var root=document.getElementById('tool-induction-head');
+    if(!root) return;
+
+    var MAX_TOKENS=10;
+    var MIN_TOKENS=2;
+    var DEFAULT_SEQ='A D E B C F D';
+    var PREV_BIG=14;          // score gap for the (idealized, always-sharp) previous-token head
+    var ARC_EPS=0.008;        // don't draw arcs carrying less than this much mass
+
+    var elSeq=root.querySelector('#induction-head-seq');
+    var elSharp=root.querySelector('#induction-head-sharp');
+    var elSharpVal=root.querySelector('#induction-head-sharp-val');
+    var elStage1Btn=root.querySelector('#induction-head-stage1-btn');
+    var elStage2Btn=root.querySelector('#induction-head-stage2-btn');
+    var elPlayBtn=root.querySelector('#induction-head-play-btn');
+    var elRepeatBtn=root.querySelector('#induction-head-repeat-btn');
+    var elResetBtn=root.querySelector('#induction-head-reset-btn');
+    var elMsg=root.querySelector('#induction-head-msg');
+    var elDiagWrap=root.querySelector('#induction-head-diagram-wrap');
+    var elSvg=root.querySelector('#induction-head-svg');
+    var elReadout=root.querySelector('#induction-head-readout');
+    var elDist=root.querySelector('#induction-head-dist');
+    var elHeatPrevWrap=root.querySelector('#induction-head-heat-prev-wrap');
+    var elHeatPrevSvg=root.querySelector('#induction-head-heat-prev-svg');
+    var elHeatIndWrap=root.querySelector('#induction-head-heat-ind-wrap');
+    var elHeatIndSvg=root.querySelector('#induction-head-heat-ind-svg');
+    if(!elSeq||!elSharp||!elSvg||!elReadout||!elDist||!elHeatPrevSvg||!elHeatIndSvg) return;
+
+    var SVGNS='http://www.w3.org/2000/svg';
+    function svgEl(tag){ return document.createElementNS(SVGNS, tag); }
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function abbrev(tok){ return tok.length<=5 ? tok : (tok.slice(0,4)+'…'); }
+    function fmt3(x){ return (isFinite(x)?x:0).toFixed(3); }
+    function pct(x){ return ((isFinite(x)?x:0)*100).toFixed(1)+'%'; }
+
+    // ---------- softmax with max-subtraction; -Infinity (masked) entries come out exactly 0 ----------
+    function softmaxRow(logits){
+      var n=logits.length, i, maxv=-Infinity;
+      for(i=0;i<n;i++){ if(isFinite(logits[i]) && logits[i]>maxv) maxv=logits[i]; }
+      if(!isFinite(maxv)) maxv=0;
+      var exps=new Array(n), sum=0;
+      for(i=0;i<n;i++){
+        var e = isFinite(logits[i]) ? Math.exp(logits[i]-maxv) : 0;
+        exps[i]=e; sum+=e;
+      }
+      if(!(sum>0)) sum=1;
+      for(i=0;i<n;i++) exps[i]/=sum;
+      return exps;
+    }
+
+    // ---------- tokenize ----------
+    function tokenizeSeq(text){
+      var raw=String(text==null?'':text).trim().split(/\s+/).filter(Boolean);
+      var empty=(raw.length===0);
+      var short=false, truncated=false;
+      if(empty) raw=DEFAULT_SEQ.split(' ');
+      if(raw.length>MAX_TOKENS){ raw=raw.slice(0,MAX_TOKENS); truncated=true; }
+      if(raw.length<MIN_TOKENS){ short=true; raw=DEFAULT_SEQ.split(' '); }
+      return {tokens:raw, empty:empty, truncated:truncated, short:short};
+    }
+
+    // ---------- the two-head circuit, computed exactly (real softmax, causal mask) ----------
+    // Previous-token head, query i:  score(i,j) = PREV_BIG if j == i-1 else 0,  for j <= i.
+    // Induction head,      query i:  key j carries "the token before j", which only exists for
+    //   j >= 1. So key 0 is a real (never-matching) candidate scoring 0, and for j >= 1
+    //   score(i,j) = S if tokens[j-1] == tokens[i] else 0,  for j <= i.
+    function computeHeads(tokens, sharpness){
+      var n=tokens.length, i, j;
+      var prevW=[], indW=[], isMatch=[];
+      for(i=0;i<n;i++){
+        var rowP=new Array(n).fill(-Infinity);
+        if(i===0){ rowP[0]=0; }                       // no earlier token: trivial self-attention
+        else { for(j=0;j<=i;j++) rowP[j] = (j===i-1) ? PREV_BIG : 0; }
+        prevW.push(softmaxRow(rowP));
+
+        var rowI=new Array(n).fill(-Infinity);
+        var rowM=new Array(n).fill(false);
+        rowI[0]=0;                                    // key 0 has no written prev-token signal
+        for(j=1;j<=i;j++){
+          rowM[j]=(tokens[j-1]===tokens[i]);
+          rowI[j]=rowM[j]?sharpness:0;
+        }
+        indW.push(softmaxRow(rowI));
+        isMatch.push(rowM);
+      }
+      return {prevW:prevW, indW:indW, isMatch:isMatch};
+    }
+
+    // Copy-OV read-out: p(next = t) = sum_j alpha_qj * 1[tokens[j] == t]
+    function copyDistribution(tokens, row){
+      var map={}, order=[], i;
+      for(i=0;i<tokens.length;i++){
+        var t=tokens[i];
+        if(!Object.prototype.hasOwnProperty.call(map,t)){ map[t]=0; order.push(t); }
+        map[t]+=row[i];
+      }
+      var out=order.map(function(t){ return {tok:t, p:map[t]}; });
+      out.sort(function(a,b){ return (b.p-a.p) || (a.tok<b.tok?-1:(a.tok>b.tok?1:0)); });
+      return out;
+    }
+
+    // Prefix-matching score: for every query position that HAS at least one induction match,
+    // the total attention mass it puts on matching keys; averaged over those queries.
+    function prefixMatchingScore(indW, isMatch){
+      var n=indW.length, i, j, tot=0, cnt=0;
+      for(i=1;i<n;i++){
+        var mass=0, any=false;
+        for(j=1;j<=i;j++){ if(isMatch[i][j]){ mass+=indW[i][j]; any=true; } }
+        if(any){ tot+=mass; cnt++; }
+      }
+      return {score: cnt>0 ? tot/cnt : 0, queries: cnt, total: n-1};
+    }
+
+    // ---------- state ----------
+    var stage=1;
+    var playTimer=null;
+    var STATE=null;
+
+    function stopPlay(){
+      if(playTimer){ clearTimeout(playTimer); playTimer=null; }
+      elPlayBtn.disabled=false;
+    }
+    function setStage(s){
+      stage=(s===2)?2:1;
+      root.classList.toggle('ihx-stage2', stage===2);
+      elStage1Btn.setAttribute('aria-pressed', stage===1?'true':'false');
+      elStage2Btn.setAttribute('aria-pressed', stage===2?'true':'false');
+    }
+
+    function compute(){
+      var tk=tokenizeSeq(elSeq.value);
+      var tokens=tk.tokens;
+      var sharpness=parseFloat(elSharp.value);
+      if(!isFinite(sharpness)) sharpness=5;
+      sharpness=Math.max(0, Math.min(12, sharpness));
+
+      var heads=computeHeads(tokens, sharpness);
+      var n=tokens.length, qPos=n-1, j;
+
+      // matching keys for the final query: j >= 1 with tokens[j-1] === tokens[qPos]
+      var matches=[];
+      for(j=1;j<=qPos;j++){ if(heads.isMatch[qPos][j]) matches.push(j); }
+      var noMatch=(matches.length===0);
+      // all matching keys share the same score, so "best" == most recent occurrence
+      var matchPos = noMatch ? -1 : matches[matches.length-1];
+      var matchWeight = noMatch ? 0 : heads.indW[qPos][matchPos];
+      var matchMass=0;
+      for(j=0;j<matches.length;j++) matchMass+=heads.indW[qPos][matches[j]];
+
+      var dist=copyDistribution(tokens, heads.indW[qPos]);
+      var pm=prefixMatchingScore(heads.indW, heads.isMatch);
+      // source positions = the earlier occurrences of the query token (each match key j sits at j-1+1)
+      var sources=matches.map(function(j){ return j-1; });
+
+      return {tokens:tokens, n:n, qPos:qPos, sharpness:sharpness,
+              prevW:heads.prevW, indW:heads.indW, isMatch:heads.isMatch,
+              matches:matches, sources:sources,
+              matchPos:matchPos, matchWeight:matchWeight, matchMass:matchMass,
+              noMatch:noMatch, tied:matches.length>1,
+              dist:dist, topTok:dist[0].tok, topP:dist[0].p, confident:(!noMatch && dist[0].p>=0.5),
+              pm:pm,
+              empty:tk.empty, truncated:tk.truncated, short:tk.short};
+    }
+
+    function renderMsg(){
+      var parts=[];
+      if(STATE.empty) parts.push('Empty input — showing the default example.');
+      if(STATE.short) parts.push('Need at least '+MIN_TOKENS+' tokens — showing the default example.');
+      if(STATE.truncated) parts.push('Only the first '+MAX_TOKENS+' tokens are used.');
+      elMsg.textContent=parts.join(' ');
+    }
+
+    // ---------- main circuit diagram ----------
+    function renderDiagram(){
+      var n=STATE.n, qPos=STATE.qPos, tokens=STATE.tokens, i, j;
+      var slots=n+1;                    // + one dashed "predicted next" slot
+      var availW=(elDiagWrap.clientWidth||620);
+      var marginX=12, gap=7, bulge=16;
+      var boxW=Math.max(38, Math.min(62, Math.floor((Math.min(Math.max(availW,340),700)-marginX*2-(slots-1)*gap)/slots)));
+      var boxH=34;
+      var topArea=98, botArea=74;       // botArea must clear: 2*bulge + chip line + index line
+      var rowY=topArea;
+      var unit=boxW+gap;
+      var gridW=slots*unit-gap;
+      var svgW=marginX*2+gridW;
+      var svgH=topArea+boxH+botArea;
+      var chipY=rowY+boxH+2*bulge+13;
+      var idxY=chipY+14;
+
+      elSvg.setAttribute('width', svgW);
+      elSvg.setAttribute('height', svgH);
+      elSvg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
+      if(elSvg.style) elSvg.style.maxWidth=svgW+'px';   // short sequences must not stretch/upscale
+      while(elSvg.firstChild) elSvg.removeChild(elSvg.firstChild);
+
+      function xLeft(idx){ return marginX+idx*unit; }
+      function xCenter(idx){ return xLeft(idx)+boxW/2; }
+
+      var defs=svgEl('defs');
+      function addMarker(id, cls){
+        var m=svgEl('marker');
+        m.setAttribute('id', id);
+        m.setAttribute('markerWidth','8'); m.setAttribute('markerHeight','8');
+        m.setAttribute('refX','6'); m.setAttribute('refY','3');
+        m.setAttribute('orient','auto'); m.setAttribute('markerUnits','userSpaceOnUse');
+        var p=svgEl('path');
+        p.setAttribute('d','M0,0 L6,3 L0,6 Z');
+        p.setAttribute('class', cls);
+        m.appendChild(p);
+        defs.appendChild(m);
+      }
+      addMarker('induction-head-arrow-prev','ihx-mk-prev');
+      addMarker('induction-head-arrow-ind','ihx-mk-ind');
+      elSvg.appendChild(defs);
+
+      var gPrev=svgEl('g'); gPrev.setAttribute('class','ihx-prevlayer');
+      var gInd=svgEl('g');  gInd.setAttribute('class','ihx-indlayer');
+      var gBoxes=svgEl('g');
+
+      // ---- stage 1: previous-token head write arcs, below the row, for i = 1..n-1
+      for(i=1;i<n;i++){
+        var x1=xCenter(i), x2=xCenter(i-1), y=rowY+boxH;
+        var w=STATE.prevW[i][i-1];
+        var path=svgEl('path');
+        path.setAttribute('class','ihx-arc-prev');
+        path.setAttribute('d','M '+x1+' '+y+' Q '+((x1+x2)/2)+' '+(y+bulge)+' '+x2+' '+y);
+        path.setAttribute('marker-end','url(#induction-head-arrow-prev)');
+        path.setAttribute('opacity', (0.25+0.75*w).toFixed(3));
+        var t1=svgEl('title');
+        t1.textContent='prev-token head: query i='+i+' ("'+tokens[i]+'") attends to key j='+(i-1)+' ("'+tokens[i-1]+'"), weight '+fmt3(w);
+        path.appendChild(t1);
+        gPrev.appendChild(path);
+
+        var chip=svgEl('text');
+        chip.setAttribute('class','ihx-chiptext');
+        chip.setAttribute('x', x1); chip.setAttribute('y', chipY);
+        chip.textContent='writes “'+abbrev(tokens[i-1])+'”';
+        gPrev.appendChild(chip);
+      }
+      var chip0=svgEl('text');
+      chip0.setAttribute('class','ihx-chiptext');
+      chip0.setAttribute('x', xCenter(0)); chip0.setAttribute('y', chipY);
+      chip0.textContent='(no prev token)';
+      gPrev.appendChild(chip0);
+
+      for(i=0;i<n;i++){
+        var idx=svgEl('text');
+        idx.setAttribute('class','ihx-idxtext');
+        idx.setAttribute('x', xCenter(i)); idx.setAttribute('y', idxY);
+        idx.textContent='i='+i;
+        gPrev.appendChild(idx);
+      }
+
+      // ---- stage 2: induction-head attention arcs from qPos back over the whole causal history
+      var indRow=STATE.indW[qPos];
+      var maxDist=Math.max(1, qPos);
+      for(j=0;j<=qPos;j++){
+        var wgt=indRow[j];
+        if(!(wgt>ARC_EPS)) continue;
+        var xq=xCenter(qPos), xk=xCenter(j), yTop=rowY;
+        var pathI=svgEl('path');
+        if(j===qPos){
+          // self-attention: a small loop above the query box (a straight Q-curve would degenerate)
+          pathI.setAttribute('d','M '+(xq-9)+' '+yTop+' C '+(xq-26)+' '+(yTop-42)+', '+(xq+26)+' '+(yTop-42)+', '+(xq+9)+' '+yTop);
+        } else {
+          var apex=Math.max(34, Math.min(topArea-14, 30+50*Math.abs(qPos-j)/maxDist));
+          pathI.setAttribute('d','M '+xq+' '+yTop+' Q '+((xq+xk)/2)+' '+(yTop-apex)+' '+xk+' '+yTop);
+        }
+        pathI.setAttribute('class','ihx-arc-ind');
+        pathI.setAttribute('marker-end','url(#induction-head-arrow-ind)');
+        pathI.setAttribute('opacity', (0.12+0.88*wgt).toFixed(3));
+        pathI.setAttribute('stroke-width', (1.4+2.2*wgt).toFixed(2));
+        var t2=svgEl('title');
+        t2.textContent='induction head: query i='+qPos+' ("'+tokens[qPos]+'") attends to key j='+j+' ("'+tokens[j]+'"), weight '+fmt3(wgt)+
+                       (STATE.isMatch[qPos][j]?' — matching key (token before it is "'+tokens[qPos]+'")':'');
+        pathI.appendChild(t2);
+        gInd.appendChild(pathI);
+      }
+
+      // ---- token boxes. Every induction-matching key is highlighted (they all carry the same
+      // score, so with repeats the mass really is split across all of them); the earlier
+      // occurrences of the query token that produced those keys are dashed.
+      var isKey={}, isSrc={};
+      for(i=0;i<STATE.matches.length;i++) isKey[STATE.matches[i]]=true;
+      for(i=0;i<STATE.sources.length;i++) isSrc[STATE.sources[i]]=true;
+      for(i=0;i<n;i++){
+        var cls='ihx-tokbox';
+        if(i===qPos) cls+=' ihx-qpos';
+        else if(isKey[i]) cls+=' ihx-match';
+        else if(isSrc[i]) cls+=' ihx-src';
+        var rect=svgEl('rect');
+        rect.setAttribute('class', cls);
+        rect.setAttribute('x', xLeft(i)); rect.setAttribute('y', rowY);
+        rect.setAttribute('width', boxW); rect.setAttribute('height', boxH);
+        rect.setAttribute('rx', 6);
+        gBoxes.appendChild(rect);
+
+        var txt=svgEl('text');
+        txt.setAttribute('class','ihx-toktext');
+        txt.setAttribute('x', xCenter(i)); txt.setAttribute('y', rowY+boxH/2+5);
+        txt.textContent=abbrev(tokens[i]);
+        var role='';
+        if(i===qPos) role=' (final query)';
+        else if(isKey[i]) role=' (induction-matching key — this token is a copy candidate, weight '+fmt3(indRow[i])+')';
+        else if(isSrc[i]) role=' (earlier occurrence of the query token)';
+        var tt=svgEl('title'); tt.textContent='position '+i+': "'+tokens[i]+'"'+role;
+        txt.appendChild(tt);
+        gBoxes.appendChild(txt);
+      }
+
+      // ---- predicted-next slot at index n. The letter is always the argmax of the real copy
+      // distribution; the box only goes solid green when that copy is actually confident
+      // (p >= 0.5), so a uniform "no signal" row still reads as uncertain.
+      var px=xLeft(n);
+      var prect=svgEl('rect');
+      prect.setAttribute('class','ihx-predbox'+(STATE.confident?' ihx-predbox-hasmatch':''));
+      prect.setAttribute('x', px); prect.setAttribute('y', rowY);
+      prect.setAttribute('width', boxW); prect.setAttribute('height', boxH);
+      prect.setAttribute('rx', 6);
+      gBoxes.appendChild(prect);
+
+      // "?" placeholder in stage 1; cross-fades into the predicted token in stage 2.
+      var qmark=svgEl('text');
+      qmark.setAttribute('class','ihx-toktext ihx-qmark');
+      qmark.setAttribute('x', px+boxW/2); qmark.setAttribute('y', rowY+boxH/2+5);
+      qmark.textContent='?';
+      gBoxes.appendChild(qmark);
+
+      var ptxt=svgEl('text');
+      ptxt.setAttribute('class','ihx-toktext ihx-predfill');
+      ptxt.setAttribute('x', px+boxW/2); ptxt.setAttribute('y', rowY+boxH/2+5);
+      ptxt.textContent=abbrev(STATE.topTok);
+      var pt=svgEl('title');
+      pt.textContent='predicted next token: "'+STATE.topTok+'" with copy probability '+fmt3(STATE.topP)+
+                     (STATE.confident?'':' — weak: no single source dominates');
+      ptxt.appendChild(pt);
+      gBoxes.appendChild(ptxt);
+
+      var pprob=svgEl('text');
+      pprob.setAttribute('class','ihx-chiptext ihx-predfill');
+      pprob.setAttribute('x', px+boxW/2); pprob.setAttribute('y', chipY);
+      pprob.textContent='p = '+fmt3(STATE.topP);
+      gBoxes.appendChild(pprob);
+
+      var pidx=svgEl('text');
+      pidx.setAttribute('class','ihx-idxtext');
+      pidx.setAttribute('x', px+boxW/2); pidx.setAttribute('y', idxY);
+      pidx.textContent='i='+n+' (next)';
+      gBoxes.appendChild(pidx);
+
+      elSvg.appendChild(gPrev);
+      elSvg.appendChild(gInd);
+      elSvg.appendChild(gBoxes);
+    }
+
+    // ---------- small attention heatmaps ----------
+    function renderHeatmap(svg, wrap, weights, tokens, highlightRow, highlightCols){
+      var n=tokens.length, i, j;
+      var colSet={};
+      if(highlightCols){ for(i=0;i<highlightCols.length;i++) colSet[highlightCols[i]]=true; }
+      var marginLeft=30, marginTop=32, pad=4;
+      var availW=(wrap && wrap.clientWidth) || 300;
+      var budget=Math.min(Math.max(availW,180),340)-marginLeft-pad;
+      var cellSize=Math.max(14, Math.min(26, Math.floor(budget/n)));
+      if(!isFinite(cellSize)||cellSize<=0) cellSize=18;
+      var gridW=cellSize*n, gridH=cellSize*n;
+      var svgW=marginLeft+gridW+pad, svgH=marginTop+gridH+pad;
+      svg.setAttribute('width', svgW);
+      svg.setAttribute('height', svgH);
+      svg.setAttribute('viewBox','0 0 '+svgW+' '+svgH);
+      if(svg.style) svg.style.maxWidth=svgW+'px';
+      while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+      for(i=0;i<n;i++){
+        for(j=0;j<n;j++){
+          var masked=(j>i);
+          var rect=svgEl('rect');
+          rect.setAttribute('class','ihx-hcell'+(masked?' ihx-hmasked':''));
+          rect.setAttribute('x', marginLeft+j*cellSize+0.5);
+          rect.setAttribute('y', marginTop+i*cellSize+0.5);
+          rect.setAttribute('width', Math.max(1,cellSize-1));
+          rect.setAttribute('height', Math.max(1,cellSize-1));
+          var tt=svgEl('title');
+          if(masked){
+            tt.textContent='query i='+i+', key j='+j+': masked (future position)';
+          } else {
+            var w=weights[i][j];
+            rect.setAttribute('fill-opacity', (0.04+0.96*w).toFixed(3));
+            tt.textContent='query i='+i+' ("'+tokens[i]+'") → key j='+j+' ("'+tokens[j]+'"): weight '+fmt3(w);
+          }
+          rect.appendChild(tt);
+          svg.appendChild(rect);
+        }
+      }
+      for(j=0;j<n;j++){
+        var lc=svgEl('text');
+        lc.setAttribute('class','ihx-hlab'+(colSet[j]?' ihx-hlabhi':''));
+        lc.setAttribute('x', marginLeft+j*cellSize+cellSize/2);
+        lc.setAttribute('y', marginTop-6);
+        lc.setAttribute('text-anchor','middle');
+        lc.textContent=abbrev(tokens[j]);
+        svg.appendChild(lc);
+      }
+      for(i=0;i<n;i++){
+        var lr=svgEl('text');
+        lr.setAttribute('class','ihx-hlab'+(highlightRow===i?' ihx-hlabhi':''));
+        lr.setAttribute('x', marginLeft-4);
+        lr.setAttribute('y', marginTop+i*cellSize+cellSize/2+3);
+        lr.setAttribute('text-anchor','end');
+        lr.textContent=abbrev(tokens[i]);
+        svg.appendChild(lr);
+      }
+      if(highlightRow!=null && highlightRow>=0 && highlightRow<n){
+        var hr=svgEl('rect');
+        hr.setAttribute('class','ihx-hrowhi');
+        hr.setAttribute('x', marginLeft+0.5); hr.setAttribute('y', marginTop+highlightRow*cellSize+0.5);
+        hr.setAttribute('width', Math.max(1,gridW-1)); hr.setAttribute('height', Math.max(1,cellSize-1));
+        svg.appendChild(hr);
+      }
+      if(highlightCols){
+        for(var k=0;k<highlightCols.length;k++){
+          var c=highlightCols[k];
+          if(!(c>=0 && c<n)) continue;
+          var hc=svgEl('rect');
+          hc.setAttribute('class','ihx-hcolhi');
+          hc.setAttribute('x', marginLeft+c*cellSize+0.5); hc.setAttribute('y', marginTop+0.5);
+          hc.setAttribute('width', Math.max(1,cellSize-1)); hc.setAttribute('height', Math.max(1,gridH-1));
+          svg.appendChild(hc);
+        }
+      }
+    }
+
+    function renderHeatmaps(){
+      renderHeatmap(elHeatPrevSvg, elHeatPrevWrap, STATE.prevW, STATE.tokens, null, null);
+      renderHeatmap(elHeatIndSvg, elHeatIndWrap, STATE.indW, STATE.tokens, STATE.qPos, STATE.matches);
+    }
+
+    // ---------- copy-distribution bars ----------
+    function renderDist(){
+      var rows=STATE.dist.slice(0,6);
+      var html='';
+      for(var k=0;k<rows.length;k++){
+        var r=rows[k];
+        var win=(k===0 && STATE.confident);
+        html += '<div class="ihx-distrow'+(win?' ihx-distwin':'')+'">'+
+                  '<span class="ihx-distname" title="'+esc(r.tok)+'">'+esc(abbrev(r.tok))+'</span>'+
+                  '<span class="ihx-distbarwrap"><span class="ihx-distbar" style="width:'+
+                    (Math.max(0,Math.min(1,r.p))*100).toFixed(2)+'%"></span></span>'+
+                  '<span class="ihx-distval">'+pct(r.p)+'</span>'+
+                '</div>';
+      }
+      if(STATE.dist.length>rows.length){
+        html += '<div class="ihx-distrow"><span class="ihx-distname">…</span>'+
+                '<span></span><span class="ihx-distval">'+(STATE.dist.length-rows.length)+' more</span></div>';
+      }
+      elDist.innerHTML=html;
+    }
+
+    // ---------- readout ----------
+    function renderReadout(){
+      var tokens=STATE.tokens, qPos=STATE.qPos, n=STATE.n;
+      var qTok=tokens[qPos];
+      var html='Query position <b>i='+qPos+'</b> holds token <b>"'+esc(qTok)+'"</b>. ';
+
+      if(STATE.noMatch){
+        html += '<span class="ihx-warnline">No earlier occurrence of "'+esc(qTok)+'" exists in positions 0…'+(qPos-1)+
+                ', so every key scores 0 and the induction row is exactly uniform over the '+(qPos+1)+
+                ' unmasked positions (weight '+fmt3(1/(qPos+1))+' each). With no signal to key off, the copy read-out is just '+
+                'token frequency: its top entry is "'+esc(STATE.topTok)+'" at only '+pct(STATE.topP)+', which is not a prediction, it is a shrug.</span>';
+      } else {
+        var matchPos=STATE.matchPos, srcPos=matchPos-1;
+        html += 'The most recent earlier occurrence of "'+esc(qTok)+'" is at position '+srcPos+
+                ', so the matching key is the position right after it: the induction head attends to <b>j='+matchPos+'</b> ("'+
+                esc(tokens[matchPos])+'") with weight <b>'+fmt3(STATE.matchWeight)+'</b>. ';
+        if(STATE.tied){
+          html += '"'+esc(qTok)+'" also occurs at earlier position'+(STATE.matches.length>2?'s':'')+' '+
+                  STATE.sources.slice(0,-1).join(', ')+
+                  ', and all matching keys score the same <span class="ihx-mono">S</span>, so the mass is split evenly across them ('+
+                  fmt3(STATE.matchMass)+' total on matching keys — see the fan of arcs). ';
+        } else {
+          html += 'Total mass on matching keys: <b>'+fmt3(STATE.matchMass)+'</b>. ';
+        }
+        html += 'Aggregating that attention by token identity, the copy read-out for position '+n+' peaks at <b>"'+
+                esc(STATE.topTok)+'"</b> with '+pct(STATE.topP)+
+                (STATE.confident?'.':' — too diffuse to call a prediction, since no single source dominates.')+' ';
+        html += '<br><b>K-composition:</b> the previous-token head wrote "'+esc(tokens[srcPos])+'" into the residual stream at position '+
+                matchPos+' (chip under box '+matchPos+'); the induction head’s <b>key</b> at position '+matchPos+
+                ' is built from that written value, not from token '+matchPos+' itself. Its <b>query</b> at position '+qPos+
+                ' reads "'+esc(qTok)+'" directly — no composition needed on the query side. Because "'+esc(tokens[srcPos])+
+                '" = "'+esc(qTok)+'", the QK score spikes exactly there.';
+      }
+
+      var pm=STATE.pm;
+      html += '<span class="ihx-scoreline"><b>Prefix-matching score:</b> ';
+      if(pm.queries===0){
+        html += 'undefined for this sequence — not one of the '+pm.total+' query positions has an earlier match to attend to. '+
+                'Press <b>Repeat as [X X]</b> to make every position in the second copy predictable.';
+      } else {
+        html += '<b>'+fmt3(pm.score)+'</b>, the mean attention mass this head puts on induction-matching keys, averaged over the '+
+                pm.queries+' of '+pm.total+' query positions that have any earlier match. This is the toy version of the score '+
+                'used to rank real heads in the code below; a genuine induction head in GPT-2 small scores roughly 0.4–0.9.';
+      }
+      html += '</span>';
+      elReadout.innerHTML=html;
+    }
+
+    function renderAll(){
+      STATE=compute();
+      elSharpVal.textContent=(Math.round(STATE.sharpness*10)/10).toString();
+      renderMsg();
+      renderDiagram();
+      renderDist();
+      renderHeatmaps();
+      renderReadout();
+    }
+
+    elSeq.addEventListener('input', renderAll);
+    elSharp.addEventListener('input', renderAll);
+    elSharp.addEventListener('change', renderAll);
+    elStage1Btn.addEventListener('click', function(){ stopPlay(); setStage(1); });
+    elStage2Btn.addEventListener('click', function(){ stopPlay(); setStage(2); });
+    elPlayBtn.addEventListener('click', function(){
+      stopPlay();
+      elPlayBtn.disabled=true;
+      setStage(1);
+      playTimer=setTimeout(function(){
+        playTimer=null;
+        elPlayBtn.disabled=false;
+        setStage(2);
+      }, 900);
+    });
+    elRepeatBtn.addEventListener('click', function(){
+      stopPlay();
+      var base=tokenizeSeq(elSeq.value).tokens;
+      var half=Math.min(base.length, Math.floor(MAX_TOKENS/2));
+      base=base.slice(0,half);
+      elSeq.value=base.concat(base).join(' ');
+      setStage(2);
+      renderAll();
+    });
+    elResetBtn.addEventListener('click', function(){
+      stopPlay();
+      elSeq.value=DEFAULT_SEQ;
+      elSharp.value='5';
+      setStage(1);
+      renderAll();
+    });
+
+    var resizePending=false;
+    window.addEventListener('resize', function(){
+      if(resizePending||!STATE) return;
+      resizePending=true;
+      window.requestAnimationFrame(function(){
+        resizePending=false;
+        if(STATE){ renderDiagram(); renderHeatmaps(); }
+      });
+    });
+
+    setStage(1);
+    renderAll();
+  })();</script>
+</div>

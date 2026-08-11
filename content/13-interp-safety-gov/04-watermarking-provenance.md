@@ -63,6 +63,8 @@ Be careful with that null, though: it assumes each scored token is green *indepe
 
 {{fig:wmprov-greenlist-mechanism}}
 
+{{tool:watermark-greenlist}}
+
 ### Context Hashing and Key Security
 
 The green list $G_t$ is typically derived by hashing the previous $h$ tokens together with a secret key $k$:

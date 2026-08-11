@@ -245,6 +245,8 @@ $\beta$ is the same KL temperature from the original objective, and it controls 
 
     Now imagine after some training the chosen log-ratio rises to $+1.5$ and rejected falls to $0.0$. Then $\Delta=0.1(1.5-0.0)=0.15$, loss $=-\log\sigma(0.15)=0.62$ nats, weight $=\sigma(-0.15)=0.46$ — smaller. The pair is now ranked correctly and contributes less. This is the self-curriculum: solved pairs fade, hard pairs dominate.
 
+{{tool:dpo-explorer}}
+
 ## The variants: fixing what DPO gets wrong
 
 DPO is elegant but not perfect. Three weaknesses drive the entire variant zoo: **(1)** it overfits / pushes margins to infinity on deterministic preferences (no explicit margin cap); **(2)** it needs *paired* data $(y_w,y_l)$ for the same prompt, which is expensive; and **(3)** it needs a frozen reference model, doubling memory and adding a forward pass. Each variant attacks one or more of these.

@@ -1,0 +1,791 @@
+<div class="viz-tool" id="tool-scaling-law-fit">
+  <div class="vt-title">Fit your own scaling law and extrapolate</div>
+
+  <div class="vt-grid">
+    <label for="scaling-law-fit-k-range">Ladder size k = <span id="scaling-law-fit-k-val">6</span> runs
+      <input id="scaling-law-fit-k-range" type="range" min="4" max="9" step="1" value="6" aria-label="Number of ladder runs">
+    </label>
+
+    <label for="scaling-law-fit-r-num">Ladder generation ratio D/N (tok/param)
+      <span class="vt-in">
+        <input id="scaling-law-fit-r-range" type="range" min="5" max="60" step="1" value="20" aria-label="Tokens per parameter ratio (slider)">
+        <input id="scaling-law-fit-r-num" type="number" min="5" max="60" step="1" value="20" aria-label="Tokens per parameter ratio (number)">
+      </span>
+    </label>
+
+    <label for="scaling-law-fit-sigma-num">Noise &sigma; on loss (nats, std dev)
+      <span class="vt-in">
+        <input id="scaling-law-fit-sigma-range" type="range" min="0" max="0.3" step="0.01" value="0" aria-label="Noise standard deviation (slider)">
+        <input id="scaling-law-fit-sigma-num" type="number" min="0" max="0.3" step="0.01" value="0" aria-label="Noise standard deviation (number)">
+      </span>
+    </label>
+
+    <label for="scaling-law-fit-reseed">Ladder data
+      <span class="vt-in">
+        <button id="scaling-law-fit-reseed" type="button">Reseed noise</button>
+        <button id="scaling-law-fit-reset" type="button">Undo point edits</button>
+      </span>
+    </label>
+
+    <label for="scaling-law-fit-E-num">Assumed loss floor E used by the fit (nats)
+      <span class="vt-in">
+        <input id="scaling-law-fit-E-range" type="range" min="0" max="3" step="0.01" value="1.69" aria-label="Assumed irreducible loss floor (slider)">
+        <input id="scaling-law-fit-E-num" type="number" min="0" max="3" step="0.01" value="1.69" aria-label="Assumed irreducible loss floor (number)">
+      </span>
+    </label>
+
+    <label for="scaling-law-fit-autoe">Let the data choose E
+      <span class="vt-in"><button id="scaling-law-fit-autoe" type="button">Auto-fit E (maximise R&sup2;)</button></span>
+    </label>
+
+    <label for="scaling-law-fit-Ct-num">Target compute C (FLOPs, log<sub>10</sub>)
+      <span class="vt-in">
+        <input id="scaling-law-fit-Ct-range" type="range" min="15.5" max="25" step="0.05" value="22.5" aria-label="Target compute, log10 FLOPs (slider)">
+        <input id="scaling-law-fit-Ct-num" type="number" min="15.5" max="25" step="0.05" value="22.5" aria-label="Target compute, log10 FLOPs (number)">
+      </span>
+    </label>
+
+    <label for="scaling-law-fit-rplan-num">Your plan's tok/param (over-/under-training)
+      <span class="vt-in">
+        <input id="scaling-law-fit-rplan-range" type="range" min="5" max="500" step="1" value="100" aria-label="Planned tokens per parameter ratio (slider)">
+        <input id="scaling-law-fit-rplan-num" type="number" min="5" max="500" step="1" value="100" aria-label="Planned tokens per parameter ratio (number)">
+      </span>
+    </label>
+  </div>
+
+  <div id="scaling-law-fit-Ct-disp" class="slf-ctdisp" aria-live="polite"></div>
+
+  <div class="slf-plot-wrap">
+    <svg id="scaling-law-fit-svg" viewBox="0 0 700 380" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Loss versus compute on log-log axes, with fitted power law, true generating curve, and extrapolation to a target compute">
+      <g id="scaling-law-fit-gridlayer"></g>
+      <g id="scaling-law-fit-axislayer"></g>
+      <path id="scaling-law-fit-truecurve" class="slf-truecurve" fill="none"></path>
+      <line id="scaling-law-fit-eline" class="slf-eline"></line>
+      <path id="scaling-law-fit-fitsolid" class="slf-fitsolid" fill="none"></path>
+      <path id="scaling-law-fit-fitdash" class="slf-fitdash" fill="none"></path>
+      <line id="scaling-law-fit-targetline" class="slf-targetline"></line>
+      <g id="scaling-law-fit-pointlayer"></g>
+      <circle id="scaling-law-fit-truedot" class="slf-truedot" r="4"></circle>
+      <circle id="scaling-law-fit-preddot" class="slf-preddot" r="4.6"></circle>
+      <text id="scaling-law-fit-predlabel" class="slf-predlabel"></text>
+    </svg>
+  </div>
+
+  <div class="slf-legend">
+    <span class="slf-swatch slf-sw-fit"></span> fitted power law (solid = supported by data, dashed = extrapolated)
+    <span class="slf-swatch slf-sw-true"></span> true generating law (reference, unknown to the fit)
+    <span class="slf-swatch slf-sw-pt"></span> ladder run &mdash; click then drag, or focus and press &uarr;/&darr; (Home restores it)
+  </div>
+
+  <div class="vt-out" id="scaling-law-fit-out" aria-live="polite"></div>
+
+  <div class="slf-tablewrap">
+    <table id="scaling-law-fit-table">
+      <caption>Ladder runs (N = params, D = tokens, C = 6ND FLOPs; residual = L &minus; fitted L&#770;)</caption>
+      <thead><tr><th scope="col">run</th><th scope="col">N</th><th scope="col">D</th><th scope="col">C</th><th scope="col">loss L</th><th scope="col">fit L&#770;</th><th scope="col">resid</th></tr></thead>
+      <tbody id="scaling-law-fit-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="vt-note">
+    <b>Fit-then-extrapolate</b> is the whole scaling-law workflow. You cannot afford to train at the target scale, so you train a cheap <i>ladder</i> of small models, fit <code>L(C) = E + A&middot;C<sup>&minus;&alpha;</sup></code> to their losses, and read the curve forward to a budget you have not paid for yet. With <code>E</code> held fixed the fit is <i>linear</i> in log space &mdash; ordinary least squares of <code>ln(L&minus;E)</code> on <code>ln C</code>, closed form, no local minima. The <b>solid</b> segment is the range your ladder actually covers; the <b>dashed</b> segment is extrapolation, and the further right it runs the more you are trusting the shape of the curve rather than data.
+    <br><br>
+    Three lessons are built into the controls. <b>(1) The model is misspecified even with zero noise.</b> The ladder is generated by the real Chinchilla surface <code>L = E + A/N<sup>&alpha;</sup> + B/D<sup>&beta;</sup></code>, which along a fixed ratio <code>D = rN</code> is a <i>sum</i> of two power laws in C, not one &mdash; so a single-term fit can only approximate it. The "&alpha; the ladder implies" stat is the exact slope of that true curve across your ladder's compute range: your fitted &alpha; should land near it, and how far it drifts is your bias budget. <b>(2) E is barely identifiable.</b> Slide the assumed floor and watch the prediction at the target swing by hundreds of a nat while R&sup2; stays above 0.99. "Auto-fit E" scans the floor for maximum R&sup2;: at &sigma;&nbsp;=&nbsp;0 it recovers &asymp;1.70 against a true 1.69, but at &sigma;&nbsp;=&nbsp;0.05 it drifts to &asymp;1.4 and at &sigma;&nbsp;=&nbsp;0.3 it collapses to 0 &mdash; hit Reseed a few times to see the spread. That is the same fragility Epoch AI reported when replicating Chinchilla (Besiroglu et al., 2024). <b>(3) One bad run rotates the line.</b> Drag a point far off the curve and watch the residual column and the extrapolated loss move; this is why real ladders drop under-converged and loss-spiked runs <i>before</i> fitting.
+    <br><br>
+    The "exact compute-optimal" stat does not use the fit at all: it minimises the true surface subject to <code>C = 6ND</code> by Lagrange multipliers, giving <code>N* = (&alpha;A/&beta;B)<sup>1/(&alpha;+&beta;)</sup>(C/6)<sup>&beta;/(&alpha;+&beta;)</sup></code> &mdash; the same closed form as the book's <code>optimal_alloc</code>. Because &alpha;&nbsp;(0.34)&nbsp;&ne;&nbsp;&beta;&nbsp;(0.28), the implied D*/N* is <i>not</i> a constant: these published constants give &asymp;32 tok/param at 10<sup>19</sup> FLOPs, &asymp;62 at 10<sup>22</sup>, and &asymp;122 at 10<sup>25</sup>. The famous "~20 tokens per parameter" is the ratio Chinchilla <i>reported</i>, and the fact that its own fitted exponents do not reproduce it is precisely the inconsistency the replication flagged &mdash; so treat 20 as a regime-local rule of thumb, never a law. Finally, raising "your plan" ratio above the optimum trains a smaller, cheaper-to-serve model for a loss penalty you can now read off exactly &mdash; and the valley is <i>flat</i>: at 10<sup>24</sup> FLOPs, going from the optimal &asymp;100:1 out to 500:1 costs under 0.01 nats, which the last stat restates as the honest currency, "the optimal split would have reached this loss on ~19% less compute". A fifth of your compute for a 5&times; smaller model to serve is exactly the over-training trade every inference-heavy lab now makes deliberately.
+  </div>
+
+  <style>
+    #tool-scaling-law-fit{
+      --slf-fit: var(--accent, #c15b39);
+      --slf-true: #1f8a5f;
+      --slf-edit: var(--warn, #b8860a);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#ffffff); font-family:var(--sans,sans-serif); max-width:100%;
+    }
+    @media (prefers-color-scheme: dark){ #tool-scaling-law-fit{ --slf-true:#5fd0a0; --slf-edit:#e5b45c; } }
+    html[data-theme="dark"] #tool-scaling-law-fit, :root[data-theme="dark"] #tool-scaling-law-fit{ --slf-true:#5fd0a0; --slf-edit:#e5b45c; }
+    html[data-theme="light"] #tool-scaling-law-fit, :root[data-theme="light"] #tool-scaling-law-fit{ --slf-true:#1f8a5f; --slf-edit:#b8860a; }
+
+    #tool-scaling-law-fit .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-scaling-law-fit .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px 18px; }
+    #tool-scaling-law-fit label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); }
+    #tool-scaling-law-fit input, #tool-scaling-law-fit select, #tool-scaling-law-fit button{
+      font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border,#e7e1d4);
+      border-radius:7px; background:var(--surface,#ffffff); color:var(--ink,#211f1b); max-width:100%;
+    }
+    #tool-scaling-law-fit button{ cursor:pointer; background:var(--surface-3,#ece7da); font-size:.8rem; padding:6px 9px; }
+    #tool-scaling-law-fit button:hover{ background:var(--surface-2,#f3efe6); }
+    #tool-scaling-law-fit input[type="range"]{ padding:0; accent-color:var(--slf-fit); border:0; background:transparent; }
+    #tool-scaling-law-fit input:focus-visible, #tool-scaling-law-fit select:focus-visible, #tool-scaling-law-fit button:focus-visible{
+      outline:2px solid var(--slf-fit); outline-offset:2px;
+    }
+    #tool-scaling-law-fit .vt-in{ display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+    #tool-scaling-law-fit .vt-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-scaling-law-fit .vt-in input[type="number"]{ flex:1 1 74px; min-width:0; }
+
+    #tool-scaling-law-fit .slf-ctdisp{ margin-top:6px; font-size:.78rem; color:var(--muted,#6d675d); font-variant-numeric:tabular-nums; }
+    #tool-scaling-law-fit .slf-ctdisp b{ color:var(--slf-fit); }
+
+    #tool-scaling-law-fit .slf-plot-wrap{
+      margin-top:12px; overflow-x:auto; max-width:100%; background:var(--surface-2,#f3efe6);
+      border:1px solid var(--border,#e7e1d4); border-radius:10px; padding:8px;
+    }
+    #tool-scaling-law-fit svg{ display:block; width:100%; height:auto; min-width:420px; }
+    #tool-scaling-law-fit .slf-grid{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-scaling-law-fit .slf-axis{ stroke:var(--muted,#6d675d); stroke-width:1; }
+    #tool-scaling-law-fit .slf-tick{ font-size:9.5px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-scaling-law-fit .slf-axislabel{ font-size:10.5px; fill:var(--ink-soft,#45413a); font-family:var(--sans,sans-serif); }
+
+    #tool-scaling-law-fit .slf-fitsolid{ stroke:var(--slf-fit); stroke-width:2.6; stroke-linejoin:round; }
+    #tool-scaling-law-fit .slf-fitdash{ stroke:var(--slf-fit); stroke-width:2.2; stroke-dasharray:7 5; stroke-linejoin:round; }
+    #tool-scaling-law-fit .slf-truecurve{ stroke:var(--slf-true); stroke-width:1.8; stroke-dasharray:2 3; opacity:.85; }
+    #tool-scaling-law-fit .slf-eline{ stroke:var(--muted,#6d675d); stroke-width:1; stroke-dasharray:3 3; }
+    #tool-scaling-law-fit .slf-targetline{ stroke:var(--ink-soft,#45413a); stroke-width:1; stroke-dasharray:2 2; }
+    #tool-scaling-law-fit .slf-pt{ fill:var(--surface,#fff); stroke:var(--slf-fit); stroke-width:2; cursor:ns-resize; touch-action:none; }
+    #tool-scaling-law-fit .slf-pt.slf-edited{ stroke:var(--slf-edit); }
+    #tool-scaling-law-fit .slf-pt.slf-excl{ stroke-dasharray:2.5 2; opacity:.65; }
+    #tool-scaling-law-fit .slf-pt:focus{ outline:none; }
+    #tool-scaling-law-fit .slf-pt:focus-visible{ outline:2px solid var(--slf-fit); outline-offset:2px; }
+    #tool-scaling-law-fit .slf-truedot{ fill:var(--slf-true); opacity:.9; }
+    #tool-scaling-law-fit .slf-preddot{ fill:var(--slf-fit); stroke:var(--surface,#fff); stroke-width:1.4; }
+    #tool-scaling-law-fit .slf-predlabel{ font-size:9.5px; fill:var(--ink-soft,#45413a); font-family:var(--sans,sans-serif); }
+
+    #tool-scaling-law-fit .slf-legend{ margin-top:10px; display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; font-size:.76rem; color:var(--ink-soft,#45413a); }
+    #tool-scaling-law-fit .slf-swatch{ display:inline-block; width:16px; height:3px; border-radius:2px; vertical-align:middle; margin-right:2px; }
+    #tool-scaling-law-fit .slf-sw-fit{ background:var(--slf-fit); }
+    #tool-scaling-law-fit .slf-sw-true{ background:var(--slf-true); }
+    #tool-scaling-law-fit .slf-sw-pt{ background:none; border:2px solid var(--slf-fit); border-radius:50%; width:9px; height:9px; }
+
+    #tool-scaling-law-fit .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; }
+    #tool-scaling-law-fit .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:9px 12px; font-size:.8rem; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; }
+    #tool-scaling-law-fit .vt-stat b{ color:var(--slf-fit); }
+    #tool-scaling-law-fit .vt-stat .l{ font-size:.72rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-scaling-law-fit .vt-stat.slf-warn{ outline:1.5px solid var(--slf-edit); }
+
+    #tool-scaling-law-fit .slf-tablewrap{ margin-top:12px; overflow-x:auto; max-width:100%; }
+    #tool-scaling-law-fit table{ border-collapse:collapse; width:100%; font-size:.78rem; color:var(--ink,#211f1b); }
+    #tool-scaling-law-fit caption{ text-align:left; font-size:.75rem; color:var(--muted,#6d675d); margin-bottom:4px; }
+    #tool-scaling-law-fit th, #tool-scaling-law-fit td{ padding:4px 8px; border-bottom:1px solid var(--border,#e7e1d4); text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    #tool-scaling-law-fit th:first-child, #tool-scaling-law-fit td:first-child{ text-align:left; }
+    #tool-scaling-law-fit tr.slf-edited td{ color:var(--slf-edit); }
+
+    #tool-scaling-law-fit .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-scaling-law-fit .vt-note code{ font-family:var(--mono,monospace); background:var(--surface-3,#ece7da); padding:0 3px; border-radius:4px; }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-scaling-law-fit');
+    if(!root) return;
+    function q(id){ return root.querySelector('#scaling-law-fit-' + id); }
+
+    var elK      = q('k-range'), elKVal = q('k-val');
+    var elRRange = q('r-range'), elRNum = q('r-num');
+    var elSRange = q('sigma-range'), elSNum = q('sigma-num');
+    var elReseed = q('reseed'), elReset = q('reset'), elAutoE = q('autoe');
+    var elERange = q('E-range'), elENum = q('E-num');
+    var elCtRange= q('Ct-range'), elCtNum = q('Ct-num');
+    var elRpRange= q('rplan-range'), elRpNum = q('rplan-num');
+    var elCtDisp = q('Ct-disp');
+
+    var svg = q('svg');
+    var gridLayer = q('gridlayer'), axisLayer = q('axislayer'), pointLayer = q('pointlayer');
+    var trueCurve = q('truecurve'), eLine = q('eline');
+    var fitSolid = q('fitsolid'), fitDash = q('fitdash'), targetLine = q('targetline');
+    var trueDot = q('truedot'), predDot = q('preddot'), predLabel = q('predlabel');
+    var outBox = q('out'), tbody = q('tbody');
+
+    // Bail out silently if any required node is missing, so a partially
+    // included copy of this widget can never throw on someone else's page.
+    var required = [elK, elKVal, elRRange, elRNum, elSRange, elSNum, elERange, elENum,
+                    elCtRange, elCtNum, elRpRange, elRpNum, elCtDisp, svg, gridLayer,
+                    axisLayer, pointLayer, trueCurve, eLine, fitSolid, fitDash,
+                    targetLine, trueDot, predDot, predLabel, outBox, tbody];
+    for(var ri = 0; ri < required.length; ri++){ if(!required[ri]) return; }
+
+    var NS = 'http://www.w3.org/2000/svg';
+    function el(tag, attrs){
+      var e = document.createElementNS(NS, tag);
+      for(var kk in attrs){ if(Object.prototype.hasOwnProperty.call(attrs, kk)) e.setAttribute(kk, attrs[kk]); }
+      return e;
+    }
+    function clearLayer(layer){ while(layer.firstChild) layer.removeChild(layer.firstChild); }
+    function clamp(x, lo, hi){ return Math.max(lo, Math.min(hi, x)); }
+    function log10(x){ return Math.log(x) / Math.LN10; }
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // ------------------------------------------------------------ geometry
+    var VB_W = 700, VB_H = 380;
+    var PAD_L = 64, PAD_R = 18, PAD_T = 18, PAD_B = 42;
+    var PLOT_W = VB_W - PAD_L - PAD_R;
+    var PLOT_H = VB_H - PAD_T - PAD_B;
+
+    // ------------------------------------------------------ real Chinchilla law
+    // Same constants as the book's "Fitting a Scaling Law From Scratch" worked
+    // example: L(N,D) = E + A/N^alpha + B/D^beta (Hoffmann et al. 2022,
+    // Approach 3). This generates the ground-truth ladder, and -- independently
+    // of the fit below -- drives the exact compute-optimal comparison panel.
+    var TRUE = { E: 1.69, A: 406.0, B: 410.0, alpha: 0.34, beta: 0.28 };
+    function trueLoss(N, D){
+      return TRUE.E + TRUE.A / Math.pow(N, TRUE.alpha) + TRUE.B / Math.pow(D, TRUE.beta);
+    }
+    // Loss along the fixed-ratio frontier D = r*N, as a function of compute
+    // C = 6*r*N^2 alone (used to draw the dotted "true generating law" curve).
+    // Note this is a SUM of two power laws in C with different exponents
+    // (-alpha/2 and -beta/2), so a single-term fit is necessarily approximate.
+    function trueFrontierLoss(C, r){
+      var N = Math.sqrt(C / (6 * r));
+      return trueLoss(N, r * N);
+    }
+    // A fixed-ratio split D = r*N at budget C = 6ND: N = sqrt(C/(6r)).
+    function ratioSplit(C, r){
+      var N = Math.sqrt(C / (6 * r));
+      return { N: N, D: r * N };
+    }
+    // The EXACT compute-optimal split: minimise E + A/N^alpha + B/D^beta subject
+    // to C = 6ND. Substituting D = C/(6N) and setting d/dN to zero gives
+    //   alpha*A*N^-(alpha+1) = beta*B*(C/6)^-beta * N^(beta-1)
+    //   => N* = (alpha*A/(beta*B))^(1/(alpha+beta)) * (C/6)^(beta/(alpha+beta))
+    // Same closed form as the book's optimal_alloc(). Verified against a brute
+    // -force grid search: agrees to 3+ significant figures at 1e19..1e25 FLOPs.
+    // Because alpha != beta, D*/N* is NOT constant -- it drifts upward with C.
+    function exactOptimalSplit(C){
+      var alpha = TRUE.alpha, beta = TRUE.beta, A = TRUE.A, B = TRUE.B;
+      var N = Math.pow(alpha * A / (beta * B), 1 / (alpha + beta)) * Math.pow(C / 6, beta / (alpha + beta));
+      var D = C / (6 * N);
+      return { N: N, D: D, ratio: D / N };
+    }
+
+    // --------------------------------------------------------------- PRNG
+    // mulberry32: tiny deterministic PRNG so "noise" is reproducible per seed.
+    function mulberry32(seed){
+      var s = seed >>> 0;
+      return function(){
+        s = (s + 0x6D2B79F5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function gaussian(rng){          // Box-Muller
+      var u1 = Math.max(rng(), 1e-9), u2 = rng();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+
+    // --------------------------------------------------------------- inputs
+    function num(elm, fallback){
+      if(!elm) return fallback;
+      var v = parseFloat(elm.value);
+      return isFinite(v) ? v : fallback;
+    }
+    // Every consumer reads parameters through here, so the ladder generator and
+    // the renderer can never disagree about r, sigma, k, ... (out-of-range text
+    // typed into a number box is clamped once, in one place).
+    function P(){
+      return {
+        k:     clamp(parseInt(elK.value, 10) || 6, 4, 9),
+        r:     clamp(num(elRNum, 20), 5, 60),
+        sigma: clamp(num(elSNum, 0), 0, 0.3),
+        E:     clamp(num(elENum, 1.69), 0, 3),
+        logCt: clamp(num(elCtNum, 22.5), 15.5, 25),
+        rPlan: clamp(num(elRpNum, 100), 5, 500)
+      };
+    }
+
+    // --------------------------------------------------------------- state
+    var seed = 1;
+    var points = [];   // { N, D, C, L0, L, edited }
+    var Nmin = 1e7, Nmax = 3e9; // 10M .. 3B params, matches the book's ladder
+    var LOGN_MIN = log10(Nmin), LOGN_MAX = log10(Nmax);
+
+    function generateLadder(){
+      var p = P();
+      var rng = mulberry32(seed);
+      points = [];
+      for(var i = 0; i < p.k; i++){
+        var t = (p.k === 1) ? 0 : i / (p.k - 1);
+        var N = Math.pow(10, LOGN_MIN + t * (LOGN_MAX - LOGN_MIN));
+        var D = p.r * N;
+        var noise = p.sigma > 0 ? p.sigma * gaussian(rng) : 0;
+        var L = clamp(trueLoss(N, D) + noise, 0.05, 20);
+        points.push({ N: N, D: D, C: 6 * N * D, L0: L, L: L, edited: false });
+      }
+    }
+
+    // ----------------------------------------------------------- fit (OLS)
+    // Model: L(C) = E + A * C^-alpha, with E fixed by the user's slider.
+    // For fixed E this is LINEAR in log space: ln(L - E) = ln(A) - alpha*ln(C).
+    // Closed-form ordinary least squares -- no iterative solver, no local
+    // minima, exactly reproducible from the data. Runs at or below the assumed
+    // floor carry no information about A, alpha and are dropped (and flagged).
+    function fitPowerLaw(pts, E){
+      var xs = [], ys = [], used = [];
+      for(var i = 0; i < pts.length; i++){
+        var Li = pts[i].L;
+        if(Li > E + 1e-6){ xs.push(Math.log(pts[i].C)); ys.push(Math.log(Li - E)); used.push(i); }
+      }
+      var n = xs.length;
+      if(n < 2) return { ok: false, n: n, used: used, E: E };
+      var Sx=0, Sy=0, Sxx=0, Sxy=0, i2;
+      for(i2 = 0; i2 < n; i2++){ Sx += xs[i2]; Sy += ys[i2]; Sxx += xs[i2]*xs[i2]; Sxy += xs[i2]*ys[i2]; }
+      var denom = n * Sxx - Sx * Sx;
+      if(!isFinite(denom) || Math.abs(denom) < 1e-12) return { ok: false, n: n, used: used, E: E };
+      var b = (n * Sxy - Sx * Sy) / denom;   // slope of ln(L-E) vs ln C
+      var a = (Sy - b * Sx) / n;             // intercept
+      if(!isFinite(a) || !isFinite(b)) return { ok: false, n: n, used: used, E: E };
+      var yMean = Sy / n, sse = 0, sstot = 0;
+      for(i2 = 0; i2 < n; i2++){
+        var pred = a + b * xs[i2];
+        sse += (ys[i2] - pred) * (ys[i2] - pred);
+        sstot += (ys[i2] - yMean) * (ys[i2] - yMean);
+      }
+      var R2 = sstot > 1e-12 ? 1 - sse / sstot : 1;
+      return { ok: true, n: n, used: used, alpha: -b, A: Math.exp(a), E: E, R2: R2 };
+    }
+    function predict(fit, C){ return fit.E + fit.A * Math.pow(C, -fit.alpha); }
+
+    // Scan the assumed floor for the one that maximises R^2 in log space. With
+    // clean data this recovers the true E almost exactly; with noise it drifts
+    // badly -- which is the identifiability lesson.
+    function autoFitE(){
+      var minL = Infinity, i;
+      for(i = 0; i < points.length; i++) minL = Math.min(minL, points[i].L);
+      var hi = Math.min(3, minL - 0.01);
+      if(!(hi > 0)) return 0;
+      var bestE = 0, bestR2 = -Infinity;
+      for(var E = 0; E <= hi + 1e-9; E += 0.005){
+        var f = fitPowerLaw(points, E);
+        if(f.ok && f.n >= 3 && isFinite(f.R2) && f.R2 > bestR2){ bestR2 = f.R2; bestE = E; }
+      }
+      return clamp(Math.round(bestE * 100) / 100, 0, 3);
+    }
+
+    // --------------------------------------------------------------- format
+    function fmtSci(x, dec){
+      if(!isFinite(x) || x <= 0) return '-';
+      var e = Math.floor(log10(x) + 1e-12);
+      var m = x / Math.pow(10, e);
+      if(m >= 9.995){ m /= 10; e += 1; }
+      return m.toFixed(dec) + 'e' + e;
+    }
+    function fmtCount(x){
+      if(!isFinite(x) || x <= 0) return '-';
+      var a = Math.abs(x);
+      if(a >= 1e12) return (x/1e12).toFixed(2)+'T';
+      if(a >= 1e9)  return (x/1e9).toFixed(2)+'B';
+      if(a >= 1e6)  return (x/1e6).toFixed(1)+'M';
+      if(a >= 1e3)  return (x/1e3).toFixed(1)+'K';
+      return x.toFixed(0);
+    }
+    function fmtLoss(x){ return isFinite(x) ? x.toFixed(3) : '-'; }
+    function signed(x, dec){
+      if(!isFinite(x)) return '-';
+      var v = parseFloat(x.toFixed(dec));
+      if(v === 0) v = 0;            // avoid a "-0.000" label
+      return (v >= 0 ? '+' : '') + v.toFixed(dec);
+    }
+    // Compute budget that, spent at the EXACT optimal split, reaches loss Lt.
+    // Lets the flat loss penalty of over-training be quoted as wasted compute,
+    // which is how practitioners actually reason about it. L_opt(C) is strictly
+    // decreasing in C, so plain bisection on log10 C is safe and converges.
+    function computeForLoss(Lt){
+      if(!isFinite(Lt) || Lt <= TRUE.E) return Infinity;
+      var lo = 6, hi = 40;
+      var lossAt = function(lg){ var o = exactOptimalSplit(Math.pow(10, lg)); return trueLoss(o.N, o.D); };
+      if(lossAt(lo) < Lt) return Math.pow(10, lo);
+      if(lossAt(hi) > Lt) return Infinity;
+      for(var i = 0; i < 80; i++){
+        var mid = (lo + hi) / 2;
+        if(lossAt(mid) > Lt) lo = mid; else hi = mid;
+      }
+      return Math.pow(10, (lo + hi) / 2);
+    }
+
+    // ---------------------------------------------------------- nice ticks
+    // 1 / 2 / 2.5 / 5 x 10^k ladder, on the LINEAR loss values that sit on the
+    // log axis, so labels stay round whatever the y-range turns out to be.
+    function niceTicks(lo, hi, target){
+      var span = hi - lo;
+      if(!(span > 0) || !isFinite(span)) return { vals: [], dec: 2 };
+      var raw = span / target;
+      var mag = Math.pow(10, Math.floor(log10(raw)));
+      var n = raw / mag, s = (n <= 1) ? 1 : (n <= 2) ? 2 : (n <= 2.5) ? 2.5 : (n <= 5) ? 5 : 10;
+      var step = s * mag;
+      var dec = Math.max(0, -Math.floor(log10(mag) + 1e-9)) + (s === 2.5 ? 1 : 0);
+      var vals = [], start = Math.ceil(lo / step - 1e-9) * step;
+      for(var v = start; v <= hi + 1e-9 && vals.length < 40; v += step) vals.push(v);
+      return { vals: vals, dec: dec };
+    }
+
+    // --------------------------------------------------------------- render
+    var S = null; // last render state (for drag hit-testing)
+
+    function render(){
+      var p = P();
+      elKVal.textContent = String(p.k);
+      if(!points.length) generateLadder();
+
+      var E = p.E, r = p.r, rPlan = p.rPlan, logCt = p.logCt;
+      var Ctarget = Math.pow(10, logCt);
+      var fit = fitPowerLaw(points, E);
+      var usedSet = {};
+      for(var iu = 0; iu < fit.used.length; iu++) usedSet[fit.used[iu]] = true;
+
+      // -------------------------------------------------- domains
+      var xDataMin = Infinity, xDataMax = -Infinity;
+      var yDataMin = Infinity, yDataMax = -Infinity;
+      points.forEach(function(pt){
+        xDataMin = Math.min(xDataMin, log10(pt.C));
+        xDataMax = Math.max(xDataMax, log10(pt.C));
+        yDataMin = Math.min(yDataMin, log10(pt.L));
+        yDataMax = Math.max(yDataMax, log10(pt.L));
+      });
+      var xPlotMin = Math.min(xDataMin, logCt) - 0.35;
+      var xPlotMax = Math.max(xDataMax, logCt) + 0.35;
+
+      var predAtTarget = fit.ok ? predict(fit, Ctarget) : NaN;
+      var trueAtTarget = trueFrontierLoss(Ctarget, r);
+      var yCandidates = [yDataMin, yDataMax, log10(Math.max(trueAtTarget, 1e-3))];
+      if(fit.ok && isFinite(predAtTarget) && predAtTarget > 0){
+        // Cap a wild extrapolated prediction so a nonsense fit (e.g. from a
+        // badly dragged point) cannot collapse the whole plot.
+        var capped = clamp(predAtTarget, Math.pow(10, yDataMin) / 4, Math.pow(10, yDataMax) * 4);
+        yCandidates.push(log10(Math.max(capped, 1e-3)));
+      }
+      // Include the assumed floor only when it is near the data. A floor of 0
+      // (or far below every run) would otherwise stretch the log axis by
+      // decades and crush the curve into a flat line.
+      var yLoSoFar = Math.min.apply(null, yCandidates);
+      if(E > 0 && log10(E) > yLoSoFar - 0.5) yCandidates.push(log10(E));
+
+      var yMin = Math.min.apply(null, yCandidates) - 0.12;
+      var yMax = Math.max.apply(null, yCandidates) + 0.12;
+      if(yMax - yMin < 0.2){ yMin -= 0.15; yMax += 0.15; }
+
+      function xScale(logC){ return PAD_L + (logC - xPlotMin) / (xPlotMax - xPlotMin) * PLOT_W; }
+      function yScale(logL){ return PAD_T + PLOT_H - (logL - yMin) / (yMax - yMin) * PLOT_H; }
+      function xOf(C){ return xScale(log10(C)); }
+      function yOf(L){ return clamp(yScale(log10(Math.max(L, 1e-6))), PAD_T - 6, PAD_T + PLOT_H + 6); }
+
+      // -------------------------------------------------- grid + axes
+      clearLayer(gridLayer); clearLayer(axisLayer);
+      var kDecStart = Math.ceil(xPlotMin), kDecEnd = Math.floor(xPlotMax);
+      for(var dK = kDecStart; dK <= kDecEnd; dK++){
+        var xg = xScale(dK);
+        gridLayer.appendChild(el('line', { class:'slf-grid', x1:xg, y1:PAD_T, x2:xg, y2:PAD_T+PLOT_H }));
+        var tx = el('text', { class:'slf-tick', x:xg, y:PAD_T+PLOT_H+14, 'text-anchor':'middle' });
+        tx.textContent = '1e' + dK;
+        axisLayer.appendChild(tx);
+      }
+      var tk = niceTicks(Math.pow(10, yMin), Math.pow(10, yMax), 6);
+      for(var ti = 0; ti < tk.vals.length; ti++){
+        var lv = tk.vals[ti];
+        if(lv <= 0) continue;
+        var yg = yScale(log10(lv));
+        gridLayer.appendChild(el('line', { class:'slf-grid', x1:PAD_L, y1:yg, x2:PAD_L+PLOT_W, y2:yg }));
+        var ty = el('text', { class:'slf-tick', x:PAD_L-6, y:yg+3, 'text-anchor':'end' });
+        ty.textContent = lv.toFixed(tk.dec);
+        axisLayer.appendChild(ty);
+      }
+      axisLayer.appendChild(el('line', { class:'slf-axis', x1:PAD_L, y1:PAD_T, x2:PAD_L, y2:PAD_T+PLOT_H }));
+      axisLayer.appendChild(el('line', { class:'slf-axis', x1:PAD_L, y1:PAD_T+PLOT_H, x2:PAD_L+PLOT_W, y2:PAD_T+PLOT_H }));
+      var xlab = el('text', { class:'slf-axislabel', x:PAD_L+PLOT_W/2, y:VB_H-6, 'text-anchor':'middle' });
+      xlab.textContent = 'compute C (FLOPs, log scale)';
+      axisLayer.appendChild(xlab);
+      var ycy = PAD_T + PLOT_H/2;
+      var ylab = el('text', { class:'slf-axislabel', x:14, y:ycy, 'text-anchor':'middle', transform:'rotate(-90 14 '+ycy+')' });
+      ylab.textContent = 'loss L (nats/token, log scale)';
+      axisLayer.appendChild(ylab);
+
+      // -------------------------------------------------- true curve (dotted)
+      var NT = 140, tpts = [];
+      for(var it = 0; it <= NT; it++){
+        var lc = xPlotMin + (xPlotMax - xPlotMin) * (it / NT);
+        tpts.push([xScale(lc), yOf(trueFrontierLoss(Math.pow(10, lc), r))]);
+      }
+      trueCurve.setAttribute('d', pathFrom(tpts));
+
+      // -------------------------------------------------- E asymptote
+      if(E > Math.pow(10, yMin) && E < Math.pow(10, yMax)){
+        var ye = yScale(log10(E));
+        eLine.setAttribute('x1', PAD_L); eLine.setAttribute('x2', PAD_L+PLOT_W);
+        eLine.setAttribute('y1', ye); eLine.setAttribute('y2', ye);
+        eLine.style.display = '';
+      } else { eLine.style.display = 'none'; }
+
+      // -------------------------------------------------- fitted curve
+      if(fit.ok){
+        var NF = 160;
+        var solidLo = Math.max(xDataMin, xPlotMin), solidHi = Math.min(xDataMax, xPlotMax);
+        var mapFit = function(lc){ return [xScale(lc), yOf(predict(fit, Math.pow(10, lc)))]; };
+        var dSolid = sampleRun(solidLo, solidHi, xPlotMin, xPlotMax, NF, mapFit);
+        // The dashed part is everything OUTSIDE the ladder's compute range,
+        // sampled as up to two runs, each starting exactly at the boundary so
+        // it visually meets the solid segment.
+        var dDash = sampleRun(xPlotMin, Math.min(xDataMin, xPlotMax), xPlotMin, xPlotMax, NF, mapFit)
+                  + ' ' + sampleRun(Math.max(xDataMax, xPlotMin), xPlotMax, xPlotMin, xPlotMax, NF, mapFit);
+        dDash = dDash.trim();
+        if(dSolid){ fitSolid.setAttribute('d', dSolid); fitSolid.style.display = ''; } else { fitSolid.style.display = 'none'; }
+        if(dDash){ fitDash.setAttribute('d', dDash); fitDash.style.display = ''; } else { fitDash.style.display = 'none'; }
+      } else {
+        fitSolid.style.display = 'none';
+        fitDash.style.display = 'none';
+      }
+
+      // -------------------------------------------------- target marker
+      var xt = xScale(logCt);
+      targetLine.setAttribute('x1', xt); targetLine.setAttribute('x2', xt);
+      targetLine.setAttribute('y1', PAD_T); targetLine.setAttribute('y2', PAD_T+PLOT_H);
+
+      trueDot.setAttribute('cx', xt); trueDot.setAttribute('cy', yOf(trueAtTarget));
+      trueDot.style.display = '';
+
+      var isExtrap = logCt > xDataMax + 1e-9 || logCt < xDataMin - 1e-9;
+      if(fit.ok && isFinite(predAtTarget)){
+        predDot.setAttribute('cx', xt); predDot.setAttribute('cy', yOf(predAtTarget));
+        predDot.style.display = '';
+        predLabel.setAttribute('x', clamp(xt + 7, PAD_L, PAD_L + PLOT_W - 128));
+        predLabel.setAttribute('y', clamp(yOf(predAtTarget) - 8, PAD_T + 8, PAD_T + PLOT_H));
+        predLabel.textContent = (isExtrap ? 'extrapolated: ' : 'interpolated: ') + fmtLoss(predAtTarget) + ' nats';
+        predLabel.style.display = '';
+      } else {
+        predDot.style.display = 'none';
+        predLabel.style.display = 'none';
+      }
+
+      // -------------------------------------------------- draggable points
+      // Preserve keyboard focus across the rebuild: without this, every arrow
+      // key would move a point and then blow away the element holding focus.
+      var act = document.activeElement;
+      var refocus = (act && pointLayer.contains(act) && act.getAttribute) ? parseInt(act.getAttribute('data-idx'), 10) : -1;
+      clearLayer(pointLayer);
+      points.forEach(function(pt, idx){
+        var excluded = !usedSet[idx];
+        var cls = 'slf-pt' + (pt.edited ? ' slf-edited' : '') + (excluded ? ' slf-excl' : '');
+        var c = el('circle', {
+          class: cls, cx: xOf(pt.C), cy: yOf(pt.L), r: 5.5, 'data-idx': idx, tabindex: '0',
+          role: 'slider', 'aria-orientation': 'vertical',
+          'aria-valuemin': '0.05', 'aria-valuemax': '20',
+          'aria-valuenow': pt.L.toFixed(3),
+          'aria-valuetext': pt.L.toFixed(3) + ' nats at ' + fmtSci(pt.C, 2) + ' FLOPs',
+          'aria-label': 'Ladder run ' + (idx+1) + ' loss; arrow keys adjust, Home restores'
+        });
+        var title = el('title', {});
+        title.textContent = 'run ' + (idx+1) + ': N=' + fmtCount(pt.N) + ' D=' + fmtCount(pt.D) +
+                            ' C=' + fmtSci(pt.C, 2) + ' L=' + fmtLoss(pt.L) + (excluded ? ' (at or below assumed E - excluded from fit)' : '');
+        c.appendChild(title);
+        pointLayer.appendChild(c);
+      });
+      if(refocus >= 0 && refocus < pointLayer.childNodes.length){
+        var tgt = pointLayer.childNodes[refocus];
+        try{ tgt.focus({ preventScroll: true }); }catch(e){ try{ tgt.focus(); }catch(e2){} }
+      }
+
+      S = { yMin: yMin, yMax: yMax };
+
+      // -------------------------------------------------- stats
+      var opt = exactOptimalSplit(Ctarget);
+      var plan = ratioSplit(Ctarget, rPlan);
+      var lossOpt = trueLoss(opt.N, opt.D);
+      var lossPlan = trueLoss(plan.N, plan.D);
+      var deltaPlan = Math.max(0, lossPlan - lossOpt);
+      var regime = rPlan > opt.ratio * 1.05 ? 'over-trained (smaller model, more tokens)'
+                 : rPlan < opt.ratio / 1.05 ? 'under-trained (bigger model, fewer tokens)'
+                 : 'close to the true optimum';
+
+      // The alpha the ladder actually implies: exact secant slope of
+      // ln(L_true - E) vs ln C across the ladder's compute range. A perfect
+      // fit on noiseless data lands here, not on Chinchilla's 0.34.
+      var cLo = Math.pow(10, xDataMin), cHi = Math.pow(10, xDataMax);
+      var gLo = trueFrontierLoss(cLo, r) - E, gHi = trueFrontierLoss(cHi, r) - E;
+      var alphaImplied = (gLo > 0 && gHi > 0 && cHi > cLo)
+        ? -(Math.log(gHi) - Math.log(gLo)) / (Math.log(cHi) - Math.log(cLo)) : NaN;
+
+      var decadesCovered = xDataMax - xDataMin;
+      var reach = isExtrap ? (logCt > xDataMax ? logCt - xDataMax : xDataMin - logCt) : 0;
+      var nEdited = 0;
+      points.forEach(function(pt){ if(pt.edited) nEdited++; });
+
+      var stats = [];
+      if(fit.ok){
+        stats.push(['&alpha; = <b>' + fit.alpha.toFixed(3) + '</b>, A = <b>' + fmtSci(fit.A, 2) + '</b>',
+                    'Fitted power law, E held at ' + E.toFixed(2) + ' (OLS on ln(L&minus;E) vs ln C)']);
+        stats.push([(isFinite(alphaImplied) ? alphaImplied.toFixed(3) : '-') +
+                    (isFinite(alphaImplied) ? ' (bias ' + signed(fit.alpha - alphaImplied, 3) + ')' : ''),
+                    '&alpha; the true curve implies over this ladder range, at this E &mdash; the target the fit should hit']);
+        stats.push(['R&sup2; = <b>' + fit.R2.toFixed(4) + '</b> (n=' + fit.n + ' of ' + points.length + ')',
+                    'Least-squares quality in log space' + (fit.n < points.length ? '; ' + (points.length - fit.n) + ' run(s) at or below E were dropped' : ''),
+                    fit.n < points.length]);
+        stats.push(['<b>' + fmtLoss(predAtTarget) + '</b> nats (' + (isExtrap ? 'extrapolated' : 'interpolated') + ')',
+                    'Fitted-curve prediction at target C', isExtrap && reach > 1.5]);
+        stats.push([fmtLoss(trueAtTarget) + ' nats (&Delta; ' + signed(predAtTarget - trueAtTarget, 3) + ')',
+                    'True loss at target C along the ladder ratio r=' + r.toFixed(0) + ' &mdash; the honest answer']);
+      } else {
+        stats.push(['fit unavailable (n=' + fit.n + ')', 'Need &ge;2 runs strictly above the assumed floor E &mdash; lower E or restore a dragged point', true]);
+        stats.push([fmtLoss(trueAtTarget) + ' nats', 'True loss at target C along the ladder ratio r=' + r.toFixed(0)]);
+      }
+      stats.push([fmtSci(cLo, 2) + ' &ndash; ' + fmtSci(cHi, 2),
+                  'Ladder compute range (' + decadesCovered.toFixed(1) + ' decades)' + (nEdited ? '; ' + nEdited + ' point(s) hand-edited' : ''), nEdited > 0]);
+      stats.push([fmtSci(Ctarget, 2) + ' FLOPs',
+                  isExtrap ? 'Target compute &mdash; ' + reach.toFixed(1) + ' decades beyond the ladder' : 'Target compute &mdash; inside the ladder range']);
+      stats.push(['N* = ' + fmtCount(opt.N) + ', D* = ' + fmtCount(opt.D) + ' (' + opt.ratio.toFixed(1) + ':1)',
+                  'Exact compute-optimal split at target (Lagrangian on the true surface, not a fixed 20:1 rule)']);
+      stats.push(['N = ' + fmtCount(plan.N) + ', D = ' + fmtCount(plan.D) + ' (' + rPlan.toFixed(0) + ':1)',
+                  'Your plan’s split at the same budget']);
+      var Cequiv = computeForLoss(lossPlan);
+      var wasted = (isFinite(Cequiv) && Ctarget > 0) ? clamp(1 - Cequiv / Ctarget, 0, 1) : 0;
+      stats.push(['+' + deltaPlan.toFixed(3) + ' nats vs true optimum',
+                  'Cost of your plan &mdash; ' + regime + '; the optimal split reaches the same loss on ' +
+                  (wasted * 100).toFixed(1) + '% less compute']);
+
+      var html = '';
+      for(var si = 0; si < stats.length; si++){
+        html += '<div class="vt-stat' + (stats[si][2] ? ' slf-warn' : '') + '">' + stats[si][0] +
+                '<div class="l">' + stats[si][1] + '</div></div>';
+      }
+      outBox.innerHTML = html;
+
+      elCtDisp.innerHTML = 'Target compute: <b>' + fmtSci(Ctarget, 2) + '</b> FLOPs (log<sub>10</sub>C = ' + logCt.toFixed(2) + ')';
+
+      // -------------------------------------------------- table
+      var rows = '';
+      points.forEach(function(pt, idx){
+        var Lhat = fit.ok ? predict(fit, pt.C) : NaN;
+        var res = fit.ok ? pt.L - Lhat : NaN;
+        rows += '<tr' + (pt.edited ? ' class="slf-edited"' : '') + '>' +
+                '<td>' + (idx+1) + (pt.edited ? ' *' : '') + (usedSet[idx] ? '' : ' &dagger;') + '</td>' +
+                '<td>' + fmtCount(pt.N) + '</td>' +
+                '<td>' + fmtCount(pt.D) + '</td>' +
+                '<td>' + fmtSci(pt.C, 2) + '</td>' +
+                '<td>' + fmtLoss(pt.L) + '</td>' +
+                '<td>' + fmtLoss(Lhat) + '</td>' +
+                '<td>' + (isFinite(res) ? signed(res, 3) : '-') + '</td></tr>';
+      });
+      tbody.innerHTML = rows;
+    }
+
+    function pathFrom(pts){
+      var d = '';
+      for(var i = 0; i < pts.length; i++) d += (i === 0 ? 'M' : 'L') + pts[i][0].toFixed(2) + ',' + pts[i][1].toFixed(2) + ' ';
+      return d.trim();
+    }
+    // Sample mapFn over [a,b], with the step size chosen from the full plot
+    // width so every segment of the curve gets the same resolution.
+    function sampleRun(a, b, full0, full1, NF, mapFn){
+      if(!(b > a)) return '';
+      var M = Math.max(2, Math.round(NF * (b - a) / (full1 - full0)));
+      var d = '';
+      for(var i = 0; i <= M; i++){
+        var pt = mapFn(a + (b - a) * (i / M));
+        d += (i === 0 ? 'M' : 'L') + pt[0].toFixed(2) + ',' + pt[1].toFixed(2) + ' ';
+      }
+      return d.trim();
+    }
+
+    // ----------------------------------------------------------- drag/edit
+    // Capture and listen on the <svg>, not on the circles: render() destroys and
+    // rebuilds every circle on each frame, so a capture held by a circle would
+    // be lost the instant the drag started moving.
+    var dragIdx = -1;
+    function idxOf(node){
+      if(!node || !node.getAttribute) return -1;
+      var a = node.getAttribute('data-idx');
+      if(a === null && node.parentNode && node.parentNode.getAttribute) a = node.parentNode.getAttribute('data-idx');
+      if(a === null) return -1;
+      var i = parseInt(a, 10);
+      return (isFinite(i) && i >= 0 && i < points.length) ? i : -1;
+    }
+    function pointerLogL(evt){
+      var rect = svg.getBoundingClientRect();
+      if(!rect || !rect.height || !S) return null;
+      var clientY = (evt.touches && evt.touches.length) ? evt.touches[0].clientY : evt.clientY;
+      if(typeof clientY !== 'number' || !isFinite(clientY)) return null;
+      var yViewBox = ((clientY - rect.top) / rect.height) * VB_H;
+      var frac = (PAD_T + PLOT_H - yViewBox) / PLOT_H;
+      return S.yMin + frac * (S.yMax - S.yMin);
+    }
+    svg.addEventListener('pointerdown', function(evt){
+      var i = idxOf(evt.target);
+      if(i < 0) return;
+      dragIdx = i;
+      try{ svg.setPointerCapture(evt.pointerId); }catch(e){}
+      evt.preventDefault();
+    });
+    svg.addEventListener('pointermove', function(evt){
+      if(dragIdx < 0 || dragIdx >= points.length) return;
+      var logL = pointerLogL(evt);
+      if(logL === null || !isFinite(logL)) return;
+      points[dragIdx].L = clamp(Math.pow(10, logL), 0.05, 20);
+      points[dragIdx].edited = true;
+      render();
+      evt.preventDefault();
+    });
+    function endDrag(evt){
+      if(dragIdx < 0) return;
+      dragIdx = -1;
+      try{ if(evt && evt.pointerId !== undefined) svg.releasePointerCapture(evt.pointerId); }catch(e){}
+    }
+    svg.addEventListener('pointerup', endDrag);
+    svg.addEventListener('pointercancel', endDrag);
+    svg.addEventListener('lostpointercapture', function(){ dragIdx = -1; });
+
+    svg.addEventListener('keydown', function(evt){
+      var i = idxOf(evt.target);
+      if(i < 0) return;
+      var step = evt.shiftKey ? 0.2 : 0.02;
+      var key = evt.key;
+      if(key === 'ArrowUp' || key === 'Up'){ points[i].L = clamp(points[i].L + step, 0.05, 20); points[i].edited = true; }
+      else if(key === 'ArrowDown' || key === 'Down'){ points[i].L = clamp(points[i].L - step, 0.05, 20); points[i].edited = true; }
+      else if(key === 'Home'){ points[i].L = points[i].L0; points[i].edited = false; }
+      else return;
+      evt.preventDefault();
+      render();
+    });
+
+    // --------------------------------------------------------------- wiring
+    // Number box and slider stay in lockstep in BOTH directions, and every
+    // handler is wrapped so a bad transient value can never throw on input.
+    function safe(fn){ return function(){ try{ fn(); }catch(e){} }; }
+    function bindPair(rangeEl, numEl, lo, hi, onChange){
+      if(!rangeEl || !numEl) return;
+      rangeEl.addEventListener('input', safe(function(){ numEl.value = rangeEl.value; onChange(); }));
+      numEl.addEventListener('input', safe(function(){
+        var v = parseFloat(numEl.value);
+        if(isFinite(v)) rangeEl.value = String(clamp(v, lo, hi));
+        onChange();
+      }));
+      numEl.addEventListener('change', safe(function(){
+        var v = parseFloat(numEl.value);
+        if(isFinite(v)){ v = clamp(v, lo, hi); numEl.value = String(v); rangeEl.value = String(v); }
+        onChange();
+      }));
+    }
+    function regen(){ generateLadder(); render(); }
+
+    elK.addEventListener('input', safe(regen));
+    elK.addEventListener('change', safe(regen));
+    bindPair(elRRange, elRNum, 5, 60, regen);
+    bindPair(elSRange, elSNum, 0, 0.3, regen);
+    bindPair(elERange, elENum, 0, 3, render);
+    bindPair(elCtRange, elCtNum, 15.5, 25, render);
+    bindPair(elRpRange, elRpNum, 5, 500, render);
+
+    if(elReseed) elReseed.addEventListener('click', safe(function(){
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      regen();
+    }));
+    if(elReset) elReset.addEventListener('click', safe(function(){
+      points.forEach(function(pt){ pt.L = pt.L0; pt.edited = false; });
+      render();
+    }));
+    if(elAutoE) elAutoE.addEventListener('click', safe(function(){
+      var best = autoFitE();
+      elENum.value = String(best);
+      elERange.value = String(best);
+      render();
+    }));
+
+    generateLadder();
+    render();
+  })();</script>
+</div>

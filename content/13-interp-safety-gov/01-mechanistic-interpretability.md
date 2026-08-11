@@ -362,6 +362,8 @@ A single causal hot-spot is a clue; a **circuit** is the explanation. A circuit 
 
 **Induction heads** are the canonical example, from the "In-context Learning and Induction Heads" work (Olsson et al., 2022). An induction circuit implements the rule *"if the sequence `[A][B] ... [A]` appeared, predict `[B]`"* — basic copy-from-context that underlies much of in-context learning. It is a two-head, two-layer composition: a **previous-token head** in an early layer writes "the token before me was `A`" into each position; then an **induction head** in a later layer attends *back* to the position right after the earlier `A` (using that written signal as its key) and copies its value forward. The two heads compose through the residual stream — a textbook **K-composition** (one head's output becomes another's key). Strikingly, the formation of induction heads coincides with a phase change in the loss curve during training and with the emergence of in-context learning, tying a circuit to a capability.
 
+{{tool:induction-head}}
+
 Induction heads are also the one circuit you can *find automatically in ten lines*, which makes them the standard first experiment. The trick is a synthetic probe: feed a random token sequence repeated twice, so the only way to predict the second copy is to copy from the first. Then score each head by its **prefix-matching score** — the average attention weight from position $i$ in the second copy back to position $i{-}\text{seq\_len}{+}1$ in the first copy, i.e. the token that *followed* the earlier occurrence of the current token.
 
 ```python

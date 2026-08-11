@@ -71,6 +71,8 @@ So $BA = B \cdot A = 0 \cdot A = 0$ at step 0: the LoRA path contributes nothing
 
 {{fig:lora-qlora-training-memory-breakdown}}
 
+{{tool:lora-lowrank}}
+
 ## Where to apply LoRA, and how merging works
 
 ### Which layers? The targeting decision

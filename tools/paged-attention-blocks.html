@@ -1,0 +1,739 @@
+<div class="viz-tool" id="tool-paged-attention-blocks">
+  <div class="vt-title">PagedAttention: the KV cache as paged blocks</div>
+
+  <div class="vt-grid">
+    <label for="paged-attention-blocks-blocksize">Block size B (tokens/block)
+      <select id="paged-attention-blocks-blocksize">
+        <option value="4">4</option>
+        <option value="8">8</option>
+        <option value="16" selected>16</option>
+        <option value="32">32</option>
+        <option value="64">64</option>
+      </select>
+    </label>
+    <label for="paged-attention-blocks-pool">Physical pool size (<span id="paged-attention-blocks-poolval">20</span> blocks)
+      <input id="paged-attention-blocks-pool" type="range" min="6" max="40" step="1" value="20">
+    </label>
+    <label for="paged-attention-blocks-numseqs">Concurrent sequences (<span id="paged-attention-blocks-numseqsval">4</span>)
+      <input id="paged-attention-blocks-numseqs" type="range" min="2" max="6" step="1" value="4">
+    </label>
+    <label for="paged-attention-blocks-maxlen">Reservation cap max_seq_len (tokens)
+      <input id="paged-attention-blocks-maxlen" type="number" min="16" max="512" step="1" value="96">
+    </label>
+    <label for="paged-attention-blocks-prefixlen">Shared prefix length (tokens)
+      <input id="paged-attention-blocks-prefixlen" type="number" min="1" max="511" step="1" value="20">
+    </label>
+    <label class="pab-check" for="paged-attention-blocks-prefix">
+      <input id="paged-attention-blocks-prefix" type="checkbox" checked>
+      Prefix sharing (Seq A &amp; B share a prompt)
+    </label>
+    <label class="pab-check" for="paged-attention-blocks-contiguous">
+      <input id="paged-attention-blocks-contiguous" type="checkbox">
+      Show contiguous pre-allocation instead
+    </label>
+  </div>
+
+  <div class="pab-btnrow">
+    <button id="paged-attention-blocks-step" type="button">Decode step &rarr;</button>
+    <button id="paged-attention-blocks-play" type="button" aria-pressed="false">Play</button>
+    <button id="paged-attention-blocks-reset" type="button">Reset</button>
+    <span class="pab-status" id="paged-attention-blocks-status" aria-live="polite"></span>
+  </div>
+
+  <div class="pab-main">
+    <div class="pab-col">
+      <div class="pab-col-title" id="paged-attention-blocks-seqtitle">Sequences &amp; block tables</div>
+      <div id="paged-attention-blocks-seqpanel"></div>
+    </div>
+    <div class="pab-col pab-col-grid">
+      <div class="pab-col-title" id="paged-attention-blocks-gridtitle">Physical GPU memory pool</div>
+      <div id="paged-attention-blocks-grid" class="pab-grid" role="img" aria-label="Grid of physical KV cache blocks, filled from the bottom in proportion to how many token slots are written, colored by owning sequence"></div>
+      <div class="pab-legend">
+        <span><i class="pab-sw pab-sw-used"></i> written token slots (color = owner)</span>
+        <span><i class="pab-sw pab-sw-waste"></i> allocated but unwritten (waste)</span>
+        <span><i class="pab-sw pab-sw-free"></i> free block</span>
+        <span><i class="pab-sw pab-sw-shared"></i> shared block (ref_count &gt; 1)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="pab-meters">
+    <div class="pab-meter-title">Pool utilization &mdash; both schemes measured on the same live trace, same physical pool
+      <span class="pab-meter-key"><i class="pab-sw pab-sw-mused"></i>tokens stored<i class="pab-sw pab-sw-mwaste"></i>wasted slots<i class="pab-sw pab-sw-mfree"></i>free pool</span>
+    </div>
+    <div id="paged-attention-blocks-summary" class="pab-summary"></div>
+    <div id="paged-attention-blocks-meters"></div>
+  </div>
+
+  <div class="pab-logwrap">
+    <div class="pab-log-title">Allocator log (allocations, copy-on-write, stalls)</div>
+    <div id="paged-attention-blocks-log" class="pab-log" aria-live="polite"></div>
+  </div>
+
+  <div class="vt-note" id="paged-attention-blocks-note"></div>
+
+  <style>
+    #tool-paged-attention-blocks{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); }
+    #tool-paged-attention-blocks *{ box-sizing:border-box; }
+    #tool-paged-attention-blocks .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-paged-attention-blocks .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-paged-attention-blocks label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); }
+    #tool-paged-attention-blocks label.pab-check{ flex-direction:row; align-items:center; gap:8px; }
+    #tool-paged-attention-blocks label.pab-check input{ width:auto; margin:0; accent-color:var(--accent,#c15b39); }
+    #tool-paged-attention-blocks input, #tool-paged-attention-blocks select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-paged-attention-blocks input[type=range]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-paged-attention-blocks input:disabled{ opacity:.5; }
+    #tool-paged-attention-blocks label.pab-disabled{ opacity:.55; }
+    #tool-paged-attention-blocks input:focus-visible, #tool-paged-attention-blocks select:focus-visible, #tool-paged-attention-blocks button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-paged-attention-blocks .pab-btnrow{ display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin-top:14px; }
+    #tool-paged-attention-blocks .pab-btnrow button{ font:inherit; font-size:.85rem; font-weight:600; padding:7px 14px; border-radius:7px; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-paged-attention-blocks .pab-btnrow button:hover:not(:disabled){ background:var(--surface-3,#ece7da); }
+    #tool-paged-attention-blocks .pab-btnrow button:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-paged-attention-blocks .pab-status{ font-size:.78rem; color:var(--muted,#6d675d); margin-left:2px; }
+
+    #tool-paged-attention-blocks .pab-main{ display:flex; flex-wrap:wrap; gap:20px; margin-top:16px; align-items:flex-start; }
+    #tool-paged-attention-blocks .pab-col{ flex:1 1 320px; min-width:0; }
+    #tool-paged-attention-blocks .pab-col-grid{ flex:1 1 360px; }
+    #tool-paged-attention-blocks .pab-col-title{ font-size:.74rem; font-weight:700; color:var(--muted,#6d675d); margin-bottom:8px; text-transform:uppercase; letter-spacing:.03em; }
+
+    #tool-paged-attention-blocks .pab-seq{ border:1px solid var(--border,#e7e1d4); border-radius:9px; padding:9px 11px; margin-bottom:9px; background:var(--surface-2,#f3efe6); }
+    #tool-paged-attention-blocks .pab-seq-head{ display:flex; align-items:center; gap:8px; font-size:.82rem; color:var(--ink,#211f1b); flex-wrap:wrap; }
+    #tool-paged-attention-blocks .pab-seq-head b{ font-weight:700; }
+    #tool-paged-attention-blocks .pab-swatch{ width:11px; height:11px; border-radius:3px; flex:0 0 auto; display:inline-block; }
+    #tool-paged-attention-blocks .pab-tag{ font-size:.67rem; padding:1px 6px; border-radius:20px; font-weight:700; background:var(--surface-3,#ece7da); }
+    #tool-paged-attention-blocks .pab-tag-done{ color:var(--pab-good,#176a43); }
+    #tool-paged-attention-blocks .pab-tag-warn{ color:var(--pab-warn,#8a6100); }
+    #tool-paged-attention-blocks .pab-chips{ margin-top:7px; display:flex; flex-wrap:wrap; gap:5px; }
+    #tool-paged-attention-blocks .pab-chip{ font:11px/1.4 var(--mono,monospace); padding:3px 6px; border-radius:5px; background:var(--surface,#fff); border:1px solid var(--border-2,#d8d1c0); color:var(--ink,#211f1b); }
+    #tool-paged-attention-blocks .pab-chip.pab-shared{ box-shadow:inset 0 0 0 1.5px var(--pab-ring,#211f1b); font-weight:700; }
+    #tool-paged-attention-blocks .pab-seq-sub{ margin-top:7px; font-size:.75rem; color:var(--muted,#6d675d); line-height:1.5; }
+    #tool-paged-attention-blocks .pab-seq-sub.pab-warntext{ color:var(--pab-warn,#8a6100); font-weight:600; }
+
+    #tool-paged-attention-blocks .pab-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(52px,1fr)); gap:5px; }
+    #tool-paged-attention-blocks .pab-cell{ position:relative; height:52px; border-radius:6px; overflow:hidden; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-3,#ece7da); }
+    #tool-paged-attention-blocks .pab-cell.pab-free{ border-style:dashed; }
+    #tool-paged-attention-blocks .pab-cell.pab-shared-cell{ box-shadow:inset 0 0 0 2px var(--pab-ring,#211f1b); }
+    #tool-paged-attention-blocks .pab-cell-bg{ position:absolute; inset:0; }
+    #tool-paged-attention-blocks .pab-cell-empty{ position:absolute; left:0; right:0; top:0; background-image:repeating-linear-gradient(45deg, var(--pab-hatch,rgba(255,255,255,.62)) 0 4px, var(--pab-hatch-2,rgba(255,255,255,.16)) 4px 8px); }
+    #tool-paged-attention-blocks .pab-cell-lab{ position:absolute; left:3px; bottom:3px; font:10px/1 var(--mono,monospace); font-weight:700; color:var(--pab-ring-fg,#ffffff); background:var(--pab-ring,#211f1b); opacity:.88; border-radius:3px; padding:1px 3px; }
+    #tool-paged-attention-blocks .pab-cell.pab-free .pab-cell-lab{ color:var(--muted,#6d675d); background:transparent; opacity:1; }
+    #tool-paged-attention-blocks .pab-cell-ref{ position:absolute; right:3px; top:3px; font:9px/1 var(--sans,sans-serif); font-weight:700; color:var(--pab-ring-fg,#ffffff); background:var(--pab-ring,#211f1b); border-radius:3px; padding:2px 3px; }
+
+    #tool-paged-attention-blocks .pab-legend{ display:flex; flex-wrap:wrap; gap:10px 14px; margin-top:9px; font-size:.71rem; color:var(--muted,#6d675d); }
+    #tool-paged-attention-blocks .pab-sw{ display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:-1px; margin-right:5px; }
+    #tool-paged-attention-blocks .pab-sw-used{ background:var(--pab-s0,#2a78d6); }
+    #tool-paged-attention-blocks .pab-sw-waste{ background-color:var(--pab-s0,#2a78d6); background-image:repeating-linear-gradient(45deg, var(--pab-hatch,rgba(255,255,255,.62)) 0 3px, var(--pab-hatch-2,rgba(255,255,255,.16)) 3px 6px); }
+    #tool-paged-attention-blocks .pab-sw-free{ background:var(--surface-3,#ece7da); border:1px dashed var(--border-2,#d8d1c0); }
+    #tool-paged-attention-blocks .pab-sw-shared{ background:var(--surface-3,#ece7da); box-shadow:inset 0 0 0 2px var(--pab-ring,#211f1b); }
+    #tool-paged-attention-blocks .pab-sw-mused{ background:var(--pab-good-fill,#2f9e6e); }
+    #tool-paged-attention-blocks .pab-sw-mwaste{ background-color:var(--pab-warn-fill,#e0a106); background-image:repeating-linear-gradient(45deg, var(--pab-hatch,rgba(255,255,255,.62)) 0 3px, var(--pab-hatch-2,rgba(255,255,255,.16)) 3px 6px); }
+    #tool-paged-attention-blocks .pab-sw-mfree{ background:var(--surface-3,#ece7da); border:1px solid var(--border-2,#d8d1c0); }
+
+    #tool-paged-attention-blocks .pab-meters{ margin-top:18px; }
+    #tool-paged-attention-blocks .pab-meter-title{ font-size:.74rem; font-weight:700; color:var(--muted,#6d675d); margin-bottom:8px; text-transform:uppercase; letter-spacing:.03em; }
+    #tool-paged-attention-blocks .pab-meter-key{ display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin-left:10px; font-weight:400; text-transform:none; letter-spacing:0; }
+    #tool-paged-attention-blocks .pab-meter-key .pab-sw{ margin-right:4px; margin-left:6px; }
+    #tool-paged-attention-blocks .pab-summary{ font-size:.79rem; color:var(--ink-soft,#45413a); line-height:1.6; margin-bottom:12px; }
+    #tool-paged-attention-blocks .pab-summary b{ color:var(--ink,#211f1b); }
+    #tool-paged-attention-blocks .pab-meter{ margin-bottom:13px; }
+    #tool-paged-attention-blocks .pab-meter-lab{ display:flex; justify-content:space-between; font-size:.8rem; color:var(--ink-soft,#45413a); margin-bottom:4px; gap:8px; flex-wrap:wrap; }
+    #tool-paged-attention-blocks .pab-meter-lab b{ color:var(--ink,#211f1b); }
+    #tool-paged-attention-blocks .pab-bar{ height:16px; border-radius:8px; background:var(--surface-3,#ece7da); overflow:hidden; display:flex; border:1px solid var(--border-2,#d8d1c0); }
+    #tool-paged-attention-blocks .pab-bar-seg{ height:100%; min-width:0; }
+    #tool-paged-attention-blocks .pab-bar-used{ background:var(--pab-good-fill,#2f9e6e); }
+    #tool-paged-attention-blocks .pab-bar-waste{ background-color:var(--pab-warn-fill,#e0a106); background-image:repeating-linear-gradient(45deg, var(--pab-hatch,rgba(255,255,255,.62)) 0 4px, var(--pab-hatch-2,rgba(255,255,255,.16)) 4px 8px); }
+    #tool-paged-attention-blocks .pab-meter-note{ font:11.5px/1.6 var(--mono,monospace); color:var(--muted,#6d675d); margin-top:5px; word-break:break-word; }
+    #tool-paged-attention-blocks .pab-meter-note b{ color:var(--pab-warn,#8a6100); }
+    #tool-paged-attention-blocks .pab-meter-note.pab-warntext{ color:var(--pab-warn,#8a6100); }
+
+    #tool-paged-attention-blocks .pab-logwrap{ margin-top:16px; }
+    #tool-paged-attention-blocks .pab-log-title{ font-size:.74rem; font-weight:700; color:var(--muted,#6d675d); margin-bottom:6px; text-transform:uppercase; letter-spacing:.03em; }
+    #tool-paged-attention-blocks .pab-log{ background:var(--surface-2,#f3efe6); border-radius:9px; padding:9px 12px; font:11.5px/1.6 var(--mono,monospace); color:var(--ink-soft,#45413a); max-height:150px; overflow-y:auto; }
+    #tool-paged-attention-blocks .pab-log div{ white-space:pre-wrap; word-break:break-word; }
+    #tool-paged-attention-blocks .pab-log .pab-log-cow{ color:var(--accent-2,#b04e2d); font-weight:600; }
+    #tool-paged-attention-blocks .pab-log .pab-log-stall{ color:var(--pab-warn,#8a6100); font-weight:600; }
+
+    #tool-paged-attention-blocks .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-paged-attention-blocks .vt-note b{ color:var(--ink-soft,#45413a); }
+
+    /* local palette: categorical sequence identity + semantic fills, both themes */
+    #tool-paged-attention-blocks{
+      --pab-s0:#2a78d6; --pab-s1:#e2611f; --pab-s2:#0f9268;
+      --pab-s3:#a8790a; --pab-s4:#cf4f86; --pab-s5:#6b4fd8;
+      --pab-good:#176a43; --pab-warn:#8a6100;
+      --pab-good-fill:#2f9e6e; --pab-warn-fill:#e0a106;
+      --pab-ring:#211f1b; --pab-ring-fg:#ffffff;
+      --pab-hatch:rgba(255,255,255,.62); --pab-hatch-2:rgba(255,255,255,.16);
+    }
+    html[data-theme="dark"] #tool-paged-attention-blocks{
+      --pab-s0:#5b9df0; --pab-s1:#f0855a; --pab-s2:#35bc8d;
+      --pab-s3:#d3a52f; --pab-s4:#ec7fa9; --pab-s5:#a294f2;
+      --pab-good:#4cc48e; --pab-warn:#e3b348;
+      --pab-good-fill:#2f9e6e; --pab-warn-fill:#c08a10;
+      --pab-ring:#ece7de; --pab-ring-fg:#211f1b;
+      --pab-hatch:rgba(0,0,0,.48); --pab-hatch-2:rgba(0,0,0,.13);
+    }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-paged-attention-blocks{
+        --pab-s0:#5b9df0; --pab-s1:#f0855a; --pab-s2:#35bc8d;
+        --pab-s3:#d3a52f; --pab-s4:#ec7fa9; --pab-s5:#a294f2;
+        --pab-good:#4cc48e; --pab-warn:#e3b348;
+        --pab-good-fill:#2f9e6e; --pab-warn-fill:#c08a10;
+        --pab-ring:#ece7de; --pab-ring-fg:#211f1b;
+        --pab-hatch:rgba(0,0,0,.48); --pab-hatch-2:rgba(0,0,0,.13);
+      }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-paged-attention-blocks');
+    if (!root) return;
+    function $(id){ return root.querySelector('#' + id); }
+
+    var elB        = $('paged-attention-blocks-blocksize');
+    var elPool     = $('paged-attention-blocks-pool');
+    var elPoolVal  = $('paged-attention-blocks-poolval');
+    var elN        = $('paged-attention-blocks-numseqs');
+    var elNVal     = $('paged-attention-blocks-numseqsval');
+    var elMax      = $('paged-attention-blocks-maxlen');
+    var elPrefix   = $('paged-attention-blocks-prefix');
+    var elPrefixLen= $('paged-attention-blocks-prefixlen');
+    var elContig   = $('paged-attention-blocks-contiguous');
+    var btnStep    = $('paged-attention-blocks-step');
+    var btnPlay    = $('paged-attention-blocks-play');
+    var btnReset   = $('paged-attention-blocks-reset');
+    var elStatus   = $('paged-attention-blocks-status');
+    var seqTitle   = $('paged-attention-blocks-seqtitle');
+    var gridTitle  = $('paged-attention-blocks-gridtitle');
+    var seqPanel   = $('paged-attention-blocks-seqpanel');
+    var gridEl     = $('paged-attention-blocks-grid');
+    var summaryEl  = $('paged-attention-blocks-summary');
+    var metersEl   = $('paged-attention-blocks-meters');
+    var logEl      = $('paged-attention-blocks-log');
+    var noteEl     = $('paged-attention-blocks-note');
+    if (!elB || !elPool || !elN || !elMax || !gridEl || !metersEl) return;
+
+    var SEQ_COLORS = ['var(--pab-s0,#2a78d6)','var(--pab-s1,#e2611f)','var(--pab-s2,#0f9268)','var(--pab-s3,#a8790a)','var(--pab-s4,#cf4f86)','var(--pab-s5,#6b4fd8)'];
+
+    /* ---------------- deterministic seeded PRNG (mulberry32) ---------------- */
+    function mulberry32(seed){
+      var a = seed >>> 0;
+      return function(){
+        a = (a + 0x6D2B79F5) >>> 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function hashStr(s){
+      var h = 5381;
+      for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+      return h >>> 0;
+    }
+    function clampInt(v, lo, hi, fallback){
+      v = parseInt(v, 10);
+      if (!isFinite(v)) v = fallback;
+      return Math.max(lo, Math.min(hi, v));
+    }
+    function ceilDiv(a, b){ return b > 0 ? Math.ceil(a / b) : 0; }
+    function letterFor(i){ return String.fromCharCode(65 + i); }
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function pct(x){ return (Math.round(x * 10) / 10); }
+
+    /* ---------------- state ---------------- */
+    var cfg = {};
+    var free = [], occupancy = [], refCount = [];
+    var seqs = [], eventLog = [], stepCount = 0, deadlock = false;
+    var playTimer = null;
+    var pagedStats = null, contigStats = null;
+
+    function readConfig(normalize){
+      cfg.B = clampInt(elB.value, 4, 64, 16);
+      cfg.pool = clampInt(elPool.value, 6, 40, 20);
+      elPool.value = cfg.pool; elPoolVal.textContent = cfg.pool;
+      cfg.n = clampInt(elN.value, 2, 6, 4);
+      elN.value = cfg.n; elNVal.textContent = cfg.n;
+
+      elMax.min = cfg.B;
+      cfg.maxLen = clampInt(elMax.value, cfg.B, 512, 96);
+      if (cfg.maxLen < cfg.B) cfg.maxLen = cfg.B;
+      if (normalize) elMax.value = cfg.maxLen;
+
+      cfg.prefixSharing = !!elPrefix.checked && cfg.n >= 2;
+      elPrefixLen.disabled = !cfg.prefixSharing;
+      var lbl = elPrefixLen.parentNode;
+      if (lbl && lbl.classList) lbl.classList.toggle('pab-disabled', !cfg.prefixSharing);
+      var pmax = Math.max(1, cfg.maxLen - 1);
+      elPrefixLen.max = pmax;
+      cfg.prefixLen = clampInt(elPrefixLen.value, 1, pmax, Math.min(20, pmax));
+      if (normalize) elPrefixLen.value = cfg.prefixLen;
+
+      cfg.contiguous = !!elContig.checked;
+    }
+
+    /* ---------------- physical pool (paged allocator) ---------------- */
+    function allocBlock(){
+      if (free.length === 0) return null;
+      var b = free.pop();
+      occupancy[b] = 0;
+      refCount[b] = 1;
+      return b;
+    }
+    function logEvent(msg, cls){
+      eventLog.unshift({ step: stepCount, msg: msg, cls: cls || '' });
+      if (eventLog.length > 40) eventLog.length = 40;
+    }
+
+    /* All-or-nothing admission: a request is only scheduled if its whole
+       prompt fits, exactly as a real block manager does. */
+    function admitSolo(seq){
+      var nb = ceilDiv(seq.promptLen, cfg.B);
+      if (free.length < nb) return false;
+      var ids = [], k;
+      for (k = 0; k < nb; k++) ids.push(allocBlock());
+      for (k = 0; k < nb; k++){
+        occupancy[ids[k]] = (k < nb - 1) ? cfg.B : (seq.promptLen - (nb - 1) * cfg.B);
+      }
+      seq.table = ids;
+      seq.len = seq.promptLen;
+      seq.admitted = true;
+      return true;
+    }
+    function admitSharedPair(a, b){
+      var nb = ceilDiv(cfg.prefixLen, cfg.B);
+      if (free.length < nb) return 0;
+      var ids = [], k;
+      for (k = 0; k < nb; k++) ids.push(allocBlock());
+      for (k = 0; k < nb; k++){
+        occupancy[ids[k]] = (k < nb - 1) ? cfg.B : (cfg.prefixLen - (nb - 1) * cfg.B);
+        refCount[ids[k]] = 2;                 // one physical copy, two block tables
+      }
+      a.table = ids.slice(); a.len = cfg.prefixLen; a.admitted = true;
+      b.table = ids.slice(); b.len = cfg.prefixLen; b.admitted = true;
+      return nb;
+    }
+
+    function rebuild(normalize){
+      stopPlay();
+      readConfig(normalize !== false);
+
+      var seed = hashStr([cfg.B, cfg.pool, cfg.n, cfg.maxLen, cfg.prefixSharing ? 1 : 0, cfg.prefixLen].join('|'));
+      var rand = mulberry32(seed);
+
+      free = [];
+      for (var i = cfg.pool - 1; i >= 0; i--) free.push(i);   // pop() hands out 0,1,2,...
+      occupancy = new Array(cfg.pool); refCount = new Array(cfg.pool);
+      for (i = 0; i < cfg.pool; i++){ occupancy[i] = 0; refCount[i] = 0; }
+
+      seqs = []; eventLog = []; stepCount = 0; deadlock = false;
+      for (i = 0; i < cfg.n; i++){
+        var promptLen;
+        if (cfg.prefixSharing && i < 2){
+          promptLen = cfg.prefixLen;
+        } else {
+          promptLen = 1 + Math.floor(rand() * Math.max(1, Math.floor(cfg.maxLen * 0.18)));
+          promptLen = Math.max(1, Math.min(cfg.maxLen - 1, promptLen));
+        }
+        var extra = 2 + Math.floor(rand() * Math.max(2, Math.floor(cfg.maxLen * 0.30)));
+        seqs.push({
+          id: i, promptLen: promptLen, target: Math.min(cfg.maxLen, promptLen + extra),
+          len: 0, table: [], admitted: false, stalled: false, doneLogged: false
+        });
+      }
+
+      logEvent('Reset: ' + cfg.n + ' requests, block size B=' + cfg.B + ', pool = ' + cfg.pool +
+               ' blocks = ' + (cfg.pool * cfg.B) + ' token slots.');
+
+      var start = 0;
+      if (cfg.prefixSharing){
+        var nb = admitSharedPair(seqs[0], seqs[1]);
+        if (nb > 0){
+          logEvent('Seq A and Seq B share a ' + cfg.prefixLen + '-token prompt: stored ONCE in ' + nb +
+                   ' block(s) [' + seqs[0].table.join(', ') + '] at ref_count=2 — ' + cfg.prefixLen +
+                   ' duplicate token slots never allocated.');
+        } else {
+          logEvent('Seq A and Seq B not admitted: their shared ' + cfg.prefixLen + '-token prompt needs ' +
+                   ceilDiv(cfg.prefixLen, cfg.B) + ' blocks, pool has ' + free.length + ' free.', 'pab-log-stall');
+        }
+        start = 2;
+      }
+      for (i = start; i < cfg.n; i++){
+        if (!admitSolo(seqs[i])){
+          logEvent('Seq ' + letterFor(i) + ' not admitted: its ' + seqs[i].promptLen + '-token prompt needs ' +
+                   ceilDiv(seqs[i].promptLen, cfg.B) + ' blocks, pool has ' + free.length + ' free.', 'pab-log-stall');
+        }
+      }
+
+      render();
+    }
+
+    /* One decode step appends exactly ONE token to a sequence.
+       New token lands at logical position seq.len (0-indexed), i.e. inside
+       logical block floor(seq.len / B) at slot seq.len % B. */
+    function growOneToken(seq){
+      if (!seq.admitted || seq.len >= seq.target) return null;
+      var prev = seq.len;
+      var res = { allocated: false, cow: false, block: null };
+
+      if (prev % cfg.B === 0){
+        // starts a fresh logical block -> needs a brand-new physical block
+        var nb = allocBlock();
+        if (nb === null) return { stalled: true };
+        seq.table.push(nb);
+        res.allocated = true; res.block = nb;
+      } else {
+        // appends inside the current last block
+        var last = seq.table[seq.table.length - 1];
+        if (refCount[last] > 1){
+          // shared with another sequence -> copy-on-write this ONE block
+          var cp = allocBlock();
+          if (cp === null) return { stalled: true };
+          occupancy[cp] = occupancy[last];
+          refCount[last] -= 1;
+          seq.table[seq.table.length - 1] = cp;
+          res.cow = true; res.from = last; res.block = cp; res.newRef = refCount[last];
+        } else {
+          res.block = last;                    // privately owned: write in place
+        }
+      }
+      occupancy[res.block] += 1;
+      seq.len += 1;
+      return res;
+    }
+
+    function decodeStep(){
+      if (deadlock) return false;
+      var i, seq, pending = false;
+      for (i = 0; i < seqs.length; i++) if (seqs[i].admitted && seqs[i].len < seqs[i].target) pending = true;
+      if (!pending) return false;
+
+      stepCount += 1;
+      var progressed = false;
+      for (i = 0; i < seqs.length; i++){
+        seq = seqs[i];
+        var r = growOneToken(seq);
+        if (r === null) continue;
+        if (r.stalled){
+          if (!seq.stalled){
+            logEvent('Seq ' + letterFor(i) + ' STALLED at ' + seq.len +
+                     ' tokens: 0 free blocks left. A real server preempts here (swap out or recompute).', 'pab-log-stall');
+          }
+          seq.stalled = true;
+          continue;
+        }
+        seq.stalled = false;
+        progressed = true;
+        if (r.cow){
+          logEvent('Seq ' + letterFor(i) + ' must write token ' + seq.len + ' into SHARED block ' + r.from +
+                   ' (ref_count was ' + (r.newRef + 1) + ') -> COPY-ON-WRITE: that one block is copied to block ' +
+                   r.block + '; block ' + r.from + ' drops to ref_count=' + r.newRef +
+                   '. Every earlier shared block stays shared.', 'pab-log-cow');
+        } else if (r.allocated){
+          logEvent('Seq ' + letterFor(i) + ' crossed a block boundary at token ' + seq.len +
+                   ' -> allocated block ' + r.block + ' (logical block ' + (seq.table.length - 1) + ').');
+        }
+        if (seq.len >= seq.target && !seq.doneLogged){
+          seq.doneLogged = true;
+          logEvent('Seq ' + letterFor(i) + ' finished at ' + seq.len + ' tokens, holding ' + seq.table.length +
+                   ' block(s) = ' + (seq.table.length * cfg.B) + ' slots.');
+        }
+      }
+      if (!progressed){
+        deadlock = true;
+        logEvent('DEADLOCK: every unfinished sequence needs a new block and the pool is empty. ' +
+                 'vLLM would preempt a sequence (swap its blocks to CPU or drop and recompute them).', 'pab-log-stall');
+      }
+      return progressed;
+    }
+
+    /* ---------------- accounting ---------------- */
+    function computeStats(){
+      var i, usedP = 0;
+      for (i = 0; i < cfg.pool; i++) if (refCount[i] > 0) usedP += occupancy[i];
+      var blocksP = cfg.pool - free.length;
+      var capP = blocksP * cfg.B;
+      var logical = 0, served = 0;
+      for (i = 0; i < seqs.length; i++) if (seqs[i].admitted){ logical += seqs[i].len; served++; }
+      pagedStats = {
+        blocksInUse: blocksP, capacity: capP, used: usedP, wasted: capP - usedP,
+        freeBlocks: free.length, logical: logical, savings: logical - usedP, served: served
+      };
+
+      /* Counterfactual: the SAME admitted requests under contiguous
+         pre-allocation, each reserving ceil(max_seq_len / B) blocks up front. */
+      var resBlocks = ceilDiv(cfg.maxLen, cfg.B);
+      var offset = 0, ranges = new Array(seqs.length), rejected = [];
+      for (i = 0; i < seqs.length; i++) ranges[i] = null;
+      for (i = 0; i < seqs.length; i++){
+        if (!seqs[i].admitted) continue;
+        if (cfg.pool - offset >= resBlocks){
+          ranges[i] = { start: offset, end: offset + resBlocks };
+          offset += resBlocks;
+        } else {
+          rejected.push(i);
+        }
+      }
+      var usedC = 0, servedC = 0;
+      for (i = 0; i < seqs.length; i++) if (ranges[i]){ usedC += seqs[i].len; servedC++; }
+      var capC = offset * cfg.B;
+      contigStats = {
+        resBlocks: resBlocks, ranges: ranges, rejected: rejected,
+        blocksInUse: offset, capacity: capC, used: usedC, wasted: capC - usedC,
+        freeBlocks: cfg.pool - offset, logical: usedC, served: servedC
+      };
+    }
+
+    /* ---------------- rendering ---------------- */
+    function renderSeqPanel(){
+      var html = '', i;
+      for (i = 0; i < seqs.length; i++){
+        var seq = seqs[i];
+        var col = SEQ_COLORS[i % SEQ_COLORS.length];
+        html += '<div class="pab-seq"><div class="pab-seq-head">' +
+                '<span class="pab-swatch" style="background:' + col + '"></span>' +
+                '<b>Seq ' + letterFor(i) + '</b><span>' + seq.len + ' / ' + seq.target + ' tok</span>';
+        if (!seq.admitted){
+          html += '<span class="pab-tag pab-tag-warn">queued</span>';
+        } else if (cfg.contiguous){
+          // in the counterfactual view only the reservation verdict is meaningful
+          html += (contigStats.rejected.indexOf(i) !== -1)
+            ? '<span class="pab-tag pab-tag-warn">rejected</span>'
+            : '<span class="pab-tag pab-tag-done">reserved</span>';
+        } else {
+          if (seq.len >= seq.target) html += '<span class="pab-tag pab-tag-done">done</span>';
+          if (seq.stalled)           html += '<span class="pab-tag pab-tag-warn">stalled</span>';
+        }
+        html += '</div>';
+
+        if (!seq.admitted){
+          html += '<div class="pab-seq-sub pab-warntext">Not admitted: its ' + seq.promptLen +
+                  '-token prompt needs ' + ceilDiv(seq.promptLen, cfg.B) +
+                  ' block(s) and the pool had none left at admission time.</div>';
+        } else if (!cfg.contiguous){
+          html += '<div class="pab-chips">';
+          for (var L = 0; L < seq.table.length; L++){
+            var p = seq.table[L];
+            var sh = refCount[p] > 1;
+            html += '<span class="pab-chip' + (sh ? ' pab-shared' : '') +
+                    '" title="logical block ' + L + ' maps to physical block ' + p +
+                    (sh ? ' (shared, ref_count=' + refCount[p] + ')' : ' (private)') + '">L' + L + '&rarr;P' + p +
+                    (sh ? ' &times;' + refCount[p] : '') + '</span>';
+          }
+          html += '</div>';
+          var lastP = seq.table[seq.table.length - 1];
+          var tail = seq.table.length ? occupancy[lastP] : 0;
+          html += '<div class="pab-seq-sub">' + seq.table.length + ' block(s) = ' + (seq.table.length * cfg.B) +
+                  ' slots for ' + seq.len + ' tokens; last block holds ' + tail + '/' + cfg.B +
+                  ' &rarr; ' + (seq.table.length * cfg.B - seq.len) + ' slot(s) wasted.</div>';
+        } else {
+          var rng = contigStats.ranges[i];
+          if (rng){
+            html += '<div class="pab-seq-sub">Reserved blocks ' + rng.start + '&ndash;' + (rng.end - 1) + ': ceil(' +
+                    cfg.maxLen + '/' + cfg.B + ') = ' + contigStats.resBlocks + ' blocks = ' +
+                    (contigStats.resBlocks * cfg.B) + ' slots held for a ' + seq.len + '-token sequence &rarr; ' +
+                    (contigStats.resBlocks * cfg.B - seq.len) + ' slot(s) wasted.</div>';
+          } else {
+            html += '<div class="pab-seq-sub pab-warntext">REJECTED: no room to reserve ceil(' + cfg.maxLen + '/' +
+                    cfg.B + ') = ' + contigStats.resBlocks + ' contiguous blocks, even though this request only ever ' +
+                    'writes ' + seq.len + ' tokens. Paged allocation is serving it right now.</div>';
+          }
+        }
+        html += '</div>';
+      }
+      seqPanel.innerHTML = html;
+    }
+
+    function cellHtml(id, color, occ, refc){
+      var frac = cfg.B > 0 ? Math.max(0, Math.min(1, occ / cfg.B)) : 0;
+      var emptyPct = (1 - frac) * 100;
+      var bg = Array.isArray(color)
+        ? 'linear-gradient(135deg,' + color[0] + ' 0 50%,' + color[1] + ' 50% 100%)'
+        : color;
+      return '<div class="pab-cell' + (refc > 1 ? ' pab-shared-cell' : '') +
+             '" title="physical block ' + id + ': ' + occ + '/' + cfg.B + ' token slots written' +
+             (refc > 1 ? ', shared by ' + refc + ' sequences (ref_count=' + refc + ')' : '') + '">' +
+             '<div class="pab-cell-bg" style="background:' + bg + '"></div>' +
+             '<div class="pab-cell-empty" style="height:' + emptyPct + '%"></div>' +
+             (refc > 1 ? '<span class="pab-cell-ref">&times;' + refc + '</span>' : '') +
+             '<div class="pab-cell-lab">' + id + '</div></div>';
+    }
+
+    function renderGrid(){
+      var owners = new Array(cfg.pool), occ = new Array(cfg.pool), ref = new Array(cfg.pool), i, L, b;
+      for (i = 0; i < cfg.pool; i++){ owners[i] = null; occ[i] = 0; ref[i] = 0; }
+
+      if (!cfg.contiguous){
+        for (i = 0; i < seqs.length; i++){
+          for (L = 0; L < seqs[i].table.length; L++){
+            var p = seqs[i].table[L];
+            if (!owners[p]) owners[p] = [];
+            if (owners[p].indexOf(i) === -1) owners[p].push(i);
+            occ[p] = occupancy[p];
+            ref[p] = refCount[p];
+          }
+        }
+      } else {
+        for (i = 0; i < seqs.length; i++){
+          var rng = contigStats.ranges[i];
+          if (!rng) continue;
+          for (b = rng.start; b < rng.end; b++){
+            owners[b] = [i];
+            occ[b] = Math.max(0, Math.min(cfg.B, seqs[i].len - (b - rng.start) * cfg.B));
+            ref[b] = 1;
+          }
+        }
+      }
+
+      var html = '';
+      for (i = 0; i < cfg.pool; i++){
+        if (!owners[i]){
+          html += '<div class="pab-cell pab-free" title="physical block ' + i +
+                  ': free"><div class="pab-cell-lab">' + i + '</div></div>';
+        } else if (owners[i].length === 1){
+          html += cellHtml(i, SEQ_COLORS[owners[i][0] % SEQ_COLORS.length], occ[i], ref[i]);
+        } else {
+          html += cellHtml(i, [SEQ_COLORS[owners[i][0] % SEQ_COLORS.length],
+                               SEQ_COLORS[owners[i][1] % SEQ_COLORS.length]], occ[i], ref[i]);
+        }
+      }
+      gridEl.innerHTML = html;
+    }
+
+    function meterHtml(label, s, note){
+      var totalCap = cfg.pool * cfg.B;
+      var usedPct  = totalCap > 0 ? s.used / totalCap * 100 : 0;
+      var wastePct = totalCap > 0 ? s.wasted / totalCap * 100 : 0;
+      var occPct   = s.capacity > 0 ? s.used / s.capacity * 100 : 0;
+      return '<div class="pab-meter">' +
+        '<div class="pab-meter-lab"><span>' + label + '</span>' +
+        '<span><b>' + (s.capacity > 0 ? pct(occPct) + '%' : '—') + '</b> occupancy &middot; ' +
+        s.blocksInUse + '/' + cfg.pool + ' blocks held</span></div>' +
+        '<div class="pab-bar">' +
+        '<div class="pab-bar-seg pab-bar-used" style="width:' + usedPct + '%"></div>' +
+        '<div class="pab-bar-seg pab-bar-waste" style="width:' + wastePct + '%"></div></div>' +
+        note + '</div>';
+    }
+
+    function renderMeters(){
+      var p = pagedStats, c = contigStats;
+      var pNote = '<div class="pab-meter-note">wasted = blocks&times;B &minus; stored = ' + p.blocksInUse + '&times;' +
+        cfg.B + ' &minus; ' + p.used + ' = <b>' + p.wasted + '</b> slots (only each sequence\'s last-block tail, &le; B&minus;1 = ' +
+        (cfg.B - 1) + ' per sequence)' +
+        (p.savings > 0 ? '; prefix sharing avoids storing ' + p.savings + ' duplicate token(s)' : '') +
+        '; serving ' + p.served + ' seq / ' + p.logical + ' logical tokens.</div>';
+
+      var cNote = '<div class="pab-meter-note">wasted = ' + c.blocksInUse + '&times;' + cfg.B + ' &minus; ' + c.used +
+        ' = <b>' + c.wasted + '</b> slots reserved-but-never-written; serving ' + c.served + ' seq / ' + c.logical +
+        ' logical tokens.</div>';
+      if (c.rejected.length){
+        cNote += '<div class="pab-meter-note pab-warntext">' + c.rejected.length + ' request(s) rejected outright: ' +
+          c.freeBlocks + ' block(s) free but each reservation needs ' + c.resBlocks + ' &mdash; denied service, not just wasted bytes.</div>';
+      }
+
+      metersEl.innerHTML =
+        meterHtml('Paged &mdash; allocate a block only when a token needs it', p, pNote) +
+        meterHtml('Contiguous &mdash; reserve ceil(max_seq_len/B) per request', c, cNote);
+
+      var ratio = (c.blocksInUse > 0 && p.blocksInUse > 0) ? (c.blocksInUse / p.blocksInUse) : 0;
+      var msg = '<b>Right now:</b> paged holds ' + p.logical + ' logical tokens of ' + p.served +
+        ' sequence(s) in <b>' + p.blocksInUse + '</b> block(s). Contiguous ties up <b>' + c.blocksInUse +
+        '</b> block(s) for only ' + c.served + ' sequence(s)';
+      if (ratio > 1.001) msg += ' &mdash; <b>' + (Math.round(ratio * 100) / 100) + '&times;</b> the KV memory for less work';
+      msg += '.';
+      if (c.rejected.length) msg += ' It also turns ' + c.rejected.length + ' request(s) away that paged is happily serving.';
+      summaryEl.innerHTML = msg;
+    }
+
+    function renderLog(){
+      var rows = [], i;
+      for (i = 0; i < eventLog.length && i < 8; i++){
+        rows.push('<div class="' + eventLog[i].cls + '">[step ' + eventLog[i].step + '] ' + esc(eventLog[i].msg) + '</div>');
+      }
+      logEl.innerHTML = rows.length ? rows.join('') : '<div>(no events yet)</div>';
+    }
+
+    function renderTitles(){
+      seqTitle.textContent = cfg.contiguous
+        ? 'Requests & contiguous reservations'
+        : 'Requests & block tables (logical → physical)';
+      gridTitle.textContent = 'Physical pool — ' + cfg.pool + ' blocks × ' + cfg.B + ' tokens = ' +
+        (cfg.pool * cfg.B) + ' slots — ' + (cfg.contiguous ? 'contiguous reservation' : 'paged, on demand');
+    }
+
+    function renderStatus(){
+      var i, admitted = 0, done = 0, queued = 0;
+      for (i = 0; i < seqs.length; i++){
+        if (!seqs[i].admitted) queued++;
+        else { admitted++; if (seqs[i].len >= seqs[i].target) done++; }
+      }
+      var msg = done + '/' + admitted + ' admitted sequence(s) finished';
+      if (queued) msg += ' · ' + queued + ' queued (pool full at admission)';
+      msg += ' · pool ' + (cfg.pool - free.length) + '/' + cfg.pool + ' blocks in use';
+      if (deadlock) msg += ' · BLOCKED: pool exhausted';
+      elStatus.textContent = msg;
+
+      var stuck = deadlock || (admitted - done) === 0;
+      btnStep.disabled = stuck;
+      btnPlay.disabled = stuck;
+      if (stuck) stopPlay();
+    }
+
+    function renderNote(){
+      noteEl.innerHTML = '<b>The takeaway:</b> tick <i>Show contiguous pre-allocation</i> to score the exact same live trace ' +
+        'on the exact same ' + cfg.pool + '-block pool under both allocators. Paged allocation only ever wastes the tail of a ' +
+        'sequence\'s <i>last</i> block &mdash; at most B&minus;1 = ' + (cfg.B - 1) + ' slots per sequence, and that bound does ' +
+        'not grow with max_seq_len (shrink B to squeeze it further). Contiguous allocation reserves ceil(max_seq_len/B) = ' +
+        ceilDiv(cfg.maxLen, cfg.B) + ' blocks per request up front no matter how few tokens are written, which is both ' +
+        'internal fragmentation <i>and</i> an admission-control disaster: once the pool is carved up, further requests are ' +
+        'rejected while most of the reserved memory sits empty. Prefix sharing goes further: Seq A and Seq B point at the ' +
+        'same physical blocks (ref_count=2, no bytes duplicated) until one writes into a shared block, at which point ' +
+        '<i>exactly that one block</i> is copied (copy-on-write) and every earlier block stays shared &mdash; the mechanism ' +
+        'behind cheap parallel sampling, beam search, and cross-request prefix caching. ' +
+        '<b>Caveat:</b> this demo never frees or preempts, so blocks stay held after a sequence finishes; a real scheduler ' +
+        'returns them to the pool and admits queued work.';
+    }
+
+    function render(){
+      computeStats();
+      renderTitles();
+      renderSeqPanel();
+      renderGrid();
+      renderMeters();
+      renderLog();
+      renderStatus();
+      renderNote();
+    }
+
+    /* ---------------- controls ---------------- */
+    function stopPlay(){
+      if (playTimer){ clearInterval(playTimer); playTimer = null; }
+      if (btnPlay){ btnPlay.textContent = 'Play'; btnPlay.setAttribute('aria-pressed', 'false'); }
+    }
+
+    elB.addEventListener('change', function(){ rebuild(true); });
+    elPool.addEventListener('input', function(){ rebuild(true); });
+    elN.addEventListener('input', function(){ rebuild(true); });
+    elMax.addEventListener('input', function(){ rebuild(false); });
+    elMax.addEventListener('change', function(){ rebuild(true); });
+    elPrefix.addEventListener('change', function(){ rebuild(true); });
+    elPrefixLen.addEventListener('input', function(){ rebuild(false); });
+    elPrefixLen.addEventListener('change', function(){ rebuild(true); });
+    elContig.addEventListener('change', function(){ cfg.contiguous = !!elContig.checked; render(); });
+
+    btnStep.addEventListener('click', function(){ stopPlay(); decodeStep(); render(); });
+    btnPlay.addEventListener('click', function(){
+      if (playTimer){ stopPlay(); return; }
+      btnPlay.textContent = 'Pause';
+      btnPlay.setAttribute('aria-pressed', 'true');
+      playTimer = setInterval(function(){
+        var moved = decodeStep();
+        render();
+        if (!moved) stopPlay();
+      }, 520);
+    });
+    btnReset.addEventListener('click', function(){ stopPlay(); rebuild(true); });
+
+    rebuild(true);
+  })();</script>
+</div>

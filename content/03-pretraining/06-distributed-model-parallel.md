@@ -606,6 +606,10 @@ The single most important thing to internalize is *what collective each axis pay
 
 Notice the frequency column. TP and EP pay *per layer*, so they demand the fastest links and the tightest placement. DP pays *per step* (after gradient accumulation over all microbatches), so it tolerates the slow outer fabric. PP's communication is cheap point-to-point but introduces the *bubble*, a compute-utilization tax rather than a bandwidth one. CP's communication overlaps with compute and so is nearly hidden when sequences are long. This table — internalized — is most of what you need to design or debug a large training run, and it connects directly to the [collective communication](../01-foundations/09-parallel-collectives.html) primitives and the practical framework details in [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
 
+The visualizer below puts all four of the load-bearing axes side by side on one grid of GPUs. Pick a strategy and step through a single training step: watch which GPU holds which parameters, which collective fires and when, and how the per-GPU memory bar (params / grads / optimizer state / activations) rearranges itself. The comparison table at the bottom is the punchline — no single axis is enough, and each one trades memory against bandwidth differently.
+
+{{tool:parallelism-visualizer}}
+
 !!! note "Activation memory is the quiet killer"
     Engineers obsess over parameter memory because it's easy to compute, but at long sequence lengths and large microbatch counts, **activation memory often dominates and is what actually OOMs your run.** TP (with Megatron sequence parallelism) and CP both attack activation memory directly; PP's 1F1B bounds in-flight activations; and gradient checkpointing/recomputation trades compute to slash it further. When a large run OOMs, your first hypothesis should usually be activations, not weights.
 

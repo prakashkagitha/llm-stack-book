@@ -137,13 +137,15 @@ def build_yarn_freqs(
     )
     ramp = ramp.clamp(0.0, 1.0)
 
-    # Blend: high-freq → no interpolation, low-freq → PI scaling
-    # NTK base for fully-scaled dims: b' = b * scale^(dim/(dim-2))
-    ntk_base = base * (scale ** (dim / (dim - 2)))
-    ntk_inv_freq = 1.0 / (ntk_base ** (torch.arange(0, dim, 2).float() / dim))
+    # Blend: high-freq → no interpolation (extrapolate), low-freq → full PI
+    # This is YaRN's "NTK-by-parts": the fully-scaled branch is θ/s, exactly PI,
+    # which is what lands every under-rotated dimension back at its trained
+    # maximum angle. (Blending toward the NTK base instead would leave those
+    # dimensions overshooting by s^(1 - 2i/(dim-2)) — e.g. 1.75x at 8x.)
+    pi_inv_freq = inv_freq / scale
 
-    # Interpolate between unscaled (ramp=0) and NTK-scaled (ramp=1) per dimension
-    blended_inv_freq = (1 - ramp) * inv_freq + ramp * ntk_inv_freq
+    # Interpolate between unscaled (ramp=0) and PI-scaled (ramp=1) per dimension
+    blended_inv_freq = (1 - ramp) * inv_freq + ramp * pi_inv_freq
 
     t = torch.arange(target_max_seq_len, dtype=torch.float)
     freqs = torch.outer(t, blended_inv_freq)
@@ -184,6 +186,8 @@ print(f"YaRN attention factor sqrt(1/t): {yarn_attention_factor(4096, 32768):.4f
     **YaRN** with $\beta_{\text{fast}} = 32$ applies *no scaling* to the highest-frequency dimension (its wavelength $\lambda_0 = 2\pi \approx 6.3$ is far below the original context 4096), so nearby tokens remain distinguishable. It applies full NTK-style scaling only to low-frequency dimensions that actually need longer range. The result is the best of both worlds.
 
 {{fig:longctx-rope-extension-spectrum}}
+
+{{tool:long-context-rope-scaling}}
 
 ---
 

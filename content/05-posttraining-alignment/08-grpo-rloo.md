@@ -129,6 +129,8 @@ $$
 
 Note what this is: a **z-score of the reward within its group**. Subtracting the mean is the baseline (variance reduction, exactly as above). Dividing by the std is a normalization that makes the advantage scale-free, so a prompt where rewards happen to be large and a prompt where they are small contribute comparably. Every token in $o_i$ shares the same scalar $\hat A_i$ — GRPO does no per-token credit assignment, because with a terminal reward there is nothing to assign per token. (We will see in the "fixes" section that the std-normalization is the most controversial design choice in the whole method.)
 
+{{tool:grpo-advantage}}
+
 ### The clipped surrogate objective
 
 Let $\pi_\theta$ be the current policy and $\pi_{\theta_{\text{old}}}$ the policy that generated the rollouts. Define the per-token importance ratio

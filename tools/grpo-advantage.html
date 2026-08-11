@@ -1,0 +1,512 @@
+<div class="viz-tool" id="tool-grpo-advantage">
+  <div class="vt-title">GRPO: group-relative advantages</div>
+
+  <div class="vt-grid">
+    <label for="grpo-advantage-source">Reward source
+      <select id="grpo-advantage-source" aria-label="reward source: sampled group or the chapter's worked example">
+        <option value="sampled" selected>Sampled group (seeded)</option>
+        <option value="worked">Chapter worked example: R = {1.2, 0.2, 1.2, 0.0}</option>
+      </select>
+    </label>
+    <label for="grpo-advantage-g-num">Group size G
+      <span class="ga-in">
+        <input id="grpo-advantage-g" type="range" min="2" max="16" step="1" value="8" aria-label="group size G, slider">
+        <input id="grpo-advantage-g-num" type="number" min="2" max="16" step="1" value="8" aria-label="group size G, exact value">
+      </span>
+    </label>
+    <label for="grpo-advantage-k-num">Correct responses k (out of G)
+      <span class="ga-in">
+        <input id="grpo-advantage-k" type="range" min="0" max="16" step="1" value="4" aria-label="number of correct responses in the group, slider">
+        <input id="grpo-advantage-k-num" type="number" min="0" max="16" step="1" value="4" aria-label="number of correct responses, exact value">
+      </span>
+    </label>
+    <label for="grpo-advantage-spread">Reward spread s (format bonus / grader jitter, 0&ndash;0.6)
+      <input id="grpo-advantage-spread" type="range" min="0" max="0.6" step="0.02" value="0.15" aria-label="reward spread: jitter magnitude added on top of correctness">
+    </label>
+    <label for="grpo-advantage-std">Std convention
+      <select id="grpo-advantage-std" aria-label="population versus sample standard deviation">
+        <option value="pop" selected>Population, &divide;G (chapter default, correction=0)</option>
+        <option value="sample">Sample, &divide;(G&minus;1) (torch.std default)</option>
+      </select>
+    </label>
+    <label for="grpo-advantage-baseline">Baseline / normalization
+      <select id="grpo-advantage-baseline" aria-label="which baseline to subtract and whether to normalize by the group standard deviation">
+        <option value="grpo" selected>GRPO: (R &minus; mean) / (std + &epsilon;)</option>
+        <option value="mean">Dr. GRPO: R &minus; mean (no &divide;std)</option>
+        <option value="rloo">RLOO: R &minus; leave-one-out mean</option>
+        <option value="raw">No baseline: A = R</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="ga-btn-row">
+    <button id="grpo-advantage-resample" type="button" class="ga-btn">&#8635; Resample group (new seed)</button>
+  </div>
+
+  <div class="ga-formula" id="grpo-advantage-formula"></div>
+
+  <div class="ga-chart-scroll">
+    <svg id="grpo-advantage-svg" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="reward and advantage bars for each sampled response in the group"></svg>
+  </div>
+
+  <div class="ga-callout" id="grpo-advantage-callout" aria-live="polite"></div>
+
+  <div class="vt-out" id="grpo-advantage-out"></div>
+
+  <div class="vt-note">
+    The group mean is a <b>Monte-Carlo estimate of the same baseline</b> that PPO trains a whole separate critic network to predict &mdash; GRPO gets it for free from the <code>G</code> samples you already generated. Subtracting a baseline removes the common-mode reward level, so gradients point toward <i>relatively</i> better responses; dividing by the group's own std (GRPO) further rescales, so an easy prompt with big reward swings and a hard prompt with small ones contribute comparably-sized updates. Note that <b>RLOO is not quite &ldquo;mean-only&rdquo;</b>: its leave-one-out baseline gives <code>A_i = (G/(G&minus;1))&middot;(R_i &minus; mean)</code>, i.e. Dr.&nbsp;GRPO's advantage rescaled by a constant &mdash; switch between them and watch only the axis numbers change, never the shape. Every mean-based option makes <b>&Sigma;A<sub>i</sub> = 0</b> exactly; &ldquo;no baseline&rdquo; does not, which is why it pushes <i>every</i> response up. The failure mode to remember: when every response in the group earns (nearly) the same reward &mdash; all correct, or all wrong &mdash; the group carries no information about which completion was better, every advantage collapses toward <b>0</b>, and the rollout's gradient vanishes. That is the empirical case for <b>dynamic sampling (DAPO)</b>: detect zero-variance groups and resample instead of wasting compute on them. Pick the <i>worked example</i> reward source to check the widget against the &plusmn;0.992 / &minus;0.811 / &minus;1.172 numbers derived in the text.
+  </div>
+
+  <style>
+    #tool-grpo-advantage{
+      /* scoped colour tokens: site vars when present, theme-tuned hex otherwise */
+      --ga-good: var(--good,#2f9e6e);
+      --ga-warn: var(--warn,#c2740a);
+      --ga-neutral: var(--muted,#6d675d);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); max-width:100%; box-sizing:border-box;
+    }
+    html[data-theme="dark"] #tool-grpo-advantage{
+      --ga-good: var(--good,#5fcb9c);
+      --ga-warn: var(--warn,#eab263);
+    }
+    @media (prefers-color-scheme: dark){
+      html:not([data-theme="light"]) #tool-grpo-advantage{
+        --ga-good: var(--good,#5fcb9c);
+        --ga-warn: var(--warn,#eab263);
+      }
+    }
+    #tool-grpo-advantage *{ box-sizing:border-box; }
+    #tool-grpo-advantage .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+
+    #tool-grpo-advantage .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px 18px; }
+    #tool-grpo-advantage label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); min-width:0; }
+    #tool-grpo-advantage input, #tool-grpo-advantage select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); min-width:0; max-width:100%; }
+    #tool-grpo-advantage input[type="range"]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-grpo-advantage input:focus-visible, #tool-grpo-advantage select:focus-visible, #tool-grpo-advantage button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-grpo-advantage input:disabled, #tool-grpo-advantage select:disabled, #tool-grpo-advantage button:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-grpo-advantage .ga-in{ display:flex; gap:6px; align-items:center; min-width:0; }
+    #tool-grpo-advantage .ga-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-grpo-advantage .ga-in input[type="number"]{ flex:1 1 58px; min-width:0; }
+
+    #tool-grpo-advantage .ga-btn-row{ margin-top:14px; }
+    #tool-grpo-advantage .ga-btn{ font:inherit; font-size:.82rem; font-weight:600; padding:8px 12px; border-radius:8px; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-grpo-advantage .ga-btn:hover:not(:disabled){ filter:brightness(0.97); }
+
+    #tool-grpo-advantage .ga-formula{ margin-top:14px; padding:9px 11px; border-radius:8px; background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); font-family:var(--mono,monospace); font-size:.78rem; line-height:1.55; color:var(--ink-soft,#45413a); overflow-x:auto; white-space:nowrap; }
+    #tool-grpo-advantage .ga-formula b{ color:var(--accent,#c15b39); font-weight:700; }
+
+    #tool-grpo-advantage .ga-chart-scroll{ margin-top:14px; overflow-x:auto; max-width:100%; border:1px solid var(--border,#e7e1d4); border-radius:8px; background:var(--surface-2,#f3efe6); padding:6px 4px; }
+    #tool-grpo-advantage svg{ display:block; }
+    #tool-grpo-advantage .ga-axis-line{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-grpo-advantage .ga-mean-line{ stroke:var(--ink,#211f1b); stroke-width:1.5; stroke-dasharray:5 4; }
+    #tool-grpo-advantage .ga-zero-line{ stroke:var(--ink-soft,#45413a); stroke-width:1.25; }
+    #tool-grpo-advantage .ga-bar-reward{ fill:var(--accent,#c15b39); }
+    #tool-grpo-advantage .ga-bar-reward.is-wrong{ fill:var(--ga-neutral); opacity:.7; }
+    #tool-grpo-advantage .ga-bar-adv-pos{ fill:var(--ga-good); }
+    #tool-grpo-advantage .ga-bar-adv-neg{ fill:var(--ga-warn); }
+    #tool-grpo-advantage .ga-lbl{ font-family:var(--mono,monospace); font-size:10.5px; fill:var(--ink-soft,#45413a); }
+    #tool-grpo-advantage .ga-lbl-strong{ font-family:var(--mono,monospace); font-size:10.5px; fill:var(--ink,#211f1b); font-weight:700; }
+    #tool-grpo-advantage .ga-panel-title{ font-family:var(--sans,sans-serif); font-size:11px; font-weight:700; fill:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.04em; }
+    #tool-grpo-advantage .ga-mark-ok{ fill:var(--ga-good); }
+    #tool-grpo-advantage .ga-mark-bad{ fill:var(--ga-warn); }
+
+    #tool-grpo-advantage .ga-callout{ margin-top:12px; padding:9px 12px; border-radius:8px; font-size:.8rem; line-height:1.5; border:1px solid var(--border,#e7e1d4); background:var(--surface-2,#f3efe6); color:var(--ink-soft,#45413a); }
+    #tool-grpo-advantage .ga-callout.is-degenerate{ border-color:var(--ga-warn); background:color-mix(in srgb, var(--ga-warn) 12%, var(--surface,#fff)); color:var(--ink,#211f1b); }
+    #tool-grpo-advantage .ga-callout.is-amplified{ border-color:var(--accent,#c15b39); background:color-mix(in srgb, var(--accent,#c15b39) 8%, var(--surface,#fff)); color:var(--ink,#211f1b); }
+    #tool-grpo-advantage .ga-callout b{ color:inherit; }
+
+    #tool-grpo-advantage .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; }
+    #tool-grpo-advantage .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:11px 13px; min-width:0; }
+    #tool-grpo-advantage .vt-stat .n{ font-size:1.05rem; font-weight:700; color:var(--accent,#c15b39); font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
+    #tool-grpo-advantage .vt-stat .l{ font-size:.74rem; line-height:1.35; color:var(--muted,#6d675d); margin-top:2px; }
+
+    #tool-grpo-advantage .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-grpo-advantage .vt-note b{ color:var(--ink-soft,#45413a); }
+    #tool-grpo-advantage .vt-note code{ font-family:var(--mono,monospace); background:var(--surface-2,#f3efe6); padding:1px 4px; border-radius:4px; }
+  </style>
+
+  <script>(function(){
+    'use strict';
+    var root = document.getElementById('tool-grpo-advantage');
+    if(!root) return;
+    var q = function(id){ return root.querySelector('#' + id); };
+
+    var els = {
+      source: q('grpo-advantage-source'),
+      gR: q('grpo-advantage-g'), gN: q('grpo-advantage-g-num'),
+      kR: q('grpo-advantage-k'), kN: q('grpo-advantage-k-num'),
+      spread: q('grpo-advantage-spread'),
+      std: q('grpo-advantage-std'),
+      baseline: q('grpo-advantage-baseline'),
+      resample: q('grpo-advantage-resample'),
+      formula: q('grpo-advantage-formula'),
+      svg: q('grpo-advantage-svg'),
+      callout: q('grpo-advantage-callout'),
+      out: q('grpo-advantage-out')
+    };
+    for(var key in els){ if(!els[key]) return; }  // bail safely if the markup was edited
+
+    var SVG_NS = 'http://www.w3.org/2000/svg';
+    var EPS = 1e-4;                    // matches the chapter code: adv / (std + 1e-4)
+    var WORKED_R = [1.2, 0.2, 1.2, 0.0];        // chapter worked example
+    var WORKED_BASE = [1, 0, 1, 0];             // correct / wrong flags for those four
+    var state = { seed: 20260728 };    // deterministic starting seed; "Resample" advances it
+
+    // ---- deterministic PRNG (mulberry32): same seed -> same group, every time ----
+    function mulberry32(seed){
+      var a = seed >>> 0;
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function readInt(el, def, min, max){
+      var v = parseInt(el.value, 10);
+      if(!isFinite(v)) v = def;
+      if(v < min) v = min;
+      if(v > max) v = max;
+      return v;
+    }
+    function fmt3(x){ return isFinite(x) ? snap(x).toFixed(3) : 'n/a'; }
+    function fmt2(x){ return isFinite(x) ? snap(x).toFixed(2) : 'n/a'; }
+    function snap(x){ return Math.abs(x) < 5e-7 ? 0 : x; }        // kill "-0.000" from float noise
+    // small positive quantities (e.g. std + eps when the group is dead) must not print
+    // as "0.000" -- that would read like a divide-by-zero.
+    function fmtSmall(x){
+      if(!isFinite(x)) return 'n/a';
+      if(snap(x) === 0) return '0.000';
+      return Math.abs(x) >= 1e-3 ? x.toFixed(3) : x.toExponential(2);
+    }
+    function signed(x){
+      if(!isFinite(x)) return 'n/a';
+      var v = snap(x);
+      if(Math.abs(v) < 5e-3) return '0.00';
+      return (v > 0 ? '+' : '') + v.toFixed(2);
+    }
+
+    // ---- read + clamp parameters ------------------------------------------------
+    // G/k each have a range+number pair; the range is the source of truth (the browser
+    // enforces min/max and re-sanitizes the value when we lower `max`), and the number
+    // box mirrors it. We never rewrite the box the user is currently typing into.
+    function readParams(){
+      var source = (els.source.value === 'worked') ? 'worked' : 'sampled';
+
+      var G = readInt(els.gR, 8, 2, 16);
+      // lowering the k slider's max makes the browser clamp its value; mirror that into
+      // BOTH inputs so the number box can never display a stale k > G.
+      els.kR.max = String(G);
+      els.kN.max = String(G);
+      var k = readInt(els.kR, Math.min(4, G), 0, G);
+      if(document.activeElement !== els.kR) els.kR.value = String(k);
+      if(document.activeElement !== els.kN) els.kN.value = String(k);
+      if(document.activeElement !== els.gN) els.gN.value = String(G);
+
+      var spread = parseFloat(els.spread.value);
+      if(!isFinite(spread) || spread < 0) spread = 0;
+      if(spread > 0.6) spread = 0.6;
+
+      var stdMode = (els.std.value === 'sample') ? 'sample' : 'pop';
+      var baseline = els.baseline.value;
+      if(baseline !== 'mean' && baseline !== 'rloo' && baseline !== 'raw') baseline = 'grpo';
+
+      if(source === 'worked'){ G = WORKED_R.length; k = 2; spread = 0; }
+
+      return { source: source, G: G, k: k, spread: spread, stdMode: stdMode, baseline: baseline };
+    }
+
+    // ---- build one deterministic group: which slots are "correct", plus jitter ----
+    function buildGroup(p){
+      if(p.source === 'worked'){
+        return { base: WORKED_BASE.slice(), rewards: WORKED_R.slice() };
+      }
+      var rand = mulberry32(state.seed >>> 0);
+      var i;
+      // base correctness: k ones and G-k zeros, placed via a seeded Fisher-Yates shuffle
+      var base = new Array(p.G);
+      for(i = 0; i < p.G; i++) base[i] = (i < p.k) ? 1 : 0;
+      for(i = p.G - 1; i > 0; i--){
+        var j = Math.floor(rand() * (i + 1));
+        var tmp = base[i]; base[i] = base[j]; base[j] = tmp;
+      }
+      // jitter: drawn from the same PRNG stream after the shuffle, so it stays deterministic
+      // and changing `spread` alone never reshuffles which responses are correct.
+      var rewards = new Array(p.G);
+      for(i = 0; i < p.G; i++){
+        rewards[i] = base[i] + p.spread * rand();   // U[0, spread): a format/style bonus
+      }
+      return { base: base, rewards: rewards };
+    }
+
+    // ---- mean / std ------------------------------------------------------------
+    function computeStats(rewards, stdMode){
+      var G = rewards.length, i, sum = 0;
+      for(i = 0; i < G; i++) sum += rewards[i];
+      var mean = sum / G;
+      var sq = 0;
+      for(i = 0; i < G; i++){ var d = rewards[i] - mean; sq += d * d; }
+      // population: divide by G. sample (Bessel): divide by G-1. G >= 2 always here.
+      var divisor = (stdMode === 'sample') ? Math.max(1, G - 1) : G;
+      var variance = sq / divisor;
+      return { mean: mean, std: Math.sqrt(variance), variance: variance, sum: sum };
+    }
+
+    // ---- advantages ------------------------------------------------------------
+    // grpo : A_i = (R_i - mean) / (std + eps)
+    // mean : A_i = R_i - mean                            (Dr. GRPO)
+    // rloo : A_i = R_i - (sum_{j!=i} R_j)/(G-1)          (= G/(G-1) * (R_i - mean))
+    // raw  : A_i = R_i
+    function computeAdvantages(rewards, stats, baseline){
+      var G = rewards.length;
+      return rewards.map(function(r){
+        if(baseline === 'raw') return r;
+        if(baseline === 'mean') return r - stats.mean;
+        if(baseline === 'rloo') return G > 1 ? r - (stats.sum - r) / (G - 1) : 0;
+        return (r - stats.mean) / (stats.std + EPS);
+      });
+    }
+
+    // ---- SVG chart -------------------------------------------------------------
+    var BAR_W = 34, COL_W = 62, LEFT_PAD = 58, RIGHT_PAD = 92;   // right gutter holds the mean label
+    var TOP_PAD = 46, REWARD_H = 108, MID_GAP = 50, ADV_H = 130, BOTTOM_PAD = 38;
+
+    function svgEl(tag, attrs){
+      var e = document.createElementNS(SVG_NS, tag);
+      for(var a in attrs) e.setAttribute(a, attrs[a]);
+      return e;
+    }
+    function svgText(x, y, str, cls, anchor){
+      var t = svgEl('text', { x: x, y: y, 'class': cls || 'ga-lbl' });
+      t.setAttribute('text-anchor', anchor || 'middle');
+      t.textContent = str;
+      return t;
+    }
+
+    function renderChart(p, group, stats, advantages){
+      var G = p.G, i;
+      var W = LEFT_PAD + G * COL_W + RIGHT_PAD;
+      var H = TOP_PAD + REWARD_H + MID_GAP + ADV_H + BOTTOM_PAD;
+      els.svg.setAttribute('width', W);
+      els.svg.setAttribute('height', H);
+      els.svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      while(els.svg.firstChild) els.svg.removeChild(els.svg.firstChild);
+
+      var rewardBase = TOP_PAD + REWARD_H;              // y of reward = 0
+      var advTop = rewardBase + MID_GAP;
+
+      // reward panel scale: rewards are non-negative by construction, axis sits at 0
+      var maxReward = 0;
+      for(i = 0; i < G; i++) if(group.rewards[i] > maxReward) maxReward = group.rewards[i];
+      var rewardScale = Math.max(maxReward, 0.001) * 1.2;
+
+      // advantage panel scale: place the zero line where the data actually puts it, so
+      // "no baseline" (all-positive) uses the full panel instead of only the top half.
+      var aLo = 0, aHi = 0;
+      for(i = 0; i < G; i++){
+        if(advantages[i] < aLo) aLo = advantages[i];
+        if(advantages[i] > aHi) aHi = advantages[i];
+      }
+      aLo *= 1.25; aHi *= 1.25;
+      var span = aHi - aLo;
+      if(!(span > 1e-9)){ aLo = -1; aHi = 1; span = 2; }   // all advantages zero
+      var zeroY = advTop + (aHi / span) * ADV_H;
+      var advPx = function(v){ return (Math.abs(v) / span) * ADV_H; };
+
+      els.svg.appendChild(svgText(LEFT_PAD - 12, TOP_PAD - 30, 'Reward R_i', 'ga-panel-title', 'start'));
+      els.svg.appendChild(svgText(LEFT_PAD - 12, advTop - 14, 'Advantage A_i', 'ga-panel-title', 'start'));
+
+      // reward baseline axis (R = 0)
+      els.svg.appendChild(svgEl('line', { x1: LEFT_PAD - 12, x2: W - RIGHT_PAD, y1: rewardBase, y2: rewardBase, 'class': 'ga-axis-line' }));
+      els.svg.appendChild(svgText(LEFT_PAD - 16, rewardBase + 4, '0', 'ga-lbl', 'end'));
+
+      var meanY = rewardBase - (stats.mean / rewardScale) * REWARD_H;
+
+      // zero line for the advantage panel
+      els.svg.appendChild(svgEl('line', { x1: LEFT_PAD - 12, x2: W - RIGHT_PAD, y1: zeroY, y2: zeroY, 'class': 'ga-zero-line' }));
+      els.svg.appendChild(svgText(LEFT_PAD - 16, zeroY + 4, 'A=0', 'ga-lbl', 'end'));
+
+      for(i = 0; i < G; i++){
+        var cx = LEFT_PAD + i * COL_W + COL_W / 2;
+        var bx = cx - BAR_W / 2;
+        var isCorrect = group.base[i] === 1;
+
+        // ---- reward bar
+        var rh = (group.rewards[i] / rewardScale) * REWARD_H;
+        if(!(rh > 0)) rh = 0;
+        var rBar = svgEl('rect', {
+          x: bx, y: rewardBase - rh, width: BAR_W, height: Math.max(rh, 0.5),
+          rx: 3, 'class': 'ga-bar-reward' + (isCorrect ? '' : ' is-wrong')
+        });
+        var rTitle = svgEl('title', {});
+        rTitle.textContent = 'response ' + (i + 1) + ': ' + (isCorrect ? 'correct' : 'wrong') +
+          ', reward R = ' + fmt3(group.rewards[i]);
+        rBar.appendChild(rTitle);
+        els.svg.appendChild(rBar);
+        els.svg.appendChild(svgText(cx, rewardBase - rh - 5, fmt2(group.rewards[i]), 'ga-lbl'));
+
+        // ---- correct / wrong marker above the reward panel
+        // check / cross written as JS escapes so this source file stays ASCII-only
+        var mark = svgText(cx, TOP_PAD - 12, isCorrect ? '\u2713' : '\u2717',
+          isCorrect ? 'ga-lbl ga-mark-ok' : 'ga-lbl ga-mark-bad');
+        els.svg.appendChild(mark);
+
+        // ---- advantage bar (signed, measured from the zero line)
+        var A = advantages[i];
+        var ah = advPx(A);
+        var isPos = A >= 0;
+        var aBar = svgEl('rect', {
+          x: bx, y: isPos ? zeroY - ah : zeroY, width: BAR_W, height: Math.max(ah, 0.5),
+          rx: 3, 'class': isPos ? 'ga-bar-adv-pos' : 'ga-bar-adv-neg'
+        });
+        var aTitle = svgEl('title', {});
+        aTitle.textContent = 'response ' + (i + 1) + ': A = ' + fmt3(A);
+        aBar.appendChild(aTitle);
+        els.svg.appendChild(aBar);
+        els.svg.appendChild(svgText(cx, isPos ? (zeroY - ah - 5) : (zeroY + ah + 12),
+          signed(A), isPos ? 'ga-lbl-strong' : 'ga-lbl'));
+
+        // ---- response index under the advantage panel
+        els.svg.appendChild(svgText(cx, advTop + ADV_H + 24, 'o' + (i + 1), 'ga-lbl'));
+      }
+
+      // group-mean dashed line, drawn last so it reads across the reward bars, with its
+      // label parked in the right gutter where no bar or bar-label can reach it
+      els.svg.appendChild(svgEl('line', { x1: LEFT_PAD - 12, x2: W - RIGHT_PAD + 2, y1: meanY, y2: meanY, 'class': 'ga-mean-line' }));
+      els.svg.appendChild(svgText(W - RIGHT_PAD + 7, meanY + 4, 'mean ' + fmt3(stats.mean), 'ga-lbl', 'start'));
+
+      els.svg.setAttribute('aria-label',
+        'Top panel: reward of each of the ' + G + ' sampled responses with the group mean ' +
+        fmt3(stats.mean) + ' marked. Bottom panel: the resulting advantage per response.');
+    }
+
+    // ---- callout: flag degenerate / homogeneous / std-amplified groups ----------
+    function renderCallout(p, group, stats){
+      var cls = '', msg;
+      var homogeneous = (p.source === 'sampled') && (p.k === 0 || p.k === p.G);
+
+      if(stats.variance < 1e-12){
+        cls = 'is-degenerate';
+        if(p.k === p.G){
+          msg = '<b>Dead group: all ' + p.G + ' responses scored correct.</b> Reward variance is exactly 0, so every advantage is 0 &mdash; nothing here tells the policy which completion was better.';
+        } else if(p.k === 0){
+          msg = '<b>Dead group: all ' + p.G + ' responses scored wrong.</b> Same problem from the other side &mdash; zero variance, zero advantage, zero learning signal. GRPO needs a <i>mix</i> of outcomes to have anything to push against.';
+        } else {
+          msg = '<b>Dead group: every reward is identical</b> (variance = 0), so every advantage is exactly 0.';
+        }
+        msg += ' The &epsilon; in the denominator only prevents a NaN; it does not resurrect any signal. This is exactly why dynamic sampling (DAPO) filters or resamples such groups instead of spending a training step on them.';
+      } else if(homogeneous){
+        cls = 'is-degenerate';
+        msg = '<b>No correctness signal: all ' + p.G + ' responses are ' + (p.k === p.G ? 'correct' : 'wrong') +
+          '.</b> The only thing still varying is the format/jitter bonus, so the advantages you see rank responses purely by <i>that</i> &mdash; the update trains style, not correctness. Turn the spread to 0 to see the group die completely.';
+      } else if(p.baseline === 'grpo' && stats.std < 0.06){
+        cls = 'is-amplified';
+        msg = '<b>Near-zero reward std (' + fmt3(stats.std) + ').</b> Dividing by such a small number inflates tiny, possibly noisy reward differences into large-magnitude advantages &mdash; the std-normalization bias that Dr. GRPO removes. Switch the baseline to &ldquo;Dr. GRPO&rdquo; and watch the advantage axis shrink back to the true reward gaps.';
+      } else {
+        var nWrong = p.G - p.k;
+        msg = 'Healthy group: ' + p.k + ' correct / ' + nWrong + ' wrong response' + (nWrong === 1 ? '' : 's') +
+          ' gives reward variance ' + fmt3(stats.variance) + ' &gt; 0, so the group carries a real learning signal &mdash; above-baseline responses get pushed up, below-baseline ones pushed down.';
+      }
+      els.callout.className = 'ga-callout' + (cls ? ' ' + cls : '');
+      els.callout.innerHTML = msg;
+    }
+
+    function renderFormula(p, stats){
+      var divisorTxt, formulaTxt;
+      if(p.baseline === 'raw'){
+        divisorTxt = 'no baseline subtracted, no normalization';
+        formulaTxt = 'A_i = R_i';
+      } else if(p.baseline === 'mean'){
+        divisorTxt = 'baseline = group mean, no std normalization (Dr. GRPO)';
+        formulaTxt = 'A_i = R_i - mean = R_i - ' + fmt3(stats.mean);
+      } else if(p.baseline === 'rloo'){
+        divisorTxt = 'leave-one-out baseline = G/(G-1) x mean-only, factor ' + fmt3(p.G / (p.G - 1));
+        formulaTxt = 'A_i = R_i - (sum_{j!=i} R_j)/(G-1) = ' + fmt3(p.G / (p.G - 1)) + ' x (R_i - ' + fmt3(stats.mean) + ')';
+      } else {
+        divisorTxt = 'divisor = std + &epsilon; = ' + fmtSmall(stats.std) + ' + ' + EPS.toExponential(0) + ' = ' + fmtSmall(stats.std + EPS);
+        formulaTxt = 'A_i = (R_i - mean) / (std + &epsilon;) = (R_i - ' + fmt3(stats.mean) + ') / ' + fmtSmall(stats.std + EPS);
+      }
+      els.formula.innerHTML = '<b>' + formulaTxt + '</b> &nbsp;|&nbsp; ' + divisorTxt +
+        ' &nbsp;|&nbsp; std convention: ' + (p.stdMode === 'sample' ? 'sample, divide by G-1' : 'population, divide by G');
+    }
+
+    function renderStats(p, stats, advantages){
+      var nPos = 0, nNeg = 0, nZero = 0, sumA = 0;
+      var minA = Infinity, maxA = -Infinity;
+      for(var i = 0; i < advantages.length; i++){
+        var a = advantages[i];
+        sumA += a;
+        if(a > 1e-9) nPos++; else if(a < -1e-9) nNeg++; else nZero++;
+        if(a < minA) minA = a;
+        if(a > maxA) maxA = a;
+      }
+      var tiles = [
+        [fmt3(stats.mean), 'Group mean reward'],
+        [fmtSmall(stats.std), 'Group std (' + (p.stdMode === 'sample' ? 'sample' : 'population') + ')'],
+        [nPos + ' up / ' + nNeg + ' down / ' + nZero + ' flat', 'Responses pushed which way'],
+        ['[' + fmt2(minA) + ', ' + fmt2(maxA) + ']', 'Advantage range'],
+        [fmt3(sumA), 'Sum of advantages (0 for any mean-based baseline)']
+      ];
+      els.out.innerHTML = tiles.map(function(s){
+        return '<div class="vt-stat"><div class="n">' + s[0] + '</div><div class="l">' + s[1] + '</div></div>';
+      }).join('');
+    }
+
+    // ---- master render ---------------------------------------------------------
+    function render(){
+      var p = readParams();
+      var worked = (p.source === 'worked');
+      [els.gR, els.gN, els.kR, els.kN, els.spread, els.resample].forEach(function(el){
+        el.disabled = worked;
+      });
+
+      var group = buildGroup(p);
+      var stats = computeStats(group.rewards, p.stdMode);
+      var advantages = computeAdvantages(group.rewards, stats, p.baseline);
+
+      renderFormula(p, stats);
+      renderChart(p, group, stats, advantages);
+      renderCallout(p, group, stats);
+      renderStats(p, stats, advantages);
+    }
+
+    els.resample.addEventListener('click', function(){
+      state.seed = (state.seed + 2654435761) >>> 0;
+      render();
+    });
+
+    // ---- paired range/number wiring: the range is the source of truth (the browser
+    // clamps it); the number box mirrors it live but is only force-normalized on
+    // change/blur, so typing a multi-digit value is never fought mid-keystroke.
+    function wirePair(rangeEl, numEl, clampFn){
+      rangeEl.addEventListener('input', function(){
+        numEl.value = rangeEl.value;
+        render();
+      });
+      numEl.addEventListener('input', function(){
+        var raw = parseFloat(numEl.value);
+        if(isFinite(raw)) rangeEl.value = String(clampFn(raw));
+        render();
+      });
+      numEl.addEventListener('change', function(){
+        numEl.value = rangeEl.value;   // normalize the display once editing settles
+        render();
+      });
+    }
+    wirePair(els.gR, els.gN, function(v){ return Math.min(16, Math.max(2, Math.round(v))); });
+    wirePair(els.kR, els.kN, function(v){
+      var gMax = parseInt(els.kR.max, 10);
+      if(!isFinite(gMax)) gMax = 16;
+      return Math.min(gMax, Math.max(0, Math.round(v)));
+    });
+
+    [els.spread, els.std, els.baseline, els.source].forEach(function(el){
+      el.addEventListener('input', render);
+      el.addEventListener('change', render);
+    });
+
+    render();
+  })();</script>
+</div>

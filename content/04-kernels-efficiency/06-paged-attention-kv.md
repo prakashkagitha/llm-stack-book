@@ -243,6 +243,8 @@ Crucially, COW happens **per block, not per sequence**. Two diverging beam-searc
 
     A **3.6× reduction**, from sharing the prompt KV. That freed memory becomes more concurrent requests — i.e. more throughput.
 
+{{tool:paged-attention-blocks}}
+
 ## The PagedAttention Kernel
 
 The bookkeeping is only useful if the attention kernel can *read* a logically-contiguous sequence whose K/V physically lives in scattered blocks. A standard attention kernel — including [FlashAttention](../04-kernels-efficiency/02-flash-attention-1.html) — assumes K and V are contiguous tensors it can stride through linearly. PagedAttention modifies the kernel to consult the **block table** and gather block-by-block.
