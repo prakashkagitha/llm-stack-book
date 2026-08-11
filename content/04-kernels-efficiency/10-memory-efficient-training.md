@@ -93,7 +93,7 @@ Activation checkpointing (also called **gradient checkpointing**) is the oldest 
 
 ### The Recompute–Storage Tradeoff
 
-Without checkpointing, storing all activations for an $L$-layer network costs $O(L)$ memory but zero extra compute. With full recomputation, you store only the input to each layer, paying one extra forward pass: memory drops to $O(1)$ (or $O(\sqrt{L})$ with optimal placement), compute goes up by roughly 33%.
+Without checkpointing, storing all activations for an $L$-layer network costs $O(L)$ memory with a large constant (roughly 12 saved tensors per layer) but zero extra compute. With full recomputation, you store only the input to each *block*, paying one extra forward pass: the stored set drops to $L$ block-boundary tensors — still $O(L)$, but with a constant of 1 instead of 12 — or to $O(\sqrt{L})$ with optimal checkpoint placement, and compute goes up by roughly 33%.
 
 The memory–compute tradeoff is:
 
@@ -188,12 +188,18 @@ def measure_peak_memory(n_layers: int, use_checkpointing: bool,
 
 
 if __name__ == "__main__":
+    # Note: pick a shape where activations actually dominate.  This model has
+    # 302M params, so weights + grads alone are a fixed ~1.2 GB floor in bf16;
+    # at the tiny default (batch=2, seq_len=512) that floor hides the effect.
     for ckpt in [False, True]:
-        mb = measure_peak_memory(n_layers=24, use_checkpointing=ckpt)
+        mb = measure_peak_memory(n_layers=24, use_checkpointing=ckpt,
+                                 batch=4, seq_len=2048)
         print(f"Checkpointing={ckpt}: peak memory = {mb:.1f} MB")
-    # Typical output:
-    # Checkpointing=False: peak memory = 3421.3 MB
-    # Checkpointing=True:  peak memory = 1108.7 MB  (~3x reduction)
+    # Measured (H100, torch 2.13, bf16):
+    # Checkpointing=False: peak memory = 7283.0 MB
+    # Checkpointing=True:  peak memory = 1624.9 MB  (~4.5x reduction)
+    # The checkpointed run is close to the 1.2 GB weights+grads floor, which is
+    # why the ratio improves further as batch/seq_len grow.
 ```
 
 ### Selective Recomputation
@@ -399,17 +405,29 @@ IGNORE_INDEX = -100  # label id excluded from the loss (padding / prompt tokens)
 
 # Correct normalization under variable token counts: sum the per-token losses
 # in each micro-batch and divide once by the window's total token count.
-window = list(itertools.islice(loader, ACCUMULATION_STEPS))
-total_tokens = sum(int((y != IGNORE_INDEX).sum()) for _, y in window)
+#
+# NOTE: islice() calls iter() on its argument, and a DataLoader is an *iterable*,
+# not an iterator -- islice(dataloader, ...) restarts at batch 0 on every call.
+# Build the iterator ONCE, then slice successive windows off it.
+data_iter = iter(dataloader)
 
-for x, y in window:
-    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-        logits = model(x.cuda())
-        loss = F.cross_entropy(                       # reduction="sum", not "mean"
-            logits.flatten(0, 1).float(), y.cuda().flatten(),
-            ignore_index=IGNORE_INDEX, reduction="sum",
-        ) / total_tokens
-    loss.backward()
+while True:
+    window = list(itertools.islice(data_iter, ACCUMULATION_STEPS))
+    if not window:
+        break                                         # epoch exhausted
+    total_tokens = sum(int((y != IGNORE_INDEX).sum()) for _, y in window)
+
+    for x, y in window:
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            logits = model(x.cuda())
+            loss = F.cross_entropy(                   # reduction="sum", not "mean"
+                logits.flatten(0, 1).float(), y.cuda().flatten(),
+                ignore_index=IGNORE_INDEX, reduction="sum",
+            ) / total_tokens
+        loss.backward()
+
+    optimizer.step()
+    optimizer.zero_grad()
 ```
 
 ## The Math Behind LoRA and Why PEFT Slashes Memory
@@ -433,10 +451,10 @@ $$
 The compression ratio is:
 
 $$
-\rho = \frac{r(d+k)}{dk} \approx \frac{r}{d} \quad \text{for } d \approx k
+\rho = \frac{r(d+k)}{dk} \approx \frac{2r}{d} \quad \text{for } d \approx k
 $$
 
-For a 7B model with $d = k = 4096$ and rank $r = 16$: $\rho \approx 16/4096 = 0.4\%$. Only 0.4% of each weight matrix's parameters are trained.
+For a 7B model with $d = k = 4096$ and rank $r = 16$: $\rho = 16 \times 8192 / 4096^2 = 2 \times 16/4096 \approx 0.78\%$. Under 1% of each weight matrix's parameters are trained.
 
 {{fig:memeff-lora-memory-collapse}}
 
@@ -452,7 +470,7 @@ With LoRA, the memory budget changes dramatically:
 | **Optimizer states** (Adam fp32) | $8P$ bytes | $8 \cdot \lvert\theta_{\text{LoRA}}\rvert$ bytes |
 | **Activations** | $M_{\text{act}}$ | $\approx M_{\text{act}}$ (**unchanged**) |
 
-For a frozen weight tensor, PyTorch does not allocate a gradient buffer, so **frozen parameters contribute 0 bytes of gradient or optimizer state**. The savings are enormous: if LoRA covers all linear layers in a 7B model with rank 16, the optimizer state shrinks from $\sim$56 GB (fp32 Adam) to roughly $56 \times 0.004 = 0.22$ GB.
+For a frozen weight tensor, PyTorch does not allocate a gradient buffer, so **frozen parameters contribute 0 bytes of gradient or optimizer state**. The savings are enormous: if LoRA covers all linear layers in a 7B model with rank 16, the optimizer state shrinks from $\sim$56 GB (fp32 Adam) to roughly $56 \times 0.0078 \approx 0.44$ GB.
 
 Note the last row carefully, because it is the single most common misconception about LoRA. Because adapters sit at *every* depth, the backward pass still traverses the whole network and every layer still saves the input it needs to form $\partial\mathcal{L}/\partial A$. **LoRA cuts the gradient and optimizer lines by ~99% and the activation line by ~0%.** That is why the standard single-GPU recipe is QLoRA *plus* gradient checkpointing, not QLoRA alone: the two techniques attack disjoint line items. See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) for the gradient-flow derivation.
 
@@ -525,6 +543,10 @@ class LoRALinear(nn.Module):
         bias = linear.bias is not None
         lora = cls(linear.in_features, linear.out_features,
                    rank=rank, alpha=alpha, bias=bias)
+        # Match the source layer's device/dtype.  Without this, cls(...) builds
+        # CPU/fp32 tensors, copy_ silently succeeds across devices, and you
+        # splice a CPU module into a CUDA model -> device mismatch at forward.
+        lora = lora.to(device=linear.weight.device, dtype=linear.weight.dtype)
         with torch.no_grad():
             lora.weight.copy_(linear.weight)
             if bias:
@@ -647,8 +669,10 @@ lora_config = LoraConfig(
 )
 model = get_peft_model(model, lora_config)
 model.print_trainable_parameters()
-# Typical output: trainable params: 4,194,304 || all params: 6,738,415,616
-# || trainable%: 0.0623
+# Typical output: trainable params: 8,388,608 || all params: 6,746,804,224
+# || trainable%: 0.1243
+# Check it by hand: 32 layers x 2 modules x r(d_in + d_out)
+#                 = 32 x 2 x 16 x 8192 = 8,388,608.  (Halve it for r=8.)
 ```
 
 ## Practical Memory Accounting: A Step-by-Step Recipe
@@ -751,9 +775,9 @@ Read the LoRA row twice: at 70B, freezing everything is *not enough*, because th
 
 !!! warning "Common pitfall: forgetting to freeze properly"
 
-    When using LoRA, many engineers rely on PEFT's `get_peft_model()` to freeze base weights automatically. If you manually set `param.requires_grad = False` on the base model *after* wrapping with PEFT, you may inadvertently freeze the adapter weights too. Always inspect `model.print_trainable_parameters()` and verify the count matches your expectation (approximately `2 * rank * (d_in + d_out) * num_adapted_layers`).
+    When using LoRA, many engineers rely on PEFT's `get_peft_model()` to freeze base weights automatically. If you manually set `param.requires_grad = False` on the base model *after* wrapping with PEFT, you may inadvertently freeze the adapter weights too. Always inspect `model.print_trainable_parameters()` and verify the count matches your expectation: `rank * (d_in + d_out) * num_adapted_matrices` — *matrices*, not layers, so 2 per layer for a q/v recipe and 4 per layer for q/k/v/o.
 
-    A related pitfall: if gradient checkpointing is enabled and `use_reentrant=True` (the old default), operations that don't accept keyword arguments will error. Use `use_reentrant=False` in PyTorch 2.0+.
+    A related pitfall: with `use_reentrant=True` (the old default) you cannot pass keyword arguments to the checkpointed function — `checkpoint(fn, x, mask=m, use_reentrant=True)` raises `ValueError: Unexpected keyword arguments: mask`. Worse, the reentrant variant needs at least one *input tensor* with `requires_grad=True`; otherwise the checkpointed segment's output carries no `grad_fn` and the entire segment silently produces no gradients. That is exactly the frozen-base/QLoRA failure mode, and it is why `prepare_model_for_kbit_training` (or `model.enable_input_require_grads()`) exists. Use `use_reentrant=False` in PyTorch 2.0+.
 
 ## Optimizer State Memory Reduction
 
@@ -928,7 +952,7 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
     - Activation memory scales as $B \times T \times L$ and can exceed static costs for long sequences; the activation memory equation gives roughly $12 \cdot B \cdot T \cdot d \cdot L$ elements ($\approx 24\,B\,T\,d\,L$ bytes in fp16/bf16).
     - Gradient checkpointing trades ~33% extra compute for $O(\sqrt{L})$ activation memory; FlashAttention achieves a similar win for the $O(T^2)$ attention term.
     - CPU offloading (ZeRO-Offload, ZeRO-Infinity) works because optimizer states are accessed once per step, tolerating PCIe latency.
-    - LoRA with rank $r$ reduces trainable parameters to $\rho \approx r/d$ of the full matrix count, eliminating nearly all gradient and optimizer state — but it leaves **activation memory essentially unchanged**, which is why it is always paired with checkpointing.
+    - LoRA with rank $r$ reduces trainable parameters to $\rho = r(d+k)/(dk) \approx 2r/d$ of the full matrix count, eliminating nearly all gradient and optimizer state — but it leaves **activation memory essentially unchanged**, which is why it is always paired with checkpointing.
     - QLoRA = 4-bit base (NF4) + double quantization + bf16 LoRA adapters + paged optimizer; the original paper fine-tunes a 65B model on a single 48 GB GPU. Once optimizer state is gone, the resident base weights are the floor, and quantizing them is the only lever that moves it.
     - 8-bit Adam provides a 4× optimizer state reduction with no change to architecture or training procedure.
     - Techniques compose: QLoRA + gradient checkpointing + gradient accumulation is the standard single-GPU fine-tuning stack.
@@ -969,14 +993,14 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
     **(a)** Per adapted matrix, $|\theta_{\text{LoRA}}| = r(d + k) = 8 \times (5120 + 5120) = 8 \times 10240 = 81{,}920$ parameters. With 4 matrices per layer over 40 layers:
     $$81{,}920 \times 4 \times 40 = 13{,}107{,}200 \approx 13.1\text{M trainable params}.$$
 
-    **(b)** $\rho = \dfrac{r(d+k)}{dk} = \dfrac{81{,}920}{5120 \times 5120} = \dfrac{81{,}920}{26{,}214{,}400} \approx 0.00313 = 0.31\%.$ Since $d = k$ this equals $2r/d = 16/5120$; it is the same order as the chapter's quick estimate $\rho \approx r/d \approx 0.16\%$.
+    **(b)** $\rho = \dfrac{r(d+k)}{dk} = \dfrac{81{,}920}{5120 \times 5120} = \dfrac{81{,}920}{26{,}214{,}400} \approx 0.00313 = 0.31\%.$ Since $d = k$ this equals the chapter's quick estimate $2r/d = 16/5120 = 0.3125\%$ exactly.
 
     **(c)** Adapter optimizer state: $8 \times 13.1\text{M} \approx 1.05\times10^{8}$ bytes $\approx 0.10\,\text{GB}$. Full fine-tuning Adam state on all $P = 13\times10^9$ params: $8P = 1.04\times10^{11}$ bytes $\approx 104\,\text{GB}$. LoRA shrinks the optimizer state by a factor of $\approx P / 13.1\text{M} \approx 1000\times$ — from $\sim104\,\text{GB}$ to $\sim0.1\,\text{GB}$, which is the entire reason PEFT fits on small GPUs.
 
-**4.** *(Why the tricks work.)* Answer each briefly, grounding your reasoning in the chapter. (a) Optimal activation checkpointing places $k = \sqrt{L}$ checkpoints. Why does this particular $k$ minimize the memory-compute product, rather than $k = 1$ or $k = L$? (b) CPU offloading of optimizer states is described as viable, but offloading activations is generally not. What property of the access pattern makes optimizer-state offload tolerate PCIe latency? (c) Gradient accumulation is called an "offloading strategy" even though no tensor moves off the GPU. In what sense does it offload?
+**4.** *(Why the tricks work.)* Answer each briefly, grounding your reasoning in the chapter. (a) Optimal activation checkpointing places $k = \sqrt{L}$ checkpoints. Why does this particular $k$ minimize activation memory, rather than $k = 1$ or $k = L$ — and what happens to the *compute* overhead as $k$ varies? (b) CPU offloading of optimizer states is described as viable, but offloading activations is generally not. What property of the access pattern makes optimizer-state offload tolerate PCIe latency? (c) Gradient accumulation is called an "offloading strategy" even though no tensor moves off the GPU. In what sense does it offload?
 
 ??? note "Solution"
-    **(a)** With $k$ checkpoints, activation memory is $O(L/k)$ (you keep one saved tensor per segment plus the intermediates of the single segment being recomputed) and the extra recompute cost is $O(k)$. Minimizing the sum $L/k + k$ over $k$ gives derivative $-L/k^2 + 1 = 0$, i.e. $k = \sqrt{L}$, which balances the two terms so each is $O(\sqrt{L})$. $k = 1$ (store everything) gives $O(L)$ memory; $k = L$ (recompute every layer from its input) minimizes memory but maximizes recompute placement overhead. $\sqrt{L}$ is the classic sublinear sweet spot: $O(\sqrt{L})$ memory *and* $O(\sqrt{L})$ extra cost.
+    **(a)** Careful: the two axes are *not* symmetric. With $k$ checkpoints you hold $k$ stored boundary tensors, and during backward you re-materialize one segment of $L/k$ layers at a time, so activation memory is $O(k + L/k)$. Minimizing that sum gives derivative $1 - L/k^2 = 0$, i.e. $k = \sqrt{L}$, which balances the two terms so each is $O(\sqrt{L})$ — the classic sublinear result. The *compute* side, however, is flat in $k$: every layer is recomputed exactly once regardless of how the segments are drawn, so the bill is one extra forward pass ($\approx +33\%$) for every $k \ge 1$. The endpoints fail on the memory axis alone: $k = 1$ (one checkpoint, recompute the whole net from its input) leaves $O(L)$ intermediates live while that single giant segment is re-materialized, and $k = L$ (checkpoint every block) stores $L$ boundary tensors, again $O(L)$. And because the recompute bill never grows with $k$, there is no tradeoff to hedge — you go straight to the memory optimum at $k = \sqrt{L}$.
 
     **(b)** Adam optimizer states ($m_t$, $v_t$, fp32 master weights) are touched exactly **once per optimizer step** — read to compute the update, written back with new values — and only *after* the gradient is ready. The Adam update is memory-bound and can run on the CPU, and there is only one round-trip per step, so a slow PCIe transfer (roughly $50\times$ slower than HBM) is amortized over the whole step and can overlap with GPU compute. Activations, by contrast, are read and written many times *within* every forward/backward pass, so moving them over PCIe would stall the critical path constantly.
 

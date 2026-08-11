@@ -124,7 +124,7 @@ The gating mechanism is important: $xV$ produces a "content" projection and $\te
 
 {{fig:modarch-swiglu-gating}}
 
-Because SwiGLU has **three** weight matrices ($W$, $V$, $W_2$) instead of two, to keep parameter count equal to a standard 4x MLP, the hidden dimension is reduced to $\frac{2}{3} \cdot 4d = \frac{8d}{3}$. In practice most models round to a multiple of 256 for hardware alignment; Llama 2 70B uses an intermediate size of 28,672 for a model dimension of 8,192.
+Because SwiGLU has **three** weight matrices ($W$, $V$, $W_2$) instead of two, to keep parameter count equal to a standard 4x MLP, the hidden dimension is reduced to $\frac{2}{3} \cdot 4d = \frac{8d}{3}$. In practice most models round to a multiple of 256 for hardware alignment; Llama 2 7B takes $d=4096 \Rightarrow 8d/3 = 10{,}922.7$ and rounds up to an intermediate size of **11,008**. Not every model sticks to the iso-parameter point: Llama 2 70B applies an extra `ffn_dim_multiplier` of 1.3 on top of the $8d/3$ rule ($21{,}845 \times 1.3 \approx 28{,}398$, rounded up to a multiple of 4096) to reach **28,672** at $d=8192$ — deliberately buying about 31% more FFN width than iso-parameter would give.
 
 ```python
 import torch
@@ -255,7 +255,7 @@ k5 = xk_rot[0, 8, 0]  # position 8, head 0
 
 ## Grouped Query Attention (GQA)
 
-Standard Multi-Head Attention (MHA) maintains separate $K$ and $V$ projection matrices for each of $H$ heads. During autoregressive decoding, the key-value (KV) cache grows as $O(L \cdot H \cdot d_k)$ per layer — for a 70B model with 64 heads and a 128K context, this is on the order of tens of gigabytes. See [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html) for the full treatment; here we focus on the design decision and its practical configuration.
+Standard Multi-Head Attention (MHA) maintains separate $K$ and $V$ projection matrices for each of $H$ heads. During autoregressive decoding, the key-value (KV) cache grows as $O(T \cdot H \cdot d_k)$ per layer for a sequence of $T$ tokens — for a 70B-shaped model ($L=80$ layers, $H=64$ heads, $d_k=128$) in bf16 at a 128K context, that is $2 \times 64 \times 128 \times 2 = 32$ KB per token per layer, or about 320 GiB for a single sequence: hundreds of gigabytes, not tens. See [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html) for the full treatment; here we focus on the design decision and its practical configuration.
 
 Grouped Query Attention (GQA), introduced in Ainslie et al. ("GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints", 2023), is a generalization that interpolates between Multi-Head Attention and Multi-Query Attention (MQA, which has a single KV head for all query heads):
 
@@ -354,6 +354,10 @@ class GroupedQueryAttention(nn.Module):
         # Scaled dot-product attention
         scale = math.sqrt(head_dim)
         attn = (q @ k.transpose(-2, -1)) / scale         # (B, n_heads, T, T)
+        # Causal mask: these are decoder-only models, so a position must
+        # never see the future. Omitting this leaks labels silently.
+        mask = torch.tril(torch.ones(T, T, device=x.device)).bool()
+        attn = attn.masked_fill(~mask, float('-inf'))
         attn = torch.softmax(attn, dim=-1)
         out  = attn @ v                                   # (B, n_heads, T, head_dim)
 
@@ -368,7 +372,7 @@ class GroupedQueryAttention(nn.Module):
 
 ### The problem: logit explosion
 
-In deep, wide models trained for many tokens, the dot products $q_i \cdot k_j$ can grow to very large values. Once the logits are large in magnitude, the softmax saturates: one token gets weight ~1 and all others get weight ~0. This "attention collapse" degrades the model's ability to attend to multiple positions, and the large pre-softmax logits create numerical instability, especially in bf16 where the dynamic range is narrow. See also [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) for why bf16 overflow is a real concern.
+In deep, wide models trained for many tokens, the dot products $q_i \cdot k_j$ can grow to very large values. Once the logits are large in magnitude, the softmax saturates: one token gets weight ~1 and all others get weight ~0. This "attention collapse" degrades the model's ability to attend to multiple positions, and the large pre-softmax logits create numerical instability in low precision. The failure mode differs by format: fp16 tops out at 65504, so large logits genuinely overflow; bf16 has the same exponent range as fp32 and does *not* overflow, but its 8-bit mantissa represents large values so coarsely that the differences between competing logits get quantized away. See also [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) for the range-versus-precision trade-off behind both failures.
 
 {{fig:modarch-logit-taming}}
 
@@ -431,9 +435,9 @@ class QKNormAttention(nn.Module):
 
 ### Dropping biases
 
-GPT-2 had bias terms in every linear projection and LayerNorm. Modern models like Llama, Qwen, and Mistral remove biases from all linear layers. The motivation is empirical: at large scale biases do not meaningfully improve loss (they represent a negligible fraction of parameters), but they complicate optimizer state memory (Adam maintains a first and second moment for every parameter, so biases add to optimizer memory with little benefit). For a 7B model, removing biases saves a few hundred MB of optimizer state — not huge, but free.
+GPT-2 had bias terms in every linear projection and LayerNorm. Modern models like Llama, Qwen, and Mistral remove biases from all linear layers. The motivation is empirical: at large scale biases do not meaningfully improve loss (they represent a negligible fraction of parameters), but they complicate optimizer state memory (Adam maintains a first and second moment for every parameter, so biases add to optimizer memory with little benefit). The saving is small: a Llama-2-7B-shaped model with biases on every projection would carry only about 1.4M bias parameters out of 6.74B (4 attention biases of 4096 plus $11008+11008+4096$ MLP biases per layer, times 32 layers), so Adam's two fp32 moments cost roughly 11 MB — call it 10–20 MB once you count the gradient and master copy. Removing them is negligible, but free.
 
-There is also a theoretical argument: when using pre-RMSNorm (which has no bias itself), the preceding biases in linear projections are redundant, as RMSNorm can represent any affine output of a linear layer with a bias by adjusting its scale. A stability argument closed the case: biases are the one part of the model that receives gradient regardless of the input, so they drift monotonically over long runs and are a recurring source of activation outliers that later break INT8/FP8 quantization (see [Quantization I: Post-Training Quantization](../04-kernels-efficiency/07-quantization-ptq.html)). Qwen2 kept a bias on the Q/K/V projections specifically to help length extrapolation; Qwen3 removed it and added QK-norm instead — the clearest single data point that the field now prefers normalizing over biasing.
+There is also a partial theoretical argument, and it is worth stating precisely because it is usually stated wrongly. Under **LayerNorm**, a bias added immediately before the norm is genuinely washed out along one direction: re-centering subtracts the bias's mean, so its all-ones component has no effect at all. Under **RMSNorm** that is not true — the learned $\gamma$ is a diagonal *multiplicative* scale and can never reproduce an additive shift, so a preceding bias remains a real (if small) extra degree of freedom. The empirical finding is simply that this degree of freedom buys nothing measurable at scale. A stability argument closed the case: biases are the one part of the model that receives gradient regardless of the input, so they drift monotonically over long runs and are a recurring source of activation outliers that later break INT8/FP8 quantization (see [Quantization I: Post-Training Quantization](../04-kernels-efficiency/07-quantization-ptq.html)). Qwen2 kept a bias on the Q/K/V projections specifically to help length extrapolation; Qwen3 removed it and added QK-norm instead — the clearest single data point that the field now prefers normalizing over biasing.
 
 ### Tied vs untied embeddings
 
@@ -478,9 +482,9 @@ $$
 \hat{a}_{ij} = 50 \cdot \tanh\!\left(\frac{q_i \cdot k_j / \sqrt{d_k}}{50}\right)
 $$
 
-**Currency note: soft-capping lost.** Gemma 3 explicitly *replaced* Gemma 2's soft-capping with QK-norm, citing Dehghani et al. (2023), Wortsman et al. (2023) and the Chameleon team. The reason is a systems reason rather than a quality one: a $\tanh$ applied to the full $T \times T$ logit matrix cannot be expressed inside a FlashAttention kernel, which by construction never materializes that matrix (see [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)). Enabling attention soft-capping in HuggingFace therefore forces the eager attention path, which is exactly the throughput you were trying to buy with long context. QK-norm, by contrast, is two cheap elementwise ops on $Q$ and $K$ *before* the kernel, so it composes with FlashAttention for free.
+**Currency note: soft-capping lost.** Gemma 3 explicitly *replaced* Gemma 2's soft-capping with QK-norm, citing Dehghani et al. (2023), Wortsman et al. (2023) and the Chameleon team. The reason is a systems reason rather than a quality one: capping the attention logits changes the math *inside* the fused kernel, so every backend has to support it explicitly. `flash-attn` eventually did — v2.6.0 (2024) added a `softcap` argument to `flash_attn_func`/`flash_attn_varlen_func` specifically for Gemma 2 and Grok, and PyTorch FlexAttention can express it as a `score_mod` — but `torch.nn.functional.scaled_dot_product_attention` still cannot, so enabling attention soft-capping in HuggingFace falls back off the `sdpa` path onto eager attention unless you have a new enough `flash-attn` installed (see [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)). QK-norm, by contrast, is two cheap elementwise ops on $Q$ and $K$ *before* the kernel: it needs no kernel support at all and therefore composes with every backend for free.
 
-The other standard guard on the **final** logits is the **z-loss**, an auxiliary penalty $\beta_z \cdot \operatorname{mean}\big(\log\sum_v e^{z_v}\big)^2$ with $\beta_z \approx 10^{-4}$ (PaLM, ST-MoE, OLMo 2). It applies pressure on the log-partition function during training instead of clamping at inference, so it changes no forward-pass math and costs nothing at serving time — which is why most 2025–2026 models use z-loss rather than logit capping. It is derived, fused with cross-entropy, and chunked for memory in [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html). Learn soft-capping because you will meet it in Gemma 2 checkpoints and in interviews; reach for QK-norm plus z-loss when you build.
+The other standard guard on the **final** logits is the **z-loss**, an auxiliary penalty $\beta_z \cdot \operatorname{mean}\big[\big(\log\sum_v e^{z_v}\big)^2\big]$ with $\beta_z \approx 10^{-4}$ (PaLM, ST-MoE, OLMo 2). Note that the square sits *inside* the average: the penalty must act on each token's log-partition individually, otherwise positive and negative $\log Z$ values would simply cancel across the batch and exert no pressure at all. It applies pressure on the log-partition function during training instead of clamping at inference, so it changes no forward-pass math and costs nothing at serving time — which is why most 2025–2026 models use z-loss rather than logit capping. It is derived, fused with cross-entropy, and chunked for memory in [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html). Learn soft-capping because you will meet it in Gemma 2 checkpoints and in interviews; reach for QK-norm plus z-loss when you build.
 
 ```python
 import torch
@@ -546,7 +550,7 @@ The attention sink phenomenon has two practical consequences:
     4. **GQA with ~8 KV heads**: dramatically reduces KV cache memory (often 4–8x smaller) with minimal quality loss; critical for deployment economics.
     5. **No biases in linear layers**: negligible quality impact, reduces optimizer memory, simplifies distributed checkpointing.
     6. **Untied input/output embeddings**: improved model quality at scale; the cost is $V \times d$ extra parameters (~130M for a 32K vocab at d=4096), which is acceptable.
-    7. **QK-norm** (RMSNorm on Q and K per head): prevents attention logit explosion during extended training runs, and unlike soft-capping it composes with FlashAttention because it acts before the kernel.
+    7. **QK-norm** (RMSNorm on Q and K per head): prevents attention logit explosion during extended training runs, and unlike soft-capping it needs no kernel support at all, because it acts on $Q$ and $K$ before the attention kernel ever runs.
     8. **Z-loss** ($\beta_z \approx 10^{-4}$ on $(\log\sum_v e^{z_v})^2$) rather than Gemma 2-style logit soft-capping: same guard against output logit blow-up, but training-time only, so inference math and kernel choice are unaffected.
     9. **Scaled residual initialization**: scale down output projections by $1/\sqrt{2L}$ to keep residual variance stable at initialization in deep models.
 
@@ -574,7 +578,7 @@ The ratio $L / d_{\text{model}}$ tends to be consistent across generations:
 
 Modern 7B-class models favor roughly 32 layers with $d=4096$, yielding an attention head dimension of 128 (with 32 heads). Larger models scale $d$ and $L$ roughly in proportion, holding $d_k = 128$ fixed and adding heads: $d_k$ below 64 wastes tensor-core tiles (which want $\ge 64$ along the contraction dimension) and starves each head of capacity, while $d_k$ above 256 is unsupported by most FlashAttention builds. So the practical knobs are $L$, $H_q$ and $H_{kv}$, with $d = H_q \cdot d_k$ falling out.
 
-Below ~1B parameters the trade-off tilts noticeably toward depth: MobileLLM (Liu et al., 2024) ablated shape at fixed parameter count for sub-billion models and found deeper-and-thinner consistently wins, which is why the capstone's Stack-100M chooses $d=512$ with 30 layers ($L/d \approx 0.059$, six times "deeper" by this metric than a 7B model). See [The Stack-100M Architecture](../14-capstone/04-architecture.html) for that derivation in full.
+Below ~1B parameters the trade-off tilts noticeably toward depth: MobileLLM (Liu et al., 2024) ablated shape at fixed parameter count for sub-billion models and found deeper-and-thinner consistently wins, which is why the capstone's Stack-100M chooses $d=512$ with 30 layers ($L/d \approx 0.059$, about seven and a half times "deeper" by this metric than the 0.0078 of a Llama 2 7B). See [The Stack-100M Architecture](../14-capstone/04-architecture.html) for that derivation in full.
 
 !!! example "Worked example: parameter count breakdown for Llama 2 7B"
 
@@ -872,7 +876,7 @@ print(f"{sum(p.numel() for p in model.parameters()):,}")  # ~3.21B, matching our
 # )
 ```
 
-That `attn_implementation` argument is where this chapter meets Part IV. `"eager"` is the hand-rolled softmax we wrote above; `"sdpa"` dispatches to `torch.nn.functional.scaled_dot_product_attention`; `"flash_attention_2"` calls the `flash-attn` package's kernel directly. Only the first can express logit soft-capping — which is precisely why Gemma 3 dropped it.
+That `attn_implementation` argument is where this chapter meets Part IV. `"eager"` is the hand-rolled softmax we wrote above; `"sdpa"` dispatches to `torch.nn.functional.scaled_dot_product_attention`; `"flash_attention_2"` calls the `flash-attn` package's kernel directly. Attention soft-capping works under the first and (since `flash-attn` 2.6) the third, but not under `sdpa` — which is the kind of backend-compatibility tax that made Gemma 3 drop it.
 
 ### Where the fused kernels live
 
@@ -917,7 +921,7 @@ When you need a correct, complete, *trainable* version of this recipe rather tha
     - **GQA** (Grouped Query Attention) reduces KV cache memory by a factor equal to the grouping ratio (commonly 4–8x) with minimal quality degradation; this is the key architectural enabler for long-context inference.
     - **QK-norm** (normalizing Q and K per head before computing attention scores) prevents attention logit explosion in large or long-training models; originating in ViT-22B and now used in Gemma 3, OLMo 2 and Qwen3, it is increasingly a default rather than a large-scale-only trick.
     - **No biases** in linear layers is almost universal at the frontier; biases add optimizer memory overhead and negligible quality benefit, especially with pre-RMSNorm, and they drive activation outliers that later hurt quantization. Qwen3 dropped the last common holdout (QKV bias) in favor of QK-norm.
-    - **Logit soft-capping** ($z \to c \cdot \tanh(z/c)$) is a differentiable alternative to hard clipping, but it cannot live inside a FlashAttention kernel; Gemma 3 replaced it with QK-norm, and the training-time **z-loss** is the standard guard on final logits.
+    - **Logit soft-capping** ($z \to c \cdot \tanh(z/c)$) is a differentiable alternative to hard clipping, but on attention logits it needs explicit support from whichever fused kernel you use (`flash-attn` $\ge$ 2.6 has it, PyTorch SDPA does not); Gemma 3 replaced it with QK-norm, which needs no kernel support at all, and the training-time **z-loss** is the standard guard on final logits.
     - **Attention sinks** (typically the BOS token) must be preserved in the KV cache for streaming/long-context inference; evicting them causes catastrophic attention pattern collapse. The 2025 refinement is a learned per-head sink *logit* with no token and no value vector (gpt-oss).
     - **Know the config field for every knob.** `num_key_value_heads`, `rope_theta`, `hidden_act`, `attention_bias`, `tie_word_embeddings`, `rms_norm_eps` are the interface; `flash-attn`, PyTorch SDPA (`enable_gqa=True`), and Liger-Kernel are the implementations you actually run.
     - **Scaled residual initialization** ($\times 1/\sqrt{2L}$ on output projections) is essential for stable training of very deep models; without it, the residual stream variance grows with depth.
@@ -925,7 +929,7 @@ When you need a correct, complete, *trainable* version of this recipe rather tha
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    The modern transformer recipe — RMSNorm, SwiGLU, RoPE, GQA, and QK-norm — has become near-universal across frontier open-source models (Llama 4, Qwen3, DeepSeek-V3, Gemma 3) since 2023, with z-loss and attention-sink awareness rounding out the toolkit for stable long-context training (logit soft-capping was a Gemma 2-only detour that Gemma 3 itself abandoned, because a $\tanh$ on the score matrix is incompatible with FlashAttention). The 2025 generation pushed on two fronts: sparse Mixture-of-Experts backbones (DeepSeek-V3, Llama 4, Qwen3) and long-context attention variants (Gemma 3's 5:1 local-to-global sliding-window interleave; Llama 4's position-free "NoPE" layers).
+    The modern transformer recipe — RMSNorm, SwiGLU, RoPE, GQA, and QK-norm — has become near-universal across frontier open-source models (Llama 4, Qwen3, DeepSeek-V3, Gemma 3) since 2023, with z-loss and attention-sink awareness rounding out the toolkit for stable long-context training (logit soft-capping was a Gemma 2-only detour that Gemma 3 itself abandoned, because a $\tanh$ on the score matrix has to be built into every fused attention backend one by one, while QK-norm needs none). The 2025 generation pushed on two fronts: sparse Mixture-of-Experts backbones (DeepSeek-V3, Llama 4, Qwen3) and long-context attention variants (Gemma 3's 5:1 local-to-global sliding-window interleave; Llama 4's position-free "NoPE" layers).
 
     **Foundational work**
 
@@ -981,7 +985,7 @@ When you need a correct, complete, *trainable* version of this recipe rather tha
 
     (b) Their ablation of LayerNorm into its components found that the **re-scaling via $\gamma$ drives almost all of LayerNorm's benefit**, while **mean subtraction contributes little to final performance** yet costs roughly a third of LayerNorm's compute (a second reduction pass plus a subtraction kernel). Dropping it is therefore near-free in quality but ~10-30% faster.
 
-    (c) The normalization involves squaring every element, summing, and taking a reciprocal square root. In low-precision formats like bf16 the squared sum can lose precision or overflow the narrow dynamic range, and the reciprocal-square-root is sensitive to rounding. Computing `x.float().pow(2).mean(...)` in float32 keeps the reduction accurate; the result is then cast back with `.type_as(x)` so the rest of the network still runs in the model's working precision. This is exactly the pattern used in the Llama reference code.
+    (c) The normalization involves squaring every element, summing, and taking a reciprocal square root. In low-precision formats like bf16 the squared sum loses precision badly — bf16 keeps only 8 mantissa bits, so squaring and accumulating $d$ terms compounds rounding error — and the reciprocal-square-root is sensitive to that error. (In fp16 the squares can additionally overflow the 65504 ceiling; bf16 shares fp32's exponent range, so its problem is precision, not range.) Computing `x.float().pow(2).mean(...)` in float32 keeps the reduction accurate; the result is then cast back with `.type_as(x)` so the rest of the network still runs in the model's working precision. This is exactly the pattern used in the Llama reference code.
 
 **2.** (Quantitative) You are configuring a SwiGLU FFN for a model with hidden dimension $d = 4096$. A vanilla two-matrix FFN would use a 4x expansion (intermediate $= 4d$). (a) Compute the parameter count of that vanilla FFN. (b) Using the iso-parameter rule for SwiGLU's three matrices, compute the target intermediate dimension, then round it to the nearest multiple of 256. (c) Compute the SwiGLU FFN's parameter count at that rounded dimension and confirm it is close to the vanilla count.
 

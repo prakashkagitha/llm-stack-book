@@ -49,7 +49,7 @@ $$
 P(I) = \min\bigl(\pi,\; \beta \cdot I\bigr),
 $$
 
-where $\pi$ is peak compute (FLOP/s) and $\beta$ is peak bandwidth (B/s). The $\beta \cdot I$ term is the **memory roof** — a diagonal line of slope $\beta$ in log-log space (bandwidth times intensity = achievable FLOP/s). The flat $\pi$ term is the **compute roof**. They meet at the ridge point $I^\* = \pi/\beta$.
+where $\pi$ is peak compute (FLOP/s) and $\beta$ is peak bandwidth (B/s). The $\beta \cdot I$ term is the **memory roof** — on log-log axes a diagonal line of *unit* slope whose height is set by $\beta$ (bandwidth times intensity = achievable FLOP/s), so a faster-bandwidth GPU shifts this line up rather than tilting it. The flat $\pi$ term is the **compute roof**. They meet at the ridge point $I^\* = \pi/\beta$.
 
 {{fig:roofline}}
 
@@ -60,7 +60,7 @@ where $\pi$ is peak compute (FLOP/s) and $\beta$ is peak bandwidth (B/s). The $\
    |                 /
    |                /  <- you want kernels here (compute-bound)
    |  memory roof  /
-   |   (slope β)  /
+   |   (P = β·I)  /
    |            ./  <- ridge point  I* = π/β
    |          ./
    |        ./   kernels here are memory-bound:
@@ -78,7 +78,7 @@ Reading the diagram is a three-step ritual you will repeat constantly:
 
 !!! warning "Common pitfall: optimizing the wrong axis"
 
-    The single most common performance mistake is reducing FLOPs on a memory-bound kernel and expecting a speedup. If a LayerNorm is bandwidth-limited (it is — intensity well under 1 FLOP/B), then rewriting it to do 20% fewer arithmetic ops changes its runtime by ~0%, because it was never waiting on arithmetic. The roofline tells you *which* resource is saturated; optimize that one. Conversely, fusing a memory-bound op into an adjacent kernel (so its inputs are already in registers) can give a large speedup with zero FLOP reduction.
+    The single most common performance mistake is reducing FLOPs on a memory-bound kernel and expecting a speedup. If a LayerNorm is bandwidth-limited (it is — intensity around 2 FLOP/B, nearly two orders of magnitude below the A100's ridge), then rewriting it to do 20% fewer arithmetic ops changes its runtime by ~0%, because it was never waiting on arithmetic. The roofline tells you *which* resource is saturated; optimize that one. Conversely, fusing a memory-bound op into an adjacent kernel (so its inputs are already in registers) can give a large speedup with zero FLOP reduction.
 
 ### A naive vs. real roofline
 
@@ -180,7 +180,7 @@ N = 6.7e9
 print(f"6N per token (N=6.7B): {6*N/1e9:8.2f} GFLOP")
 ```
 
-Running this prints a forward cost on the order of a few GFLOP/token, with the FFN taking the largest slice, the projections second, and attention scores a small minority at this sequence length — and the $\approx 3\times$ forward estimate landing close to the $6N$ figure. Two independent methods agreeing within ~10–20% is exactly the confidence you want from a FLOP estimate.
+Running this prints a forward cost of about $14$ GFLOP/token — right where the $2N \approx 13.4$ GFLOP rule says it should be — with the FFN taking the largest slice, the projections second, and attention scores a small minority at this sequence length — and the $\approx 3\times$ forward estimate landing close to the $6N$ figure. Two independent methods agreeing within ~10–20% is exactly the confidence you want from a FLOP estimate.
 
 !!! note "Aside: why $3\times$ forward, not $3\times$ everything"
 
@@ -232,7 +232,7 @@ In bf16 ($b = 2$) that collapses to $I \approx M$ FLOP/B: **the arithmetic inten
 
     So the *hardware ceiling* for single-stream decode is about $1/0.0067 \approx 150$ tokens/s, and real systems hit perhaps 60–70% of that. Notice what this says: the GPU's 312 TFLOP/s is almost irrelevant here. The decode FLOPs are $2N \approx 1.34\times 10^{10}$ per token; at 150 tok/s that's $\approx 2\,\text{TFLOP/s}$ — under **1%** of peak compute. The chip is starved on bandwidth.
 
-    Now batch 64 requests. The weights are read once and reused across all 64 tokens, so per-token weight traffic drops ~64×, intensity rises above the ridge, and the workload becomes compute-bound — *until* the per-request KV cache traffic and capacity start to dominate. This single example is the entire economic argument for continuous batching ([Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)).
+    Now batch 64 requests. The weights are read once and reused across all 64 tokens, so per-token weight traffic drops ~64× and intensity rises to $I \approx 64$ FLOP/B — a huge win, though still short of the A100's ridge at 156, so the workload is *less* memory-bound but not yet compute-bound. Push concurrency to ~256 tokens in flight and you finally cross the ridge — *until* the per-request KV cache traffic and capacity start to dominate. This single example is the entire economic argument for continuous batching ([Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)).
 
 ```python
 def decode_roofline(num_params, bytes_per_param=2,
@@ -279,8 +279,8 @@ def mfu(num_params, tokens_per_sec, num_gpus, peak_tflops_per_gpu):
     return model_flops_per_s / peak
 
 # Example: 7B model, 256 A100s (312 TFLOP/s bf16 peak each).
-# Suppose we measure global throughput of 1.5M tokens/sec.
-util = mfu(num_params=6.7e9, tokens_per_sec=1.5e6,
+# Suppose we measure global throughput of 1.0M tokens/sec.
+util = mfu(num_params=6.7e9, tokens_per_sec=1.0e6,
            num_gpus=256, peak_tflops_per_gpu=312)
 print(f"MFU = {util*100:.1f}%")
 
@@ -408,20 +408,20 @@ def kernel_verdict(flops, bytes_moved, seconds,
         "efficiency_vs_ceiling_%": round(100 * achieved / roof, 1),
     }
 
-# A LayerNorm over (8, 2048, 4096) bf16, measured at, say, 90 microseconds.
+# A LayerNorm over (8, 2048, 4096) bf16, measured at, say, 160 microseconds.
 n = 8 * 2048 * 4096
 ln_flops = 8 * n            # rough: a handful of ops per element
 ln_bytes = 2 * (2 * n)      # read x, write y in bf16 (ignoring the tiny γ,β)
-print("LayerNorm:", kernel_verdict(ln_flops, ln_bytes, 90e-6))
+print("LayerNorm:", kernel_verdict(ln_flops, ln_bytes, 160e-6))
 
-# A big FFN GEMM (8*2048 tokens) x (4096 -> 11008), bf16, measured 1.1 ms.
+# A big FFN GEMM (8*2048 tokens) x (4096 -> 11008), bf16, measured 6.8 ms.
 m, k, nn = 8*2048, 4096, 11008
 gemm_flops = 2 * m * k * nn
 gemm_bytes = 2 * (m*k + k*nn + m*nn)
-print("FFN GEMM :", kernel_verdict(gemm_flops, gemm_bytes, 1.1e-3))
+print("FFN GEMM :", kernel_verdict(gemm_flops, gemm_bytes, 6.8e-3))
 ```
 
-The LayerNorm comes back with intensity well under 1 FLOP/B and "memory"-bound — confirming it is hopeless to optimize its arithmetic and ripe for fusion. The GEMM comes back compute-bound with an efficiency you can compare against peak; if it's at 70% of the compute roof, that's healthy, and chasing the last 30% means kernel-level work (CUTLASS, better tiling) rather than algorithmic change.
+The LayerNorm comes back with an intensity of about 2 FLOP/B and "memory"-bound — confirming it is hopeless to optimize its arithmetic and ripe for fusion. The GEMM comes back compute-bound with an efficiency you can compare against peak; here it lands at ~70% of the compute roof, which is healthy, and chasing the last 30% means kernel-level work (CUTLASS, better tiling) rather than algorithmic change.
 
 ### NVIDIA Nsight: Systems and Compute
 
@@ -430,16 +430,18 @@ When the PyTorch profiler isn't enough — you need to see multi-GPU overlap, NV
 **Nsight Systems** (`nsys`) captures a full timeline: CUDA kernels, memory copies, NCCL collectives, CPU threads, and the gaps between them. It's the tool for "why is my GPU only 60% busy" — usually the answer is a comms bubble or a host-side stall.
 
 ```bash
-# Capture a timeline of a training step (limit duration to keep the file small).
+# Capture a timeline of a training step (cap the duration to keep the file small).
 nsys profile \
     --trace=cuda,nvtx,osrt,cudnn,cublas \
-    --capture-range=cudaProfilerApi \
+    --duration=30 \
     --output=run_timeline \
     python train.py --max-steps 20
 
 # Open run_timeline.nsys-rep in the Nsight Systems GUI, or get a CLI summary:
 nsys stats run_timeline.nsys-rep
 ```
+
+For a surgical capture of exactly the steps you care about, use `--capture-range` instead of `--duration` — but note it only works if the *application* signals the range. `--capture-range=cudaProfilerApi` collects nothing until the script calls `torch.cuda.profiler.start()` (and stops at `torch.cuda.profiler.stop()`), so an uninstrumented `train.py` under that flag yields an empty report; `--capture-range=nvtx --nvtx-capture=step` requires an NVTX range literally named `step`.
 
 Annotate regions with NVTX so the timeline is readable:
 
@@ -586,10 +588,10 @@ Despite these caveats, the roofline remains the most valuable single tool in per
 
 ## Exercises
 
-**1.** (Conceptual) A colleague benchmarks a LayerNorm kernel, finds it runs at 4% of the GPU's peak FLOP/s, and concludes "the kernel is badly written — it's wasting 96% of the compute." Using the roofline vocabulary of this chapter, explain why this conclusion is likely wrong, and state what single measurement would settle the question.
+**1.** (Conceptual) A colleague benchmarks a LayerNorm kernel on an A100, finds it runs at about 1% of the GPU's peak FLOP/s, and concludes "the kernel is badly written — it's wasting 99% of the compute." Using the roofline vocabulary of this chapter, explain why this conclusion is likely wrong, and state what single measurement would settle the question.
 
 ??? note "Solution"
-    Low FLOP-utilization is *expected*, not pathological, for a memory-bound kernel. LayerNorm reads each element, does a handful of arithmetic ops, and writes it back, giving an arithmetic intensity well under $1$ FLOP/B (the chapter's `kernel_verdict` example puts it there explicitly). On an A100 the ridge point is $I^\* = \pi/\beta \approx 156$ FLOP/B, so a kernel at $I \approx 0.5$ is deep in the memory-bound regime. Its performance ceiling is *not* $\pi$ but $\beta I$, which for $I \approx 0.5$ is roughly $0.5/156 \approx 0.3\%$ of peak FLOP/s. A kernel achieving a few percent of peak FLOP/s is therefore already near — or even above — its bandwidth ceiling; the arithmetic units are *supposed* to sit idle because the kernel is waiting on HBM.
+    Low FLOP-utilization is *expected*, not pathological, for a memory-bound kernel. LayerNorm reads each element, does a handful of arithmetic ops, and writes it back, giving an arithmetic intensity of order $2$ FLOP/B (the chapter's `kernel_verdict` example puts it there explicitly). On an A100 the ridge point is $I^\* = \pi/\beta \approx 156$ FLOP/B, so a kernel at $I \approx 2$ is deep in the memory-bound regime. Its performance ceiling is *not* $\pi$ but $\beta I$, which for $I \approx 2$ is $2.0\times10^{12} \times 2 = 4$ TFLOP/s, i.e. $2/156 \approx 1.3\%$ of peak FLOP/s. A kernel achieving ~1% of peak FLOP/s is therefore already sitting essentially *on* its bandwidth ceiling — nothing can exceed $\min(\pi, \beta I)$; the arithmetic units are *supposed* to sit idle because the kernel is waiting on HBM.
 
     The one measurement that settles it: the **achieved memory bandwidth** (bytes moved / time), compared to peak HBM bandwidth $\beta$. If the kernel is at, say, 80-90% of peak bandwidth, it is running essentially as fast as physics allows and is not "wasting" anything — the only way to speed it up is to move fewer bytes (e.g. fuse it into an adjacent kernel so its input/output never round-trips to HBM), not to reduce FLOPs. Nsight Compute reports exactly this as **Memory Throughput (% of peak)** alongside SM Throughput.
 
@@ -671,9 +673,10 @@ Despite these caveats, the roofline remains the most valuable single tool in per
     flops = 2 * N
     elems = 2 * N
     # If it is bandwidth-bound, time scales ~linearly with bytes moved:
-    # fp32 baseline 200 us, bf16 ~half the bytes ~half the time, fp8 ~quarter.
-    times = {"fp32": 200e-6, "bf16": 100e-6, "fp8": 50e-6}
+    # fp32 baseline 300 us (~1.8 TB/s, near the 2.0 TB/s roof), bf16 ~half the
+    # bytes ~half the time, fp8 ~quarter.
+    times = {"fp32": 300e-6, "bf16": 150e-6, "fp8": 75e-6}
     import pprint; pprint.pprint(precision_sweep(flops, elems, times))
     ```
 
-    What it shows: with $2N$ FLOPs and $2N$ touched values, intensity is $I = 2N / (2N \cdot \text{bpe}) = 1/\text{bpe}$ FLOP/B — so $0.25$ (fp32), $0.5$ (bf16), $1.0$ (fp8). All three are far below the ridge of $156$, so the classification stays **memory**-bound in every case. But because the kernel is bandwidth-bound, halving the byte width (fp32 -> bf16 -> fp8) halves the bytes that must cross HBM and therefore roughly halves the runtime — the modeled times drop $200 \to 100 \to 50\ \mu s$. That is the chapter's point made concrete: on a memory-bound kernel you win by *moving fewer bytes*, and dropping precision does exactly that (while also raising the intensity toward the ridge). Note it does **not** reduce FLOPs — the FLOP count is identical across all three columns.
+    What it shows: with $2N$ FLOPs and $2N$ touched values, intensity is $I = 2N / (2N \cdot \text{bpe}) = 1/\text{bpe}$ FLOP/B — so $0.25$ (fp32), $0.5$ (bf16), $1.0$ (fp8). All three are far below the ridge of $156$, so the classification stays **memory**-bound in every case. But because the kernel is bandwidth-bound, halving the byte width (fp32 -> bf16 -> fp8) halves the bytes that must cross HBM and therefore roughly halves the runtime — the modeled times drop $300 \to 150 \to 75\ \mu s$ (all three sitting at ~1.8 TB/s, close to the 2.0 TB/s roof). That is the chapter's point made concrete: on a memory-bound kernel you win by *moving fewer bytes*, and dropping precision does exactly that (while also raising the intensity toward the ridge). Note it does **not** reduce FLOPs — the FLOP count is identical across all three columns.

@@ -153,7 +153,7 @@ a saving of about $0.373$ bits/weight — which the QLoRA paper reports as rough
 
     **INT4 per-group-128 (with FP16 scales):** Weights = $70 \times 10^9 \times 0.5 \text{ bytes} = 35 \text{ GB}$. Scales add $70 \times 10^9 / 128 \times 2 \text{ bytes} \approx 1.1 \text{ GB}$. Total: $\approx 36 \text{ GB}$.
 
-    **NF4 (block 64) without double quantization:** Weights $\approx 35$ GB. FP32 absmax scales: $70 \times 10^9 / 64 \times 4 \text{ bytes} \approx 4.4$ GB. Total $\approx 39.4$ GB — the scales alone cost more than a full extra bit per weight.
+    **NF4 (block 64) without double quantization:** Weights $\approx 35$ GB. FP32 absmax scales: $70 \times 10^9 / 64 \times 4 \text{ bytes} \approx 4.4$ GB. Total $\approx 39.4$ GB — the scales alone cost half an extra bit per weight, an eighth of the 4-bit payload.
 
     **NF4 + double quantization:** Weights $\approx 35$ GB. First-level 8-bit scales: $70 \times 10^9 / 64 \times 1 \text{ byte} \approx 1.1$ GB. Second-level FP32 meta-scale: $70 \times 10^9 / (64 \times 256) \times 4 \text{ bytes} \approx 0.017$ GB. Total: $\approx 36.1$ GB — double quantization bought back $3.3$ GB, enough to matter for whether the model plus its KV cache fits in 80 GB.
 
@@ -185,9 +185,11 @@ import torch
 import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling
 
-# Create FP8 recipe: E4M3 for forward, E5M2 for backward (if training)
+# Create FP8 recipe. `Format.HYBRID` = E4M3 in the forward pass, E5M2 in the
+# backward pass (gradients need the extra exponent range). `Format.E4M3` would
+# use E4M3 for both directions — fine for inference-only use.
 fp8_recipe = DelayedScaling(
-    fp8_format=Format.E4M3,
+    fp8_format=Format.HYBRID,
     amax_history_len=16,      # track amax over last 16 iters to set scale
     amax_compute_algo="max",
 )
@@ -364,12 +366,18 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-# The 16 NF4 code points (from QLoRA paper, normalized to [-1, 1])
+# The 16 NF4 code points (the constants bitsandbytes ships, normalized to
+# [-1, 1]). Reproduce them with scipy so they cannot silently drift:
+#   from scipy.stats import norm; import numpy as np
+#   off = 0.9677083
+#   pos = norm.ppf(np.linspace(off, 0.5, 9)[:-1])        # 8 positive levels
+#   neg = -norm.ppf(np.linspace(off, 0.5, 8)[:-1])       # 7 negative levels
+#   v = np.sort(np.concatenate([neg, [0.0], pos])); v /= np.abs(v).max()
 NF4_CODES = torch.tensor([
-    -1.0,       -0.6961928,  -0.5250730,  -0.3954816,
-    -0.2849375, -0.1832600,  -0.0911578,  0.0,
-     0.0795761,  0.1609030,   0.2461331,   0.3379990,
-     0.4407979,  0.5626170,   0.7229568,   1.0,
+    -1.0,       -0.6961929,  -0.5250730,  -0.3949175,
+    -0.2844414, -0.1847734,  -0.0910500,  0.0,
+     0.0795803,  0.1609302,   0.2461123,   0.3379152,
+     0.4407098,  0.5626170,   0.7229568,   1.0,
 ], dtype=torch.float32)
 
 def quantize_nf4(weight: torch.Tensor, group_size: int = 64):
@@ -551,9 +559,9 @@ QLoRA (Dettmers et al., 2023) is arguably the most impactful combination of quan
 1. **Freeze** the base model weights in NF4 (4-bit, per-group-64, double quantization).
 2. **Add LoRA adapters** (small rank-$r$ matrices $A, B$ in BF16) alongside the frozen quantized layers.
 3. **Fine-tune only the LoRA adapters.** Gradients flow through the NF4-dequantized base weights using STE, then into the BF16 LoRA params.
-4. **4-bit NF4 paged optimizer states**: instead of keeping FP32 Adam states for the base model, only LoRA params have optimizer states — since they are tiny ($r \ll d$), this is cheap.
+4. **Paged optimizer states**: instead of keeping FP32 Adam states for the base model, only LoRA params have optimizer states — since they are tiny ($r \ll d$), this is cheap. (Those states are still ordinary 32-bit — or bnb 8-bit — Adam moments; NF4 applies to the frozen base *weights* only.)
 
-The key trick: **paged optimizers** (bnb's `PagedAdamW32bit`) keep optimizer states in CPU RAM and page them to GPU only when needed, preventing OOM on long sequences.
+The key trick: **paged optimizers** (bnb's `PagedAdamW32bit`) allocate the optimizer states in CUDA *unified* memory, so they normally live on the GPU but are automatically evicted to CPU RAM when the GPU runs out of memory and paged back in for the update step. That smooths the transient memory spikes (long sequences, gradient checkpointing) that would otherwise OOM the run, at essentially no cost in the common case.
 
 ```python
 # QLoRA fine-tuning with bitsandbytes + PEFT
@@ -587,7 +595,8 @@ lora_config = LoraConfig(
 )
 model = get_peft_model(base_model, lora_config)
 model.print_trainable_parameters()
-# Trainable params: ~20M / 8B total (0.25%) — massive memory saving
+# Trainable params: ~41.9M / 8.03B total (~0.52%) — massive memory saving
+# (r=16 on 7 projections x 32 layers: 16*(d_in + d_out) params per module)
 
 # 3. Use paged optimizer to handle memory spikes
 optimizer = bnb.optim.PagedAdamW32bit(
@@ -645,18 +654,27 @@ def dequantize_kv(kv_int8: torch.Tensor, scale: torch.Tensor):
     """Recover approximate FP16 KV from INT8 + scale."""
     return kv_int8.to(torch.float16) * scale
 
-# Memory comparison for a 32-layer, 32-head, 128-dim model at 8K context
-B, H, T, D = 1, 32 * 32, 8192, 128  # flattened heads
+# --- Correctness check on a deliberately tiny tensor ---
+B, H, T, D = 1, 4, 128, 128
 kv = torch.randn(B, H, T, D)
-kv_int8, scale = quantize_kv_int8(kv.view(B, 32, 32, T, D).view(B, H, T, D))
+kv_int8, scale = quantize_kv_int8(kv)
+rel_err = ((dequantize_kv(kv_int8, scale).float() - kv).abs().mean() / kv.abs().mean())
+print(f"Mean relative reconstruction error: {rel_err:.4f}")  # ~0.007
 
-bf16_size = kv.numel() * 2  # bytes
-int8_size  = kv_int8.numel() * 1 + scale.numel() * 2
-print(f"BF16 KV size: {bf16_size / 1e9:.2f} GB")
+# --- Memory accounting for a real 32-layer, 32-head, 128-dim model at 8K
+# context, computed analytically (materializing this tensor would cost GBs).
+# Both K and V are cached, hence the factor of 2.
+L, H_real, D_real, T_real = 32, 32, 128, 8192
+n_elem = 2 * L * H_real * D_real * T_real          # K and V, all layers
+n_scales = 2 * L * H_real * T_real                 # one fp16 scale per (layer, head, token)
+
+bf16_size = n_elem * 2                             # bytes
+int8_size = n_elem * 1 + n_scales * 2
+print(f"BF16 KV size: {bf16_size / 1e9:.2f} GB")   # 4.29 GB
 print(f"INT8 KV size: {int8_size  / 1e9:.2f} GB  ({100*int8_size/bf16_size:.0f}% of BF16)")
 ```
 
-**INT4 KV cache** (used in FlexGen for offloading) quantizes per-group-20 along the token dimension. Accuracy impact on generation quality is measurable on long-context tasks; for short contexts INT4 KV is essentially lossless. PagedAttention (discussed in [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)) already manages KV memory in blocks; each block can independently carry a scale, making per-block quantization natural.
+**INT4 KV cache** (used in FlexGen for offloading) quantizes in groups of 64 along the hidden dimension. Accuracy impact on generation quality is measurable on long-context tasks; for short contexts INT4 KV is essentially lossless. PagedAttention (discussed in [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)) already manages KV memory in blocks; each block can independently carry a scale, making per-block quantization natural.
 
 ---
 
@@ -716,11 +734,11 @@ The large spread in INT4 throughput reflects kernel quality, not format: hand-tu
     - Absmax scaling is never MSE-optimal: one outlier inflates the scale for a whole group. Real PTQ grid-searches a clipping ratio and minimizes *output* error on calibration activations, not weight error.
     - NF4 places its 16 code points at equal-probability quantiles of $\mathcal{N}(0,1)$ (asymmetric, with an exact zero, tails clipped at $p=0.9677$) — an entropy-maximizing rather than strictly MSE-optimal design, but a clear win over uniform INT4 because it spends resolution where weights actually live.
     - Double quantization compresses the per-block scale factors themselves (FP32 → 8-bit integers, in second-level blocks of 256), cutting scale overhead from 0.5 to 0.127 bits/weight at NF4's block size of 64 — about 3 GB on a 65 B model.
-    - QLoRA combines NF4 base model storage with BF16 LoRA adapters and paged optimizers, enabling full fine-tuning of a 65 B model on a single 48 GB GPU; gradients never need to pass through the NF4 rounding because the base model weights are frozen.
+    - QLoRA combines NF4 base model storage with BF16 LoRA adapters and paged optimizers, enabling adapter fine-tuning of a 65 B model on a single 48 GB GPU; gradients never need to pass through the NF4 rounding because the base model weights are frozen.
     - llama.cpp's GGUF k-quants use two-level block scaling (fp16 super-block scales over cheap 6-bit sub-block scales); the `_S`/`_M`/`_L` suffixes are *tensor-level mixes* that promote sensitive tensors like `attn_v` and `ffn_down` to a higher k-quant, not different block layouts. Below 4 bits, build an importance matrix with `llama-imatrix` first.
     - Quantization damage scales *inversely* with model size: a 100 M model has far less redundancy than a 7 B one, so prefer Q8_0/Q6_K there and always re-run your eval battery after quantizing — it is a model edit, and therefore a hypothesis.
     - FP8 (E4M3) inference on Hopper and Blackwell GPUs achieves near-BF16 quality at roughly half the memory bandwidth, but requires per-tensor or per-row scaling and benefits from SmoothQuant-style activation smoothing; Blackwell further adds native FP4 (NVFP4) Tensor Cores for roughly another 1.8× memory reduction over FP8.
-    - KV-cache quantization (INT8 or INT4 per-token) can halve or quarter KV memory overhead at long contexts; per-token scales are required because KV distributions vary dramatically across positions.
+    - KV-cache quantization (INT8 or INT4) can halve or quarter KV memory overhead at long contexts, but the *axis* matters more than the bit width: keys want per-channel scales (they have persistent outlier channels), values want per-token scales (they are contracted along position) — the KIVI asymmetry. FP8 E4M3 is the production default because its exponent field absorbs the heavy tails.
     - Quantization-aware training with the straight-through estimator (STE) allows gradient flow through the rounding operation by passing upstream gradients unchanged in the backward pass, at the cost of a biased gradient estimate.
     - As a rule of thumb: Q4_K_M / NF4 is the recommended default for 7–70 B models when maximizing quality-per-GB; INT8 W+A (SmoothQuant) is the right choice when maximizing server throughput on Ampere/Hopper GPUs.
 
@@ -733,7 +751,7 @@ The large spread in INT4 throughput reflects kernel quality, not format: hand-tu
 
     - [Dettmers et al., *LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale* (2022)](https://arxiv.org/abs/2208.07339) — introduced mixed-precision decomposition to handle activation outliers, making INT8 practical for 6.7 B+ models.
     - [Dettmers et al., *QLoRA: Efficient Finetuning of Quantized LLMs* (2023)](https://arxiv.org/abs/2305.14314) — introduced NF4, double quantization, and paged optimizers, enabling 65 B fine-tuning on a single 48 GB GPU.
-    - [Frantar et al., *GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers* (2022)](https://arxiv.org/abs/2210.17323) — second-order OBC-based INT4 calibration; the algorithm behind most GGUF conversions and GPTQ server deployments.
+    - [Frantar et al., *GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers* (2022)](https://arxiv.org/abs/2210.17323) — second-order OBC-based INT4 calibration; the algorithm behind GPTQ/`compressed-tensors` W4A16 server checkpoints (llama.cpp's k-quants use their own imatrix-weighted search instead).
 
     **Recent advances (2023–2026)**
 
@@ -762,7 +780,7 @@ The large spread in INT4 throughput reflects kernel quality, not format: hand-tu
 - **Dettmers et al., "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale"**, NeurIPS 2022 — the mixed-precision decomposition that made INT8 practical for very large models.
 - **Dettmers et al., "QLoRA: Efficient Finetuning of Quantized LLMs"**, NeurIPS 2023 — introduces NF4, double quantization, paged optimizers, and the QLoRA recipe.
 - **Xiao et al., "SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models"**, ICML 2023 — the per-channel migration trick that enables W8A8.
-- **Frantar et al., "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers"**, ICLR 2023 — the second-order OBC-based algorithm that produces the INT4 weights used by many GGUF conversions.
+- **Frantar et al., "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers"**, ICLR 2023 — the second-order OBC-based algorithm that produces the INT4 W4A16 weights served by vLLM/TGI.
 - **Frantar et al., "MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on Large Language Models"** — the mixed-precision GEMM kernel that keeps W4A16 fast past batch size 1; the default INT4 path in vLLM, with `Machete` as its Hopper/CUTLASS-3 successor.
 - **bitsandbytes library** (Tim Dettmers / Hugging Face) — `github.com/bitsandbytes-foundation/bitsandbytes` — the production Python/CUDA implementation of LLM.int8() and NF4.
 - **llama.cpp** (Georgi Gerganov and contributors) — `github.com/ggml-org/llama.cpp` — the canonical k-quant and GGUF implementation; `ggml-quants.c` and the `block_*` structs in `ggml-quants.h` are the reference for Q4_K/Q5_K internals.

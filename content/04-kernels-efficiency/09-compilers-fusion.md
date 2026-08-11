@@ -26,7 +26,7 @@ so fusion halves the traffic here. The win grows with the length of the chain: f
 
 Kernel fusion means merging several GPU kernels into one so that intermediate values never leave the SM (Streaming Multiprocessor). There are several distinct flavours.
 
-### Horizontal (Producer–Consumer) Fusion
+### Vertical (Producer–Consumer) Fusion
 
 A producer kernel writes a tensor that is immediately consumed by the next kernel. After fusion, both live in a single kernel and the intermediate stays in registers or shared memory. Classic examples:
 
@@ -34,9 +34,9 @@ A producer kernel writes a tensor that is immediately consumed by the next kerne
 - LayerNorm, which is three passes (mean, variance, normalize) collapsed into one
 - Softmax: finding the row max, computing exponentials, and dividing, all in one pass (this is exactly what [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html) exploits)
 
-### Vertical (Loop) Fusion
+### Horizontal (Same-Input / Loop) Fusion
 
-Multiple loops over the same tensor are merged. For example, computing both `mean` and `var` of a tensor in a single pass rather than two sequential reductions.
+Independent ops that share an input or an iteration space are merged into one loop. For example, computing both `mean` and `var` of a tensor in a single pass rather than two sequential reductions, or issuing the three QKV projections as one batched GEMM instead of three.
 
 ### Operator Tiling & Blocking
 
@@ -69,15 +69,21 @@ import torch
 
 def build_cuda_graph(model, static_input):
     """Capture model forward pass into a CUDA graph."""
-    # 1. Warmup: run eagerly a few times to warm caches / allocate memory
-    for _ in range(3):
-        _ = model(static_input)
+    # 1. Warmup on a SIDE STREAM (required by the documented recipe): lazy
+    #    initialization — allocator blocks, cuBLAS workspaces, NCCL comms —
+    #    must happen off the capturing stream, or capture fails/hangs.
+    s = torch.cuda.Stream()
+    s.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(s), torch.no_grad():   # no_grad: inference capture
+        for _ in range(3):
+            _ = model(static_input)
+    torch.cuda.current_stream().wait_stream(s)
 
     torch.cuda.synchronize()
 
     # 2. Capture phase: all CUDA work between begin/end is recorded
     g = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(g):
+    with torch.cuda.graph(g), torch.no_grad():
         static_output = model(static_input)
 
     torch.cuda.synchronize()
@@ -115,7 +121,7 @@ The vLLM serving system manages this by pre-capturing graphs for a discrete set 
 
 The hardest problem in compiling Python is that Python is dynamic: code can inspect its own stack frames, call arbitrary C extensions, use dynamic dispatch, and depend on Python objects in arbitrary ways. Prior approaches (TorchScript, `torch.fx` manual tracing) required the user to rewrite code into a compilable subset.
 
-TorchDynamo takes a different approach: it installs a *frame evaluation hook* at the CPython bytecode level and speculatively traces through Python execution, building an `FX Graph` as it encounters PyTorch operations. When it encounters something it cannot trace — a Python `print`, a shape-dependent `if`, a call into a C extension — it records a **graph break** and falls back to eager execution for that segment.
+TorchDynamo takes a different approach: it installs a *frame evaluation hook* at the CPython bytecode level and speculatively traces through Python execution, building an `FX Graph` as it encounters PyTorch operations. When it encounters something it cannot trace — a Python `print`, an `if` that branches on a *tensor value*, a call into a C extension — it records a **graph break** and falls back to eager execution for that segment. (Branching on `tensor.shape` is *not* a break: Dynamo specializes the shape and installs a guard, so a new shape costs a recompile rather than a fragmented graph.)
 
 ```python
 import torch
@@ -124,13 +130,13 @@ import torch._dynamo as dynamo
 # Demonstrate graph breaks with explain()
 def my_func(x):
     y = torch.sin(x)          # traced
-    if x.shape[0] > 10:       # graph break: dynamic control flow
+    if y.sum() > 0:           # graph break: branches on a tensor VALUE
         y = y * 2
     return torch.cos(y)       # traced (in new subgraph)
 
 explanation = dynamo.explain(my_func)(torch.randn(5))
-print(explanation.graphs)          # Two subgraphs
-print(explanation.break_reasons)  # "Data-dependent control flow"
+print(explanation.graphs)         # Two subgraphs
+print(explanation.break_reasons)  # "Data-dependent jump"
 ```
 
 {{fig:dynamo-graph-breaks-subgraphs}}
@@ -224,10 +230,12 @@ import torch
 
 model = MyTransformerBlock(d_model=4096, n_heads=32)
 model = model.to(device="cuda", dtype=torch.bfloat16).eval()
-example = (torch.randn(1, 512, 4096, device="cuda", dtype=torch.bfloat16),)
+# NOTE: export 0/1-specializes — a dim whose example value is 0 or 1 is frozen
+# to a constant — so the sample for a dynamic dim must be >= 2.
+example = (torch.randn(2, 512, 4096, device="cuda", dtype=torch.bfloat16),)
 
 # Declare which dimensions may vary; everything else is frozen at export time.
-batch = torch.export.Dim("batch", min=1, max=64)
+batch = torch.export.Dim("batch", min=2, max=64)
 ep = torch.export.export(model, example, dynamic_shapes={"x": {0: batch}})
 
 # Lower to a standalone package (a .pt2 file containing the compiled kernels).
@@ -264,9 +272,10 @@ Common causes and fixes:
 |---|---|
 | `tensor.item()` / `.numpy()` | Use tensor ops; move `item()` outside the compiled region |
 | `print(tensor)` | Remove debug prints or guard behind `if not torch.is_grad_enabled()` |
-| Shape-dependent `if` | Use `torch.where` or pass shape as a compile-time constant |
+| `if` branching on a tensor value (e.g. `if x.max() > 1`) | Use `torch.where`, or hoist the branch outside the compiled region |
 | Custom C extension | Wrap in `torch.library.custom_op` with an abstract impl |
-| `torch.no_grad()` context manager | Use `@torch.inference_mode()` decorator instead |
+
+Two things that are commonly *assumed* to break the graph but do not: a shape-dependent `if` (`if x.shape[0] > 10`), which Dynamo evaluates at trace time and covers with a shape guard — so it costs a *recompile* when the shape changes, not a break — and `with torch.no_grad():`, whose grad-mode toggle Dynamo models natively and traces straight through.
 
 ## Worked Example: Compiling a Transformer Block
 
@@ -277,7 +286,7 @@ Common causes and fixes:
     **Setup:**
     - Layer: `d_model=4096`, `n_heads=32`, `ffn_dim=16384`, GeLU activation
     - Batch: 4 sequences of length 2048, bfloat16
-    - Input tensor shape: `[4, 2048, 4096]` ≈ 128 M elements × 2 bytes = **256 MB**
+    - Input tensor shape: `[4, 2048, 4096]` ≈ 33.6 M elements × 2 bytes = **64 MiB (~67 MB)**
 
     **Eager forward pass time:** ~14 ms (measured with `torch.utils.benchmark`)
 
@@ -285,14 +294,14 @@ Common causes and fixes:
 
     That is roughly a 1.55× speedup from compilation alone, coming from:
     - Fusing QKV projection bias-add with the projection matmul epilogue
-    - Fusing SiLU/GELU + gate in the FFN
+    - Fusing the GeLU into the up-projection matmul epilogue in the FFN
     - Eliminating ~40 separate kernel launches via CUDA graph capture in reduce-overhead mode
 
     **For training** (forward + backward), the gain is typically somewhat larger because AOTAutograd fuses activation-gradient pairs that eager mode computes in separate kernels.
 
     A rough breakdown of where time goes in the compiled version:
-    - ~55% attention (FlashAttention kernel, not further fused)
-    - ~35% FFN (matmuls with fused epilogues)
+    - ~55% FFN (the two $4096 \leftrightarrow 16384$ matmuls, with fused epilogues) — at these dimensions the FFN alone is about 60% of the layer's FLOPs
+    - ~35% attention *block* — dominated by the QKV and output projections; the FlashAttention kernel itself is under 10% of the layer's FLOPs at $S = 2048$, because the attention core costs $S / (2 d_{\text{model}}) = 0.25\times$ what the four projections cost at these dimensions
     - ~10% overhead (LayerNorm, residual add, kernel launches)
 
     The attention kernel itself is already hand-tuned (FlashAttention); `torch.compile` does not replace it but integrates with it via custom operator registration.
@@ -305,7 +314,7 @@ Common causes and fixes:
 
 XLA (Accelerated Linear Algebra) is Google's compiler for TPUs, and the foundation of JAX. XLA takes a computation expressed as an HLO (High-Level Optimizer) graph and applies:
 
-- **Operation fusion**: similar to Inductor, but implemented in LLVM-based passes
+- **Operation fusion**: similar to Inductor, but decided by HLO-level passes (instruction fusion, fusion merging, priority fusion); LLVM appears only in the CPU/GPU emitters that lower an already-formed fusion, and the TPU backend uses its own codegen entirely
 - **Layout optimization**: permutes tensor dimension orders to maximize memory access patterns on TPU systolic arrays
 - **Rematerialization**: drops and recomputes activations to reduce memory, analogous to gradient checkpointing (see [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html))
 
@@ -539,15 +548,18 @@ def forward_good(x):
 ### Python Lists of Tensors
 
 ```python
-# BAD: list indexing can be dynamic; Dynamo may break here
-def forward_bad(tensors: list):
-    return [t * 2 for t in tensors]  # Python list comprehension → break
+# COSTLY (but not a graph break): Dynamo unrolls the comprehension at trace
+# time and guards on len(tensors), emitting one multiply node per element.
+def forward_costly(tensors: list):
+    return [t * 2 for t in tensors]  # every new list length → a full recompile
 
-# GOOD: stack into a single tensor
-def forward_good(tensors: list):
-    stacked = torch.stack(tensors)   # Single op, fully traced
+# BETTER: stack into a single tensor
+def forward_better(tensors: list):
+    stacked = torch.stack(tensors)   # note: returns a Tensor, not a list
     return stacked * 2
 ```
+
+This is a recompilation trap rather than a break: a list of 8 tensors and a list of 9 tensors are two different traces, so a loop whose list length varies will exhaust the recompile budget. Stacking also replaces N tiny kernels with one large one — but it changes the return type, so a caller that expects `list[Tensor]` needs `torch.unbind` on the way out.
 
 ### Shape Guards and Recompilation
 
@@ -577,7 +589,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 !!! interview "Interview Corner"
     **Q:** You are told that a model compiled with `torch.compile` shows no speedup over eager mode. Walk through your debugging process.
 
-    **A:** I would start with `TORCH_LOGS=graph_breaks python ...` to check whether the model is actually being compiled or fragmenting into many small subgraphs. If there are many graph breaks, I identify the causes (usually `tensor.item()`, shape-dependent control flow, or unsupported ops) and either eliminate them or restructure the code. Next, I'd check if the dominant kernels are already hand-tuned (FlashAttention, cuBLAS GEMM) — `torch.compile` adds little value on top of those since Inductor won't regenerate a better matmul than cuBLAS. I'd profile with `torch.profiler` to see which kernels dominate. If the model is memory-bound and small, compile overhead from CUDA graph capture might not be paid back at the measured batch size — I'd try larger batches or `mode="max-autotune"`. Finally, I'd check if the model has side effects (printing, `.item()` in the loop) that prevent CUDA graph capture in `reduce-overhead` mode.
+    **A:** I would start with `TORCH_LOGS=graph_breaks python ...` to check whether the model is actually being compiled or fragmenting into many small subgraphs. If there are many graph breaks, I identify the causes (usually `tensor.item()`, control flow that branches on a tensor value, or unsupported ops) and either eliminate them or restructure the code. Next, I'd check if the dominant kernels are already hand-tuned (FlashAttention, cuBLAS GEMM) — `torch.compile` adds little value on top of those since Inductor won't regenerate a better matmul than cuBLAS. I'd profile with `torch.profiler` to see which kernels dominate. If the model is memory-bound and small, compile overhead from CUDA graph capture might not be paid back at the measured batch size — I'd try larger batches or `mode="max-autotune"`. Finally, I'd check if the model has side effects (printing, `.item()` in the loop) that prevent CUDA graph capture in `reduce-overhead` mode.
 
 ## Key Takeaways
 
@@ -585,7 +597,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     - Kernel fusion reduces GPU DRAM round-trips by keeping intermediate values in registers or shared memory — for sequences of elementwise ops, it can 2–3× the memory bandwidth efficiency.
     - CUDA graphs record the entire kernel launch sequence into a single GPU-executable artifact, eliminating the CPU overhead of re-launching hundreds of kernels per step; they are most effective for fixed-shape decode loops.
     - `torch.compile` is a three-layer pipeline: TorchDynamo captures an FX graph via Python bytecode tracing, AOTAutograd differentiates it ahead-of-time, and TorchInductor lowers it to fused Triton or CUDA kernels.
-    - Graph breaks partition the model into compiled subgraphs separated by eager fallback; the most common culprits are `tensor.item()`, shape-dependent `if` statements, and unsupported Python built-ins.
+    - Graph breaks partition the model into compiled subgraphs separated by eager fallback; the most common culprits are `tensor.item()`, `if` statements that branch on a tensor value, and unsupported Python built-ins (a *shape*-dependent `if`, by contrast, costs a recompile, not a break).
     - `mode="reduce-overhead"` enables CUDA graph capture internally; `mode="max-autotune"` runs an exhaustive Triton tile-size search that takes longer to compile but achieves the highest throughput on a given shape.
     - AOTAutograd's joint forward+backward graph enables cross-boundary fusion, for example fusing an activation function with its gradient computation, which is unavailable in eager mode.
     - XLA (used by JAX/TPU) and TVM take fundamentally similar approaches — whole-graph compilation with loop fusion — but are optimized for different hardware targets and have different dynamism tradeoffs.
@@ -706,8 +718,8 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     Walking the chapter's "Common causes" table and the graph-breaks deep-dive:
 
     - `torch.sin(x)` — traced, no break.
-    - `if y.mean() > 0:` — **graph break: data-dependent (shape/value-dependent) control flow.** `y.mean()` is a tensor whose value forces a CPU/GPU sync, and the branch is dynamic. (Same pattern as the chapter's `if x.max() > 1.0` "BAD" example.)
-    - The `for s in scale_list` loop over Python floats does not itself break (the values are compile-time constants captured as guards), but iterating a Python container of *tensors* would; here it is fine.
+    - `if y.mean() > 0:` — **graph break: data-dependent control flow.** `y.mean()` is a tensor whose value forces a CPU/GPU sync, and the branch is dynamic. (Same pattern as the chapter's `if x.max() > 1.0` "BAD" example.)
+    - The `for s in scale_list` loop does not break: Dynamo unrolls the iteration at trace time and guards on the container (its length, and for floats their values). A list of *tensors* would likewise be unrolled — the cost there is a recompile whenever the length changes, not a break.
     - `print("debug:", y.shape)` — **graph break: `print` (a Python side effect / built-in).** The chapter's table lists `print(tensor)` explicitly.
     - `torch.relu(y)` — traced.
 

@@ -37,7 +37,7 @@ It is tempting to think of $h$ heads as $h$ literally separate `nn.Linear` layer
 
 ## Implementing Multi-Head Attention From Scratch
 
-Here is a complete, batched, causal-capable MHA module. It uses one fused QKV projection and the standard reshape, and calls into PyTorch's fused `scaled_dot_product_attention` (the same math we hand-rolled in 2.3, just IO-aware under the hood). Read the comments on the reshapes carefully — they are the part that bites.
+Here is a complete, batched, causal-capable MHA module. It uses one fused projection per role ($Q$, $K$, $V$ — each a single $d_\text{model}\to d_\text{model}$ GEMM covering all heads) and the standard reshape, and calls into PyTorch's fused `scaled_dot_product_attention` (the same math we hand-rolled in 2.3, just IO-aware under the hood). Read the comments on the reshapes carefully — they are the part that bites.
 
 ```python
 import torch
@@ -130,7 +130,7 @@ For $d_\text{model}=4096$ that is $4\times 4096^2 \approx 67$ million parameters
 
 ## The KV Cache: Why Inference Memory, Not FLOPs, Becomes the Bottleneck
 
-Autoregressive generation produces one token at a time. To generate token $t+1$, the model runs attention where the query is the single new token but the keys and values span *all* $t$ previous tokens. Recomputing $K$ and $V$ for the entire prefix at every step would be hopelessly wasteful — it would make decoding $\mathcal{O}(t^2)$ work per token. The fix is the **KV cache**: after we compute each token's key and value vectors, we *store* them, and at the next step we only compute $K$ and $V$ for the one new token and append it. The query is fresh each step; the keys and values accumulate.
+Autoregressive generation produces one token at a time. To generate token $t+1$, the model runs attention where the query is the single new token but the keys and values span *all* $t$ previous tokens. Re-running the whole prefix through the model at every step — recomputing $K$ and $V$ for all $t$ previous tokens and letting all $t$ queries attend to all $t$ keys — would be hopelessly wasteful: that is $\mathcal{O}(t^2)$ work for every single generated token. The fix is the **KV cache**: after we compute each token's key and value vectors, we *store* them, and at the next step we only compute $K$ and $V$ for the one new token and append it. The query is fresh each step; the keys and values accumulate.
 
 {{fig:mha-kvcache-append}}
 
@@ -296,12 +296,12 @@ for n_kv in (8, 2, 1):                            # MHA, GQA(g=2), MQA
     # Cache width per token (one layer, one sequence), bf16 = 2 bytes, ×2 for K&V:
     kv_bytes = 2 * n_kv * (d_model // n_heads) * 2
     print(f"n_kv={n_kv}: out {tuple(y.shape)}, KV bytes/token/layer = {kv_bytes}")
-# n_kv=8: 256 B   n_kv=2: 64 B   n_kv=1: 32 B  -> 8× and 16× smaller than MHA
+# n_kv=8: 256 B   n_kv=2: 64 B   n_kv=1: 32 B  -> 4× and 8× smaller than MHA
 ```
 
 The two load-bearing facts in that code: (1) `W_k` and `W_v` output `n_kv_heads * head_dim`, which is *smaller* than `d_model` — that is where parameters and, more importantly, cache are saved; (2) `repeat_kv` never touches the *cache* — you store only the narrow `n_kv_heads` tensors and expand a transient copy at compute time, and a GQA-aware kernel skips even that copy. The query side is untouched, so the model keeps all $h$ query heads' worth of expressivity in *how it asks questions*, sacrificing only the diversity of *what it can address*.
 
-One consequence that trips people up: **GQA saves bytes, not FLOPs.** After the broadcast the kernel still computes $h$ full sets of $QK^\top$ and $PV$ products, so training and prefill FLOPs are *identical* to MHA. What changes is the *arithmetic intensity* of the attention operator during decode: the same FLOPs are performed while reading $h/g$ fewer bytes of K/V from HBM, which is exactly what moves a bandwidth-bound decode step toward the compute-bound side of the roofline. If you benchmark GQA on a prefill-only workload and see no speedup, nothing is broken — you measured the wrong regime.
+One consequence that trips people up: **GQA saves bytes, not FLOPs.** After the broadcast the kernel still computes $h$ full sets of $QK^\top$ and $PV$ products, so the *attention-core* FLOPs are identical to MHA; the only arithmetic GQA removes is in the K/V projection GEMMs, which shrink by $h/g$ (Exercise 3 puts the whole attention block at $5/8$ of MHA's parameters — and hence of its projection FLOPs — for a Llama-3-8B-style config). That is a modest, one-off saving, not the point. What changes is the *arithmetic intensity* of the attention operator during decode: the same FLOPs are performed while reading $h/g$ fewer bytes of K/V from HBM, which is exactly what moves a bandwidth-bound decode step toward the compute-bound side of the roofline. If you benchmark GQA on a prefill-only workload and see no speedup, nothing is broken — you measured the wrong regime.
 
 ### GQA in the real libraries
 
@@ -482,7 +482,7 @@ From here, the cache reappears everywhere downstream: the serving systems that *
     - **The query-head count and the KV-head count can be decoupled.** Many query heads can share few key/value heads — this single observation generates MQA, GQA, and MLA.
     - **MQA** uses one shared KV head ($1/h$ cache) but loses quality and can destabilize training. **GQA** uses $g$ KV groups ($g/h$ cache); at $g\approx 8$ it recovers ≈ MHA quality and is the modern default.
     - **GQA implementation** = smaller $W_K, W_V$ projections (output $g\,d_h$, not $d_\text{model}$) plus a `repeat_kv` broadcast to align KV heads with query heads; setting $n_\text{kv}=h$ recovers MHA and $n_\text{kv}=1$ recovers MQA. In real stacks you skip the broadcast copy entirely — `enable_gqa=True` in PyTorch SDPA, or `nheads_k < nheads_q` in `flash_attn_func`; in `transformers` the whole scheme is the single config field `num_key_value_heads`.
-    - **GQA saves bytes, not FLOPs.** Prefill/training cost is identical to MHA; the win is a $h/g$ reduction in KV bytes read per decode step, which raises attention's arithmetic intensity and unbinds a bandwidth-bound decode.
+    - **GQA saves bytes, not FLOPs.** The attention-core FLOPs at prefill/training are identical to MHA (only the K/V projection GEMMs shrink, by $h/g$); the win is a $h/g$ reduction in KV bytes read per decode step, which raises attention's arithmetic intensity and unbinds a bandwidth-bound decode.
     - **MLA (DeepSeek)** caches a low-rank latent $c^{KV}$ and up-projects per-head K/V from it, with weight absorption to keep decode cheap and a decoupled RoPE key to remain position-aware — pushing the memory–quality frontier beyond GQA at the cost of complexity.
     - **An MHA checkpoint can be uptrained into GQA** by mean-pooling KV weights within groups and fine-tuning with a small fraction of pretraining compute — a cheap retrofit that accelerated GQA's adoption.
     - **Cache savings are a budget, not a free lunch**, and they stack with KV quantization and TP-aligned head counts ($g=8$ for 8-way tensor parallelism). Always state what you hold fixed when quoting a reduction factor.
@@ -527,7 +527,7 @@ From here, the cache reappears everywhere downstream: the serving systems that *
 **1.** The chapter states that MHA's parameter count is $P_\text{MHA} = 4\,d_\text{model}^2$, *independent of the number of heads $h$*. Yet it also argues that heads are what give the model its expressive power. Reconcile these two claims: if adding heads doesn't add parameters, where does the extra expressivity come from, and what exactly does the choice of $h$ trade off against? What would you lose by setting $h = 1$, and what would you lose by setting $h = d_\text{model}$ (so $d_h = 1$)?
 
 ??? note "Solution"
-    The parameter count is fixed because the four projections $W_Q, W_K, W_V, W_O$ are each $d_\text{model}\times d_\text{model}$ no matter how you slice the output into heads. Choosing $h$ does not change *how many* parameters exist — it only changes how the same $d_\text{model}$ output dimensions are **partitioned** into subspaces for the attention operation. Concretely, the block-diagonal reshape `(B, L, d_model) -> (B, h, L, d_h)` re-interprets one big projection as $h$ small ones; the total matrix is identical.
+    The parameter count is fixed because the four projections $W_Q, W_K, W_V, W_O$ are each $d_\text{model}\times d_\text{model}$ no matter how you slice the output into heads. Choosing $h$ does not change *how many* parameters exist — it only changes how the same $d_\text{model}$ output dimensions are **partitioned** into subspaces for the attention operation. Concretely, the reshape `(B, L, d_model) -> (B, h, L, d_h)` splits the *output* axis of one big projection into $h$ column blocks: the fused $W_Q$ is exactly the horizontal concatenation $[W_Q^{(1)} \mid \dots \mid W_Q^{(h)}]$ of $h$ dense $d_\text{model}\times d_h$ matrices, so the total matrix is identical (every head still reads all $d_\text{model}$ input dimensions).
 
     The expressivity does not come from parameters — it comes from running $h$ **independent softmaxes** in $h$ separate $d_h$-dimensional subspaces. A single head is forced to average all "kinds" of relevance into one probability distribution (one blurry blend); $h$ heads let the model hold $h$ sharp, specialized retrieval patterns simultaneously and then fuse them through $W_O$.
 

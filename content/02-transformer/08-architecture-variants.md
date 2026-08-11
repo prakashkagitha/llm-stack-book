@@ -151,10 +151,10 @@ Raffel et al. (*Exploring the Limits of Transfer Learning with a Unified Text-to
 
 ```text
 Input (encoder):  "The <extra_id_0> sat on the <extra_id_1> mat."
-Target (decoder): "<extra_id_0> cat <extra_id_1> brown"
+Target (decoder): "<extra_id_0> cat <extra_id_1> brown <extra_id_2>"
 ```
 
-This framing is more efficient than BERT's MLM because the decoder only generates masked spans (typically 15% of tokens), not the full sequence. T5's key insight is to reframe *all* NLP tasks as text-to-text: translation, summarization, classification, QA — every task feeds a textual prompt and expects a textual output. This makes fine-tuning uniform.
+Note the trailing `<extra_id_2>`: T5's target ends with the *next unused* sentinel, which is what signals that the reconstruction is complete. This framing is more efficient than BERT's MLM because the decoder only generates masked spans (typically 15% of tokens), not the full sequence. T5's key insight is to reframe *all* NLP tasks as text-to-text: translation, summarization, classification, QA — every task feeds a textual prompt and expects a textual output. This makes fine-tuning uniform.
 
 ```python
 import torch
@@ -218,7 +218,7 @@ BART (Lewis et al., *BART: Denoising Sequence-to-Sequence Pre-training for Natur
 
 ### Memory Footprint of Encoder-Decoder
 
-A significant practical consideration: encoder-decoder models carry *two* full transformer stacks. T5-large has around 770M parameters split roughly evenly. During generation, the decoder must re-run cross-attention at every step and either recompute or cache the encoder hidden states. If the cross-attention K/V are cached, the memory cost scales as $B \times T_\text{enc} \times d_\text{attn} \times 2 \times N_\text{dec}$ bytes, where $d_\text{attn} = n_\text{heads} \times d_k$ is the attention *inner* dimension and the factor 2 counts K and V. For a model with $d_\text{attn} = 1024$, 24 decoder layers, and a 1 024-token source:
+A significant practical consideration: encoder-decoder models carry *two* full transformer stacks. T5-large has around 770M parameters split roughly evenly. During generation, the decoder must re-run cross-attention at every step and either recompute or cache the encoder hidden states. If the cross-attention K/V are cached, the memory cost scales as $B \times T_\text{enc} \times d_\text{attn} \times 2 \times N_\text{dec} \times b$ bytes, where $d_\text{attn} = n_\text{heads} \times d_k$ is the attention *inner* dimension, the factor 2 counts K and V, and $b$ is the bytes per element (2 in fp16, 4 in fp32). For a model with $d_\text{attn} = 1024$, 24 decoder layers, and a 1 024-token source:
 
 $$
 \text{cross-attention KV cache} \approx 1024 \times 1024 \times 2 \times 24 \times 2\text{ bytes (fp16)} \approx 96\text{ MB per batch element}
@@ -390,8 +390,13 @@ class DecoderOnlyTransformer(nn.Module):
     def generate(self, prompt: torch.Tensor, max_new_tokens: int = 64,
                  temperature: float = 1.0) -> torch.Tensor:
         """Greedy/temperature sampling. Prompt: (1, T_prompt)."""
+        max_seq_len = self.pos_emb.num_embeddings
         for _ in range(max_new_tokens):
-            logits = self.forward(prompt)[:, -1, :]         # (1, vocab_size)
+            # Crop to the context window: pos_emb (and the causal-mask buffer)
+            # only cover max_seq_len positions, so a longer sequence would
+            # index out of range.
+            idx_cond = prompt[:, -max_seq_len:]
+            logits = self.forward(idx_cond)[:, -1, :]       # (1, vocab_size)
             logits = logits / temperature
             next_tok = torch.multinomial(torch.softmax(logits, dim=-1), 1)
             prompt = torch.cat([prompt, next_tok], dim=1)
@@ -489,18 +494,18 @@ The key limitation: during pre-training on pure text data, you must decide the p
     $$
 
     **Bidirectional (encoder):** No masking. Softmax of each row. Row 0:
-    $$\text{softmax}([1.0, 0.5, 0.8, 0.3]) = [0.38, 0.23, 0.31, 0.18]$$
+    $$\text{softmax}([1.0, 0.5, 0.8, 0.3]) = [0.34, 0.21, 0.28, 0.17]$$
     Token 0's representation is a blend of all four value vectors.
 
     **Causal (decoder):** Apply lower-triangular mask. For row 0 (query = position 0), only position 0 is visible:
     $$L'_{0,:} = [1.0, -\infty, -\infty, -\infty] \xrightarrow{\text{softmax}} [1.0, 0, 0, 0]$$
     Position 0's output is exactly its own value vector — it cannot see the future. For row 3:
-    $$\text{softmax}([0.2, 0.8, 0.4, 1.3]) = [0.14, 0.27, 0.17, 0.42]$$
+    $$\text{softmax}([0.2, 0.8, 0.4, 1.3]) = [0.14, 0.26, 0.17, 0.43]$$
     Position 3 blends all four — it benefits from full left-context.
 
     **Prefix-LM with prefix length 2:** Rows 0 and 1 can see all other prefix positions (columns 0–1) bidirectionally:
     - Row 0: $\text{softmax}([1.0, 0.5, -\infty, -\infty]) = [0.62, 0.38, 0, 0]$
-    - Row 2 (generation starts): causal from here, $\text{softmax}([0.7, 0.3, 1.1, -\infty]) = [0.26, 0.18, 0.56, 0]$
+    - Row 2 (generation starts): causal from here, $\text{softmax}([0.7, 0.3, 1.1, -\infty]) = [0.32, 0.21, 0.47, 0]$
 
     Notice: prefix-LM gives prefix tokens *better* representations than pure causal (they mix with each other fully), while generation tokens remain strictly causal.
 
@@ -573,7 +578,7 @@ print("MLM loss:", bert(**batch).loss.item())
 t5_tok = AutoTokenizer.from_pretrained("google-t5/t5-small")
 t5     = AutoModelForSeq2SeqLM.from_pretrained("google-t5/t5-small")
 src    = t5_tok("The <extra_id_0> sat on the <extra_id_1> mat.", return_tensors="pt")
-tgt    = t5_tok("<extra_id_0> cat <extra_id_1> brown", return_tensors="pt")
+tgt    = t5_tok("<extra_id_0> cat <extra_id_1> brown <extra_id_2>", return_tensors="pt")
 print("span-corruption loss:", t5(**src, labels=tgt.input_ids).loss.item())
 
 # (3) Decoder-only + CLM. Pass labels == input_ids; the model shifts by one
@@ -587,7 +592,7 @@ print("CLM loss:", gpt(input_ids=ids, labels=ids).loss.item())
 Two library gotchas worth internalizing. First, `AutoModelForCausalLM` shifts `labels` for you — if you shift them *and* pass them, you train the model to predict two tokens ahead and the loss plateaus mysteriously high. Second, `AutoModel` (no head) returns hidden states with the architecture's *native* mask, so calling it on a decoder checkpoint and mean-pooling gives you causal, not bidirectional, embeddings.
 
 !!! note "The ELECTRA Alternative"
-    Clark et al. (*ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators*, 2020) observed that MLM wastes compute on easy-to-predict unmasked tokens. ELECTRA uses a small generator to fill in masks, then trains a large discriminator to detect which tokens are "replaced." The discriminator trains on *all* tokens, achieving BERT-level performance at substantially lower compute. This is still encoder-only but with a more efficient objective.
+    Clark et al. (*ELECTRA: Pre-training Text Encoders as Discriminators Rather Than Generators*, 2020) observed that MLM pays the full forward/backward cost over every position but extracts a learning signal from only the ~15% masked ones. ELECTRA uses a small generator to fill in masks, then trains a large discriminator to detect which tokens are "replaced." The discriminator trains on *all* tokens, achieving BERT-level performance at substantially lower compute. This is still encoder-only but with a more efficient objective.
 
 ---
 
@@ -617,16 +622,20 @@ def prefix_lm_mask(prefix_len: int, total_len: int,
     return mask
 
 
-def encoder_decoder_mask(T_dec: int, T_enc: int,
+def encoder_decoder_mask(T_dec: int, T_enc: int, B: int = 1,
                           pad_mask: torch.Tensor | None = None,
                           device: torch.device = torch.device("cpu")) -> dict:
     """
     Returns the two masks needed for an encoder-decoder model:
       - 'self':  causal mask for decoder self-attention  (T_dec, T_dec)
-      - 'cross': encoder padding mask for cross-attention (T_enc,) bool: True=PAD
+      - 'cross': encoder padding mask for cross-attention (B, T_enc) bool: True=PAD
+                 — the batch dimension is required because padding is per-example,
+                 and it is exactly what CrossAttention.forward expects as
+                 `encoder_mask` (it does encoder_mask[:, None, None, :]).
     """
     self_mask  = causal_mask(T_dec, device)
-    cross_mask = pad_mask if pad_mask is not None else torch.zeros(T_enc, dtype=torch.bool, device=device)
+    cross_mask = (pad_mask if pad_mask is not None
+                  else torch.zeros(B, T_enc, dtype=torch.bool, device=device))
     return {"self": self_mask, "cross": cross_mask}
 
 
@@ -658,7 +667,7 @@ def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
 
 There is a systems catch hiding behind everything above. The moment you pass an explicit `(T, T)` mask tensor, you have (a) allocated $O(T^2)$ memory and (b) usually dropped off the fused FlashAttention backend, because FlashAttention's kernel supports only a fixed menu of masks — dense, causal, and sliding-window variants — not an arbitrary user matrix. So the prefix-LM mask we just built is *correct but slow*: at $T = 8192$ a single `(B, 1, T, T)` bool mask for a batch of 8 is already half a gigabyte.
 
-PyTorch 2.5+ closes this gap with **FlexAttention** (`torch.nn.attention.flex_attention`). You express the mask as a *predicate over indices*, `mask_mod(b, h, q_idx, kv_idx) -> bool`, and `torch.compile` lowers it into a fused, block-sparse Triton kernel; `create_block_mask` evaluates the predicate once per $128\times128$ block and stores only which blocks are non-empty, so fully-masked blocks are never computed at all.
+PyTorch 2.5+ closes this gap with **FlexAttention** (`torch.nn.attention.flex_attention`). You express the mask as a *predicate over indices*, `mask_mod(b, h, q_idx, kv_idx) -> bool`, and `torch.compile` lowers it into a fused, block-sparse Triton kernel; `create_block_mask` evaluates the predicate over the index grid once and then records, for each $128\times128$ block, whether it is fully visible, partially masked, or fully masked. Fully-masked blocks are skipped entirely at runtime, fully-visible blocks run the plain unmasked kernel, and only the partial blocks (the diagonal, for causal) re-apply the predicate elementwise. Because that one-off grid evaluation is itself $O(T^2)$, wrap `create_block_mask` in `torch.compile` when $T$ is large.
 
 ```python
 import torch
@@ -734,7 +743,7 @@ The same `mask_mod` trick answers the mask you will *actually* ship when pretrai
 
     **Recent advances (2023–2026)**
 
-    - [Jiang et al., *Mistral 7B* (2023)](https://arxiv.org/abs/2310.06825) — compact decoder-only model introducing grouped-query attention and sliding window attention; a reference design for efficient causal LMs.
+    - [Jiang et al., *Mistral 7B* (2023)](https://arxiv.org/abs/2310.06825) — compact decoder-only model combining grouped-query attention (introduced by [Ainslie et al., *GQA* (2023)](https://arxiv.org/abs/2305.13245)) with sliding-window attention (Child et al., 2019; Beltagy et al., 2020); a reference design for efficient causal LMs.
     - [Warner et al., *ModernBERT: Smarter, Better, Faster, Longer* (2024)](https://arxiv.org/abs/2412.13663) — modernized encoder-only model with RoPE, FlashAttention, and 8 192-token context; a leading modern bidirectional encoder and a common 2026 default for retrieval and classification.
     - [Elfeki et al., *Return of the Encoder: Maximizing Parameter Efficiency for SLMs* (2025)](https://arxiv.org/abs/2501.16273) — shows encoder-decoder architectures achieve 47 % lower first-token latency and 4.7× higher throughput than decoder-only models at small (≤1B) parameter budgets.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — a 671B-parameter (37B active) decoder-only mixture-of-experts model with Multi-head Latent Attention; a canonical account of the MoE-decoder design now common at the frontier.

@@ -95,7 +95,7 @@ We do not have to use one scale for an entire matrix. Finer **granularity** = mo
 
 - **Per-tensor**: a single $(s, z)$ for the matrix. Fastest kernels, but one outlier ruins everything. Common for *activations* where you want a cheap dynamic scale.
 - **Per-channel** (per-row for weights): one scale per output channel. The matmul $y = Wx$ produces output $y_j = \sum_i W_{ji} x_i$; a per-row scale $s_j$ factors out cleanly because the whole row shares it: $y_j \approx s_j \sum_i q^{W}_{ji} x_i$.
-- **Per-group**: split each row into contiguous groups of $G$ weights (typically $G=128$) and give each group its own scale. This is the dominant scheme for 4-bit LLM weights (GPTQ, AWQ, GGUF all default to group size 128). It costs $\frac{16}{G} = \frac{16}{128} = 0.125$ extra bits per weight to store the FP16 scales — negligible.
+- **Per-group**: split each row into contiguous groups of $G$ weights (typically $G=128$) and give each group its own scale. This is the dominant scheme for 4-bit LLM weights (GPTQ and AWQ both default to group size 128; llama.cpp's GGUF k-quants use the same idea with a different block layout — 32-weight sub-blocks inside 256-weight super-blocks, see [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html)). It costs $\frac{16}{G} = \frac{16}{128} = 0.125$ extra bits per weight to store the FP16 scales — negligible.
 
 ```python
 def quantize_per_group(W: torch.Tensor, n_bits=4, group_size=128):
@@ -190,6 +190,7 @@ def gptq_quantize_layer(W, H, n_bits=4, group_size=128, percdamp=0.01):
     or to be packed into INT4). This mirrors the real algorithm's structure.
     """
     W = W.clone().float()
+    H = H.clone().float()              # we dampen H in place below; do not touch the caller's
     out_f, in_f = W.shape
     qmax = 2 ** (n_bits - 1) - 1
 
@@ -263,7 +264,7 @@ def capture_layer_inputs(model, linear, batches):
     return store
 ```
 
-Two practical details that real implementations get right and a naive one does not. First, **work block by block, not model-wide**: hold the hidden states entering transformer block $\ell$, quantize every linear in that block, then re-run those hidden states through the *already quantized* block to produce the inputs for block $\ell+1$. Later layers then compensate for the error earlier layers introduced — this is the `true_sequential` option in GPTQModel, and it is worth roughly a tenth of a perplexity point at INT4. Second, **budget the Hessians**: $H$ is $d_{\text{in}}\times d_{\text{in}}$ in FP32, so for $d_{\text{in}}=4096$ that is 67 MB per linear — and the MLP down-projection, whose input is the much wider intermediate dimension, costs several times that again. Accumulate them one block at a time and free them before moving on.
+Two practical details that real implementations get right and a naive one does not. First, **work block by block, not model-wide**: hold the hidden states entering transformer block $\ell$, quantize every linear in that block, then re-run those hidden states through the *already quantized* block to produce the inputs for block $\ell+1$. Later layers then compensate for the error earlier layers introduced — every real implementation does this unconditionally. The `true_sequential` flag in AutoGPTQ/GPTQModel pushes the same idea one level finer, *inside* a block: quantize q/k/v, then `o_proj`, then gate/up, then `down_proj`, re-capturing each sub-group's inputs after the previous ones have been quantized, instead of treating all of the block's linears as a single group. It is worth roughly a tenth of a perplexity point at INT4. Second, **budget the Hessians**: $H$ is $d_{\text{in}}\times d_{\text{in}}$ in FP32, so for $d_{\text{in}}=4096$ that is 67 MB per linear — and the MLP down-projection, whose input is the much wider intermediate dimension, costs several times that again. Accumulate them one block at a time and free them before moving on.
 
 GPTQ runs in **minutes to a couple of hours** for a 7B–70B model on a single GPU and reliably hits INT4 (and often INT3) with small perplexity loss. Its weakness: it is sequential per layer and Hessian-heavy, and it can struggle on the very narrowest bit-widths without a group size.
 
@@ -284,8 +285,10 @@ $$
 Quantizing $w\cdot\alpha$ instead of $w$ shrinks its **relative** rounding error by roughly $\alpha$, because the error is $s/2$ in absolute terms but the value is now $\alpha$ times bigger. The cost is that the input $x/\alpha$ must be rescaled — but $x$ stays in FP16 (weight-only), so we can fold $1/\alpha$ into the previous layer's normalization weights *for free*. AWQ searches for a **per-input-channel** scale vector $\mathbf{s}$ that minimizes the layer output error, using a simple grid search over a hyperparameter that interpolates between "scale by activation magnitude" and "scale by weight magnitude":
 
 $$
-\mathbf{s} = \big(\,\text{mean}_t |x|_{:,c}\,\big)^{\beta}, \qquad \beta \in [0, 1] \text{ chosen by grid search}.
+\mathbf{s}_c = \frac{\big(\,\text{mean}_t |x|_{:,c}\,\big)^{\beta}}{\big(\,\text{mean}_j |W_{j,c}|\,\big)^{1-\beta}}, \qquad \beta \in [0, 1] \text{ chosen by grid search}.
 $$
+
+At $\beta = 1$ the scale is pure activation magnitude (the form written in the AWQ paper); at $\beta = 0$ it is pure inverse-weight magnitude; in between it blends the two, which is what the reference implementation searches over.
 
 ```python
 import torch
@@ -327,7 +330,7 @@ def awq_search_scales(W, X, n_bits=4, group_size=128, grid=20):
     return best_s
 ```
 
-AWQ is **faster than GPTQ** (no Hessian inverse, no sequential per-column loop — just a grid search over a scale vector), has **no overfitting to the calibration set** (it never solves a least-squares problem against specific tokens, only a magnitude statistic), and tends to **generalize better across domains**. In practice GPTQ and AWQ are both excellent at INT4-g128, and their kernels remain popular in `vllm`/`sglang` serving stacks — though by 2026 the original standalone AutoGPTQ and AutoAWQ libraries have both been retired in favor of actively-maintained successors: [GPTQModel](https://github.com/ModelCloud/GPTQModel) for broad multi-backend GPTQ/AWQ support, and the vLLM Project's [`llm-compressor`](https://github.com/vllm-project/llm-compressor) for producing GPTQ/AWQ/SmoothQuant checkpoints tuned for vLLM deployment.
+AWQ is **faster than GPTQ** (no Hessian inverse, no sequential per-column loop — just a grid search over a scale vector), **overfits the calibration set less** (the grid search does score each candidate by output error on calibration tokens, but the only thing being fit is a single exponent over a scale family derived from magnitude statistics — no per-weight least-squares solve, so no weight is ever tuned to specific tokens), and tends to **generalize better across domains**. In practice GPTQ and AWQ are both excellent at INT4-g128, and their kernels remain popular in `vllm`/`sglang` serving stacks — though by 2026 the original standalone AutoGPTQ and AutoAWQ libraries have both been retired in favor of actively-maintained successors: [GPTQModel](https://github.com/ModelCloud/GPTQModel) for broad multi-backend GPTQ/AWQ support, and the vLLM Project's [`llm-compressor`](https://github.com/vllm-project/llm-compressor) for producing GPTQ/AWQ/SmoothQuant checkpoints tuned for vLLM deployment.
 
 !!! warning "Common pitfall"
 
@@ -453,11 +456,11 @@ print(f"max|x| after  rotation: {(x @ Q).abs().max():.2f}")   # far smaller
 
     Take a 13B-parameter decoder, FP16 weights.
 
-    **Memory.** FP16: $13\times10^{9}\times 2\,\text{B} = 26\ \text{GB}$ just for weights — already tight on a 24 GB consumer GPU (RTX 4090). INT4-g128: each weight is 4 bits = $13\times10^{9}\times 0.5\,\text{B} = 6.5\ \text{GB}$, **plus** the per-group scales. With group size 128, there is one FP16 scale per 128 weights: $\frac{13\times10^9}{128}\times 2\,\text{B} \approx 0.20\ \text{GB}$. Total ≈ **6.7 GB**. A 4x reduction; the model now fits with plenty of room for KV cache.
+    **Memory.** FP16: $13\times10^{9}\times 2\,\text{B} = 26\ \text{GB}$ just for weights — already over the 24 GB budget of a consumer GPU (RTX 4090), before a single byte of KV cache or activations. INT4-g128: each weight is 4 bits = $13\times10^{9}\times 0.5\,\text{B} = 6.5\ \text{GB}$, **plus** the per-group scales. With group size 128, there is one FP16 scale per 128 weights: $\frac{13\times10^9}{128}\times 2\,\text{B} \approx 0.20\ \text{GB}$. Total ≈ **6.7 GB**. A 4x reduction; the model now fits with plenty of room for KV cache.
 
     **Decode speedup.** Decoding one token requires streaming *all* weights from HBM once (it is bandwidth-bound — see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html)). Moving 6.7 GB instead of 26 GB at, say, 2 TB/s of HBM bandwidth: $26/2000 = 13\ \text{ms}$ vs $6.7/2000 \approx 3.4\ \text{ms}$ of weight-load time per token. Close to 4x fewer milliseconds spent moving weights — the headline reason INT4 weight-only quantization speeds up *decoding*.
 
-    **Quantization error budget.** A typical weight column has values around $|w|\sim 0.02$. Per-group INT4 with $\max|w|\approx0.08$ gives step $s = 0.08/7 \approx 0.0114$. Worst-case rounding error per weight is $s/2 \approx 0.0057$ — about 7% of a typical weight, but **uncorrelated across the 5120 weights in a row**, so the error on the *output* sum shrinks like $1/\sqrt{5120}\approx 1.4\%$. That averaging is why INT4 weight-only quantization barely moves perplexity, and why GPTQ/AWQ — which actively *correlate* and *protect* against the worst errors — close most of the remaining gap.
+    **Quantization error budget.** A typical weight column has values around $|w|\sim 0.02$. Per-group INT4 with $\max|w|\approx0.08$ gives step $s = 0.08/7 \approx 0.0114$. Worst-case rounding error per weight is $s/2 \approx 0.0057$ — about 29% of a typical weight (and $\approx 7\%$ of the group's max-magnitude weight, which is what sets $s$). But those errors are **uncorrelated across the 5120 weights in a row**, so on the *output* sum they add incoherently, like $\sqrt{5120}\,\sigma_e$ rather than the coherent worst case $5120\times s/2$ — a factor $1/\sqrt{5120}\approx 1.4\%$ of that worst case. What survives is an RMS relative output error of $\sigma_e/\sigma_w = (s/\sqrt{12})/0.02 \approx 16.5\%$, i.e. the same relative noise the weights themselves carry, not 5120 times worse. That averaging is why INT4 weight-only quantization barely moves perplexity, and why GPTQ/AWQ — which actively *correlate* and *protect* against the worst errors — close most of the remaining gap.
 
 ## Putting It Together: A Decision Guide
 
@@ -651,7 +654,7 @@ To watch this run end to end on a model you built yourself — RTN INT8 and INT4
 
     **(b)** After scaling, the weight is $0.06$ and (by assumption) $s$ is unchanged, so the absolute error is still $s/2 \approx 0.00571$, but the value it sits on is 3x larger: $0.00571/0.06 \approx 9.5\%$. The relative error dropped by a factor of $\approx 3 = \alpha$.
 
-    **(c)** General rule: multiplying a salient weight by $\alpha$ leaves the absolute step $s/2$ (roughly) unchanged while making the stored value $\alpha$x larger, so its **relative** rounding error shrinks by $\approx \alpha$; the compensating $1/\alpha$ on the activation is free because it folds into the upstream LayerNorm/RMSNorm. The condition: this holds only while the scaled weight does **not** become the group's new max-absolute value. If $w\cdot\alpha$ exceeds the group max, $s$ itself grows (proportionally to $\alpha$ in the extreme), and the relative-error gain evaporates. That is exactly why AWQ does not blindly scale up salient channels — it grid-searches a per-channel scale $\mathbf{s}=(\text{mean}_t|x|)^\beta$ that balances protecting salient channels against inflating the group scale.
+    **(c)** General rule: multiplying a salient weight by $\alpha$ leaves the absolute step $s/2$ (roughly) unchanged while making the stored value $\alpha$x larger, so its **relative** rounding error shrinks by $\approx \alpha$; the compensating $1/\alpha$ on the activation is free because it folds into the upstream LayerNorm/RMSNorm. The condition: this holds only while the scaled weight does **not** become the group's new max-absolute value. If $w\cdot\alpha$ exceeds the group max, $s$ itself grows (proportionally to $\alpha$ in the extreme), and the relative-error gain evaporates. That is exactly why AWQ does not blindly scale up salient channels — it grid-searches a per-channel scale $\mathbf{s}_c=(\text{mean}_t|x|_{:,c})^\beta/(\text{mean}_j|W_{j,c}|)^{1-\beta}$ that balances protecting salient channels against inflating the group scale.
 
 **5.** *(Implementation.)* Implement SmoothQuant's per-channel migration and empirically verify its two defining properties on a synthetic layer with an injected activation outlier: (i) the transform is *mathematically exact* — $\hat{X}\hat{W}^\top = XW^\top$ — and (ii) it *reduces* the activation's max-absolute value. Use $\alpha = 0.5$.
 

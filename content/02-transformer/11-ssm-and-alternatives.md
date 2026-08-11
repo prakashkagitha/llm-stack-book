@@ -1,6 +1,6 @@
 # 2.11 Beyond Attention: SSMs, Mamba, RWKV & Linear Attention
 
-The transformer has dominated language modeling since Vaswani et al. introduced it in 2017. Yet it carries a fundamental cost: the standard attention mechanism scales quadratically in both compute and memory with sequence length. For a 128 K-token context, a naive attention over a single head requires computing an $N \times N$ score matrix with $N = 131072$ — about 128 billion floating-point multiplications before the value aggregation step. At that scale, alternatives to attention stop being academic curiosities and start being engineering necessities.
+The transformer has dominated language modeling since Vaswani et al. introduced it in 2017. Yet it carries a fundamental cost: the standard attention mechanism scales quadratically in both compute and memory with sequence length. For a 128 K-token context, a naive attention over a single head requires computing an $N \times N$ score matrix with $N = 131072$ — about 17 billion score entries, or roughly 2.2 trillion floating-point multiplications at a head dimension of $d_k = 128$, before the value aggregation step even begins. At that scale, alternatives to attention stop being academic curiosities and start being engineering necessities.
 
 This chapter is about those alternatives. We will study what makes attention expensive, then tour the major architectural families that attempt to fix the scaling problem: sparse and sliding-window attention, linear attention, structured state space models (SSMs) like S4 and Mamba, recurrent language models like RWKV, and the Retention mechanism behind RetNet. We end by looking at hybrid architectures that mix attention and these alternatives — a pragmatic approach that is finding real adoption in production LLMs.
 
@@ -208,14 +208,19 @@ def linear_attention_parallel(
     Q: torch.Tensor,  # (B, N, H, d_k)
     K: torch.Tensor,  # (B, N, H, d_k)
     V: torch.Tensor,  # (B, N, H, d_v)
-    causal: bool = True,
+    causal: bool = False,
 ) -> torch.Tensor:
     """
-    Parallel (training) form of linear attention.
+    Parallel (training) form of linear attention -- NON-CAUSAL only.
     For causal (autoregressive) models we cannot simply do K^T V first —
-    we need the cumulative version. Here we show the non-causal form for clarity.
-    The causal form requires a cumulative outer-product scan.
+    we need the cumulative version, which is what linear_attention_chunked /
+    linear_attention_recurrent_step below implement. Hence `causal` defaults to
+    False and this function refuses to silently return an acausal result.
     """
+    if causal:
+        raise NotImplementedError(
+            "use linear_attention_chunked (or the recurrent form) for causal masking"
+        )
     B, N, H, d_k = Q.shape
     d_v = V.shape[-1]
 
@@ -437,11 +442,11 @@ Mamba Block (per layer):
 
 Input x: (B, L, D)
          |
-    Linear proj → z: (B, L, D)   [skip branch, gated by SiLU]
+    One in-projection to (B, L, 2*expand*D), split in half:
+      → u: (B, L, expand*D)   [SSM branch]
+      → z: (B, L, expand*D)   [gate branch, SiLU]
          |
-    Linear proj → u: (B, L, expand*D)   [SSM branch]
-         |
-    Depthwise conv (width 4)
+    Depthwise conv (width 4)   [on u]
          |
     SiLU activation
          |
@@ -649,7 +654,7 @@ $$
 (a_l, b_l) \bullet (a_e, b_e) = (a_l a_e,\ a_l b_e + b_l).
 $$
 
-Because the operator is associative, a work-efficient parallel prefix scan computes *all* prefix states $h_0, \ldots, h_{L-1}$ in $O(\log L)$ sequential steps instead of $O(L)$ — this is exactly what `torch.associative_scan` and Mamba's CUDA `selective_scan` do under the hood.
+Because the operator is associative, a parallel prefix scan computes *all* prefix states $h_0, \ldots, h_{L-1}$ in $O(\log L)$ sequential steps instead of $O(L)$ — this is exactly what PyTorch's `torch._higher_order_ops.associative_scan` (still a private/experimental higher-order op) and Mamba's CUDA `selective_scan` do under the hood. The version below is the simplest such scan, Hillis–Steele, which reaches $O(\log L)$ depth at $O(L \log L)$ total work; production kernels use the *work-efficient* Blelloch two-sweep variant, which keeps the depth but does only $O(L)$ work.
 
 ```python
 import torch
@@ -694,7 +699,7 @@ if __name__ == "__main__":
 
 To drive the selective SSM with it, set `a = dA` and `b = dB * x[..., None]` (both shaped `(L, B, D, N)`), call `associative_scan` over the time axis to get every `h_t` at once, then read out `y_t = (h_t * C_t).sum(-1)`.
 
-**Route 2: the chunkwise (intra-chunk parallel + inter-chunk recurrent) algorithm.** This is what Mamba-2 (SSD) and GLA actually ship, because it maps onto tensor-core matmuls rather than a scalar scan. Split the sequence into chunks of length $C$. *Within* a chunk, materialize the $C \times C$ decay-weighted score matrix and multiply by the chunk's values — a dense masked matmul, identical in shape to `linear_attention_chunked` above but with the data-dependent decay mask $L_{ij} = \prod_{k=j+1}^{i} a_k$ in place of the plain causal mask. *Between* chunks, carry the low-rank state $S \in \mathbb{R}^{d \times N}$ and pass it forward. Intra-chunk work is $O((N/C) \cdot C^2 \cdot d) = O(N C d)$ of tensor-core matmul; inter-chunk work is $O((N/C) \cdot d N)$ of state passing. See `state-spaces/mamba` (`mamba_chunk_scan_combined`) and `fla-org/flash-linear-attention` (`chunk_gla`, `chunk_simple_gla`) for the fused Triton/CUDA implementations.
+**Route 2: the chunkwise (intra-chunk parallel + inter-chunk recurrent) algorithm.** This is what Mamba-2 (SSD) and GLA actually ship, because it maps onto tensor-core matmuls rather than a scalar scan. Split the sequence into chunks of length $C$. *Within* a chunk, materialize the $C \times C$ decay-weighted score matrix and multiply by the chunk's values — a dense masked matmul, identical in shape to `linear_attention_chunked` above but with the data-dependent decay mask $L_{ij} = \prod_{k=j+1}^{i} a_k$ in place of the plain causal mask. *Between* chunks, carry the low-rank state $S \in \mathbb{R}^{d \times N_s}$ ($N_s$ = state dimension) and pass it forward. Intra-chunk work is $O((N/C) \cdot C^2 \cdot d) = O(N C d)$ of tensor-core matmul; inter-chunk work is $O((N/C) \cdot d\, N_s)$ of state passing — both linear in the sequence length $N$. See `state-spaces/mamba` (`mamba_chunk_scan_combined`) and `fla-org/flash-linear-attention` (`chunk_gla`, `chunk_simple_gla`) for the fused Triton/CUDA implementations.
 
 ### Mamba-2 and the State Space Duality
 
@@ -727,7 +732,7 @@ Here $w \in \mathbb{R}^d$ is a *learned decay* vector (one per channel), $u \in 
 The recurrent form has a scalar state per channel and can be written as:
 
 $$
-a_t = e^{w} a_{t-1} + e^{k_t} v_t, \quad b_t = e^{w} b_{t-1} + e^{k_t}
+a_t = e^{-w} a_{t-1} + e^{k_t} v_t, \quad b_t = e^{-w} b_{t-1} + e^{k_t}
 $$
 
 $$
@@ -803,7 +808,10 @@ class RWKVTimeMixing(nn.Module):
 
         # WKV computation (simplified sequential loop over T)
         # In practice this is a custom CUDA kernel for speed
-        w = -torch.exp(self.w)   # (C,), negative → exponential decay
+        # Note the sign convention: the math above writes the per-step decay as
+        # e^{-w} with w > 0; here `w` holds the *log* of that factor, i.e. -w < 0,
+        # so the state update multiplies by exp(w) = e^{-w_math} < 1.
+        w = -torch.exp(self.w)   # (C,), negative log-decay → exponential decay
         u = self.u               # (C,)
 
         # Running accumulators
@@ -840,7 +848,7 @@ class RWKVTimeMixing(nn.Module):
 
 ## RetNet and the Retention Mechanism
 
-RetNet (Sun et al., 2023) proposes **Retention** — a recurrence-free, attention-free sequence model that explicitly targets the "training parallelism vs. inference efficiency" tradeoff with what the authors call the "impossible triangle" — the claim that retention achieves all three: training parallelism, $O(1)$ inference, and good performance.
+RetNet (Sun et al., 2023) proposes **Retention** — a softmax-free sequence model with three equivalent computation forms (parallel, recurrent, and chunkwise) that explicitly targets the "training parallelism vs. inference efficiency" tradeoff with what the authors call the "impossible triangle" — the claim that retention achieves all three: training parallelism, $O(1)$ inference, and good performance.
 
 The retention score between query $q_i$ and key $k_j$ is:
 
@@ -901,7 +909,7 @@ The natural solution is to combine attention and SSM layers in the same model.
 
 ### Jamba (AI21 Labs, 2024)
 
-Jamba interleaves Mamba SSM blocks and transformer (attention + MLP) blocks, with a ratio heavily weighted toward Mamba (roughly 1 attention layer per 8 Mamba layers). It also incorporates MoE (Mixture-of-Experts; see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html)) in the MLP blocks to increase model capacity without proportionally increasing compute.
+Jamba interleaves Mamba SSM blocks and transformer (attention + MLP) blocks, with a ratio heavily weighted toward Mamba (1 attention layer per 7 Mamba layers — one attention layer in every 8-layer block). It also incorporates MoE (Mixture-of-Experts; see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html)) in the MLP blocks to increase model capacity without proportionally increasing compute.
 
 The key design insight: a small number of attention layers provides the exact-retrieval capability that SSMs lack, while the majority of layers being Mamba keeps memory and compute efficient. Jamba demonstrated that this hybrid could match or exceed pure transformer models on standard benchmarks while using far less KV-cache memory at long contexts.
 
@@ -999,8 +1007,15 @@ class HybridLanguageModel(nn.Module):
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         """tokens: (B, L) -> logits (B, L, vocab_size)"""
         x = self.embed(tokens)  # (B, L, d_model)
+        L = tokens.shape[1]
+        # The Mamba layers are causal by construction, but nn.MultiheadAttention is
+        # NOT -- without this mask the attention layers would attend to future tokens
+        # and the LM would trivially cheat at next-token prediction.
+        causal_mask = torch.triu(
+            torch.full((L, L), float("-inf"), device=x.device), diagonal=1
+        )
         for layer in self.layers:
-            x = layer(x)
+            x = layer(x, attn_mask=causal_mask)
         x = self.norm_out(x)
         return self.lm_head(x)
 
@@ -1055,7 +1070,8 @@ if __name__ == "__main__":
     B, L, D = 2, 64, 256
     if Mamba2 is not None and torch.cuda.is_available():
         x = torch.randn(B, L, D, device="cuda", dtype=torch.bfloat16)
-        # d_state=64 and headdim=64 are Mamba-2's defaults; d_inner = expand*D = 512.
+        # headdim=64, expand=2, d_conv=4 are Mamba-2's defaults; d_state defaults to
+        # 128 (we pass 64 to keep the example small). d_inner = expand*D = 512.
         block = Mamba2(d_model=D, d_state=64, d_conv=4, expand=2, headdim=64).cuda().to(torch.bfloat16)
         y = block(x)                       # (B, L, D) -> (B, L, D), fused chunkwise SSD
         assert y.shape == x.shape
@@ -1142,12 +1158,12 @@ $$
 o_t = q_t S_t
 $$
 
-where $G_t \in (0,1)^{d_k \times d_v}$ is a data-dependent gate (or decay) matrix. Different choices of $G_t$ recover different architectures:
+where $G_t \in (0,1)^{d_k \times d_v}$ is a data-dependent gate (or decay) matrix. Because the update is elementwise, $G_t$ is a *broadcast* of a per-key-channel decay vector $\alpha_t \in (0,1)^{d_k}$ across the $d_v$ value columns — $G_t = \alpha_t \mathbf{1}^\top$ — not a diagonal matrix (a diagonal $G_t$ would zero the off-diagonal entries of $S$ at every step). Different choices of $\alpha_t$ recover different architectures:
 
-- $G_t = \text{diag}(\gamma)$ (constant) → RetNet
-- $G_t = \text{diag}(\exp(-\exp(w)))$ (input-dependent scalar per channel) → RWKV-style
-- $G_t = \text{diag}(\exp(\Delta_t A))$ (Mamba-style discretization) → Mamba / selective SSM
-- $G_t = I$ (no decay) → linear attention
+- $\alpha_t = \gamma\mathbf{1}$, a constant scalar decay per head → RetNet
+- $\alpha_t = \exp(-\exp(w))$, a *static* learned per-channel decay → RWKV-4/5-style (RWKV-6+ makes $w$ input-dependent)
+- $\alpha_t = \exp(\Delta_t A)$ (Mamba-style discretization, input-dependent through $\Delta_t$) → Mamba / selective SSM
+- $\alpha_t = \mathbf{1}$, i.e. $G_t = \mathbf{1}\mathbf{1}^\top$ (no decay) → linear attention
 
 {{fig:gated-linear-recurrence-convergence}}
 

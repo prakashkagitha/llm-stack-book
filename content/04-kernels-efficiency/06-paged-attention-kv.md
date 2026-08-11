@@ -35,7 +35,7 @@ $$
 
 The leading $2$ is "K and V." Note what is *not* here: the batch dimension (that just multiplies through) and the number of *query* heads (the cache scales with KV heads only — this is the entire point of GQA/MQA for serving). **MLA** (multi-head latent attention, as in DeepSeek-V2/V3) attacks the same formula from a different angle: it caches one low-rank *latent* vector per token per layer and reconstructs K and V on the fly, replacing $2 H_{kv} d_h$ with a single latent width — see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html). Everything in this chapter is agnostic to which of these you chose; paging manages whatever per-token bytes the architecture produces.
 
-Define the **per-token KV footprint** $\beta = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot b$ bytes/token. Then the cache for a sequence of length $s$ is simply $\beta s$, and for a batch of $B$ sequences it is $\beta \sum_{i} s_i$. This linear-in-tokens structure is what makes paging natural: tokens are the unit of allocation.
+Define the **per-token KV footprint** $\beta = 2 \cdot L \cdot H_{kv} \cdot d_h \cdot b$ bytes/token. Then the cache for a sequence of length $s$ is simply $\beta s$, and for a batch of $N$ sequences it is $\beta \sum_{i} s_i$. This linear-in-tokens structure is what makes paging natural: tokens are the unit of allocation.
 
 !!! example "Worked example: KV cache for Llama-2-13B and a 70B GQA model"
 
@@ -45,7 +45,7 @@ Define the **per-token KV footprint** $\beta = 2 \cdot L \cdot H_{kv} \cdot d_h 
     \beta = 2 \cdot 40 \cdot 40 \cdot 128 \cdot 2 = 819{,}200 \text{ bytes/token} \approx 0.78\ \text{MiB/token}.
     $$
 
-    A single 2048-token sequence costs $0.78 \times 2048 \approx 1.6$ GiB. On an 80 GiB A100 holding the ~26 GiB of fp16 weights, you have ~54 GiB for cache — about **34** such sequences. The model has tens of thousands of FLOPs of headroom per step, but you run out of *memory* at a few dozen sequences. That ceiling is the throughput ceiling.
+    A single 2048-token sequence costs $0.78 \times 2048 \approx 1.6$ GiB. On an 80 GiB A100 holding the ~26 GiB of fp16 weights, you have ~54 GiB for cache — about **34** such sequences. A decode step at that batch size is bandwidth-bound — sweeping ~80 GiB of weights plus cache at ~2 TB/s takes tens of milliseconds, during which the GPU could have executed *teraFLOPs* of arithmetic it has no work for — so you run out of *memory* at a few dozen sequences long before you run out of FLOPs. That ceiling is the throughput ceiling.
 
     **Llama-2-70B with GQA** ($H_{kv}=8$): $L=80$, $d_h=128$, fp16.
 
@@ -189,7 +189,7 @@ class BlockManager:
 Three properties fall out immediately:
 
 1. **No external fragmentation.** Every physical block is identical in size, so any free block satisfies any request. The free list never gets "stuck."
-2. **Bounded internal fragmentation.** A sequence wastes at most $B-1$ token-slots in its final, partially filled block. With $B=16$ and sequences of hundreds of tokens, that is well under a few percent — versus the 60–80% of contiguous allocation.
+2. **Bounded internal fragmentation.** A sequence wastes at most $B-1$ token-slots in its final, partially filled block. With $B=16$ that is at most 15 slots: a few percent for sequences of several hundred tokens (Exercise 3 works out 10.7% for a 100-token sequence), shrinking toward zero as sequences lengthen — versus the 60–80% of contiguous allocation.
 3. **On-demand growth.** Blocks are allocated only as the sequence actually reaches them. A request that stops after 30 tokens used 2 blocks, not 128.
 
 ### Choosing the block size $B$
@@ -279,9 +279,13 @@ def paged_attention_decode(query,            # [num_heads, head_dim]  (one new t
     num_heads, head_dim = query.shape
     scale = 1.0 / math.sqrt(head_dim)
 
-    out  = torch.zeros_like(query)                          # [H, d]
-    m    = torch.full((num_heads,), float("-inf"))          # running max of logits
-    l    = torch.zeros(num_heads)                           # running softmax denominator
+    # Accumulators live on the query's device (the KV pool is on the GPU) and in
+    # fp32 — a real kernel likewise keeps m, l and the output accumulator in
+    # fp32 registers even when the cache is fp16/bf16/fp8.
+    dev  = query.device
+    out  = torch.zeros_like(query, dtype=torch.float32)     # [H, d]
+    m    = torch.full((num_heads,), float("-inf"), device=dev)  # running max of logits
+    l    = torch.zeros(num_heads, device=dev)               # running softmax denominator
 
     num_logical_blocks = (context_len + block_size - 1) // block_size
     for lb in range(num_logical_blocks):
@@ -307,10 +311,10 @@ def paged_attention_decode(query,            # [num_heads, head_dim]  (one new t
                 out[h] = out[h] * alpha + p * v
                 m[h]  = m_new
 
-    return out / l.unsqueeze(-1)                            # normalize by denominator
+    return (out / l.unsqueeze(-1)).to(query.dtype)          # normalize, cast back
 ```
 
-The inner triple loop is purely illustrative; a production kernel assigns one thread block (CUDA cooperative thread array) per (sequence, KV-head), loads each physical KV block into shared memory / registers, does the dot products with vectorized loads, and reduces with warp shuffles. But the *only* algorithmic novelty over FlashAttention is the line `phys = block_table[lb]`: a gather through the page table before each block load.
+The inner triple loop is purely illustrative; a production kernel assigns one thread block (CUDA cooperative thread array) per (sequence, query head) — vLLM's `paged_attention_v1/v2` launch a `(num_heads, num_seqs, ...)` grid and derive the KV head inside the kernel as `head_idx / num_queries_per_kv`, exactly the `h // num_queries_per_kv` mapping above — loads each physical KV block into shared memory / registers, does the dot products with vectorized loads, and reduces with warp shuffles. But the *only* algorithmic novelty over FlashAttention is the line `phys = block_table[lb]`: a gather through the page table before each block load.
 
 ### From Python bookkeeping to the tensors the kernel actually takes
 
@@ -322,12 +326,14 @@ import torch
 def build_step_tensors(seq_ids, block_mgr, cur_lens, device="cpu"):
     """Turn host-side block tables into the int32 tensors a paged kernel consumes.
 
-    block_tables: [B, max_blocks] — right-padded with 0. Padding is never read
-                  because context_lens bounds each sequence's block loop.
-    slot_mapping: [B] — the flat pool slot (phys_block * block_size + offset)
+    block_tables: [batch, max_blocks] — right-padded with 0. Padding is never
+                  read because context_lens bounds each sequence's block loop.
+    slot_mapping: [batch] — the flat pool slot (phys_block * block_size + offset)
                   where THIS step's new K,V is written; one entry per token,
                   so during prefill it has one entry per prompt token instead.
-    context_lens: [B] — valid cached tokens per sequence AFTER this step's write.
+    context_lens: [batch] — valid cached tokens per sequence AFTER this step's
+                  write. (Here `batch` is the number of sequences; `B` is
+                  reserved for the block size throughout this chapter.)
     """
     tables = [block_mgr.block_tables[s] for s in seq_ids]
     max_blocks = max(len(t) for t in tables)
@@ -512,7 +518,7 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
     - Naive **contiguous, max-length** allocation wastes 60–80% of KV memory through internal fragmentation (worst-case reservation), external fragmentation (holes between allocations), and the inability to share identical prefixes.
     - **PagedAttention** applies OS virtual-memory paging: split the KV cache into fixed-size **blocks** ($B \approx 16$ tokens), store them anywhere in a pool, and map logical → physical via a per-sequence **block table**. This eliminates external fragmentation and bounds internal fragmentation to under one block.
     - **Copy-on-write** block sharing lets requests share identical prompt prefixes (system prompts, few-shot, beams, parallel samples), copying only the one block where they diverge — large memory and prefill-compute savings.
-    - The **paged kernel** is FlashAttention-style online softmax plus one indirection: read the physical block id from the block table, gather that block's K/V, accumulate. The tax is a small per-block gather; the payoff is far larger batches. In a real engine that indirection arrives as two int32 tensors per step — `block_tables` `[B, max_blocks]` for the gather and `slot_mapping` for the write — pre-allocated at fixed shape so the decode step can be CUDA-graph captured.
+    - The **paged kernel** is FlashAttention-style online softmax plus one indirection: read the physical block id from the block table, gather that block's K/V, accumulate. The tax is a small per-block gather; the payoff is far larger batches. In a real engine that indirection arrives as two int32 tensors per step — `block_tables` `[batch, max_blocks]` for the gather and `slot_mapping` for the write — pre-allocated at fixed shape so the decode step can be CUDA-graph captured.
     - In practice you *configure* this rather than implement it: **vLLM** exposes `--block-size`, `--gpu-memory-utilization`, `--kv-cache-dtype`, and `--swap-space`, sizes the block pool from a startup profiling pass, and logs the resulting KV capacity — divide it by your typical sequence length to get your true concurrency ceiling. **FlashInfer** supplies the paged kernels to vLLM and SGLang; HuggingFace `StaticCache` is the contiguous, max-length allocator paging replaces.
     - Paging is the substrate for **continuous batching** and **prefix caching**, delivering roughly $2\text{--}4\times$ throughput in the memory-bound decode regime. When the pool is exhausted, the engine **preempts** sequences (recompute or swap), the paged analogue of OS swapping.
 
@@ -528,7 +534,7 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
 
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — introduces RadixAttention, a radix-tree KV-cache index that generalises COW prefix sharing to arbitrary program structures, achieving up to 6.4× higher throughput than prior state-of-the-art inference systems.
     - [Prabhu et al., *vAttention: Dynamic Memory Management for Serving LLMs without PagedAttention* (2024)](https://arxiv.org/abs/2405.04437) — leverages OS demand-paging to keep KV cache virtually contiguous, avoiding custom paged kernels while matching or beating PagedAttention throughput; accepted ASPLOS 2025.
-    - [Hooper et al., *KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization* (2024)](https://arxiv.org/abs/2401.18079) — per-channel + non-uniform 4-bit/3-bit KV quantization enabling 10M-token contexts on a single A100; NeurIPS 2024.
+    - [Hooper et al., *KVQuant: Towards 10 Million Context Length LLM Inference with KV Cache Quantization* (2024)](https://arxiv.org/abs/2401.18079) — per-channel + non-uniform 4-bit/3-bit KV quantization enabling 1M-token contexts on a single A100-80GB and 10M on an 8-GPU system; NeurIPS 2024.
     - [Ye et al., *FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving* (2025)](https://arxiv.org/abs/2501.01005) — composable attention kernels (paged, ragged, sparse) adopted by vLLM, SGLang, and TRT-LLM; MLSys 2025.
 
     **Open-source & tools**

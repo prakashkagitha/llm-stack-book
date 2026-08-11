@@ -167,7 +167,7 @@ Warp shuffles are significantly faster than shared memory reductions because the
 
 ## Tiled Matrix Multiplication: A Complete Kernel
 
-Matrix multiplication is the dominant operation in every LLM layer — it is the attention projection, the FFN weight multiply, the embedding lookup. A naive CUDA matmul reads each element of A and B $N$ times from global memory; a tiled matmul cuts that to $N/T$ reads (where $T$ is the tile size) by reusing data from shared memory. This is the single most important kernel to understand.
+Matrix multiplication is the dominant operation in every LLM layer — it is the attention projection, the FFN weight multiply, the embedding lookup. A naive CUDA matmul reads each element of A $N$ times and each element of B $M$ times from global memory; a tiled matmul cuts those to $N/T$ and $M/T$ reads (where $T$ is the tile size) by reusing data from shared memory. This is the single most important kernel to understand.
 
 ### Naive Matmul (Baseline)
 
@@ -390,6 +390,7 @@ For production use, you compile a CUDA kernel and expose it to Python via a PyTo
 ```cpp
 // matmul_ext.cu — save as a .cu file
 #include <torch/extension.h>  // PyTorch C++ frontend
+#include <c10/cuda/CUDAStream.h>  // getCurrentCUDAStream()
 #include <cuda_runtime.h>
 
 #define BLOCK_SIZE 32
@@ -401,6 +402,11 @@ torch::Tensor matmul_cuda(torch::Tensor A, torch::Tensor B) {
     TORCH_CHECK(B.device().is_cuda(), "B must be a CUDA tensor");
     TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "Inputs must be 2D");
     TORCH_CHECK(A.size(1) == B.size(0), "Inner dimensions must match");
+    // The kernel indexes A/B/C as dense row-major FP32 — enforce that, or a
+    // transposed/strided input silently produces wrong numbers.
+    TORCH_CHECK(A.is_contiguous() && B.is_contiguous(), "Inputs must be contiguous");
+    TORCH_CHECK(A.scalar_type() == torch::kFloat && B.scalar_type() == torch::kFloat,
+                "Inputs must be float32");
 
     int M = A.size(0), K = A.size(1), N = B.size(1);
     auto C = torch::zeros({M, N}, A.options());  // Allocate output on GPU
@@ -409,7 +415,12 @@ torch::Tensor matmul_cuda(torch::Tensor A, torch::Tensor B) {
     dim3 grid((N + BLOCK_SIZE - 1) / BLOCK_SIZE,
               (M + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
-    matmul_tiled<<<grid, block>>>(
+    // Launch on PyTorch's *current* stream, not the legacy default stream.
+    // The output C was allocated on the current stream, and PyTorch's side
+    // streams are created cudaStreamNonBlocking (no implicit sync with the
+    // default stream) — so a bare <<<grid, block>>> would race under
+    // torch.cuda.stream(...) and fail outright under CUDA-graph capture.
+    matmul_tiled<<<grid, block, 0, c10::cuda::getCurrentCUDAStream()>>>(
         A.data_ptr<float>(),
         B.data_ptr<float>(),
         C.data_ptr<float>(),
@@ -529,7 +540,7 @@ Without a registered fake (meta) implementation, `torch.compile` cannot infer th
 
 - You are writing a fused activation, layer norm, softmax, or custom attention variant — the productivity gain is enormous.
 - You want portability across GPU vendors.
-- The 5–10% performance gap compared to expert CUDA is acceptable (it usually is).
+- The 5–20% performance gap compared to expert CUDA is acceptable (it usually is).
 - You are prototyping quickly and may iterate on the algorithm; Triton's Python syntax shortens the iteration loop dramatically.
 
 **When to use neither (torch.compile + PyTorch):**
@@ -663,7 +674,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
 
     - The GPU execution model is a three-level hierarchy: grid → blocks → threads. Warps (32 threads) execute in lockstep; the SM hides memory latency by switching between warps.
     - **Memory coalescing** is the single most impactful access pattern optimization: threads in a warp should read/write consecutive addresses to minimize HBM transactions.
-    - **Shared memory** is programmer-managed L1 cache (~19 TB/s). Use it to reuse data loaded from HBM — the tiled matmul reduces global reads by a factor of $T$ (tile size), converting a bandwidth-bound kernel into a compute-bound one.
+    - **Shared memory** is programmer-managed L1 cache (~19 TB/s). Use it to reuse data loaded from HBM — the tiled matmul reduces global reads by a factor of $T$ (tile size), taking the kernel from hopelessly bandwidth-bound to within reach of the compute roof (a 32×32 FP32 tile alone still falls just short; see below).
     - **Bank conflicts** occur when multiple threads in a warp access different addresses in the same shared-memory bank. Fix them by padding shared arrays by one element per row.
     - **Warp shuffle intrinsics** (`__shfl_sync`, `__shfl_down_sync`) enable intra-warp reductions and broadcasts faster than shared memory, without `__syncthreads()` overhead.
     - A $T \times T$ shared-memory tile cuts HBM traffic by exactly $T$ and yields $T/4$ FLOP/byte in FP32 — so a 32×32 tile reaches only ~8 FLOP/byte, still short of the A100's ~10 FLOP/byte FP32 crossover. Register blocking (an $8\times8$ accumulator per thread → a $128\times128$ effective tile) and Tensor Cores are what finally make a GEMM compute-bound.
@@ -777,7 +788,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
 
     Final lane-0 value: **28**, which equals $0+1+2+\cdots+7 = 28$. Correct.
 
-    **(b) Why only lane 0, and why 5 steps.** `__shfl_down_sync` only moves data *downward* (from higher lane to lower lane). At each step lane 0 accumulates the sum of a doubling window of lanes above it ($1, 2, 4, \ldots$), so after the last step lane 0 holds the total. Other lanes hold partial sums of *their* upward windows, and lanes near the top read past the warp boundary (undefined/stale data), so their results are not the full sum — only lane 0 is guaranteed correct. A tree reduction halves the number of unreduced partial sums each step, so summing 32 values needs $\log_2 32 = 5$ halvings, hence `delta = 16, 8, 4, 2, 1`.
+    **(b) Why only lane 0, and why 5 steps.** `__shfl_down_sync` only moves data *downward* (from higher lane to lower lane). At each step lane 0 accumulates the sum of a doubling window of lanes above it ($1, 2, 4, \ldots$), so after the last step lane 0 holds the total. Other lanes hold partial sums of *their* upward windows, and lanes near the top read past the warp boundary — the intrinsic simply returns the calling lane's own value unchanged when $\text{lane} + \delta \ge 32$, so those partial sums are well-defined but are not the total. Only lane 0 is guaranteed correct. A tree reduction halves the number of unreduced partial sums each step, so summing 32 values needs $\log_2 32 = 5$ halvings, hence `delta = 16, 8, 4, 2, 1`.
 
 **5.** Reproduce the chapter's memory-traffic worked example for a *non-square* projection: an FFN up-projection with $M = 8192$ (tokens), $K = 4096$ (hidden), $N = 16384$ ($4\times$ expansion). Compute (a) total FLOPs, (b) global-memory read traffic in bytes for the tiled kernel (each element of $A$ and $B$ read once, FP32), and (c) the arithmetic intensity. Using the A100 roofline crossover of ~156 FLOP/byte given in the chapter, is this kernel compute-bound?
 

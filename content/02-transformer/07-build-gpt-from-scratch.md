@@ -65,7 +65,7 @@ We now write the model as four nested modules: `LayerNorm` (so we can toggle bia
 
 ### LayerNorm with an optional bias
 
-PyTorch's `nn.LayerNorm` always has a bias. We want the option to drop it, so we write our own thin wrapper. The math is the standard per-token normalization:
+nanoGPT predates PyTorch 2.1, which is when `nn.LayerNorm` gained a `bias=` flag, so it ships a thin wrapper that makes the bias optional. We keep the hand-written version because writing the normalization out is instructive and keeps us at nanoGPT parity — on modern PyTorch you could equally write `nn.LayerNorm(ndim, bias=False)` (or `nn.RMSNorm`, used later in this chapter). The math is the standard per-token normalization:
 
 $$
 \operatorname{LN}(x) = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \odot \gamma + \beta,
@@ -80,7 +80,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class LayerNorm(nn.Module):
-    """LayerNorm with an optional bias. PyTorch's built-in does not allow bias=None."""
+    """LayerNorm with an optional bias (nanoGPT's wrapper, written out for clarity;
+    PyTorch >= 2.1 also offers nn.LayerNorm(ndim, bias=False) directly)."""
     def __init__(self, ndim, bias):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(ndim))               # gamma, scale
@@ -635,15 +636,15 @@ print(decode(out_ids[0].tolist()))
 !!! example "Worked example: temperature on a 4-token distribution"
     Suppose the model emits logits $z = [3.0,\ 1.0,\ 0.5,\ -1.0]$ for four candidate next characters.
 
-    At $\tau = 1.0$: softmax gives $\approx [0.78,\ 0.105,\ 0.064,\ 0.014]$. The top token is likely but not certain.
+    At $\tau = 1.0$: softmax gives $\approx [0.809,\ 0.110,\ 0.066,\ 0.015]$. The top token is likely but not certain.
 
-    At $\tau = 0.5$ (sharper): logits become $[6,\ 2,\ 1,\ -2]$; softmax $\approx [0.97,\ 0.018,\ 0.0066,\ 0.00033]$. Now the top token is nearly certain — text becomes repetitive and "safe."
+    At $\tau = 0.5$ (sharper): logits become $[6,\ 2,\ 1,\ -2]$; softmax $\approx [0.975,\ 0.018,\ 0.0066,\ 0.00033]$. Now the top token is nearly certain — text becomes repetitive and "safe."
 
-    At $\tau = 2.0$ (flatter): logits become $[1.5,\ 0.5,\ 0.25,\ -0.5]$; softmax $\approx [0.46,\ 0.17,\ 0.13,\ 0.062]$ (plus mass elsewhere) — the rare fourth token now has a real chance, so text gets more surprising and more error-prone. Same model, three very different writers, controlled by one scalar in the denominator.
+    At $\tau = 2.0$ (flatter): logits become $[1.5,\ 0.5,\ 0.25,\ -0.5]$; softmax $\approx [0.559,\ 0.206,\ 0.160,\ 0.076]$ — the rare fourth token now has a real chance, so text gets more surprising and more error-prone. Same model, three very different writers, controlled by one scalar in the denominator.
 
 ### The KV-cache connection
 
-Our `generate` recomputes attention over the *entire* growing prefix at every step — $\mathcal{O}(T^2)$ work to produce $T$ tokens. Real serving systems never do this: because the causal mask makes each token's keys and values independent of future tokens, you compute each position's K and V *once* and cache them, so each new token costs only $\mathcal{O}(T)$. That **KV cache** is the single most important inference optimization, and it is the subject of [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html). For learning and small-scale generation, the simple recompute-everything loop above is correct and clear; just know that production swaps it out.
+Our `generate` recomputes the *entire* growing prefix at every step: producing $T$ tokens costs $\mathcal{O}(T^2)$ token-forwards, and since step $t$ also recomputes a $t \times t$ attention matrix, $\mathcal{O}(T^3)$ attention work. Real serving systems never do this: because the causal mask makes each token's keys and values independent of future tokens, you compute each position's K and V *once* and cache them. Each new token is then a *single*-token forward that attends against the cache — $\mathcal{O}(T)$ token-forwards and $\mathcal{O}(T^2)$ attention work in total, one factor of $T$ cheaper on both counts. That **KV cache** is the single most important inference optimization, and it is the subject of [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html). For learning and small-scale generation, the simple recompute-everything loop above is correct and clear; just know that production swaps it out.
 
 !!! interview "Interview Corner"
     **Q:** You implemented a GPT and it trains, but generation produces repetitive, degenerate loops ("the the the the..."). The training loss is reasonable. What is going on, and how do you diagnose and fix it?
@@ -1031,7 +1032,7 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
 
     which is exactly the famous "GPT-2 small = 124M parameters."
 
-    **(d) Embedding fraction.** $38{,}597{,}376 / 124{,}318{,}464 \approx 0.31$, i.e. **~31%** of the model is the token embedding. This is a world apart from the tiny-vocab default, where a 65-token embedding was $\approx 1\%$ of the model. The chapter's point stands: the tied embedding is a rounding error only when the vocabulary is small; with a realistic 50k BPE vocabulary it becomes a major fraction of a small model, which is exactly why weight tying (saving one such matrix) matters so much at this scale.
+    **(d) Embedding fraction.** $38{,}597{,}376 / 124{,}318{,}464 \approx 0.31$, i.e. **~31%** of the model is the token embedding. This is a world apart from the tiny-vocab default, where the 65-token embedding was $24{,}960 / 10{,}740{,}096 \approx 0.23\%$ of the model (and token *plus* position tables together were only the $\approx 1\%$ the chapter's worked example rounded to). The chapter's point stands: the tied embedding is a rounding error only when the vocabulary is small; with a realistic 50k BPE vocabulary it becomes a major fraction of a small model, which is exactly why weight tying (saving one such matrix) matters so much at this scale.
 
 **3.** The constructor scales every `c_proj.weight` (the sublayer output projections) by $1/\sqrt{2\, n_\text{layer}}$ relative to the base init std of $0.02$. (a) Derive why the residual stream's variance would otherwise grow roughly linearly in depth, and why $1/\sqrt{2\, n_\text{layer}}$ is the right correction. (b) Where does the factor of $2$ come from? (c) For the default model ($n_\text{layer}=6$), what numerical std does each `c_proj.weight` get initialized to?
 
@@ -1132,7 +1133,7 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
         return n_params
     ```
 
-    For the default config this returns $10{,}740{,}096 - 98{,}304 = 10{,}641{,}792 \approx 10.64\text{M}$ non-embedding parameters, matching the body-dominated count from the chapter's worked example. (Only `wpe` is subtracted: `wte` is tied to the output head, so it participates in producing logits and is conventionally counted as "real" model capacity.)
+    For the default config `sum(p.numel() ...)` returns $10{,}745{,}088$ — the $10{,}740{,}096$ of the chapter's hand count *plus* the $6 \times 2 \times 384 + 384 = 4{,}992$ LayerNorm gains that the hand count deliberately dropped as "tiny." So the method returns $10{,}745{,}088 - 98{,}304 = 10{,}646{,}784 \approx 10.65\text{M}$ non-embedding parameters, matching the body-dominated count from the chapter's worked example. (Only `wpe` is subtracted: `wte` is tied to the output head, so it participates in producing logits and is conventionally counted as "real" model capacity.)
 
     **(b) Checkpoint size.** Take the full count $N \approx 10.74\text{M}$ parameters. In fp32 each number is 4 bytes.
 

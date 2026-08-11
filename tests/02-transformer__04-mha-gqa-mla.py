@@ -197,7 +197,7 @@ for n_kv in (8, 2, 1):                            # MHA, GQA(g=2), MQA
     # Cache width per token (one layer, one sequence), bf16 = 2 bytes, ×2 for K&V:
     kv_bytes = 2 * n_kv * (d_model // n_heads) * 2
     print(f"n_kv={n_kv}: out {tuple(y.shape)}, KV bytes/token/layer = {kv_bytes}")
-# n_kv=8: 256 B   n_kv=2: 64 B   n_kv=1: 32 B  -> 8× and 16× smaller than MHA
+# n_kv=8: 256 B   n_kv=2: 64 B   n_kv=1: 32 B  -> 4× and 8× smaller than MHA
 assert 2 * 8 * (d_model // n_heads) * 2 == 256
 assert 2 * 2 * (d_model // n_heads) * 2 == 64
 assert 2 * 1 * (d_model // n_heads) * 2 == 32

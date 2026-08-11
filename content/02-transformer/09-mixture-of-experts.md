@@ -52,17 +52,19 @@ For $E=256$ experts and $d_\text{model}=4096$, that is about a million parameter
 
 **Softmax: before or after top-k?** Two conventions exist and they are *not* equivalent:
 
-- **Softmax-then-top-k** (GShard, Switch): compute $p = \operatorname{softmax}(h(x))$ over *all* $E$ experts, then keep the $k$ largest probabilities as the gate weights. The kept weights are a slice of a full distribution; they do **not** sum to 1.
+- **Softmax-then-top-k** (Switch, with $k=1$): compute $p = \operatorname{softmax}(h(x))$ over *all* $E$ experts, then keep the $k$ largest probabilities as the gate weights *as they are*. The kept weights are a slice of a full distribution; they do **not** sum to 1.
 - **Top-k-then-softmax** (Mixtral): select the top-$k$ logits first, then softmax *only over those $k$*. The gate weights now sum to 1, which keeps the output magnitude stable regardless of how confident the router was.
 
-Mixtral's choice — renormalizing over the chosen experts — is the more common modern default because it decouples "how much total signal flows" from "how spread the router's confidence was." With softmax-then-top-k, a router that is uncertain (flat distribution) produces small gate weights and a weak FFN contribution; renormalizing fixes that. Here is the gate, both ways, so you can see the difference is a single line:
+One clarification that trips people up: computing the full softmax and *then* renormalizing the kept entries by their sum is algebraically the *same thing* as softmax-over-the-kept-logits — the shared partition function cancels, $\frac{e^{h_1}/Z}{(e^{h_1}+e^{h_2})/Z} = \frac{e^{h_1}}{e^{h_1}+e^{h_2}}$. GShard's top-2 gating does exactly that (its algorithm ends with $g_1 \leftarrow g_1/(g_1+g_2)$, $g_2 \leftarrow g_2/(g_1+g_2)$), so GShard lands in the *renormalized* camp with Mixtral despite computing the softmax first. The real distinction is **renormalized or not**, and the classic un-renormalized case is Switch's $k=1$ gate, which multiplies the expert output by the raw router probability $p_\text{max} < 1$.
+
+Renormalizing over the chosen experts is the modern default because it decouples "how much total signal flows" from "how spread the router's confidence was." Without it, a router that is uncertain (flat distribution) produces small gate weights and a weak FFN contribution; renormalizing fixes that. Here is the gate, both ways, so you can see the difference is a single line:
 
 ```python
 import torch
 import torch.nn.functional as F
 
 def route_softmax_then_topk(logits, k):
-    # GShard/Switch style: softmax over ALL experts, then keep the top-k slice.
+    # Switch style: softmax over ALL experts, then keep the top-k slice as-is.
     # The kept weights do NOT sum to 1 (they are a slice of a full distribution).
     probs = F.softmax(logits, dim=-1)                  # (tokens, E)
     weights, idx = torch.topk(probs, k, dim=-1)        # (tokens, k)
@@ -277,7 +279,7 @@ GShard (Lepikhin et al., Google) put MoE into a 600B-parameter multilingual tran
 
 ### Switch Transformer (2021): top-1 is enough
 
-Switch (Fedus, Zoph, Shazeer, Google) made a deliberately aggressive simplification: route each token to exactly **one** expert ($k = 1$). The conventional wisdom had been that you needed top-2 so the router could *compare* two experts and get a gradient signal for the choice; Switch showed top-1 trains fine with the right tricks. The payoff is roughly halved communication and compute per token. Switch also contributed the cleaner **auxiliary loss** formulation above, careful **bf16 stability** work (selectively casting the router to fp32), and the **router z-loss**. It scaled to 1.6T parameters. If you implement MoE once from scratch, implement Switch; it is the minimal complete design.
+Switch (Fedus, Zoph, Shazeer, Google) made a deliberately aggressive simplification: route each token to exactly **one** expert ($k = 1$). The conventional wisdom had been that you needed top-2 so the router could *compare* two experts and get a gradient signal for the choice; Switch showed top-1 trains fine with the right tricks. The payoff is roughly halved communication and compute per token. Switch also contributed the cleaner **auxiliary loss** formulation above and careful **bf16 stability** work — its "selective precision" trick casts the router to fp32 while the rest of the layer stays in bf16. (The **router z-loss** came later, from ST-MoE; see below.) It scaled to 1.6T parameters. If you implement MoE once from scratch, implement Switch; it is the minimal complete design.
 
 ### Mixtral 8×7B (2023): MoE for open decoder LLMs
 
@@ -299,9 +301,9 @@ A small comparison table to anchor the lineage:
 
 | Model | Experts $E$ | Top-$k$ | Gating | Balancing | Notable idea |
 |---|---|---|---|---|---|
-| Shazeer et al. 2017 | up to 1000s | k (e.g. 4) | softmax-then-topk + noise | aux + importance loss | first sparse LSTM MoE |
-| GShard 2020 | per-layer, sharded | 2 | softmax-then-topk | aux loss, capacity drop | expert parallel all-to-all |
-| Switch 2021 | up to thousands | 1 | softmax-then-topk | aux + z-loss | top-1 simplicity, bf16 stability |
+| Shazeer et al. 2017 | up to 1000s | k (e.g. 4) | noisy logits, then topk-then-softmax (`KeepTopK` mask, then softmax) | aux + importance loss | first sparse LSTM MoE |
+| GShard 2020 | per-layer, sharded | 2 | softmax-then-topk, top-2 gates renormalized | aux loss, capacity drop | expert parallel all-to-all |
+| Switch 2021 | up to thousands | 1 | softmax-then-topk (raw probability as gate) | aux loss | top-1 simplicity, fp32 router / bf16 stability |
 | Mixtral 2023 | 8 | 2 | topk-then-softmax | aux loss | open decoder LLM, shared attn |
 | DeepSeek-V3 2024 | 256 routed (+shared) | 8 | sigmoid/softmax + bias | aux-loss-free bias | fine-grained + shared experts |
 
@@ -339,8 +341,12 @@ The reference implementation of the balancing term lives in `transformers.models
 MOE_ARGS=(
   --num-experts 64                        # E: routed experts per MoE layer
   --moe-router-topk 6                     # k: experts per token
-  --moe-router-load-balancing-type aux_loss   # 'none' => the bias-based scheme
+  --moe-router-load-balancing-type aux_loss   # aux_loss | seq_aux_loss | sinkhorn | none
+                                              # 'none' => NO balancing at all (not the bias scheme)
   --moe-aux-loss-coeff 1e-2               # alpha in alpha * E * sum(f * P)
+  # DeepSeek-V3-style auxiliary-loss-free balancing is a separate pair of flags:
+  # --moe-router-enable-expert-bias       # dynamic per-expert bias on the selection scores
+  # --moe-router-bias-update-rate 1e-3    # gamma; DeepSeek-V3's value
   --moe-z-loss-coeff 1e-3                 # router z-loss (ST-MoE), logit hygiene
   --moe-expert-capacity-factor 1.25       # omit this flag entirely => dropless
   --moe-shared-expert-intermediate-size 2048  # always-on shared expert (DeepSeekMoE)
@@ -397,7 +403,7 @@ The gate weights sum to 1 and every expert is (nearly) the same function, so the
 
 ## Expert Parallelism: A Systems Preview
 
-So far we have treated all experts as living on one device. At frontier scale they cannot — 256 experts of 100M+ parameters each will not fit on one GPU, and even if they did, you would want their compute spread out. **Expert parallelism (EP)** shards the experts across devices: GPU 0 holds experts 0–31, GPU 1 holds 32–63, and so on. This creates the defining systems challenge of MoE, and it is worth previewing here even though [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html) covers it in depth.
+So far we have treated all experts as living on one device. At frontier scale they cannot — DeepSeek-V3's 256 routed experts are only $\approx 44$M parameters each ($3 \times 7168 \times 2048$ for a SwiGLU expert with $d_\text{model}=7168$, $d_\text{ff}=2048$), yet that is still $\approx 11$B parameters of experts in a *single* layer, which will not fit alongside everything else on one GPU; and even if it did, you would want their compute spread out. **Expert parallelism (EP)** shards the experts across devices: GPU 0 holds experts 0–31, GPU 1 holds 32–63, and so on. This creates the defining systems challenge of MoE, and it is worth previewing here even though [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html) covers it in depth.
 
 The problem: a token on GPU 0 may route to an expert on GPU 5. Before the MoE layer can run, **every token must be sent to the device holding its chosen expert**, and after the experts run, **every result must be sent back** to the token's home device for the residual add and the next layer. These two shuffles are **all-to-all** collectives (see [Parallel Computing & Collective Communication](../01-foundations/09-parallel-collectives.html)) — the most communication-intensive pattern there is, because in the worst case every device talks to every other device.
 
@@ -524,10 +530,10 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
 
 !!! key "Key Takeaways"
     - **MoE decouples parameters from FLOPs.** Replace the FFN with $E$ experts and a router; each token uses only $k \ll E$ of them, so the model has the *capacity* of a giant model at the *compute* of a small one. The total-to-active ratio is the sparsity dial.
-    - **The router is a tiny linear gate** producing per-expert logits; you select **top-$k$** (the non-differentiable step) and combine outputs with softmax weights — either softmax-then-topk (Switch/GShard) or topk-then-softmax with renormalized weights (Mixtral).
+    - **The router is a tiny linear gate** producing per-expert logits; you select **top-$k$** (the non-differentiable step) and combine outputs with softmax weights — either the raw softmax probability as the gate (Switch, $k=1$) or weights renormalized over the chosen $k$ (Mixtral's topk-then-softmax, and GShard's equivalent normalize-the-top-2).
     - **Load balancing is make-or-break.** Without it, routing collapses to one expert (rich-get-richer). The **auxiliary loss** $\alpha E \sum_e f_e P_e$ mixes a *hard* dispatch count (direction) with a *soft* probability (gradient); the **z-loss** stabilizes router logits; **expert-choice** routing balances by construction but breaks causal decode.
     - **Capacity factor and token dropping** exist because GPUs want rectangular tensors: capacity $= \lceil C_f \cdot Nk/E\rceil$ bounds each expert's buffer; overflow is dropped (quality cost), underflow is padded (compute cost). Dropless grouped-GEMM kernels (Megablocks) avoid both.
-    - **The lineage:** Shazeer 2017 (sparse gating) → GShard (top-2, expert parallelism) → Switch (top-1 simplicity, z-loss) → Mixtral (open decoder LLM, renormalized gating) → DeepSeek-MoE (**fine-grained + shared experts**, auxiliary-loss-free bias balancing).
+    - **The lineage:** Shazeer 2017 (sparse gating) → GShard (top-2, expert parallelism) → Switch (top-1 simplicity, fp32 router) → ST-MoE (the router z-loss) → Mixtral (open decoder LLM, renormalized gating) → DeepSeek-MoE (**fine-grained + shared experts**, auxiliary-loss-free bias balancing).
     - **Expert parallelism makes MoE a communication problem:** tokens are shuffled to their experts' devices via **all-to-all** and back. Load imbalance directly idles GPUs because the all-to-all is a barrier — architecture and systems are inseparable.
     - **MoE serving is memory- and bandwidth-bound,** not compute-bound: low active FLOPs (fast decode) but all experts must stay resident in HBM (high VRAM) with heavy all-to-all traffic.
     - **Know the libraries:** `transformers` for modelling and fine-tuning (set `output_router_logits=True` or you train with *no* balancing loss), Megatron-Core / DeepSpeed-MoE / Tutel / MegaBlocks for grouped-GEMM dispatch and expert parallelism at scale, vLLM and SGLang (`--enable-expert-parallel`) for serving. **Sparse upcycling** — copy a trained dense FFN into every expert, jitter to break symmetry, small-but-nonzero router init — gets you an MoE without a from-scratch MoE budget.
@@ -604,7 +610,7 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
 
     (f) **Total-to-active ratio:** $E/k = 16/2 = 8\times$ (equivalently $5.37\times10^{8} / 6.71\times10^{7} = 8$). The layer holds 8x the parameters of a 2-expert dense FFN while paying the per-token FLOPs of only 2 experts.
 
-**3.** Take the router logits from the chapter for a single token over 8 experts: $h = [2.0,\ 1.0,\ 0.1,\ -1.0,\ 0.5,\ 3.0,\ -2.0,\ 0.2]$ and $k = 2$. Compute the selected expert indices and their gate weights under **both** conventions — softmax-then-top-k (GShard/Switch) and top-k-then-softmax (Mixtral). State numerically why the two differ and what property renormalization guarantees.
+**3.** Take the router logits from the chapter for a single token over 8 experts: $h = [2.0,\ 1.0,\ 0.1,\ -1.0,\ 0.5,\ 3.0,\ -2.0,\ 0.2]$ and $k = 2$. Compute the selected expert indices and their gate weights under **both** conventions — un-renormalized softmax-then-top-k (Switch style) and top-k-then-softmax (Mixtral style; GShard's normalized top-2 is equivalent to it). State numerically why the two differ and what property renormalization guarantees.
 
 ??? note "Solution"
     The two largest logits are $3.0$ (expert 5) and $2.0$ (expert 0), so **both** methods select experts $\{5, 0\}$. Only the *weights* differ.
@@ -616,7 +622,7 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
     $$
     These sum to $0.731 + 0.269 = 1.000$.
 
-    **Softmax-then-top-k (GShard/Switch).** Softmax over *all 8* logits first. The exponentials are
+    **Softmax-then-top-k, un-renormalized (Switch).** Softmax over *all 8* logits first. The exponentials are
     $e^{2}=7.389,\ e^{1}=2.718,\ e^{0.1}=1.105,\ e^{-1}=0.368,\ e^{0.5}=1.649,\ e^{3}=20.086,\ e^{-2}=0.135,\ e^{0.2}=1.221$, summing to $Z \approx 34.671$. Keeping the top-2 probabilities:
     $$
     p_5 = \frac{20.086}{34.671} \approx 0.579,\qquad p_0 = \frac{7.389}{34.671} \approx 0.213.

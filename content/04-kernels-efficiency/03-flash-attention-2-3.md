@@ -8,21 +8,21 @@ This chapter is about the *systems engineering* of attention kernels. We assume 
 
 ## What FlashAttention-1 left on the table
 
-Let us restate the FA1 inner loop precisely, because the FA2 improvements are best understood as edits to it. We tile the query into blocks of $B_r$ rows and the keys/values into blocks of $B_c$ columns. For a fixed query block $Q_i$ we loop over all key blocks $K_j, V_j$, maintaining a running max $m$, running denominator $\ell$, and a running unnormalized output accumulator $O$:
+Let us restate the FA1 inner loop precisely, because the FA2 improvements are best understood as edits to it. We tile the query into blocks of $B_r$ rows and the keys/values into blocks of $B_c$ columns. For a fixed query block $Q_i$ we loop over all key blocks $K_j, V_j$, maintaining a running max $m$, running denominator $\ell$, and a running output accumulator $O$:
 
 $$
 S_{ij} = Q_i K_j^\top, \quad m^{\text{new}} = \max(m, \operatorname{rowmax}(S_{ij})), \quad P_{ij} = \exp(S_{ij} - m^{\text{new}})
 $$
 
 $$
-\ell^{\text{new}} = e^{m - m^{\text{new}}}\,\ell + \operatorname{rowsum}(P_{ij}), \qquad O^{\text{new}} = e^{m - m^{\text{new}}}\,O + P_{ij} V_j
+\ell^{\text{new}} = e^{m - m^{\text{new}}}\,\ell + \operatorname{rowsum}(P_{ij}), \qquad O^{\text{new}} = \frac{\ell\, e^{m - m^{\text{new}}}\, O + P_{ij} V_j}{\ell^{\text{new}}}
 $$
 
-After the last key block, the final output is $O / \ell$. This is exact attention — the online recurrence reproduces the global softmax. Three inefficiencies hide in this loop.
+(all the $\ell$ and $e^{m-m^{\text{new}}}$ factors act row-wise, i.e. they are $\operatorname{diag}(\cdot)$ multiplies on the $B_r \times d$ accumulator). Note that FA1 keeps $O$ **correctly normalized after every inner iteration**: it multiplies the accumulator back up by the old $\ell$, adds the new contribution, and divides by the new $\ell^{\text{new}}$. After the last key block $O$ is already the finished output — no epilogue. This is exact attention — the online recurrence reproduces the global softmax. Three inefficiencies hide in this loop.
 
-**1. The rescaling does too much non-matmul work.** Every inner iteration multiplies the accumulator $O$ by the correction factor $e^{m - m^{\text{new}}}$. On a GPU, FLOPs are *not* fungible: a tensor-core matmul instruction on an A100 runs at ~312 TFLOP/s in bf16, but the same hardware executes element-wise transcendental and multiply operations on the much slower CUDA cores at perhaps 1/16th that rate. So the $\exp$, the rowmax, and the per-iteration rescale — though they are a small *fraction* of total FLOPs — consume a disproportionate share of *time*. FA1 rescales $O$ once per inner iteration; that is more non-matmul work than necessary.
+**1. The rescaling does too much non-matmul work.** Every inner iteration multiplies the accumulator $O$ by the correction factor $e^{m - m^{\text{new}}}$. On a GPU, FLOPs are *not* fungible: a tensor-core matmul instruction on an A100 runs at ~312 TFLOP/s in bf16, but the same hardware executes element-wise transcendental and multiply operations on the much slower CUDA cores at perhaps 1/16th that rate. So the $\exp$, the rowmax, and the per-iteration rescale — though they are a small *fraction* of total FLOPs — consume a disproportionate share of *time*. And FA1 does more of it than necessary: on top of the $e^{m-m^{\text{new}}}$ correction (which is unavoidable), it multiplies the accumulator by the old $\ell$ and divides by the new $\ell^{\text{new}}$ *every* inner iteration — two extra elementwise passes over $B_r \times d$ values, one of them a division, purely to keep $O$ normalized at a point where nobody is looking at it.
 
-**2. The parallelization wastes blocks.** FA1 parallelized over the batch and head dimensions and over query blocks, assigning one thread block per $(\text{batch},\text{head},\text{query-block})$. The number of these is `batch * heads * (seqlen / B_r)`. For training large models with long sequences, batch-times-heads can be small (you trade batch for sequence length), so the grid may not have enough thread blocks to fill all the streaming multiprocessors (SMs). An A100 has 108 SMs; if your grid launches only 60 thread blocks, 44% of the chip is idle.
+**2. The parallelization wastes blocks.** FA1 parallelized over the batch and head dimensions only, assigning one thread block per $(\text{batch},\text{head})$ and looping over *all* query blocks inside that thread block. The number of blocks in the grid is therefore just `batch * heads`. For training large models with long sequences, batch-times-heads can be small (you trade batch for sequence length), so the grid may not have enough thread blocks to fill all the streaming multiprocessors (SMs). An A100 has 108 SMs; if your grid launches only 60 thread blocks, 44% of the chip is idle — and the sequence length, the one dimension that *is* large, contributes nothing to the parallelism.
 
 **3. Work is split badly across warps inside a block.** A thread block on Ampere is typically 4 or 8 warps (128–256 threads). FA1 split the *key/value* block across warps: each warp computed $Q_i K_j^\top$ for a slice of columns. But then every warp needs the full $Q_i$ in registers, and after computing its partial $P V$ the warps must *communicate through shared memory* to combine results, because each warp owns a column-slice of the scores but the output reduction is along columns. This shared-memory round trip — the so-called "split-K" pattern — stalls the warps and adds synchronization.
 
@@ -32,9 +32,9 @@ FA2 fixes all three. None of these changes touch the math; they change *who comp
 
 ### Edit 1 — defer the rescaling
 
-The first FA2 trick removes the per-iteration accumulator rescale. Instead of keeping $O$ correctly normalized at every step, we keep an **unnormalized** accumulator and only divide by $\ell$ once at the very end.
+The first FA2 trick removes the per-iteration normalization of the accumulator. Instead of keeping $O$ correctly normalized at every step, we keep an **unnormalized** accumulator and only divide by $\ell$ once at the very end.
 
-Look again at the recurrence. The accumulator update is $O^{\text{new}} = e^{m - m^{\text{new}}} O + P_{ij} V_j$. The factor $e^{m - m^{\text{new}}}$ must still be applied — it corrects for the change in the running max — so we cannot drop it. But the *normalization by $\ell$* can be deferred. In FA1's framing the normalization and the max-correction were tangled together; FA2 separates them. The accumulator is held as $\tilde{O}$ (unnormalized), and we only compute $O_i = \tilde{O}_i / \ell_i$ after the key loop finishes. This removes one full division per element per inner iteration and replaces it with a single division at the end.
+Look again at the recurrence. FA2 drops the $\ell$ bookkeeping out of the accumulator entirely, so the update becomes just $\tilde{O}^{\text{new}} = e^{m - m^{\text{new}}} \tilde{O} + P_{ij} V_j$. The factor $e^{m - m^{\text{new}}}$ must still be applied — it corrects for the change in the running max — so we cannot drop it. But the *normalization by $\ell$* can be deferred, because it is a single scalar scaling per row applied identically to every accumulated term. In FA1's framing the normalization and the max-correction were tangled together in one fused update; FA2 separates them. The accumulator is held as $\tilde{O}$ (unnormalized), and we only compute $O_i = \tilde{O}_i / \ell_i$ after the key loop finishes. That removes a multiply *and* a full division per element per inner iteration, replacing them with a single division at the end.
 
 More importantly, FA2 reorganizes which operations are on the critical path so that the bulk of the inner loop is two back-to-back matmuls ($Q K^\top$ then $P V$) with the minimum possible scalar work between them. The rule of thumb: **keep the tensor cores fed; do everything else as rarely as possible.**
 
@@ -109,7 +109,7 @@ The single line `Oi = alpha.unsqueeze(1) * Oi + Pij @ vj` plus the final `Oi / l
 
 ### Edit 2 — parallelize over the sequence dimension
 
-FA2's second change is at the *grid* level, not inside the kernel. FA1 assigned one thread block per query block but did not use sequence-length parallelism beyond that. FA2 makes the **outer loop over query blocks the parallel axis** and additionally allows splitting along sequence length so that the grid has enough thread blocks to saturate every SM even when batch and heads are small.
+FA2's second change is at the *grid* level, not inside the kernel. FA1's grid was only `(num_heads, batch_size)`, so the loop over query blocks ran *sequentially inside* each thread block and the sequence dimension contributed no parallelism at all. FA2 promotes that loop to a grid dimension — the **outer loop over query blocks becomes the parallel axis** — so long sequences by themselves generate enough thread blocks to saturate every SM even when batch and heads are small.
 
 Concretely, the FA2 launch grid is three-dimensional:
 
@@ -507,15 +507,16 @@ def incoherent_rotation(d, seed=0):
     return H @ torch.diag(D)                   # M = H D, orthogonal
 
 def fake_fp8_quant(x):
-    """Crude e4m3-like quantization: per-tensor scale, ~3 mantissa bits."""
+    """Fake-quantize to real e4m3 (per-tensor scale, quantize-then-dequantize)."""
     s = x.abs().max() / 448.0                  # 448 = max finite e4m3 magnitude
     if s == 0:
         s = torch.tensor(1.0)
-    xs = x / s                                 # bring values into FP8 range
-    # simulate ~3 mantissa bits by rounding to 2^-3 relative steps
-    # (illustrative, not a bit-exact e4m3 emulator)
-    mant = torch.round(xs * 8) / 8
-    return mant * s
+    xs = (x / s).clamp(-448.0, 448.0)          # bring values into FP8 range
+    # e4m3 keeps 3 mantissa bits, so the step is ~2^-3 *relative* to the
+    # magnitude: near 448 the spacing is 32, near 1.0 it is 1/8. Rounding on
+    # an absolute grid would badly understate the error at large magnitudes,
+    # which is exactly the regime outliers create -- so use the real dtype.
+    return xs.to(torch.float8_e4m3fn).to(x.dtype) * s
 
 if __name__ == "__main__":
     torch.manual_seed(0)

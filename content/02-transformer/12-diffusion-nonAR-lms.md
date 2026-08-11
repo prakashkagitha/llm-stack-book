@@ -82,7 +82,7 @@ $$
 Read this carefully, because three ideas are packed into it:
 
 1. **Only masked positions contribute.** The sum runs over $i$ where $x_t^i$ is `[MASK]`. Unmasked positions provide *context* but no loss — the model is rewarded only for recovering what was hidden.
-2. **The weight $1/(1-\alpha_t)$ corrects for the masking rate.** When $t$ is near 1, almost everything is masked, $1-\alpha_t \approx 1$, and the model must reconstruct from almost nothing — a hard denoising problem. When $t$ is near 0, only a few tokens are masked and the weight is large, so each rare masked position counts heavily. This weighting is exactly what makes the masked-LM loss a valid (upper bound on the) negative log-likelihood, i.e. a true generative objective, not just a representation-learning trick. The MDLM and RADD analyses (Sahoo et al.; Ou et al., 2024) show this weighted form is a tight Evidence Lower Bound. (Strictly, the continuous-time ELBO carries the weight $-\alpha_t'/(1-\alpha_t)$, where $\alpha_t' = \mathrm{d}\alpha_t/\mathrm{d}t$. With the standard **linear** schedule $\alpha_t = 1 - t$ we get $\alpha_t' = -1$ and the weight collapses to $1/(1-\alpha_t) = 1/t$, the form we use throughout this chapter. A pleasant result of the MDLM/Shi et al. analyses is that the ELBO's *value* is invariant to the choice of monotone schedule — unlike continuous diffusion, where the noise schedule is a hyperparameter you tune — so the schedule only affects gradient variance, not the objective being optimized.)
+2. **The weight $1/(1-\alpha_t)$ corrects for the masking rate.** When $t$ is near 1, almost everything is masked, $1-\alpha_t \approx 1$, and the model must reconstruct from almost nothing — a hard denoising problem. When $t$ is near 0, only a few tokens are masked and the weight is large, so each rare masked position counts heavily. This weighting is exactly what makes the masked-LM loss a valid (upper bound on the) negative log-likelihood, i.e. a true generative objective, not just a representation-learning trick. The MDLM and RADD analyses (Sahoo et al.; Ou et al., 2024) show this weighted form is a tight Evidence Lower Bound. (Strictly, the continuous-time ELBO carries the weight $-\alpha_t'/(1-\alpha_t)$, where $\alpha_t' = \mathrm{d}\alpha_t/\mathrm{d}t$. With the standard **linear** schedule $\alpha_t = 1 - t$ we get $\alpha_t' = -1$ and the weight collapses to $1/(1-\alpha_t) = 1/t$, the form we use throughout this chapter. A pleasant result of the MDLM/Shi et al. analyses is that the ELBO's *value* is invariant to the choice of monotone schedule, so the schedule only affects gradient variance, not the objective being optimized. This mirrors what Kingma et al. proved for continuous diffusion, where the continuous-time ELBO depends on the schedule only through its endpoint signal-to-noise ratios; the reason image-diffusion practitioners still tune schedules is that they optimize a *reweighted* loss ($\epsilon$- or $v$-prediction with uniform weighting), not the ELBO itself, and that reweighted loss *is* schedule-dependent.)
 3. **There is no left-to-right ordering.** Unlike next-token prediction, where the chain rule dictates the factorization order, here the model learns to fill *any* subset of positions given *any* other subset. This is the source of the bidirectional advantage.
 
 Contrast with next-token prediction, where the loss is $-\sum_t \log p_\theta(x_t \mid x_{<t})$ over *every* position with a strict causal mask. AR predicts the next token from a left context; masked diffusion predicts a random subset from a bidirectional context. AR gives you an exact autoregressive likelihood and trivially correct sampling order; diffusion gives you parallelism and bidirectionality at the cost of an approximate, order-agnostic factorization.
@@ -360,7 +360,11 @@ model = AutoModel.from_pretrained(
 
 # The absorbing token is a REAL vocabulary entry in released checkpoints -- read
 # it from the config/tokenizer instead of hardcoding index 0 as our toy sampler did.
-mask_id = getattr(model.config, "mask_token_id", None) or tok.mask_token_id
+# (Use an explicit `is None` test, not `or`: a checkpoint whose mask id is
+# literally 0 would be silently skipped by a truthiness check.)
+mask_id = getattr(model.config, "mask_token_id", None)
+if mask_id is None:
+    mask_id = tok.mask_token_id
 
 # From here the loop is the one we wrote by hand: start from a fully-[MASK]ed
 # answer block after the prompt, forward the whole sequence, commit the most
@@ -658,10 +662,13 @@ for a single clean sequence `x0`. Follow the chapter's conventions (`MASK_ID`, a
 
         # 5. Weight by 1 / (1 - alpha_t) to make the masked-LM loss a valid
         #    negative-log-likelihood bound across all masking rates.
+        #    NOTE: this is the ELBO weight for the LINEAR schedule alpha_t = 1 - t.
+        #    In general the continuous-time weight is -alpha_t' / (1 - alpha_t);
+        #    see below if you want to plug in a non-linear alpha_fn.
         return ce / (1.0 - alpha_t)
     ```
 
-    A linear schedule `alpha_fn = lambda t: 1.0 - t` is the common default (then $1 - \alpha_t = t$, so the weight is $1/t$).
+    A linear schedule `alpha_fn = lambda t: 1.0 - t` is the common default (then $1 - \alpha_t = t$, so the weight is $1/t$) — and it is also the schedule this weight silently assumes. The general continuous-time weight is $-\alpha_t'/(1-\alpha_t)$ with $\alpha_t' = \mathrm{d}\alpha_t/\mathrm{d}t$, which reduces to $1/(1-\alpha_t)$ exactly when $\alpha_t' = -1$. To support an arbitrary monotone schedule, take the derivative as a second argument and return `ce * (-dalpha_fn(t) / (1.0 - alpha_t))`; otherwise a non-linear `alpha_fn` (e.g. cosine) yields a reweighted objective that no longer bounds the NLL.
 
     **Which positions contribute.** Only the masked positions (`logits[masked]`, `x0[masked]`) enter the cross-entropy. Unmasked positions are fed to the network as *context* but carry no loss term — the model is rewarded solely for reconstructing what was hidden. This mirrors point 1 of the objective discussion and matches the sampler, which never overwrites clamped/committed context.
 

@@ -6,7 +6,7 @@ $$
 \operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right) V .
 $$
 
-That implementation is *correct* and it is *slow* — not because the arithmetic is expensive, but because of where the numbers live. The standard implementation builds the full $N \times N$ score matrix $S = QK^\top/\sqrt{d}$ in GPU main memory (HBM), reads it back to apply softmax, reads it again to multiply by $V$. For a sequence of $N = 8192$ tokens, that intermediate matrix is 64 million entries *per head per layer*, and every byte of it has to travel across the slowest wire in the machine. The matrix multiplies that everyone worries about are not the bottleneck. The traffic to and from HBM is.
+That implementation is *correct* and it is *slow* — not because the arithmetic is expensive, but because of where the numbers live. The standard implementation builds the full $N \times N$ score matrix $S = QK^\top/\sqrt{d}$ in GPU main memory (HBM), reads it back to apply softmax, reads it again to multiply by $V$. For a sequence of $N = 8192$ tokens, that intermediate matrix is 67 million entries *per head per layer*, and every byte of it has to travel across the slowest wire in the machine. The matrix multiplies that everyone worries about are not the bottleneck. The traffic to and from HBM is.
 
 FlashAttention (Dao, Fu, Ermon, Rudra, Ré, *FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness*, 2022) is the algorithm that removed that bottleneck. Its central trick is to **never materialize the $N \times N$ matrix at all** — to compute attention in tiles small enough to live in on-chip SRAM, fusing the three steps into a single pass. To make that possible it needs one beautiful piece of numerical machinery: the **online softmax**, a way to compute a numerically-stable softmax incrementally, while streaming the inputs, without ever seeing all of them at once. That algorithm — running maxima, running denominators, and a correction factor that retroactively rescales partial results — is the heart of this chapter, and one of the most elegant ideas in all of systems-for-ML.
 
@@ -216,7 +216,7 @@ import numpy as np
 
 def flash_attention_forward(Q, K, V, Br=32, Bc=32, causal=False):
     """
-    Exact attention via tiling + online softmax. Mirrors the FlashAttention-1
+    Exact attention via tiling + online softmax. Mirrors the FlashAttention
     forward pass. No N×N matrix is ever fully materialized: the largest
     intermediate is one Br×Bc score tile.
 
@@ -308,10 +308,12 @@ A few details worth pausing on.
 
 - **The logsumexp $L_i = m_i + \log \ell_i$ is the one statistic we save.** It is the log of the softmax denominator for row $i$, computed in a stable way. We will see in the next section that the backward pass needs exactly this scalar per row to reconstruct the softmax weights on the fly — so storing $L$ (size $N$) lets us *recompute* $P$ (size $N^2$) in backward instead of storing it. This is the recomputation trade we make.
 
-- **Causal masking is free.** With a causal mask, query $i$ only attends to keys $j \le i$. In the tiled loop that means the outer query-block $i$ can simply **skip all key-blocks $j$ that lie entirely above the diagonal** ($j_0 > i_1$), and only the diagonal block needs the elementwise triangular mask. This roughly halves the work for long sequences — a major reason causal FlashAttention is so fast — and the real kernel exploits it explicitly.
+- **Causal masking is free.** With a causal mask, query $i$ only attends to keys $j \le i$. In the tiled loop that means the outer query-block $i$ can simply **skip all key-blocks $j$ that lie entirely above the diagonal** ($j_0 \ge i_1$ — equivalently $j_0 > i_1 - 1$, since `i1` is an exclusive end in the code above), and only the diagonal block needs the elementwise triangular mask. This roughly halves the work for long sequences — a major reason causal FlashAttention is so fast — and the real kernel exploits it explicitly.
 
 !!! note "Why the inner loop is over keys, not queries"
-    FlashAttention-1 puts the **query block** in the outer loop and **key/value blocks** in the inner loop, accumulating each output row to completion before moving on. This keeps the running statistics ($m_i, \ell_i, O_i$) for a query block resident in registers/SRAM across the whole inner loop, and writes each output row to HBM exactly once. [FlashAttention 2](../04-kernels-efficiency/03-flash-attention-2-3.html) revisits this loop ordering and the placement of the rescale to reduce non-matmul FLOPs and improve GPU occupancy — but the online-softmax core is identical.
+    The implementation above puts the **query block** in the outer loop and **key/value blocks** in the inner loop, accumulating each output row to completion before moving on. That keeps the running statistics ($m_i, \ell_i, O_i$) for a query block resident in registers/SRAM across the whole inner loop, and writes each output row to HBM exactly once.
+
+    Worth knowing: this is *not* the ordering of the original paper. FlashAttention-1's Algorithm 1 loops the other way — **key/value blocks outer, query blocks inner** — so each query block's $O_i, \ell_i, m_i$ are re-read from and re-written to HBM once per key block. [FlashAttention 2](../04-kernels-efficiency/03-flash-attention-2-3.html) swapped the loops to the query-outer form used here (and moved the rescale) precisely to kill that traffic, reduce non-matmul FLOPs, and expose the query-block axis for parallelism. Every modern kernel — and every implementation in this book — uses the query-outer ordering, which is why we write it that way from the start. The online-softmax core is identical either way.
 
 ## The backward pass: recomputation instead of storage
 
@@ -423,12 +425,12 @@ def num_grad(param, idx):
 err = max(abs(num_grad(Q, (3, 2)) - dQ[3, 2]),
           abs(num_grad(K, (5, 1)) - dK[5, 1]),
           abs(num_grad(V, (7, 4)) - dV[7, 4]))
-print("max grad-check error:", err)     # ~1e-7: analytic backward matches finite differences
+print("max grad-check error:", err)     # ~3e-11: analytic backward matches finite differences
 ```
 
-The gradient check passes to $\sim 10^{-7}$, the expected precision of central differences in fp64. The backward pass is genuinely exact. Two practical notes mirror the real kernel:
+The gradient check passes to $\sim 10^{-11}$ — about the best central differences can resolve in fp64 at $h = 10^{-5}$, where the truncation error is $O(h^2)$ and the round-off is $O(\epsilon/h)$. The backward pass is genuinely exact. Two practical notes mirror the real kernel:
 
-- **$\mathrm{d}V$ and $\mathrm{d}K$ accumulate across query blocks** (every query attends to a given key), so in a parallel implementation they require atomic adds or a separate reduction pass. FlashAttention-1 handles this by looping keys in the outer loop for the backward pass (the opposite of the forward), so each key block's $\mathrm{d}K_j, \mathrm{d}V_j$ is finalized in one go while $\mathrm{d}Q$ is accumulated with atomics. The math above is loop-order-agnostic; the implementation chooses an order that minimizes atomics. A practical consequence: because floating-point addition is not associative and atomics land in nondeterministic order, the FlashAttention **backward pass is run-to-run nondeterministic** by default. If you are bisecting a training divergence and need bitwise reproducibility, set `deterministic=True` in the `flash-attn` API (it uses a slower deterministic reduction) or `torch.use_deterministic_algorithms(True)`, and expect to pay for it.
+- **$\mathrm{d}V$ and $\mathrm{d}K$ accumulate across query blocks** (every query attends to a given key), so in a parallel implementation they require atomic adds or a separate reduction pass. Real kernels handle this by looping keys in the outer loop for the backward pass, so each key block's $\mathrm{d}K_j, \mathrm{d}V_j$ is finalized in one go while $\mathrm{d}Q$ is accumulated with atomics. (In FA-1 that is the *same* key-outer order as its forward pass; in FA-2, whose forward is query-outer, the backward is the mirror image of the forward.) The math above is loop-order-agnostic; the implementation chooses an order that minimizes atomics. A practical consequence: because floating-point addition is not associative and atomics land in nondeterministic order, the FlashAttention **backward pass is run-to-run nondeterministic** by default. If you are bisecting a training divergence and need bitwise reproducibility, set `deterministic=True` in the `flash-attn` API (it uses a slower deterministic reduction) or `torch.use_deterministic_algorithms(True)`, and expect to pay for it.
 
 - **Recomputation cost is small and overlaps.** The backward pass redoes the $QK^\top$ matmul (the score tile) it could have stored. That is one extra $O(N^2 d)$ matmul — but matmuls run on tensor cores that the memory-bound kernel was leaving idle anyway, and we *save* the $O(N^2)$ HBM read/write of the stored $P$. On the memory-bound side of the roofline, trading FLOPs for bytes is exactly the right direction.
 
@@ -504,7 +506,7 @@ $$
 \text{HBM}_{\text{naive}} = \Theta\!\left(N^2 + N d\right) = \Theta(N^2 d \, / \, d) \approx \Theta(N^2).
 $$
 
-**FlashAttention.** Choose block sizes so that one $Q$ tile, one $K$ tile, one $V$ tile, and the accumulators all fit in SRAM. With SRAM size $M$, the column block can be $B_c = \Theta(M/d)$ and the row block $B_r = \Theta(M/d)$ as well (bounded so the $B_r \times B_c$ score tile $\le M$). Now count: the outer loop runs $N / B_r$ times; for *each* query block, the inner loop streams **all** of $K$ and $V$ from HBM once — that is $\Theta(Nd)$ bytes per query block. So:
+**FlashAttention.** Choose block sizes so that one $Q$ tile, one $K$ tile, one $V$ tile, and the accumulators all fit in SRAM. With SRAM size $M$, take the row block $B_r = \Theta(M/d)$ — so the $Q_i$ tile and the $O_i$ accumulator are each $\Theta(M)$ elements — and the column block $B_c = \Theta(d)$, which keeps the $B_r \times B_c$ score tile at $\Theta(M)$ as well. (Both blocks cannot be $\Theta(M/d)$ at once: that would make the score tile $\Theta(M^2/d^2) \gg M$. The paper, whose loops are transposed, sets $B_c = \lceil M/4d \rceil$ and $B_r = \min(\lceil M/4d \rceil, d)$ for exactly this reason.) Now count: the outer loop runs $N / B_r$ times; for *each* query block, the inner loop streams **all** of $K$ and $V$ from HBM once — that is $\Theta(Nd)$ bytes per query block. So:
 
 $$
 \text{HBM}_{\text{flash}} = \frac{N}{B_r} \cdot \Theta(Nd) = \Theta\!\left(\frac{N^2 d}{B_r}\right) = \Theta\!\left(\frac{N^2 d^2}{M}\right).
@@ -558,10 +560,10 @@ with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
     out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
 ```
 
-Things that silently *disable* the FlashAttention backend and fall back to a slower math path — worth memorizing because they show up in profiling:
+Things that silently *disable* the FlashAttention backend and drop you to a slower path — either the memory-efficient (cutlass) backend, which is still fused and still $O(N)$ memory but slower than FA, or, if that one is ineligible too, the materialized math kernel. Worth memorizing because they show up in profiling:
 
 - **Unsupported `head_dim`.** Older kernels support head dims up to 128 (later up to 256). A head dim of 160, say, may fall back.
-- **fp32 inputs.** FlashAttention kernels target fp16/bf16. Pass fp32 and you get the math fallback.
+- **fp32 inputs.** FlashAttention kernels target fp16/bf16. Pass fp32 and SDPA drops to the memory-efficient backend (which does support fp32) — not all the way to math, but no longer FA.
 - **An additive float mask with awkward shape**, or a mask that the kernel cannot fuse, can force the materialized path. Prefer `is_causal=True` over hand-built masks when possible.
 - **Non-contiguous tensors** or unsupported strides.
 

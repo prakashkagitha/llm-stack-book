@@ -19,7 +19,7 @@ Imagine you must choose the atomic unit of text. There are three obvious candida
 **Characters (or bytes).** Go the other way: vocabulary is tiny (256 byte values, or ~150k Unicode code points), and there is *no OOV* — every string is representable. But:
 
 - **Sequences become brutally long.** A 1,000-word document is maybe 1,300 word-tokens but roughly 6,000 characters. Since self-attention is $O(n^2)$ in sequence length $n$ (see [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html)), a 4–5× longer sequence is a 16–25× larger attention cost. Your effective context shrinks and your bill grows.
-- **The model spends capacity learning spelling.** Each layer can only mix information a limited distance; forcing the network to assemble "information" from nine characters before it can reason about the *concept* wastes depth.
+- **The model spends capacity learning spelling.** Each layer can only mix information a limited distance; forcing the network to assemble "information" from eleven characters before it can reason about the *concept* wastes depth.
 
 **Subwords** are the Goldilocks answer, and the central insight of modern tokenization:
 
@@ -212,7 +212,7 @@ The key subtlety in `encode_word` is the **rank-based priority**: we do not just
     2. **Incremental pair counts.** Maintain a `pair -> count` map plus, for each pair, the set of word positions where it occurs. When you merge a pair, only the pairs *adjacent to each merge site* change — the pair to the left and right of the merge are destroyed, and (at most) two new pairs are created — so you update a handful of counts instead of rescanning the whole corpus. Pull the top pair with a max-heap or bucket structure keyed by count, in roughly $O(\log P)$, instead of a full linear `max` scan.
     3. **Parallelize pre-tokenization** across corpus shards (embarrassingly parallel), then merge the per-shard word counters before the sequential merge loop.
 
-    Rough wall-clock: the naive pure-Python trainer above (and educational trainers like `minbpe`) would take many hours to days for 32k merges on ~1 GB of text. The incremental Rust implementation in HuggingFace `tokenizers` trains 32k merges on ~1 GB in well under a minute — roughly ~20 s/GB. Takeaway: the *algorithm* above is exactly right for understanding BPE, but do not run it on real corpora — reach for HF `tokenizers` or `tiktoken` and read their incremental-update loop if you need to train a production tokenizer. If you want the incremental version written out in Python, with the one subtle bookkeeping bug that makes the obvious implementation silently wrong, [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) builds it for the capstone model.
+    Rough wall-clock: the naive pure-Python trainer above (and educational trainers like `minbpe`) would take many hours to days for 32k merges on ~1 GB of text. The incremental Rust implementation in HuggingFace `tokenizers` trains 32k merges on ~1 GB in a couple of minutes on a many-core server — minutes, not hours. (Do not confuse this with the ~20 s/GB number quoted in the `tokenizers` README: that is *encoding* throughput, not training time.) Takeaway: the *algorithm* above is exactly right for understanding BPE, but do not run it on real corpora — reach for HF `tokenizers` or `tiktoken` and read their incremental-update loop if you need to train a production tokenizer. If you want the incremental version written out in Python, with the one subtle bookkeeping bug that makes the obvious implementation silently wrong, [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) builds it for the capstone model.
 
 ## Byte-Level BPE: Guaranteeing No `<unk>`
 
@@ -269,7 +269,7 @@ Everything above — the 256-byte base alphabet, the frequency-ranked merge list
 
 ### Putting it together: a complete byte-level BPE tokenizer
 
-The char-level trainer above used an end-of-word marker `</w>` to keep word boundaries from blurring. Byte-level BPE drops `</w>` entirely: word boundaries are instead carried by the leading-space *byte* (`0x20`, which maps to the `Ġ` glyph) that the pre-tokenizer keeps attached to each word, so a merge can never accidentally span two words without a shared `Ġ`. One more thing to fix before writing code: integer IDs. This tokenizer uses the same convention `tiktoken` and `minbpe` use — IDs `0..255` are the 256 raw byte values (token = that byte's `b2u` glyph, id == byte value), then one ID per learned merge in the order it was learned (`256, 257, ...`), then special tokens on top.
+The char-level trainer above used an end-of-word marker `</w>` to keep word boundaries from blurring. Byte-level BPE drops `</w>` entirely: word boundaries are instead carried by the leading-space *byte* (`0x20`, which maps to the `Ġ` glyph) that the pre-tokenizer keeps attached to each word, so a merge can never accidentally span two words without a shared `Ġ`. One more thing to fix before writing code: integer IDs. This tokenizer uses the same convention `minbpe` uses — IDs `0..255` are the 256 raw byte values (token = that byte's `b2u` glyph, id == byte value), then one ID per learned merge in the order it was learned (`256, 257, ...`), then special tokens on top. (`tiktoken` also reserves ranks `0..255` for the 256 single bytes, but ordered by its ranks file rather than by byte value: `tiktoken.get_encoding("gpt2").decode_single_token_bytes(0)` is `b'!'`, not `b'\x00'`. So do not assume id == byte value when you load a real GPT-2 or `cl100k_base` table — read the ids from the table.)
 
 **The exact GPT-2 pre-tokenization regex.** This is verified against `tiktoken`'s `gpt2` encoding — it is the literal pattern GPT-2 and GPT-3 use to chop text into chunks *before* BPE ever runs:
 
@@ -614,8 +614,9 @@ import tiktoken
 
 enc = tiktoken.get_encoding("cl100k_base")     # GPT-3.5 / GPT-4 family
 ids = enc.encode("Tokenization is sneaky.")
-print(ids)                                      # e.g. [3,2078,2065,374,83760,13]
-print([enc.decode([i]) for i in ids])           # per-token text pieces
+print(ids)                                      # [3404, 2065, 374, 21423, 29200, 13]
+# per-token text pieces: ['Token', 'ization', ' is', ' sne', 'aky', '.']
+print([enc.decode([i]) for i in ids])
 print(enc.decode(ids))                          # 'Tokenization is sneaky.'
 
 # Why counting tokens matters: this is what you are billed for and what fills
@@ -818,7 +819,7 @@ print(per_digit("6789"))        # ['6', '7', '8', '9']  -- same scheme every tim
     - **Subwords are the Goldilocks unit.** Words cause OOV and huge vocabularies; characters cause crippling sequence lengths. Subwords keep frequent strings whole, split rare ones into reusable pieces, and (with bytes) never go OOV.
     - **BPE merges the most frequent adjacent pair, greedily and repeatedly**, producing an ordered merge list. Encoding applies those merges *in learned order* (rank-priority), not by left-to-right scanning.
     - **Byte-level BPE** starts from the 256 byte values, so any string in any language is representable with no `<unk>` — the reason GPT-2/3/4 and Llama-3 use it (Llama-1/2 and early Mistral instead use SentencePiece BPE with byte-fallback, a related but distinct scheme). The `Ġ` you see is the byte-to-unicode map for a space.
-    - **WordPiece** (BERT) merges by likelihood gain and marks continuations with `##`; **Unigram/SentencePiece** (T5, Llama, Gemma) prunes a large vocabulary via EM, decodes with Viterbi, marks spaces with `▁`, and natively supports subword-regularization sampling.
+    - **WordPiece** (BERT) merges by likelihood gain and marks continuations with `##`; **Unigram/SentencePiece** (T5, ALBERT, XLNet) prunes a large vocabulary via EM, decodes with Viterbi, marks spaces with `▁`, and natively supports subword-regularization sampling. Llama-1/2 and Gemma use the SentencePiece *library* with a **BPE** backend (plus `byte_fallback`), not Unigram — "uses SentencePiece" names the library, not the objective.
     - **Vocabulary size is a tradeoff:** larger $V$ compresses text (fewer tokens → cheaper inference, more context, more effective pretraining data) but grows the embedding/softmax matrices linearly and risks undertrained "glitch" tokens. The trend at frontier scale is toward larger vocabularies (32k → 256k), but the arithmetic *inverts* for small models: at $d_\text{model}=768$ a 32k table is already ~25% of a 100M-parameter budget.
     - **In practice you train with a library, not the loop above:** HF `tokenizers` (`BpeTrainer` + `ByteLevel`, seeded with `ByteLevel.alphabet()`) emits the `tokenizer.json` that `transformers`, TRL, and vLLM consume; `sentencepiece` covers Unigram and SentencePiece-BPE, where `byte_fallback`, `split_digits`, and `remove_extra_whitespaces=False` are the flags that decide whether your tokenizer handles code and low-resource languages.
     - **Special tokens** (EOS, BOS, pad, chat/role markers) are a trusted-code-only injection surface — never parse them from user input.

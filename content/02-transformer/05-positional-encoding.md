@@ -109,7 +109,7 @@ class LearnedAbsolutePositionalEmbedding(nn.Module):
 Learned tables are flexible — the model carves out whatever positional geometry minimizes loss — and they were the workhorse for years. But they have a fatal flaw for the long-context era, made explicit by the `assert` above: **they cannot extrapolate even one token past $L_{\max}$.** There is simply no parameter for position 1025 in a model with 1024 rows. Worse, they tend to overfit absolute index and underperform on relative reasoning. This is *the* reason the field abandoned them.
 
 !!! warning "Common pitfall: the off-by-one and the hard length ceiling"
-    With learned absolute encodings, the maximum sequence length is a *hard architectural ceiling baked into the parameter shapes*, not a soft preference. Feeding a longer sequence indexes out of bounds and crashes (or, worse, silently wraps if you forget the assert). You cannot fine-tune your way past it without adding rows and retraining those rows from scratch. This brittleness — plus the lack of relative structure — is why nearly every model since roughly 2021 (Llama, GPT-NeoX, PaLM, Mistral, Qwen, DeepSeek, Gemma) uses RoPE or ALiBi instead.
+    With learned absolute encodings, the maximum sequence length is a *hard architectural ceiling baked into the parameter shapes*, not a soft preference. Feeding a longer sequence indexes out of bounds and crashes — `IndexError: index out of range in self` on CPU, an opaque device-side assert that poisons the CUDA context on GPU; the explicit assert above simply turns that into a message that names the real cause. You cannot fine-tune your way past it without adding rows and retraining those rows from scratch. This brittleness — plus the lack of relative structure — is why nearly every model since roughly 2021 (Llama, GPT-NeoX, PaLM, Mistral, Qwen, DeepSeek, Gemma) uses RoPE or ALiBi instead.
 
 ## Relative Position and the Road to RoPE
 
@@ -186,7 +186,7 @@ a function of $q_m$, $k_n$, and the **relative** offset $n - m$ alone. RoPE is a
 
 ### Implementation: the rotate-half trick
 
-We never materialize the $d \times d$ matrix $R_\Theta(m)$ — it is $99.6\%$ zeros. Instead we precompute per-position $\cos$ and $\sin$ vectors and apply the rotation elementwise. There are two equivalent conventions for *which* dimensions form a pair:
+We never materialize the $d \times d$ matrix $R_\Theta(m)$ — with $d/2$ blocks of four entries each it holds only $2d$ nonzeros among $d^2$ entries, i.e. $1 - 2/d$ zeros ($98.4\%$ for a $128$-dim head, $96.9\%$ for a $64$-dim one). Instead we precompute per-position $\cos$ and $\sin$ vectors and apply the rotation elementwise. There are two equivalent conventions for *which* dimensions form a pair:
 
 - **Interleaved** (original RoPE paper): pairs are adjacent dims $(0,1), (2,3), \dots$.
 - **`rotate_half`** (GPT-NeoX / Llama / HuggingFace): pairs are dim $k$ with dim $k + d/2$, i.e., the first half is paired with the second half. This permits a vectorized `rotate_half` that is friendlier to hardware.
@@ -543,7 +543,7 @@ From here, RoPE'd attention slots into [a full Transformer block](../02-transfor
     - [Chen et al., *Extending Context Window via Positional Interpolation* (2023)](https://arxiv.org/abs/2306.15595) — Position Interpolation: linearly squeeze positions into the trained range to extend RoPE context with ~1000 fine-tuning steps.
     - [Peng et al., *YaRN: Efficient Context Window Extension* (2023)](https://arxiv.org/abs/2309.00071) — per-dimension NTK-by-parts ramp plus attention temperature scaling; the production-grade method behind most 32K→128K model releases.
     - [Kazemnejad et al., *The Impact of Positional Encoding on Length Generalization* (NeurIPS 2023)](https://arxiv.org/abs/2305.19466) — shows decoder-only Transformers with no explicit positional encoding (NoPE) can outperform RoPE and ALiBi on out-of-distribution lengths.
-    - [Ding et al., *LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens* (2024)](https://arxiv.org/abs/2402.13753) — non-uniform per-dimension rescaling with evolutionary search; used in Microsoft Phi-3 to reach 2M-token context.
+    - [Ding et al., *LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens* (2024)](https://arxiv.org/abs/2402.13753) — non-uniform per-dimension rescaling with evolutionary search; demonstrated to 2M tokens on LLaMA2-7B and Mistral-7B, and shipped as the `longrope` scaling type in Microsoft's Phi-3 128K models.
     - [Shang et al., *LongRoPE2: Near-Lossless LLM Context Window Scaling* (2025)](https://arxiv.org/abs/2502.20082) — traces the residual out-of-distribution failure to under-trained high RoPE dimensions; a perplexity-guided evolutionary rescaling plus mixed-length training extends Llama3-8B to 128K while keeping >98% of short-context quality with ~80× fewer tokens than Meta's recipe.
 
     **Open-source & tools**

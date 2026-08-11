@@ -125,7 +125,7 @@ In post-norm, normalization is applied *after* the residual addition: $\mathbf{x
 
 The original transformer used post-norm with learning rate warmup because post-norm is unstable at initialization. Here is the mechanical reason:
 
-At initialization $F(\mathbf{x}) \approx \mathbf{0}$, so $\mathbf{x} + F(\mathbf{x}) \approx \mathbf{x}$. The variance of the residual sum is dominated by the variance of the skip path. In post-norm, the normalization then divides by this variance, which is fine. But the *gradients* of the loss with respect to the pre-norm input scale as $1/\text{std}$, and std can vary wildly early in training when the sublayer outputs are small. This creates extremely large gradients through the normalization, requiring careful warmup to survive.
+At initialization $F(\mathbf{x}) \approx \mathbf{0}$, so $\mathbf{x} + F(\mathbf{x}) \approx \mathbf{x}$ and the residual sum is dominated by the skip path; the normalization then divides by that sum's standard deviation, which in the forward direction is perfectly well behaved. The trouble is in the *backward* direction. In post-norm there is no un-normalized route from the loss back to the early layers: every backward path is forced through all $L$ normalizations, and each one contributes a $1/\text{std}$ Jacobian factor. Those factors compound with depth, so at initialization the gradient magnitude is strongly layer-dependent — Xiong et al. (*On Layer Normalization in the Transformer Architecture*, 2020) show that for post-norm the expected gradient norm at the layers nearest the output is large and essentially independent of $L$, while the lower layers are gradient-starved. A single learning rate cannot serve both ends of that mismatch, so the run diverges unless the learning rate is ramped up slowly — which is exactly what warmup does.
 
 In pre-norm, the normalization acts on $\mathbf{x}$ *before* $F$, stabilizing the input to $F$ regardless of what $F$ outputs. Crucially, the residual skip path ($\mathbf{x}$ itself, unnormalized) always contributes a unit-variance gradient path backward. This means pre-norm transformers train stably even without warmup and tolerate much larger learning rates (Xiong et al., *On Layer Normalization in the Transformer Architecture*, 2020).
 
@@ -135,7 +135,7 @@ A subtlety worth knowing: because the last block's output is not normalized befo
 
     **Q:** Why do modern LLMs like Llama use pre-norm with RMSNorm instead of post-norm with LayerNorm as in the original transformer paper?
 
-    **A:** Two independent improvements were combined. Pre-norm (normalizing before the sublayer rather than after) places the normalization on the input rather than on the residual sum, which stabilizes gradients at initialization and removes the need for careful learning rate warmup. The identity skip path in pre-norm guarantees a clean gradient highway of magnitude 1, whereas post-norm gradients scale as $1/\text{std}$ of the residual sum, which can be large and noisy early in training. RMSNorm replaces LayerNorm for efficiency: it drops the mean-centering step (one fewer pass over the vector), uses no bias parameter, and achieves near-identical training loss in practice. Together, these two changes make training faster and more robust without any measurable quality loss.
+    **A:** Two independent improvements were combined. Pre-norm (normalizing before the sublayer rather than after) places the normalization on the input rather than on the residual sum, which stabilizes gradients at initialization and removes the need for careful learning rate warmup. The identity skip path in pre-norm guarantees a clean gradient highway of magnitude 1, whereas in post-norm every backward path is forced through all $L$ normalizations, whose $1/\text{std}$ Jacobian factors compound and leave gradients large at the top of the stack and starved at the bottom (Xiong et al., 2020). RMSNorm replaces LayerNorm for efficiency: it drops the mean-centering step (one fewer pass over the vector), uses no bias parameter, and achieves near-identical training loss in practice. Together, these two changes make training faster and more robust without any measurable quality loss.
 
 ---
 
@@ -223,7 +223,7 @@ The intuition: the gate $\text{Swish}(W_\text{gate}\mathbf{x})$ can *suppress* e
 Notice that every `nn.Linear` in this chapter's reference implementation defaults to `bias=False`, and that RMSNorm has no $\boldsymbol{\beta}$. This is not an oversight: **PaLM (Chowdhery et al., 2022) removed the bias from every dense layer and every normalization and reported improved training stability at scale**, and Llama, Mistral, Gemma, and DeepSeek-V3 all followed. Three reasons make this nearly free:
 
 1. *Redundancy.* Every dense layer in a pre-norm block reads a freshly normalized input. A learned additive offset on that input is largely absorbed by the norm's own scale (and, in LayerNorm, its shift), so the bias buys little expressive power it did not already have.
-2. *Cost without benefit.* Biases are a negligible fraction of parameters ($d_\text{ff} + d$ per FFN versus $3 d\, d_\text{ff}$ weights) but they are a separate tensor to broadcast, an extra epilogue in every GEMM, and one more thing for a tensor-parallel or quantization pass to shard correctly.
+2. *Cost without benefit.* Biases are a negligible fraction of parameters ($2 d_\text{ff} + d$ per gated FFN versus $3 d\, d_\text{ff}$ weights) but they are a separate tensor to broadcast, an extra epilogue in every GEMM, and one more thing for a tensor-parallel or quantization pass to shard correctly.
 3. *Stability.* A bias is the one parameter in a linear layer whose gradient does not shrink when the input shrinks, so it drifts freely; unbounded bias drift is a known contributor to the slow logit growth that precedes loss spikes (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)).
 
 The exceptions are worth knowing so you are not surprised by a `config.json`: GPT-2 and the encoder-style models keep biases everywhere, and some recent families (notably Qwen2) retained a bias on the QKV projection specifically while dropping it elsewhere. If you are writing a checkpoint loader, treat "does this family use QKV bias?" as a per-family flag rather than a constant.
@@ -237,7 +237,7 @@ Dropout (Srivastava et al., *Dropout: A Simple Way to Prevent Neural Networks fr
 1. After the attention weights (before the weighted sum over values) — *attention dropout*.
 2. After each sublayer's output, before the residual addition — *residual dropout*.
 
-During pretraining of large models on large datasets, dropout is often set to 0.0 — the models are underfit, not overfit, and dropout hurts loss. GPT-2 (and nanoGPT's default config) used $p = 0.1$; Llama and subsequent open-weight models use $p = 0.0$ throughout pretraining and may introduce small dropout during fine-tuning.
+During pretraining of large models on large datasets, dropout is often set to 0.0 — the models are underfit, not overfit, and dropout hurts loss. GPT-2 used $p = 0.1$, while nanoGPT — which otherwise reproduces GPT-2 — defaults to $p = 0.0$ and suggests $0.1+$ only for finetuning; Llama and subsequent open-weight models use $p = 0.0$ throughout pretraining and may introduce small dropout during fine-tuning.
 
 If you train on small datasets or fine-tune with very few samples, residual dropout of 0.05–0.1 remains a useful regularizer. See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) for fine-tuning configurations.
 
@@ -321,7 +321,7 @@ class SwiGLUFFN(nn.Module):
                  bias: bool = False, dropout: float = 0.0):
         super().__init__()
         if hidden_dim is None:
-            # 8/3 * dim, rounded to nearest multiple of 64
+            # 8/3 * dim, rounded *up* to a multiple of 64
             hidden_dim = int(8 * dim / 3)
             hidden_dim = 64 * ((hidden_dim + 63) // 64)
 
@@ -505,7 +505,7 @@ Understanding the block's numerical behavior is essential for training at scale.
 
 ### Pre-norm keeps the norm bounded
 
-At layer $l$, the residual stream has (empirically) roughly unit variance after the final norm. Because we normalize *before* the sublayer, the sublayer always sees a well-conditioned input. The output of the sublayer is added back to the (un-normalized) residual stream, whose variance grows slowly as $\mathcal{O}(\sqrt{l})$ in theory (as a sum of independent random variables). In practice with careful initialization (weight std $\propto 1/\sqrt{d}$ or with the "scaled init" used in GPT-2), growth is much slower.
+At layer $l$, the residual stream has (empirically) roughly unit variance after the final norm. Because we normalize *before* the sublayer, the sublayer always sees a well-conditioned input. The output of the sublayer is added back to the (un-normalized) residual stream, whose *norm* grows slowly as $\mathcal{O}(\sqrt{l})$ in theory (its variance grows as $\mathcal{O}(l)$, since it is a sum of independent random contributions). In practice with careful initialization (weight std $\propto 1/\sqrt{d}$ or with the "scaled init" used in GPT-2), growth is much slower.
 
 ### Initialization scaling for deep stacks
 
@@ -538,9 +538,9 @@ def scaled_residual_init(model: TransformerStack, n_layers: int,
 
 Skipping this is a common cause of early-training instability in deep-and-thin models, where $L$ is large relative to $d$; the capstone applies exactly this scaling to its 30-layer stack in [The Stack-100M Architecture](../14-capstone/04-architecture.html).
 
-### bfloat16 and overflow in the FFN
+### bfloat16 vs float16 in the FFN
 
-The inner FFN activations after the gating product can have large magnitudes (on the order of 10–100 at the start of training). In float16 this overflows to `inf`; in bfloat16 the larger dynamic range handles it. This is one reason most modern LLM pretraining uses bfloat16. See [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) and [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
+float16 and bfloat16 both use 16 bits but split them differently: fp16 keeps 10 mantissa bits and tops out at a maximum finite value of $65{,}504$, while bf16 keeps only 7 mantissa bits and inherits fp32's exponent range (up to $\approx 3.4 \times 10^{38}$). The FFN's inner activations after the gating product, together with the attention logits, are the widest-dynamic-range tensors in the block, and outlier features grow by orders of magnitude over the course of a long run — under fp16 that is a real risk of saturating to `inf`, and at the other end small gradients fall below fp16's smallest subnormal ($\approx 6 \times 10^{-8}$) and flush to zero, which is why fp16 training needs dynamic loss scaling at all. bf16 simply has the range to absorb both ends, with no loss-scaling machinery, at the cost of mantissa precision. This is one reason most modern LLM pretraining uses bfloat16. See [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) and [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
 
 !!! example "Worked example: Residual stream variance growth"
 
@@ -578,7 +578,7 @@ $$
 \mathbf{x}' = \mathbf{x} + \text{Attn}(\text{Norm}(\mathbf{x})) + \text{FFN}(\text{Norm}(\mathbf{x}))
 $$
 
-This saves one residual addition and one normalization call, and allows fusing the attention QKV projection with the FFN $W_\text{gate}$/$W_\text{up}$ projections into a single large matrix multiply — a throughput win on hardware with slow memory bandwidth relative to compute. The gradient flow is slightly different but empirically yields similar quality.
+This saves one normalization call and removes the sequential dependency between the two sublayers, and allows fusing the attention QKV projection with the FFN $W_\text{gate}$/$W_\text{up}$ projections into a single large matrix multiply — a throughput win on hardware with slow memory bandwidth relative to compute. The gradient flow is slightly different but empirically yields similar quality.
 
 ### DeepNorm
 
@@ -608,7 +608,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
     - SwiGLU (and GeGLU) outperform plain ReLU and GELU on language tasks by adding a multiplicative gate that suppresses irrelevant features while passing relevant ones through. They require three weight matrices instead of two and conventionally use $d_\text{ff} = \frac{8d}{3}$ to match FLOPs.
     - The FFN accounts for roughly two-thirds of transformer parameters (at the standard $4\times$ or $\frac{8}{3}\times$ expansion ratio) and processes each token independently — making it the primary site of factual storage.
     - Dropout is typically 0.0 during large-scale pretraining (data is more abundant than model capacity), but 0.05–0.1 is useful for fine-tuning on small datasets.
-    - Deep stacks benefit from careful output-projection scaling ($1/\sqrt{2L}$) to prevent residual stream variance blowup. Using bfloat16 (rather than float16) avoids FFN activation overflow.
+    - Deep stacks benefit from careful output-projection scaling ($1/\sqrt{2L}$) to prevent residual stream variance blowup. Using bfloat16 (rather than float16) gives the block fp32's exponent range, removing both the overflow risk on outlier activations and the loss-scaling machinery fp16 requires.
     - The final RMSNorm after the last block is essential in pre-norm architectures: without it, the last block's output is un-normalized before the language-model head projection.
     - Modern blocks carry **no bias terms** anywhere (PaLM's finding, now universal), and norm statistics must be accumulated in fp32 even under bf16 training. In real code this block is `LlamaDecoderLayer` in HuggingFace `transformers`, `torch.nn.RMSNorm` in PyTorch, and `LigerRMSNorm`/`LigerSwiGLUMLP` when you want the fused Triton versions.
 
@@ -725,7 +725,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
 ??? note "Solution"
     **(a) Final norm.** In pre-norm, each block computes $\mathbf{x}' = \mathbf{x} + F(\text{Norm}(\mathbf{x}))$, so the normalization only ever touches the *input* to a sublayer — it never normalizes the value that leaves the last block. As the chapter's variance discussion notes, the residual stream grows across depth (roughly $\mathcal{O}(\sqrt{l})$, and up to a norm of $\approx 128$ in the worked $L=32$ example), so the final block emits a vector of large and layer-count-dependent magnitude. Feeding that directly into the language-model head would send poorly-conditioned, large-magnitude logits into the softmax, hurting stability and calibration. Inserting a final RMSNorm/LayerNorm rescales the stream back to a well-conditioned unit scale before the LM head projection, which is why every pre-norm model adds one.
 
-    **(b) Warmup.** In post-norm the normalization sits on top of the residual sum, so the gradient with respect to the pre-norm input scales as $1/\text{std}$ of that sum; early in training $F(\mathbf{x}) \approx \mathbf{0}$ makes the sum's variance small and volatile, producing huge, noisy gradients that only slow warmup can survive. In pre-norm the unnormalized skip path always contributes a clean unit-variance gradient path backward regardless of what $F$ outputs, so gradients stay bounded from step one and no warmup is needed.
+    **(b) Warmup.** In post-norm the normalization sits on top of every residual sum, so no un-normalized path connects the loss to the early layers: each backward path passes through all $L$ norms and picks up a $1/\text{std}$ Jacobian factor from each, and those factors compound with depth — at initialization the layers nearest the output see large gradients while the lower layers are starved, a mismatch no single learning rate handles, so the rate must be ramped up slowly. In pre-norm the unnormalized skip path always contributes a clean unit-variance gradient path backward regardless of what $F$ outputs, so gradients stay bounded from step one and no warmup is needed.
 
 **4.** (Quantitative) You are sizing a SwiGLU FFN for a model with $d = 2048$, using this chapter's reference recipe: set the inner dimension to $\lfloor 8d/3 \rfloor$ rounded *up* to the nearest multiple of 64, and use no bias. (a) Compute $d_\text{ff}$. (b) Compute the total FFN parameter count. (c) Compare it against a standard two-matrix FFN with the classic $d_\text{ff} = 4d$ expansion, and comment on why the $8/3$ factor is chosen.
 
@@ -832,7 +832,9 @@ where attention and FFN read the *same* normalized input. Using the chapter's `R
             # Single shared normalization instead of one per sublayer
             self.norm = RMSNorm(dim, eps=norm_eps)
             self.attn = MinimalMHA(dim, n_heads, bias=bias)
-            self.ffn  = SwiGLUFFN(dim, ffn_hidden, bias=bias, dropout=dropout)
+            # As in TransformerBlock, the FFN's *internal* dropout is disabled
+            # so that the FFN path gets exactly one dropout (self.res_drop).
+            self.ffn  = SwiGLUFFN(dim, ffn_hidden, bias=bias, dropout=0.0)
             self.res_drop = nn.Dropout(dropout)
 
         def forward(self, x: torch.Tensor,
@@ -843,6 +845,6 @@ where attention and FFN read the *same* normalized input. Using the chapter's `R
             return x + attn_out + ffn_out         # single residual update
     ```
 
-    **Norm calls:** the sequential block calls `RMSNorm` **twice** per forward pass (once before attention, once before the FFN); the parallel block calls it **once**, saving a normalization and one residual addition per block.
+    **Norm calls:** the sequential block calls `RMSNorm` **twice** per forward pass (once before attention, once before the FFN); the parallel block calls it **once**, saving one normalization per block. (It does *not* save a residual addition — `x + attn_out + ffn_out` is still two binary adds, exactly as in the sequential layout; what it removes is the serialization dependency between the two sublayers.)
 
     **Hardware optimization:** because attention and the FFN now consume the identical input `h`, their input projections — attention's QKV projection and the FFN's $W_\text{gate}$/$W_\text{up}$ projections — can be fused into a single large matrix multiply on `h`. As the chapter notes, this is a throughput win on hardware whose memory bandwidth is slow relative to compute, since one big GEMM launches more efficiently than several smaller ones. The gradient flow differs slightly from the sequential layout but empirically yields similar quality.

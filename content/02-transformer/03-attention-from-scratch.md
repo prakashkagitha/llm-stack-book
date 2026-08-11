@@ -144,7 +144,7 @@ The scaled scores have unit variance regardless of head dimension. Softmax recei
     **Without scaling**, softmax of $[20, 4, -3, 1]$:
     $e^{20} \approx 4.85\times10^8$ swamps $e^4 \approx 54.6$, $e^{-3}\approx 0.05$, $e^{1}\approx 2.72$. The weights are about $[0.99999988,\ 0.00000011,\ \approx 0,\ \approx 0]$ — a one-hot vector. Effectively a hard pick; gradient to the other keys is essentially zero.
 
-    **With scaling** by $\sqrt{64} = 8$, the scores become $[2.5,\ 0.5,\ -0.375,\ 0.125]$. Now softmax gives roughly $[0.77,\ 0.10,\ 0.04,\ 0.07]$ — still peaked on the first key (good, it *was* the best match) but soft enough that gradient flows to all four. The model can still learn to adjust which key wins. Same data, wildly different trainability — entirely because of one $\div\sqrt{d_k}$.
+    **With scaling** by $\sqrt{64} = 8$, the scores become $[2.5,\ 0.5,\ -0.375,\ 0.125]$. Now softmax gives roughly $[0.78,\ 0.11,\ 0.04,\ 0.07]$ — still peaked on the first key (good, it *was* the best match) but soft enough that gradient flows to all four. The model can still learn to adjust which key wins. Same data, wildly different trainability — entirely because of one $\div\sqrt{d_k}$.
 
 ## A From-Scratch Implementation in NumPy
 
@@ -202,7 +202,7 @@ def scaled_dot_product_attention(Q, K, V, mask=None):
     return out, weights
 ```
 
-Now a tiny worked sanity check we can verify by hand. We make the keys *axis-aligned* (one-hot-ish) and the values easy-to-read tags, then issue a query that points almost exactly at the second key.
+Now a tiny worked sanity check we can verify by hand. We make the keys *axis-aligned* (one-hot-ish) and the values easy-to-read tags, then issue a query that points almost exactly at the third key.
 
 ```python
 np.random.seed(0)
@@ -219,16 +219,16 @@ V = np.array([
     [20.0, 20.0],           # value 1
     [30.0, 30.0],           # value 2
 ])
-# One query that aligns strongly with key 1 (the second axis).
-Q = np.array([[0.1, 3.0, 0.1, 0.0]])
+# One query that aligns strongly with key 2 (the third axis).
+Q = np.array([[0.1, 0.1, 3.0, 0.0]])
 
 out, w = scaled_dot_product_attention(Q, K, V)
-print("attention weights:", np.round(w, 3))   # ~ [[0.16 0.681 0.16]]
-print("output:", np.round(out, 2))            # ~ [[20. 20.]] -> mostly value 1
+print("attention weights:", np.round(w, 3))   # ~ [[0.16 0.16 0.681]]
+print("output:", np.round(out, 2))            # ~ [[25.21 25.21]] -> mostly value 2
 print("rows sum to 1:", np.allclose(w.sum(axis=-1), 1.0))  # True
 ```
 
-The query points mostly along axis 1, so it scores highest against key 1, softmax concentrates ~0.68 of its mass there, and the output is pulled toward value 1 (`[20, 20]`) — a soft retrieval of "the value whose key best matches my query." Crank the query's second component up to, say, 30 and the weight on key 1 approaches 1.0 and the output approaches exactly `[20, 20]`: hard retrieval recovered in the limit. That single experiment *is* the intuition for everything attention does.
+The query points mostly along axis 2, so it scores highest against key 2, softmax concentrates ~0.68 of its mass there, and the output is pulled toward value 2 (`[30, 30]`) — a soft retrieval of "the value whose key best matches my query." The number is diagnostic: a uniform (non-discriminating) blend would give exactly `[20, 20]` and a hard `argmax` pick would give `[30, 30]`, and we land at `[25.21, 25.21]` — genuinely *between* the two, which is what "soft" means. Crank the query's third component up to, say, 30 and the weight on key 2 goes to ~1.0 and the output moves to `[30, 30]`: hard retrieval recovered in the limit. That single experiment *is* the intuition for everything attention does.
 
 ## Causal & Padding Masks: Same Machinery, Different Information Flow
 
@@ -252,8 +252,8 @@ This single triangular mask is the entire reason a decoder-only Transformer can 
 
 To batch sequences of different lengths together, we pad short sequences with a special `<pad>` token up to a common length. Those pad positions are meaningless and must never contribute to or receive attention. A **padding mask** zeroes out every score whose *key* is a pad token, for every query. In a real model you combine the causal and padding masks by taking the logical AND (a position is attendable only if it is both non-future and non-pad).
 
-!!! warning "Common pitfall: use a large negative number, not Python's −inf, in low precision"
-    Setting masked scores to exactly $-\infty$ is mathematically clean, but in float16/bfloat16 a row that is *entirely* masked (which can happen with padding bugs) makes softmax compute `exp(-inf - (-inf)) = exp(nan) = nan`, poisoning the whole batch. Production kernels use a large finite negative number (e.g. the most negative representable value of the dtype, or `-1e9` in fp32) instead of true `-inf`, and they guard against fully-masked rows. We discuss the numerics further in [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html).
+!!! warning "Common pitfall: use a large finite negative number, not Python's −inf"
+    Setting masked scores to exactly $-\infty$ is mathematically clean, but a row that is *entirely* masked (which can happen with padding bugs) makes the max-subtracting softmax compute `exp(-inf - (-inf)) = exp(nan) = nan`, poisoning the whole batch. This is **not** a low-precision quirk — $-\infty - (-\infty)$ is NaN in fp32 and fp64 too, and the fp64 NumPy `softmax` above NaNs on a fully-masked row exactly the same way. Production kernels therefore use a large *finite* negative number instead of true `-inf`, and additionally guard against fully-masked rows. The sentinel must be representable in the compute dtype: `torch.finfo(dtype).min` is the safe general choice, which is about $-3.4\times10^{38}$ in fp32 and $-65504$ in fp16 — note that the popular `-1e9` is fine in fp32 but overflows to $-\infty$ in fp16 (whose largest finite magnitude is 65504), reintroducing the very NaN it was meant to avoid, so use roughly $-10^4$ if you must hard-code a constant for fp16. We discuss the numerics further in [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html).
 
 ### Causal attention in NumPy
 
@@ -514,7 +514,7 @@ From here the path forks in three directions, all of which build directly on thi
     - The headline equation is $\operatorname{Attention}(Q,K,V)=\operatorname{softmax}\!\big(\tfrac{QK^\top}{\sqrt{d_k}}\big)V$. $Q,K,V$ are learned linear projections of the input in self-attention; in cross-attention $Q$ comes from one sequence and $K,V$ from another.
     - **Scale by $\sqrt{d_k}$ because $\operatorname{Var}(q\cdot k)=d_k$.** Without it, softmax saturates as $d_k$ grows, its Jacobian collapses, and query/key gradients vanish. Dividing by $\sqrt{d_k}$ fixes the score variance at 1, independent of head size.
     - **The attention matrix $A$ is $n \times n$.** Row $i$ is query $i$'s distribution over keys; you must softmax along the *key* axis (`dim=-1`). It is inspectable but is *not* a faithful explanation of model behavior.
-    - **Masking is a single additive bias.** A lower-triangular causal mask forbids attending to the future (enabling one-pass training and the KV cache); a padding mask ignores `<pad>` tokens. In low precision use a large finite negative number, not true $-\infty$.
+    - **Masking is a single additive bias.** A lower-triangular causal mask forbids attending to the future (enabling one-pass training and the KV cache); a padding mask ignores `<pad>` tokens. Use a large finite negative number that is representable in the compute dtype (`torch.finfo(dtype).min`) rather than true $-\infty$ — a fully-masked row turns softmax into NaN in *any* precision, fp32 included.
     - **Cost is $\mathcal{O}(n^2 d)$ in compute and $\mathcal{O}(n^2)$ in memory** for the score matrix — the quadratic bottleneck that motivates FlashAttention, long-context tricks, and sub-quadratic alternatives.
     - The output is a convex combination of value vectors: it can interpolate among them but never extrapolate beyond their hull. Gradient to value $v_j$ is exactly its attention weight $a_{ij}$.
     - **The backward pass is four matmuls**: $dV = A^\top dO$, $dA = dO V^\top$, $dS = A \odot (dA - D)$ with $D_i = dO_i \cdot o_i$, then $dQ = dS\,K/\sqrt{d_k}$ and $dK = dS^\top Q/\sqrt{d_k}$. That $D$ row-sum is exactly what FlashAttention's backward kernel precomputes.
@@ -530,7 +530,7 @@ From here the path forks in three directions, all of which build directly on thi
 
     **Pushing the frontier (2024–2026)**
 
-    - [Dao, *FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning* (2023)](https://arxiv.org/abs/2307.08691) — restructured parallelism to reach ~70% of H100 theoretical FLOPs.
+    - [Dao, *FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning* (2023)](https://arxiv.org/abs/2307.08691) — restructured parallelism and work partitioning to reach ~73% of the theoretical maximum FLOPs/s on an A100 (≈230 TFLOPs/s fp16). On H100 the same kernel only reaches ~35% utilization, which is exactly what motivated FlashAttention-3.
     - [Shah et al., *FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision* (2024)](https://arxiv.org/abs/2407.08608) — exploits Hopper GPU warp-specialization and FP8 to reach ~75% H100 utilization (up to 740 TFLOPs/s FP16, close to 1.2 PFLOPs/s FP8).
     - [FlashAttention-4 (CuTeDSL)](https://github.com/Dao-AILab/flash-attention) — the current generation, rewritten in CuTeDSL and optimized for both Hopper and NVIDIA Blackwell (B200) GPUs; supersedes FA3 on the newest hardware.
     - [Ainslie et al., *GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints* (2023)](https://arxiv.org/abs/2305.13245) — grouped-query attention, now standard in Llama 2/3, Mistral, and most production decoders.
@@ -620,12 +620,12 @@ From here the path forks in three directions, all of which build directly on thi
 
     **(c)** The raw-score distribution $[0.998, 0.002, 0.00001]$ is nearly one-hot. The softmax Jacobian is $J = \operatorname{diag}(a) - a a^\top$; when $a$ is one-hot, every entry of $J$ collapses toward zero, so almost no gradient flows back to the queries and keys — training would stall. The scaled distribution $[0.665, 0.245, 0.090]$ keeps all three weights well away from 0 and 1, so $J$ has healthy non-zero entries and gradient propagates to all keys and to the query. Identical raw data; the single $\div\sqrt{d_k}$ is the difference between a live and a dead backward pass.
 
-**4.** (Conceptual — masking.) The `mask` argument sets forbidden scores to $-\infty$ before softmax. (a) Why $-\infty$ specifically, rather than $0$? (b) The chapter warns that in float16/bfloat16 you should use a large finite negative number instead of true $-\infty$. Describe the exact failure that true $-\infty$ can cause, and when it arises.
+**4.** (Conceptual — masking.) The `mask` argument sets forbidden scores to $-\infty$ before softmax. (a) Why $-\infty$ specifically, rather than $0$? (b) The chapter warns that you should use a large finite negative number instead of true $-\infty$. Describe the exact failure that true $-\infty$ can cause, when it arises, and why the choice of sentinel constant depends on the compute dtype.
 
 ??? note "Solution"
     **(a)** A mask must make a forbidden position receive *exactly zero* attention weight after softmax. Softmax exponentiates its input, and $e^{-\infty} = 0$, so setting a forbidden score to $-\infty$ guarantees that position contributes nothing to the normalizer and gets weight exactly 0. Setting it to $0$ would instead give $e^{0} = 1$ — a *large* weight (0 is a perfectly ordinary, even competitive, score), so the forbidden position would actually receive substantial attention. Zero is a score, not an "off" switch; $-\infty$ is the additive identity that softmax maps to zero weight.
 
-    **(b)** The danger is a row that is *entirely* masked — every key forbidden — which can happen with a padding bug (e.g. a fully-`<pad>` row, or a causal-plus-padding AND that leaves a query with no allowed key). If every score in the row is true $-\infty$, the numerically stable softmax first subtracts the per-row max, which is also $-\infty$, computing $\exp(-\infty - (-\infty)) = \exp(\text{NaN}) = \text{NaN}$. That NaN then propagates through the weighted sum and, via autograd, poisons the entire batch's gradients. Production kernels avoid this by using a large *finite* negative number (e.g. the most-negative representable value of the dtype, or $-10^9$ in fp32): a fully-masked row then produces a uniform-ish but finite distribution rather than NaN, and kernels additionally guard against fully-masked rows. The bug only bites when a whole row is masked; a partially-masked row subtracts a finite max and is fine even with true $-\infty$ on the forbidden entries.
+    **(b)** The danger is a row that is *entirely* masked — every key forbidden — which can happen with a padding bug (e.g. a fully-`<pad>` row, or a causal-plus-padding AND that leaves a query with no allowed key). If every score in the row is true $-\infty$, the numerically stable softmax first subtracts the per-row max, which is also $-\infty$, computing $\exp(-\infty - (-\infty)) = \exp(\text{NaN}) = \text{NaN}$. That NaN then propagates through the weighted sum and, via autograd, poisons the entire batch's gradients. Production kernels avoid this by using a large *finite* negative number (e.g. the most-negative representable value of the dtype, or $-10^9$ in fp32): a fully-masked row then produces a uniform-ish but finite distribution rather than NaN, and kernels additionally guard against fully-masked rows. Note that this is not a low-precision-only hazard: $-\infty - (-\infty)$ is NaN in fp32 and fp64 as well. The sentinel does, however, have to be *representable* in the compute dtype — `-1e9` is fine in fp32 and bf16 but overflows to $-\infty$ in fp16 (max finite magnitude 65504), which would reintroduce the exact NaN it was meant to prevent; `torch.finfo(dtype).min` is the dtype-safe choice. The bug only bites when a whole row is masked; a partially-masked row subtracts a finite max and is fine even with true $-\infty$ on the forbidden entries.
 
 **5.** (Implementation.) *Temperature-controlled attention.* Extend the NumPy `scaled_dot_product_attention` from the chapter to accept a `temperature` parameter $\tau > 0$ that divides the scaled scores before softmax (so the effective scores are $\frac{QK^\top}{\tau\sqrt{d_k}}$). Then, using the chapter's hand-check keys/values and query, describe qualitatively what happens to the attention weights as $\tau \to 0^+$ and as $\tau \to \infty$.
 
@@ -657,7 +657,7 @@ From here the path forks in three directions, all of which build directly on thi
         return out, weights
     ```
 
-    Quick check on the chapter's hand example ($K$ axis-aligned, $V \in \{[10,10],[20,20],[30,30]\}$, $Q = [[0.1, 3.0, 0.1, 0.0]]$):
+    Quick check on the chapter's hand example ($K$ axis-aligned, $V \in \{[10,10],[20,20],[30,30]\}$, $Q = [[0.1, 0.1, 3.0, 0.0]]$):
 
     ```python
     for tau in (0.1, 1.0, 10.0):
@@ -667,7 +667,9 @@ From here the path forks in three directions, all of which build directly on thi
 
     Behavior:
 
-    - **$\tau \to 0^+$ (low temperature):** dividing by a tiny $\tau$ blows the score gaps up without bound, so softmax **sharpens toward a one-hot** distribution on the single best-matching key (here key 1). The weights approach $[0, 1, 0]$ and the output approaches exactly $v_1 = [20, 20]$ — hard retrieval / $\arg\max$ recovered in the limit.
+    - **$\tau \to 0^+$ (low temperature):** dividing by a tiny $\tau$ blows the score gaps up without bound, so softmax **sharpens toward a one-hot** distribution on the single best-matching key (here key 2). The weights approach $[0, 0, 1]$ and the output approaches exactly $v_2 = [30, 30]$ — hard retrieval / $\arg\max$ recovered in the limit.
     - **$\tau \to \infty$ (high temperature):** dividing by a huge $\tau$ crushes all score differences toward 0, so softmax **flattens toward uniform**, $[1/3, 1/3, 1/3]$. The output approaches the plain average of the values, $\tfrac{1}{3}([10,10]+[20,20]+[30,30]) = [20, 20]$ — the query stops discriminating among keys.
+
+    At $\tau = 1$ the output sits at $[25.21, 25.21]$, strictly between those two limits.
 
     So $\tau$ is exactly a temperature knob on the attention distribution: small $\tau$ = confident/peaked, large $\tau$ = diffuse/uniform. This is the same temperature effect the chapter attributes to the $\sqrt{d_k}$ scale — dividing scaled scores by $\sqrt{d_k}$ is itself an implicit temperature of $\sqrt{d_k}$ relative to the raw scores.

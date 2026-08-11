@@ -287,8 +287,13 @@ class DecoderOnlyTransformer(nn.Module):
     def generate(self, prompt: torch.Tensor, max_new_tokens: int = 64,
                  temperature: float = 1.0) -> torch.Tensor:
         """Greedy/temperature sampling. Prompt: (1, T_prompt)."""
+        max_seq_len = self.pos_emb.num_embeddings
         for _ in range(max_new_tokens):
-            logits = self.forward(prompt)[:, -1, :]         # (1, vocab_size)
+            # Crop to the context window: pos_emb (and the causal-mask buffer)
+            # only cover max_seq_len positions, so a longer sequence would
+            # index out of range.
+            idx_cond = prompt[:, -max_seq_len:]
+            logits = self.forward(idx_cond)[:, -1, :]       # (1, vocab_size)
             logits = logits / temperature
             next_tok = torch.multinomial(torch.softmax(logits, dim=-1), 1)
             prompt = torch.cat([prompt, next_tok], dim=1)
@@ -328,24 +333,31 @@ def prefix_lm_mask(prefix_len: int, total_len: int,
     return mask
 
 
-def encoder_decoder_mask(T_dec: int, T_enc: int,
+def encoder_decoder_mask(T_dec: int, T_enc: int, B: int = 1,
                           pad_mask: torch.Tensor | None = None,
                           device: torch.device = torch.device("cpu")) -> dict:
     """
     Returns the two masks needed for an encoder-decoder model:
       - 'self':  causal mask for decoder self-attention  (T_dec, T_dec)
-      - 'cross': encoder padding mask for cross-attention (T_enc,) bool: True=PAD
+      - 'cross': encoder padding mask for cross-attention (B, T_enc) bool: True=PAD
+                 — the batch dimension is required because padding is per-example,
+                 and it is exactly what CrossAttention.forward expects as
+                 `encoder_mask` (it does encoder_mask[:, None, None, :]).
     """
     self_mask  = causal_mask(T_dec, device)
-    cross_mask = pad_mask if pad_mask is not None else torch.zeros(T_enc, dtype=torch.bool, device=device)
+    cross_mask = (pad_mask if pad_mask is not None
+                  else torch.zeros(B, T_enc, dtype=torch.bool, device=device))
     return {"self": self_mask, "cross": cross_mask}
 
 
-# --- Common gotcha: using the wrong dtype ---
+# --- Common gotcha: mask dtype AND mask polarity ---
 # torch.where and masked_fill expect a *bool* mask, not float.
-# torch.nn.functional.scaled_dot_product_attention (PyTorch 2.0+) expects
-# an *additive* attn_mask (float, 0 or -inf), NOT a bool mask.
-# Always double-check which convention your attention function uses.
+# torch.nn.functional.scaled_dot_product_attention (PyTorch 2.0+) accepts
+# EITHER a float additive mask (0 / -inf, added to the logits) OR a bool
+# mask — and in the bool case True means "this key DOES take part in
+# attention", which is the exact opposite of nn.MultiheadAttention's
+# `attn_mask`, where True means "block this position".
+# Always check both dtype and polarity for the function you are calling.
 
 def apply_causal_mask_sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
                            ) -> torch.Tensor:
@@ -438,10 +450,13 @@ def test_block6_mask_functions():
     # generation rows remain causal (no peeking at the future)
     assert pmask[3, 4].item() is False
 
-    ed = encoder_decoder_mask(T_dec=4, T_enc=5)
+    ed = encoder_decoder_mask(T_dec=4, T_enc=5, B=2)
     assert ed["self"].shape == (4, 4)
-    assert ed["cross"].shape == (5,)
+    assert ed["cross"].shape == (2, 5)
     assert not bool(ed["cross"].any())  # default: no padding
+    # The cross mask must be directly usable as CrossAttention's encoder_mask.
+    ca = CrossAttention(d_model=8, n_heads=2)
+    _ = ca(torch.randn(2, 4, 8), torch.randn(2, 5, 8), encoder_mask=ed["cross"])
 
     # Exercise the SDPA convenience wrapper end-to-end.
     B, H, T_, d_k = 2, 4, 6, 8
