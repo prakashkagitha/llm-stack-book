@@ -8,7 +8,7 @@ We begin with the upstream work described in [Pretraining Data: Sources, Crawlin
 
 Before any quality heuristic is applied you need to know what language a document is written in. A heuristic that works for English prose (average word length > 4 characters, high fraction of common words) will misfire on German, Finnish, or Vietnamese. Language identification (LangID) is therefore the gating step.
 
-**fastText LangID.** The `fastText` model trained on Wikipedia and other multilingual sources can classify text into 176 languages in roughly 1 microsecond per document. It operates on character $n$-grams, making it robust to typos and code-switching. A single call returns a label and a confidence score:
+**fastText LangID.** The `fastText` model trained on Wikipedia and other multilingual sources can classify text into 176 languages in well under a millisecond per document (on the order of $10^3$–$10^4$ documents per second per core). It operates on character $n$-grams, making it robust to typos and code-switching. A single call returns a label and a confidence score:
 
 ```python
 import fasttext
@@ -163,11 +163,11 @@ A lower perplexity means the document resembles Wikipedia-quality text, so CCNet
 
 ### Fasttext and Linear Classifiers
 
-For speed at billion-document scale, fastText classifiers (with TF-IDF or hashing bag-of-words features) are common. They run in microseconds per document, enabling an entire CommonCrawl WET dump (on the order of a billion URLs, several hundred GB) to be classified in hours on a single machine.
+For speed at billion-document scale, fastText classifiers (with TF-IDF or hashing bag-of-words features) are common. They run in microseconds per document, enabling an entire CommonCrawl WET dump (on the order of 3 billion URLs, roughly 9 TB of compressed WET text) to be classified in hours on a single machine.
 
 Be precise about which recipe is which, because the two are often conflated. **CCNet** does not train a discriminative classifier at all: it fits a *per-language KenLM 5-gram model on Wikipedia* and bins each document by perplexity into head/middle/tail thirds, keeping the head (and optionally the middle). The **Wikipedia-vs-crawl fastText classifier** — positives from Wikipedia/Books/WebText-linked pages, negatives from raw crawl, keep the top percentile by predicted score — is the GPT-3 recipe. Which positives you choose matters more than the model class: DCLM (Li et al., 2024) found that a plain fastText classifier trained with *instruction-style* positives (OpenHermes-2.5 plus highly-upvoted ELI5 posts) rather than Wikipedia produced a markedly stronger filter, and that filter is what defines DCLM-baseline. The ROOTS corpus (used for BLOOM) went in another direction, adding domain experts to annotate quality labels.
 
-Here is a compact but complete trainable classifier: Wikipedia paragraphs are the positive class, raw CommonCrawl paragraphs the negative class, and we keep the top percentile by predicted quality on a held-out split (the CCNet recipe). It uses `HashingVectorizer` so there is no vocabulary to store -- fixed memory regardless of corpus size -- with a `LogisticRegression` head; the commented block shows the faster `fasttext.train_supervised` alternative used at billion-document scale.
+Here is a compact but complete trainable classifier: Wikipedia paragraphs are the positive class, raw CommonCrawl paragraphs the negative class, and we keep the top percentile by predicted quality on a held-out split (the GPT-3 recipe, not CCNet's perplexity binning). It uses `HashingVectorizer` so there is no vocabulary to store -- fixed memory regardless of corpus size -- with a `LogisticRegression` head; the commented block shows the faster `fasttext.train_supervised` alternative used at billion-document scale.
 
 ```python
 from sklearn.feature_extraction.text import HashingVectorizer
@@ -208,7 +208,7 @@ For an embedding-based classifier -- the FineWeb-Edu recipe, where a strong LLM 
 
 ### Instruction-Following / Reward Model Classifiers
 
-More recent pipelines use a reward model or an LLM-as-a-judge signal: a small fine-tuned model scores each document on dimensions like "educational value," "coherence," and "uniqueness." Phi-1 (Gunasekar et al., 2023) famously used GPT-4 to generate "textbook quality" synthetic documents and to score web crawl text for educational value, dramatically boosting sample efficiency. This approach is expensive but effective for smaller, higher-quality subsets.
+More recent pipelines use a reward model or an LLM-as-a-judge signal: a small fine-tuned model scores each document on dimensions like "educational value," "coherence," and "uniqueness." Phi-1 (Gunasekar et al., 2023) is the canonical example: GPT-4 annotated the "educational value" of a ~100k-document subset of The Stack and StackOverflow, those labels trained a cheap classifier over code embeddings that then filtered the full code corpus, and the accompanying "textbook quality" synthetic textbooks and exercises were generated with GPT-3.5 — together dramatically boosting sample efficiency. This approach is expensive but effective for smaller, higher-quality subsets.
 
 ## Toxicity Filtering and PII Removal
 
@@ -237,7 +237,7 @@ import re
 # (e.g., spaCy en_core_web_trf) for name/address detection.
 
 EMAIL_RE = re.compile(
-    r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Z|a-z]{2,}\b"
+    r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
 )
 PHONE_RE = re.compile(
     r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b"
@@ -637,8 +637,9 @@ if __name__ == "__main__":
     #   doc2 <-> doc5  estimated Jaccard = 0.547
     # doc3 and doc4 share no near-duplicate, so they never appear.
 
-    # ---- Verification: MinHash is an unbiased Jaccard estimator whose standard
-    # error is ~1/sqrt(num_hashes) = 1/sqrt(64) = 0.125. Check the signature
+    # ---- Verification: MinHash is an unbiased Jaccard estimator (a mean of k
+    # Bernoulli(J) indicators), so its standard error is sqrt(J(1-J)/k), which
+    # is at most 1/(2*sqrt(k)) = 0.0625 for k = 64. Check the signature
     # estimate against the exact set Jaccard for the closest pair. ----
     def exact_jaccard(a: str, b: str, k: int = 5) -> float:
         sa, sb = get_shingles(a, k), get_shingles(b, k)
@@ -650,7 +651,7 @@ if __name__ == "__main__":
     est = jaccard_from_sigs(s1, s2)
     exact = exact_jaccard(docs["doc1"], docs["doc2"])
     print(f"doc1<->doc2 check: est={est:.3f} exact={exact:.3f} err={abs(est-exact):.3f}")
-    assert abs(est - exact) <= 3 / (64 ** 0.5), "estimate outside 3 standard errors"
+    assert abs(est - exact) <= 3 / (2 * 64 ** 0.5), "estimate outside 3 standard errors"
     # Prints: doc1<->doc2 check: est=0.938 exact=0.950 err=0.012
 ```
 
@@ -771,7 +772,7 @@ Deduplication is not just about storage efficiency — it has measurable effects
     - After heuristic filters: approximately 45 billion tokens.
     - After exact dedup (SHA-256 on normalized text): approximately 40 billion tokens (removes ~10% exact duplicates — mostly mirror sites and syndicated content).
     - After MinHash fuzzy dedup (threshold 0.8, 128 hashes, 16 bands): approximately 30 billion tokens (removes another ~25% near-duplicates).
-    - After benchmark decontamination (13-gram, against 20 standard benchmarks): approximately 29.9 billion tokens (removes <0.1% but dramatically improves eval integrity).
+    - After benchmark decontamination (13-gram, against 20 standard benchmarks): approximately 29.9 billion tokens (removes ~0.3% but dramatically improves eval integrity).
 
     Final yield: roughly 30% of raw tokens, with substantially higher diversity, lower memorization risk, and honest benchmark evaluations. The yield ratio will vary — older crawls (2014–2018) tend to have more boilerplate; newer crawls have more unique content.
 
@@ -842,13 +843,15 @@ def loglikelihood(model, context, continuation):
 
 def eval_multiple_choice(model, examples):
     # examples: [{"ctx": str, "endings": [str, ...], "label": int}, ...]
-    # length-normalized log-likelihood == lm-eval-harness `acc_norm`.
+    # lm-eval-harness `acc_norm`: divide the summed log-likelihood by the
+    # choice's *character* length, NOT its token count. (The harness scores
+    # the request (ctx, " " + choice) but normalizes by len(choice).)
     correct = 0
     for ex in examples:
         best_j, best_norm = -1, -1e30
         for j, end in enumerate(ex["endings"]):
-            ll, n = loglikelihood(model, ex["ctx"], " " + end)
-            norm = ll / max(n, 1)
+            ll, _n_tokens = loglikelihood(model, ex["ctx"], " " + end)
+            norm = ll / max(len(end), 1)
             if norm > best_norm:
                 best_norm, best_j = norm, j
         correct += (best_j == ex["label"])
@@ -891,7 +894,7 @@ def run_ablation(raw_docs, clean_docs, heldout_docs, mc_examples,
 - *8-GPU node* (DDP, 160M model, effective `bs=64`, 5-10B tokens, a few hours): the PPL gap is clear and HellaSwag/PIQA `acc_norm` typically moves **+1-3 points**.
 - *Multi-node* (1B params, 30B+ tokens): this is the DCLM/FineWeb regime where good filtering vs raw CommonCrawl moves an aggregate benchmark suite by **several points** reliably -- the scale at which the published 1.5-2x sample-efficiency and downstream gains show up cleanly.
 
-**Verification -- establish a noise floor first.** Before trusting a raw-vs-clean delta, train two models on the *same* corpus with different seeds; the PPL gap between them is your noise floor. Only a raw-vs-clean delta that exceeds that floor is real. This same-data control is why single-GPU ablations should report a 3-seed mean rather than a single number. The multiple-choice scorer above is the length-normalized log-likelihood metric implemented by [`EleutherAI/lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) (`acc_norm`); for publishable numbers run that harness rather than the toy scorer, which omits its request-batching and prompt templates.
+**Verification -- establish a noise floor first.** Before trusting a raw-vs-clean delta, train two models on the *same* corpus with different seeds; the PPL gap between them is your noise floor. Only a raw-vs-clean delta that exceeds that floor is real. This same-data control is why single-GPU ablations should report a 3-seed mean rather than a single number. The multiple-choice scorer above is the length-normalized log-likelihood metric implemented by [`EleutherAI/lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) (`acc_norm`) — note the denominator is the choice's character length, not its token count, which is why the code divides by `len(end)`; for publishable numbers run that harness rather than the toy scorer, which omits its request-batching and prompt templates.
 
 ## Putting It All Together: A Production Pipeline
 
@@ -899,8 +902,11 @@ A production data-cleaning pipeline for pretraining runs in several distributed 
 
 ```bash
 # Stage 0: Download WET files from CommonCrawl S3
+# NOTE: --include only re-includes what an earlier --exclude removed, so the
+# leading --exclude "*" is mandatory; without it you would sync the warc/ and
+# wat/ subdirectories too (~90 TB instead of ~9 TB).
 aws s3 sync s3://commoncrawl/crawl-data/CC-MAIN-2024-10/segments/ ./wet/ \
-  --include "*.warc.wet.gz" --request-payer requester
+  --exclude "*" --include "*/wet/*.warc.wet.gz"
 
 # Stage 1: Text extraction + language ID + heuristic filtering
 # (Spark or Ray job, ~hours on 100-node cluster)
@@ -1118,11 +1124,13 @@ Three things this buys you over hand-rolled scripts, and they are the reasons th
 
     **(c) Total memory.** $m = 19.2 \times 2\times10^{8} = 3.83 \times 10^{9}$ bits $= 4.79 \times 10^{8}$ bytes $\approx 0.48$ GB.
 
-    **(d) Unique documents wrongly dropped.** A false positive drops a genuinely unique document, and each document is tested once before insertion. If essentially all $n$ are unique, the expected number of false positives is
+    **(d) Unique documents wrongly dropped.** A false positive drops a genuinely unique document, and each document is tested once before insertion. If essentially all $n$ are unique, the number of false positives is at most
 
     $$
     p \times n = 10^{-4} \times 2\times10^{8} = 2\times10^{4} = 20{,}000 \text{ documents}.
     $$
+
+    This is an upper bound, not the exact expectation: $p$ is the false-positive rate at *full* load, but document $i$ is tested against a filter holding only $i-1$ items, so the early stream is far cleaner. Averaging $(1 - e^{-ki/m})^{k}$ over $i = 1 \ldots n$ gives a mean rate near $10^{-5}$ here — roughly an order of magnitude below $p$ — so expect a few thousand wrongly-dropped documents in practice. Size with $p \times n$ anyway; it is the conservative direction.
 
     There are **no** false negatives, so a true duplicate is never kept — the asymmetry the chapter highlights.
 

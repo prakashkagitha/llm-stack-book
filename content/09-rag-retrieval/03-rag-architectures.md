@@ -364,7 +364,7 @@ That narrow interface is exactly how the capstone wires retrieval into a 100M mo
 **No cross-encoder reranking.** Bi-encoders embed query and document independently, so they cannot capture fine-grained interaction. A query "disadvantages of batch normalization" may retrieve the highest-scoring chunk being a general overview of batch norm that only tangentially mentions its disadvantages.
 
 !!! warning "Common pitfall: trusting cosine similarity as a quality signal"
-    A cosine similarity of 0.85 between a query and a chunk does not guarantee the chunk is relevant. In high-dimensional embedding spaces, cosine similarities cluster in a narrow band (often 0.7–0.95 for any reasonable pair). Always pair vector retrieval with a reranker for high-stakes applications.
+    A cosine similarity of 0.85 between a query and a chunk does not guarantee the chunk is relevant. The scale is *encoder-specific*: some embedding spaces are strongly anisotropic (all vectors occupy a narrow cone, so even unrelated pairs score 0.7–0.95 — OpenAI's `ada-002` and untuned BERT-CLS are the classic examples), while contrastively-trained sentence encoders such as `all-MiniLM-L6-v2` push unrelated pairs down to roughly 0.0–0.2. An absolute threshold tuned on one encoder does not transfer to another, so calibrate cutoffs per model on your own data — and pair vector retrieval with a reranker for high-stakes applications.
 
 ## RAG Evaluation: RAGAS and the Three Metrics
 
@@ -406,10 +406,18 @@ Two retrieval-quality metrics round out the picture:
 - **Context Recall.** Given ground-truth relevant passages, how many were retrieved? Recall penalizes missed evidence.
 
 $$
-\text{ContextPrecision@k} = \frac{|\{\text{relevant chunks in top-}k\}|}{k}
+\text{Precision@k} = \frac{|\{\text{relevant chunks in top-}k\}|}{k}
 $$
 
 In the LLM-as-judge variant (no ground truth), the judge is asked: "Is this chunk necessary to produce the correct answer?" for each retrieved chunk.
+
+The formula above is plain precision@$k$ — a rank-*insensitive* proxy that is easy to compute by hand and is what we use in the exercises. The `ragas` library's `context_precision` is the rank-weighted average-precision form, which additionally rewards putting the useful chunks *early*:
+
+$$
+\text{ContextPrecision@}K = \frac{\sum_{k=1}^{K} \text{Precision@}k \cdot v_k}{|\{\text{relevant chunks in top-}K\}|}, \qquad v_k \in \{0, 1\}
+$$
+
+where $v_k$ indicates whether the chunk at rank $k$ is relevant. Note the denominator is the number of relevant chunks, not $K$. With 5 retrieved chunks of which 2 are relevant, the plain form gives $0.40$ regardless of ordering, whereas the `ragas` form gives $(\frac{1}{1} + \frac{2}{2})/2 = 1.00$ if they sit at ranks 1-2 and $(\frac{1}{4} + \frac{2}{5})/2 = 0.325$ if they sit at ranks 4-5. Do not expect a hand-computed precision@$k$ to match the library's number.
 
 ### RAGAS in Practice
 
@@ -830,7 +838,7 @@ A few operational concerns that come up in every production RAG deployment:
 
     - **Lost-in-the-middle.** Liu et al. (2023) showed LLMs use information at the *beginning* and *end* of a long context far better than information in the middle. With 15 chunks, the truly relevant evidence may land in positions 6-10 and be effectively ignored, whereas with 3 chunks every passage sits near an edge.
     - **Prompt over-crowding.** Fifteen chunks consume a large share of the context budget, leaving little room for reasoning (and, in a chat setting, competing with conversation history and tool outputs). More retrieved tokens is not the same as more useful signal.
-    - **Semantic redundancy / low precision.** Positions 4-15 are increasingly likely to be near-duplicate or only tangentially relevant chunks. Because context precision falls as $k$ grows (`ContextPrecision@k` has $k$ in the denominator), the prompt fills with noise that can distract the generator and even seed hallucination when passages are ambiguous.
+    - **Semantic redundancy / low precision.** Positions 4-15 are increasingly likely to be near-duplicate or only tangentially relevant chunks. Because context precision falls as $k$ grows (plain `Precision@k` has $k$ in the denominator), the prompt fills with noise that can distract the generator and even seed hallucination when passages are ambiguous.
 
     Mitigation from the "Generator Configuration" section: **positional-bias mitigation** — put the most relevant chunk *first and last* (or shuffle chunk order across runs). This directly counters lost-in-the-middle by ensuring the strongest evidence occupies a high-recall position. (A retrieval-side fix the chapter also names is an MMR/diversity filter to remove redundant chunks before they reach the prompt — see Exercise 5.)
 
@@ -862,7 +870,7 @@ A few operational concerns that come up in every production RAG deployment:
   - BM25 ranking $R_1$: $A, B, C$
   - Dense ranking $R_2$: $C, A, D$
 
-  Compute the RRF score of every chunk and give the final fused order. Which chunk wins, and what property of RRF makes it win even though it is never ranked first by either retriever?
+  Compute the RRF score of every chunk and give the final fused order. Which chunk wins, and what property of RRF makes it beat $C$, which also tops one of the two rankings?
 
 ??? note "Solution"
     RRF score $= \sum_R 1/(k + \text{rank}_R(d))$ with $k = 60$; a chunk absent from a ranking contributes nothing from that ranking.
@@ -874,20 +882,20 @@ A few operational concerns that come up in every production RAG deployment:
 
     Fused order: $A\ (0.032522) > C\ (0.032266) > B\ (0.016129) > D\ (0.015873)$.
 
-    $A$ wins. Neither retriever ranks it first, but $A$ is the only chunk that appears *high in both* lists (rank 1 and rank 2). RRF rewards **consensus across retrievers**: two moderately-high placements sum to more than a single first place ($C$'s rank-1 in one list is dragged down by its rank-3 in the other). The large constant $k = 60$ flattens the gap between adjacent ranks, so agreement across lists matters more than winning any single list.
+    $A$ wins. Both $A$ and $C$ top exactly one list, but $A$ is the only chunk placed *high in both* lists (rank 1 and rank 2). RRF rewards **consensus across retrievers**: a first place plus a close second beats a first place plus a distant third ($C$'s rank-1 in the dense list is dragged down by its rank-3 in BM25). The large constant $k = 60$ flattens the gap between adjacent ranks, so agreement across lists matters more than winning any single list by a wide margin.
 
 **4.** (Quantitative) An LLM judge decomposes a generated answer into 5 atomic claims and finds 4 of them supported by the retrieved context. Separately, of the $k = 5$ retrieved chunks, only 2 are judged necessary to answer the question.
 
   (a) Compute the RAGAS faithfulness score and state whether it clears the chapter's hallucination threshold.
-  (b) Compute `ContextPrecision@5`.
-  (c) The system has faithfulness $= 0.8$ but the *single* unsupported claim happens to be the exact fact the user asked about. Which additional RAGAS metric would flag this, and why can faithfulness alone miss it?
+  (b) Compute the plain `Precision@5` of the retrieved context.
+  (c) The system has faithfulness $= 0.8$ but the *single* unsupported claim happens to be the exact fact the user asked about — and that fact is nowhere in the retrieved context. Which additional RAGAS metric would localize this failure, and why can faithfulness alone miss it?
 
 ??? note "Solution"
     (a) $\text{Faithfulness} = \dfrac{|\text{supported claims}|}{|\text{claims}|} = \dfrac{4}{5} = 0.80$. The chapter states "a score below 0.8 is a strong signal of hallucination," so at exactly $0.80$ it sits right on the boundary — not below it, but with no margin; one more unsupported claim would drop it to $0.6$ and clearly flag hallucination.
 
-    (b) $\text{ContextPrecision@}5 = \dfrac{|\text{relevant chunks in top-}5|}{5} = \dfrac{2}{5} = 0.40$. Low precision: 3 of the 5 injected chunks are noise.
+    (b) $\text{Precision@}5 = \dfrac{|\text{relevant chunks in top-}5|}{5} = \dfrac{2}{5} = 0.40$. Low precision: 3 of the 5 injected chunks are noise. (The ranks of the two useful chunks are not given, so the rank-weighted `ragas` `context_precision` cannot be computed here; it would range from $1.00$ if they sit at ranks 1-2 down to $0.325$ at ranks 4-5.)
 
-    (c) **Answer relevance** would flag it. Faithfulness only asks whether each claim is *entailed by the context* — it says nothing about whether the answer actually addresses the *query*. Here 4 grounded-but-peripheral claims keep faithfulness high while the one claim that matters is wrong/unsupported, so the answer is faithful-ish yet off-target. Answer relevance is computed by having the judge generate hypothetical questions the answer appears to address and measuring their embedding similarity to the original query; an answer that dodges the real question yields low similarity. The two metrics are deliberately orthogonal, which is why RAGAS reports both.
+    (c) **Context recall** would flag it (the reference-based metric, so you must supply the gold `reference`). Faithfulness is a *ratio over claims*: it dilutes one critical hallucination among four grounded-but-peripheral ones, and it never asks whether the evidence needed to answer the question was retrieved at all. Context recall does exactly that — with the key fact absent from the retrieved chunks, recall drops, localizing the failure to **retrieval** rather than generation. Note that **answer relevance** would *not* catch this case: the answer squarely addresses the query (the offending claim is precisely the fact asked about), so the back-generated questions closely match $q$ and relevance scores high. Answer relevance measures on-topic-ness, not groundedness or correctness — which is why RAGAS reports the retrieval-side metrics alongside it. If you want to catch the wrong fact itself rather than the missing evidence, add a reference-based correctness metric (`FactualCorrectness` in modern `ragas`).
 
 **5.** (Implementation) The chapter warns that ANN retrieval can return several near-duplicate chunks ("semantic redundancy"), and names **Maximal Marginal Relevance (MMR)** as the fix. Modify the minimal RAG implementation's `retrieve` function into a `retrieve_mmr` variant that over-fetches `fetch_k` candidates from FAISS and then greedily selects `k` of them by MMR, balancing query relevance against novelty. Use the MMR objective
 

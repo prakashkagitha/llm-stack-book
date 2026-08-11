@@ -705,7 +705,7 @@ if __name__ == "__main__":
 A few load-bearing details in that script:
 
 - **`ShardingStrategy.FULL_SHARD`** is ZeRO-3. FSDP also offers `SHARD_GRAD_OP` (ZeRO-2: shard grads + optimizer state but keep params resident — less communication, more memory) and `NO_SHARD` (plain DDP). `HYBRID_SHARD` shards *within* a node and replicates *across* nodes, which avoids slow inter-node all-gathers for the parameter reconstruction — a critical optimization on clusters where intra-node NVLink is far faster than inter-node InfiniBand.
-- **`reduce_dtype=torch.float32`** keeps the gradient reduce-scatter in fp32 even though params are bf16 — bf16 gradient summation across many ranks loses precision (bf16 has only 8 mantissa bits), so reducing in fp32 protects convergence at negligible cost.
+- **`reduce_dtype=torch.float32`** keeps the gradient reduce-scatter in fp32 even though params are bf16 — bf16 gradient summation across many ranks loses precision (bf16 has only 7 mantissa bits), so reducing in fp32 protects convergence at negligible cost.
 - **`use_orig_params=True`** exposes the original parameter tensors (not just the opaque FlatParameter), which is required for `torch.compile`, parameter-group-specific learning rates, and selective freezing.
 - **Checkpointing is genuinely different under sharding.** No rank has the whole model, so saving requires either an all-gather to materialize a full state dict on rank 0 (simple, but a memory spike and a bottleneck for huge models) or a *sharded* state dict where each rank writes its own slice (scalable). This is covered in depth in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
@@ -814,6 +814,10 @@ In the loop you then call `model, opt, loader = accelerator.prepare(model, opt, 
   "gradient_accumulation_steps": 4,
   "bf16": { "enabled": true },
   "gradient_clipping": 1.0,
+  "optimizer": {
+    "type": "AdamW",
+    "params": { "lr": 3e-4, "betas": [0.9, 0.95], "weight_decay": 0.1 }
+  },
   "zero_optimization": {
     "stage": 3,
     "overlap_comm": true,
@@ -833,7 +837,7 @@ for x, y in loader:                    # engine handles accumulation + clipping
     engine.step()                      # NOT opt.step(); also steps the LR schedule
 ```
 
-Flip `"stage"` between 1, 2, and 3 to walk the ladder from the previous section; add `"offload_param"` for ZeRO-Infinity-style spill. The configuration surface and the Megatron-DeepSpeed integration are developed in [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
+Flip `"stage"` between 1, 2, and 3 to walk the ladder from the previous section; add `"offload_param"` for ZeRO-Infinity-style spill. The `"optimizer"` block is load-bearing: ZeRO is built *around* an optimizer, so you must either declare one in the config (as here) or pass a constructed one as `optimizer=` to `deepspeed.initialize`. With neither, DeepSpeed falls back to a dummy optimizer — `engine.step()` then updates nothing (when it does not error outright), and `"offload_optimizer"` is offloading state that was never created. The configuration surface and the Megatron-DeepSpeed integration are developed in [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
 
 ### Putting It Together: A Runnable Distributed `train.py`
 
@@ -1054,7 +1058,13 @@ For the largest models, data parallelism alone is insufficient and is combined w
     T_{\text{comm}} \approx \frac{3 \times 26 \text{ GB}}{25 \text{ GB/s}} \approx 3.1 \text{ s/step}
     $$
 
-    If forward+backward compute is, say, 1.5 s, the job is badly communication-bound — the extra all-gather of ZeRO-3 is exposed because the inter-node link is slow. **Switching to `HYBRID_SHARD`** keeps the bandwidth-heavy parameter all-gathers *inside* each node (fast NVLink, $\beta \approx 300$ GB/s) and only does a once-per-step inter-node all-reduce of gradients — roughly $2\Psi$ over the slow link $\approx \frac{2 \times 26}{25} \approx 2.1$ s, partly overlappable, and the all-gathers nearly vanish from the critical path. This is why hybrid sharding is the default for multi-node FSDP whenever the model *fits* in a single node's aggregate memory.
+    If forward+backward compute is, say, 1.5 s, the job is badly communication-bound — the extra all-gather of ZeRO-3 is exposed because the inter-node link is slow. **Switching to `HYBRID_SHARD`** keeps the bandwidth-heavy parameter all-gathers *inside* each node (fast NVLink, $\beta \approx 300$ GB/s) and leaves only a once-per-step inter-node all-reduce of each rank's *gradient shard*. Gradients are first reduce-scattered over the $S = 8$ GPUs of a node, so what crosses the seam is $2\Psi/S = 26/8 = 3.25$ GB per rank; all-reducing that over the $R = 2$ node-replicas moves $2\frac{R-1}{R} \times 3.25 = 3.25$ GB per rank:
+
+    $$
+    T_{\text{inter}} \approx \frac{3.25 \text{ GB}}{25 \text{ GB/s}} \approx 0.13 \text{ s/step}
+    $$
+
+    (sanity check: each node need only ship *one* copy of the gradient, 26 GB, across the seam, and its 8 GPUs share that link). The exposed slow-link cost therefore drops from $\approx 3.1$ s to $\approx 0.13$ s, and the all-gathers nearly vanish from the critical path onto NVLink. This is why hybrid sharding is the default for multi-node FSDP whenever the model *fits* in a single node's aggregate memory.
 
 !!! interview "Interview Corner"
 
@@ -1107,7 +1117,7 @@ For the largest models, data parallelism alone is insufficient and is combined w
 
 ## Further Reading
 
-- **Rajbhandari, Rajbhandari, Ruwase, He (2020):** "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models" — the foundational paper introducing the three-stage sharding of optimizer states, gradients, and parameters, with the per-parameter memory accounting this chapter builds on.
+- **Rajbhandari, Rasley, Ruwase, He (2020):** "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models" — the foundational paper introducing the three-stage sharding of optimizer states, gradients, and parameters, with the per-parameter memory accounting this chapter builds on.
 - **Ren et al. (2021):** "ZeRO-Offload: Democratizing Billion-Scale Model Training" and **Rajbhandari et al. (2021):** "ZeRO-Infinity: Breaking the GPU Memory Wall for Extreme Scale Deep Learning" — CPU/NVMe offload extensions.
 - **Li et al. (2020):** "PyTorch Distributed: Experiences on Accelerating Data Parallel Training" — the design of DDP, including bucketing, gradient hooks, and the overlap strategy reconstructed in this chapter.
 - **Zhao et al. (2023):** "PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel" — the FSDP design paper covering FlatParameter sharding, prefetching, hybrid sharding, and mixed precision.
@@ -1210,10 +1220,10 @@ For the largest models, data parallelism alone is insufficient and is combined w
     T_{\text{intra}} \approx \frac{2 \times 14 \text{ GB}}{300 \text{ GB/s}} \approx 0.093 \text{ s},
     $$
 
-    nearly negligible. The only inter-node traffic is a once-per-step gradient all-reduce across the node-replicas, $\approx 2\Psi$ worth $= 28$ GB over the slow link:
+    nearly negligible. The only inter-node traffic is a once-per-step all-reduce of each rank's *gradient shard* across the $R = 4$ node-replicas. Gradients are reduce-scattered inside the node first (over $S = 8$ GPUs per node), so the shard that crosses the seam is $2\Psi/S = 14/8 = 1.75$ GB per rank, and a ring all-reduce over $R$ replicas moves $2\frac{R-1}{R}$ times that:
 
     $$
-    T_{\text{inter}} \approx \frac{2 \times 14 \text{ GB}}{25 \text{ GB/s}} = \frac{28}{25} \approx 1.12 \text{ s/step}.
+    T_{\text{inter}} \approx \frac{2 \cdot \frac{3}{4} \times 1.75 \text{ GB}}{25 \text{ GB/s}} = \frac{2.6}{25} \approx 0.11 \text{ s/step}.
     $$
 
-    So `HYBRID_SHARD` cuts the exposed slow-link time from $\approx 1.68$ s to $\approx 1.12$ s (plus a near-free $0.09$ s on NVLink), because it keeps the expensive all-gathers on the fast intra-node fabric and only pays the slow link for a single gradient reduction. This is exactly why hybrid sharding is the default for multi-node FSDP whenever the model fits in one node's aggregate memory — the tradeoff is that each node now stores a full model-state shard, so it only works when that fits.
+    So `HYBRID_SHARD` cuts the exposed slow-link time from $\approx 1.68$ s to $\approx 0.11$ s (plus a near-free $0.09$ s on NVLink), because it keeps the expensive all-gathers on the fast intra-node fabric and only pays the slow link for a single reduction of the (already node-reduced) gradient shard. This is exactly why hybrid sharding is the default for multi-node FSDP whenever the model fits in one node's aggregate memory — the tradeoff is that each node now stores a full model-state shard, so it only works when that fits.

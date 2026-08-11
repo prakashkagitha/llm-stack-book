@@ -233,7 +233,7 @@ import re
 # (e.g., spaCy en_core_web_trf) for name/address detection.
 
 EMAIL_RE = re.compile(
-    r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Z|a-z]{2,}\b"
+    r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
 )
 PHONE_RE = re.compile(
     r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b"
@@ -569,8 +569,9 @@ if __name__ == "__main__":
     assert {(a, b) for a, b, _ in pairs} == {("doc1", "doc2"), ("doc1", "doc5"), ("doc2", "doc5")}
     assert ("doc3", "doc4") not in {(a, b) for a, b, _ in pairs}
 
-    # ---- Verification: MinHash is an unbiased Jaccard estimator whose standard
-    # error is ~1/sqrt(num_hashes) = 1/sqrt(64) = 0.125. Check the signature
+    # ---- Verification: MinHash is an unbiased Jaccard estimator (a mean of k
+    # Bernoulli(J) indicators), so its standard error is sqrt(J(1-J)/k), which
+    # is at most 1/(2*sqrt(k)) = 0.0625 for k = 64. Check the signature
     # estimate against the exact set Jaccard for the closest pair. ----
     def exact_jaccard(a: str, b: str, k: int = 5) -> float:
         sa, sb = get_shingles(a, k), get_shingles(b, k)
@@ -582,7 +583,7 @@ if __name__ == "__main__":
     est = jaccard_from_sigs(s1, s2)
     exact = exact_jaccard(docs["doc1"], docs["doc2"])
     print(f"doc1<->doc2 check: est={est:.3f} exact={exact:.3f} err={abs(est-exact):.3f}")
-    assert abs(est - exact) <= 3 / (64 ** 0.5), "estimate outside 3 standard errors"
+    assert abs(est - exact) <= 3 / (2 * 64 ** 0.5), "estimate outside 3 standard errors"
     # Prints: doc1<->doc2 check: est=0.938 exact=0.950 err=0.012
 
 

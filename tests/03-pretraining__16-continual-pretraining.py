@@ -400,7 +400,7 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
       new_vocab     : dict {new_token_str -> new_id}
       old_tokenizer : can encode a string into OLD ids
     Shared tokens copy their trained vector; new tokens are initialized to the
-    mean of the OLD sub-token embeddings of their surface string (FOCUS-style).
+    mean of the OLD sub-token embeddings of their surface string.
     Falls back to the overall mean (a safe centroid) when no sub-tokens exist.
     """
     d = old_emb.shape[1]
@@ -411,7 +411,14 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
         if tok in old_vocab:                     # shared: copy trained vector
             new_emb[new_id] = old_emb[old_vocab[tok]]
         elif mean_init:                          # new: mean of OLD sub-tokens
-            sub_ids = old_tokenizer.encode(tok, add_special_tokens=False)
+            # `tok` is a VOCAB KEY, not a surface string: byte-level BPE and
+            # SentencePiece put a word-boundary marker on it ("Ġmedical",
+            # "▁medical"). Encoding the key raw would re-encode that marker
+            # as literal text (GPT-2: "Ġmedical" -> ['Ä','ł','medical']) and
+            # pollute the mean with junk byte fragments. Recover the surface
+            # form (" medical") first, then encode that.
+            surface = old_tokenizer.convert_tokens_to_string([tok])
+            sub_ids = old_tokenizer.encode(surface, add_special_tokens=False)
             if sub_ids:
                 new_emb[new_id] = old_emb[torch.tensor(sub_ids)].mean(0)
             else:
@@ -423,46 +430,54 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
 
 class _FakeOldTokenizer:
     """Tiny stand-in tokenizer: BPE-like sub-token split by fixed pieces,
-    no network/model download involved."""
+    no network/model download involved. Vocabulary KEYS carry a byte-level
+    word-boundary marker ("G" here standing in for GPT-2's 'Ġ'), exactly like
+    a real byte-level BPE tokenizer -- so `encode` only understands SURFACE
+    strings and the caller must convert keys to surface form first."""
 
     def __init__(self, vocab: dict):
         self._vocab = vocab            # {token_str -> old_id}
-        # a hand-built "sub-token split" for a few whole words not in vocab
+        # a hand-built "sub-token split" keyed by SURFACE string
         self._splits = {
-            "hello": ["he", "llo"],
-            "world": ["wor", "ld"],
-            "unknownxyz": [],           # no sub-tokens found -> falls back to mean
+            " hello": ["Ghe", "llo"],
+            " world": ["Gwor", "ld"],
+            " unknownxyz": [],          # no sub-tokens found -> falls back to mean
         }
 
     def get_vocab(self):
         return dict(self._vocab)
 
-    def encode(self, tok, add_special_tokens=False):
-        pieces = self._splits.get(tok, [])
+    def convert_tokens_to_string(self, tokens):
+        return "".join(" " + t[1:] if t.startswith("G") else t for t in tokens)
+
+    def encode(self, text, add_special_tokens=False):
+        pieces = self._splits.get(text, [])
         return [self._vocab[p] for p in pieces if p in self._vocab]
 
 
 torch.manual_seed(0)
-_old_vocab = {"he": 0, "llo": 1, "wor": 2, "ld": 3, "shared_tok": 4}
+_old_vocab = {"Ghe": 0, "llo": 1, "Gwor": 2, "ld": 3, "shared_tok": 4}
 _old_emb = torch.randn(len(_old_vocab), 6)
 _old_tok = _FakeOldTokenizer(_old_vocab)
 
 # new_vocab: one shared token (kept), two whole words needing mean-of-subtokens,
 # and one token with no sub-tokens found (falls back to overall mean)
-_new_vocab = {"shared_tok": 0, "hello": 1, "world": 2, "unknownxyz": 3}
+_new_vocab = {"shared_tok": 0, "Ghello": 1, "Gworld": 2, "Gunknownxyz": 3}
 _new_emb = init_new_embeddings(_old_emb, _new_vocab, _old_tok, mean_init=True)
 
 assert _new_emb.shape == (4, 6)
 # shared token: exact copy of its trained vector
 assert torch.equal(_new_emb[0], _old_emb[_old_vocab["shared_tok"]])
-# "hello" -> mean of "he" and "llo" embeddings
-_expected_hello = _old_emb[torch.tensor([_old_vocab["he"], _old_vocab["llo"]])].mean(0)
+# "Ghello" -> surface " hello" -> mean of "Ghe" and "llo" embeddings
+_expected_hello = _old_emb[torch.tensor([_old_vocab["Ghe"], _old_vocab["llo"]])].mean(0)
 assert torch.allclose(_new_emb[1], _expected_hello)
-# "world" -> mean of "wor" and "ld" embeddings
-_expected_world = _old_emb[torch.tensor([_old_vocab["wor"], _old_vocab["ld"]])].mean(0)
+# "Gworld" -> surface " world" -> mean of "Gwor" and "ld" embeddings
+_expected_world = _old_emb[torch.tensor([_old_vocab["Gwor"], _old_vocab["ld"]])].mean(0)
 assert torch.allclose(_new_emb[2], _expected_world)
-# "unknownxyz" -> no sub-tokens found, falls back to the overall mean
+# "Gunknownxyz" -> no sub-tokens found, falls back to the overall mean
 assert torch.allclose(_new_emb[3], _old_emb.mean(0))
+# and the marker really matters: encoding the raw vocab KEY finds no sub-tokens
+assert _old_tok.encode("Ghello") == []
 print("init_new_embeddings: shared-token copy, mean-of-subtokens, and fallback-to-mean all verified.")
 
 
@@ -476,14 +491,29 @@ def fit_cpt_trajectory(tokens, losses):
     """
     Fit L(D) = L_inf + A / (D0 + D)**alpha to pilot (tokens, loss) points,
     then return a predictor and the token count to hit a target loss.
-    tokens : array of CPT token counts (e.g. [1e9, 2e9, 4e9])
+    tokens : array of CPT token counts (e.g. [1e9, 2e9, 4e9, 8e9, 1.6e10]).
+             The law has FOUR free parameters, so you need at least 5 pilot
+             points -- curve_fit raises on an under-determined system, and a
+             merely exactly-determined fit (4 points) has zero slack and
+             happily lands on absurd parameter values.
     losses : measured new-domain loss at each.
     """
+    tokens = np.asarray(tokens, dtype=float)
+    losses = np.asarray(losses, dtype=float)
+    if tokens.size < 5:
+        raise ValueError("need >= 5 pilot points to fit 4 parameters")
+
     def law(D, L_inf, A, D0, alpha):
         return L_inf + A / np.power(D0 + D, alpha)
-    p0 = [min(losses) * 0.9, 1.0, 1e9, 0.3]            # rough initial guess
-    popt, _ = curve_fit(law, np.asarray(tokens), np.asarray(losses),
-                        p0=p0, maxfev=20000)
+
+    alpha0 = 0.3
+    # scale A's guess to the data: A0 / D_min**alpha0 ~ the observed loss drop.
+    # (A flat p0 like A=1.0 starts orders of magnitude off and the fit stalls.)
+    A0 = max(losses.max() - losses.min(), 1e-6) * tokens.min() ** alpha0
+    p0 = [losses.min() * 0.9, A0, tokens.min(), alpha0]
+    # keep A, D0, alpha positive so (D0 + D)**alpha is never NaN inside the fit
+    bounds = ([-np.inf, 0.0, 0.0, 1e-3], [np.inf, np.inf, np.inf, 2.0])
+    popt, _ = curve_fit(law, tokens, losses, p0=p0, bounds=bounds, maxfev=20000)
     L_inf, A, D0, alpha = popt
 
     def predict(D):                                    # loss at D tokens
@@ -496,11 +526,11 @@ def fit_cpt_trajectory(tokens, losses):
 
     return predict, tokens_for_target, popt
 
-# Example usage:
+# Example usage (5 pilot points for 4 parameters):
 # predict, tokens_for, params = fit_cpt_trajectory(
-#     [1e9, 2e9, 4e9], [2.41, 2.30, 2.22])
+#     [1e9, 2e9, 4e9, 8e9, 1.6e10], [2.41, 2.30, 2.22, 2.16, 2.12])
 # print(predict(40e9))           # extrapolated loss at the full 40B budget
-# print(tokens_for(2.10))        # tokens needed to reach loss 2.10
+# print(tokens_for(2.05))        # tokens needed to reach loss 2.05
 
 if curve_fit is None:
     print("SKIP(optional-dependency): scipy not available, skipping fit_cpt_trajectory call.")
@@ -508,8 +538,15 @@ else:
     # pilot points generated from a KNOWN shifted power law + tiny noise, so we
     # can check the fitter recovers a sane, monotonically-decreasing curve.
     _true_law = lambda D, L_inf=2.0, A=50.0, D0=1e9, alpha=0.3: L_inf + A / (D0 + D) ** alpha
-    _pilot_tokens = np.array([1e9, 2e9, 4e9, 8e9])
+    _pilot_tokens = np.array([1e9, 2e9, 4e9, 8e9, 1.6e10, 3.2e10])
     _pilot_losses = np.array([_true_law(d) for d in _pilot_tokens])
+
+    # the law has 4 free parameters: fewer than 5 points is under-determined
+    try:
+        fit_cpt_trajectory(_pilot_tokens[:4], _pilot_losses[:4])
+        raise AssertionError("expected fit_cpt_trajectory to reject 4 points")
+    except ValueError as _e:
+        print("under-determined pilot correctly rejected:", _e)
 
     _predict, _tokens_for, _popt = fit_cpt_trajectory(_pilot_tokens, _pilot_losses)
     print("fitted params (L_inf, A, D0, alpha):", [round(float(p), 4) for p in _popt])

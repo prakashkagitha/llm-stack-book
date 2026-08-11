@@ -22,7 +22,7 @@ Dense embedding models overwhelmingly use the **bi-encoder** design:
 
 Both query and document are encoded independently by the same (or separate) transformer. The final similarity score is computed as a dot product or cosine similarity at retrieval time. This independence is the key property that enables pre-computation: all document embeddings can be computed offline and stored in an ANN index. Only the query needs to be embedded at inference time.
 
-The **cross-encoder** alternative runs both query and document through the same forward pass with joint attention, producing higher-quality relevance scores but at $O(n)$ inference cost per document. Cross-encoders are used as rerankers on a short candidate list; they cannot be the first-stage retriever. See [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html) for cross-encoder reranking.
+The **cross-encoder** alternative runs both query and document through the same forward pass with joint attention, producing higher-quality relevance scores but at $O(n)$ inference cost per query over an $n$-document corpus — one full forward pass per candidate, with nothing precomputable. Cross-encoders are used as rerankers on a short candidate list; they cannot be the first-stage retriever. See [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html) for cross-encoder reranking.
 
 ## From Token Representations to Sentence Embeddings: Pooling
 
@@ -96,9 +96,9 @@ $$
 
 where $\tau > 0$ is the **temperature** hyperparameter. The loss is a cross-entropy over $N$ classes: class $i$ is the correct document for query $i$. Minimizing it encourages $\mathbf{e}_{q_i} \cdot \mathbf{e}_{d_i^+}$ to be the maximum among all $N$ dot products in row $i$.
 
-**Why temperature matters.** A small $\tau$ (e.g., 0.01–0.1) sharpens the softmax, creating a steep gradient signal and forcing the model to distinguish very fine-grained differences. A large $\tau$ (near 1.0) makes the loss soft and nearly uniform. Typical values: 0.05–0.1 for image encoders (SimCLR used 0.07), 0.02–0.05 for text retrieval.
+**Why temperature matters.** A small $\tau$ (e.g., 0.01–0.1) sharpens the softmax, creating a steep gradient signal and forcing the model to distinguish very fine-grained differences. A large $\tau$ (near 1.0) makes the loss soft and nearly uniform. Typical values: 0.05–0.1 for image encoders (SimCLR settled on 0.1; MoCo uses 0.07, which is also CLIP's initialization for its *learned* temperature), 0.02–0.05 for text retrieval.
 
-**Scaling with batch size.** With batch size $N$, each query sees $N-1$ negatives. Doubling $N$ roughly doubles the number of negatives per query, which empirically improves representation quality — this is why contrastive learning loves large batches. DPR (Karpukhin et al., 2020) used batch size 128; modern models often train with effective batch sizes in the thousands via gradient accumulation.
+**Scaling with batch size.** With batch size $N$, each query sees $N-1$ negatives. Doubling $N$ roughly doubles the number of negatives per query, which empirically improves representation quality — this is why contrastive learning loves large batches. DPR (Karpukhin et al., 2020) used batch size 128; modern models often train with effective batch sizes in the thousands via GradCache and cross-GPU all-gather of in-batch negatives. Note that plain gradient accumulation does *not* help here: each accumulated micro-batch computes its own softmax over only its own rows, so the negative pool per query stays at the micro-batch size. Enlarging it genuinely requires the techniques in "Key Training Decisions" below.
 
 !!! note "Why InfoNCE fixes anisotropy: alignment and uniformity"
 
@@ -189,10 +189,10 @@ if __name__ == "__main__":
     Softmax probabilities:
 
     $$
-    p_0 = \frac{e^{18}}{e^{18} + 3e^{2}} \approx \frac{65,659,969}{65,659,969 + 22.17} \approx 0.99997
+    p_0 = \frac{e^{18}}{e^{18} + 3e^{2}} \approx \frac{65,659,969}{65,659,969 + 22.17} \approx 0.9999997
     $$
 
-    Cross-entropy loss for this query: $-\log(0.99997) \approx 0.00003$. Almost zero — the model
+    Cross-entropy loss for this query: $-\log(0.9999997) \approx 3.4 \times 10^{-7}$. Almost zero — the model
     has near-perfectly separated the positive from the negatives.
 
     Now suppose similarity with the positive drops to 0.30:
@@ -217,7 +217,7 @@ In-batch negatives are easy to implement but are often *too easy* — randomly s
 
 **BM25-mined negatives.** Run BM25 retrieval on the query; take high-ranked documents that are not the gold positive. These share vocabulary with the query but differ in meaning.
 
-**Dense-mined negatives.** Use an earlier checkpoint of the embedding model to retrieve top-$k$ passages; use non-positive ones as negatives. This "ANN negative mining" strategy, used in DPR and ANCE (Xiong et al., 2021), iteratively updates the negatives as the model improves. Training with the model's own hard negatives dramatically accelerates convergence.
+**Dense-mined negatives.** Use an earlier checkpoint of the embedding model to retrieve top-$k$ passages; use non-positive ones as negatives. This "ANN negative mining" strategy was introduced by ANCE (Xiong et al., 2021), which iteratively refreshes the negatives from an asynchronously updated index as the model improves. (DPR, by contrast, trained on in-batch negatives plus a single *BM25*-mined hard negative per question, fixed before training.) Training with the model's own hard negatives dramatically accelerates convergence.
 
 **Cross-encoder filtered negatives.** Apply a high-quality cross-encoder reranker to a large candidate set, then use passages that the cross-encoder scores as irrelevant as negatives. These are the hardest and most informative.
 
@@ -326,8 +326,13 @@ from sentence_transformers.util import mine_hard_negatives
 
 model = SentenceTransformer("BAAI/bge-base-en-v1.5")
 
+# Your indexed corpus: every passage a negative could plausibly be drawn from.
+my_passages: list[str] = load_my_corpus()   # tens of thousands of chunks
+
 # Step 1: (anchor, positive) pairs. Column ORDER is what matters to the loss,
 # not the column names. This is the output of the data pipeline above.
+# Two rows here only to show the shape -- a real run needs thousands of rows,
+# otherwise the rank windows below have nothing to select from.
 pairs = Dataset.from_dict({
     "anchor":   ["What is the capital of France?", "Who wrote Hamlet?"],
     "positive": ["Paris is the capital of France.", "Hamlet was written by Shakespeare."],
@@ -338,9 +343,11 @@ pairs = Dataset.from_dict({
 train_ds = mine_hard_negatives(
     pairs,
     model,
+    corpus=my_passages,    # the real search pool; defaults to the positives only,
+                           # which is far too small for the rank windows below
     num_negatives=4,
-    range_min=10,          # skip ranks 1-9: most likely to be FALSE negatives
-    range_max=50,          # sample from ranks 10-50: hard but probably wrong
+    range_min=10,          # skip the 10 closest: most likely to be FALSE negatives
+    range_max=50,          # sample from the next ~40: hard but probably wrong
     max_score=0.8,         # reject anything suspiciously similar to the query
     margin=0.05,           # ...and anything within 0.05 of the positive's score
     sampling_strategy="top",
@@ -446,7 +453,7 @@ Represent this sentence for retrieval:
   Input: <query>
 ```
 
-The instruction is tokenized and encoded together with the query, so the pooled vector is a function of both. In a bidirectional (BERT-style) encoder every query token attends to the instruction tokens directly; in a decoder-only encoder the causal mask means the instruction sits in the *prefix*, and the last-token representation has attended over all of it. Either way the same backbone lands the query in a different region of the space depending on the stated task. One operational consequence: **the instruction must be applied at index time exactly as the model was trained**. E5 and BGE prefix documents with `passage:` and queries with `query:`; if you index with the wrong prefix (or none), scores degrade silently — no error, just worse retrieval.
+The instruction is tokenized and encoded together with the query, so the pooled vector is a function of both. In a bidirectional (BERT-style) encoder every query token attends to the instruction tokens directly; in a decoder-only encoder the causal mask means the instruction sits in the *prefix*, and the last-token representation has attended over all of it. Either way the same backbone lands the query in a different region of the space depending on the stated task. One operational consequence: **the instruction must be applied at index time exactly as the model was trained**. E5 prefixes queries with `query:` and documents with `passage:`, while BGE-v1.5 prepends a *query-only* natural-language instruction (`"Represent this sentence for searching relevant passages: "`) and leaves passages unprefixed; BGE-M3 uses no prefix on either side. Always check the model card. If you index with the wrong prefix (or none), scores degrade silently — no error, just worse retrieval.
 
 This is especially powerful for LLM-based embedders. Models like E5-mistral-7b-instruct (Wang et al., 2023) — and the 2025 frontier models Qwen3-Embedding and Gemini Embedding that superseded it on the leaderboards — use a decoder-only LLM backbone and take the last-token representation instead of mean pooling (since left-to-right autoregressive models produce context-rich representations at the final token, not the first).
 

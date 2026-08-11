@@ -20,11 +20,11 @@ Both the FLOPs for this product and the memory to store $S$ grow as $\mathcal{O}
 
 | Sequence length | Score matrix (fp16) |
 |---|---|
-| 2,048 | 16 MB per head |
-| 32,768 | ~4 GB per head |
-| 128,000 | ~61 GB per head |
+| 2,048 | 8 MB per head |
+| 32,768 | ~2 GB per head |
+| 128,000 | ~31 GB per head |
 
-A model with 32 heads would need ~2 TB just for score matrices at 128 K. FlashAttention (covered in depth in [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html) and [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html)) eliminates the need to materialise the full $S$ in HBM by fusing the computation in tiles, reducing the HBM requirement to $\mathcal{O}(T)$ activations. But the $\mathcal{O}(T^2)$ FLOPs remain — you simply compute them faster.
+A model with 32 heads would need ~1 TB just for score matrices at 128 K. FlashAttention (covered in depth in [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html) and [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html)) eliminates the need to materialise the full $S$ in HBM by fusing the computation in tiles, reducing the HBM requirement to $\mathcal{O}(T)$ activations. But the $\mathcal{O}(T^2)$ FLOPs remain — you simply compute them faster.
 
 ### Memory From Activations and KV Cache
 
@@ -56,7 +56,7 @@ $$
 
 where $m$ is the absolute position and $\theta_i = b^{-2i/d}$ with base $b = 10{,}000$ by default. The key insight is that the dot product $q_m \cdot k_n$ depends only on the *relative* position $m - n$, because the rotation matrices satisfy $R_m^\top R_n = R_{m-n}$.
 
-The problem for extrapolation: at training time, $m$ never exceeds $T_{\text{train}}$. The angles $m \theta_i$ stay within $[0, T_{\text{train}} \theta_i]$. For the low-frequency dimensions (large $i$, tiny $\theta_i$) this range can be small — those dimensions barely rotate even within the training window. For the high-frequency dimensions the rotation is well-covered. When you push $m > T_{\text{train}}$, high-frequency dimensions enter completely unseen phase territory, causing attention to produce pathological scores.
+The problem for extrapolation: at training time, $m$ never exceeds $T_{\text{train}}$. The angles $m \theta_i$ stay within $[0, T_{\text{train}} \theta_i]$. For the low-frequency dimensions (large $i$, tiny $\theta_i$) this range can be small — those dimensions barely rotate even within the training window. For the high-frequency dimensions the rotation is well-covered: because $\cos$ and $\sin$ are $2\pi$-periodic, a dimension whose wavelength $\lambda_i = 2\pi/\theta_i$ is much shorter than $T_{\text{train}}$ has already swept every phase thousands of times. When you push $m > T_{\text{train}}$, it is therefore the *low*-frequency dimensions — the ones that never completed even a single rotation during training — that enter completely unseen phase territory, causing attention to produce pathological scores. The high-frequency dimensions wrap harmlessly onto phases the model saw densely.
 
 ### Position Interpolation (PI)
 
@@ -175,15 +175,15 @@ print(f"YaRN attention factor sqrt(1/t): {yarn_attention_factor(4096, 32768):.4f
 
     Consider a model with $d = 128$ trained at $T_{\text{train}} = 4{,}096$. We extend to $T_{\text{target}} = 32{,}768$ (8x).
 
-    **Standard RoPE** at position 32 768, dimension $i=0$ (highest frequency):
-    $$\theta_0 = 10000^{0/128} = 1.0, \quad m\theta_0 = 32{,}768 \text{ rad}$$
-    The model was trained only up to $4096 \text{ rad}$ for this dimension — over 8x out of distribution.
+    **Standard RoPE** at position 32 768, dimension $i = 63$ (the *lowest*-frequency pair — this is the one that actually breaks):
+    $$\theta_{63} = 10000^{-126/128} = 1.155\times10^{-4}, \quad \lambda_{63} = 2\pi/\theta_{63} \approx 54{,}400 \text{ tokens}$$
+    Across the whole 4 096-token training window this dimension only ever swept $4096\,\theta_{63} \approx 0.47$ rad — under 8% of a single period. At $m = 32{,}768$ it reaches $3.78$ rad, a phase range the model has genuinely never seen. The highest-frequency dimension $i=0$ ($\theta_0 = 1$, $\lambda_0 = 2\pi \approx 6.3$ tokens) is *not* a problem: its angle at $m = 32{,}768$ is $32{,}768$ rad, but since $\cos/\sin$ are $2\pi$-periodic that is just another point on a circle it already wrapped around ~650 times during training.
 
     **Position Interpolation** divides every position by 8:
-    $$m' = 32{,}768 / 8 = 4{,}096, \quad m'\theta_0 = 4{,}096 \text{ rad}$$
-    Now the highest-frequency dimension is safely in range, but nearby positions at $m=1$ and $m=2$ now appear at $m'=0.125$ and $m'=0.25$ — the model can barely tell them apart.
+    $$m' = 32{,}768 / 8 = 4{,}096, \quad m'\theta_{63} \approx 0.47 \text{ rad}$$
+    The under-rotated low-frequency dimension lands back at exactly its trained maximum angle — but the compression is applied uniformly, so nearby positions at $m=1$ and $m=2$ now appear at $m'=0.125$ and $m'=0.25$. On the high-frequency dimensions, which never needed fixing, the model can now barely tell adjacent tokens apart.
 
-    **YaRN** with $\beta_{\text{fast}} = 32$ applies *no scaling* to the highest-frequency dimension (its wavelength $\lambda_0 = 2\pi \approx 6.3$ is far below the original context 4096), so nearby tokens remain distinguishable. It applies full NTK-style scaling only to low-frequency dimensions that actually need longer range. The result is the best of both worlds.
+    **YaRN** with $\beta_{\text{fast}} = 32$ applies *no scaling* to the highest-frequency dimensions (dimension 0's wavelength $\lambda_0 \approx 6.3$ is far below the ramp's high-frequency cutoff $T_{\text{train}}/\beta_{\text{fast}} = 128$), so nearby tokens remain distinguishable. It applies full PI scaling only to the low-frequency dimensions that actually fell out of distribution. The result is the best of both worlds.
 
 {{fig:longctx-rope-extension-spectrum}}
 
@@ -421,13 +421,13 @@ Ring Attention (Liu et al., 2023, *Ring Attention with Blockwise Transformers*) 
 Ring of 4 GPUs, each holding T/4 tokens:
 
 Step 0: GPU-i computes attention of its Q chunk against its own KV chunk.
-Step 1: Each GPU sends its KV chunk to the next GPU in the ring.
-        While the data is in flight, each GPU continues computing
-        attention of its Q chunk against the KV chunk it is about to
-        receive (overlap communication with computation).
-Step 2: Repeat for N-1 total rounds.
-After N rounds, each GPU has accumulated the full softmax-normalised
-attention output for its Q chunk.
+        At the same time it posts the send of that KV chunk to the next
+        GPU in the ring, and a receive (into a second buffer) from the
+        previous GPU -- so the rotation is in flight while GPU-i is still
+        computing against the chunk it currently holds.
+Step 1: Swap in the newly arrived KV chunk and repeat.
+After N compute steps and N-1 KV rotations, each GPU has accumulated the
+full softmax-normalised attention output for its Q chunk.
 ```
 
 {{fig:longctx-ring-attention-rotation}}
@@ -459,7 +459,13 @@ def ring_attention_forward(
 
     # Accumulators for online softmax (see FlashAttention chapter for derivation)
     output_acc = torch.zeros_like(q_local)        # O accumulator
-    lse_acc = torch.full((q_local.shape[0], q_local.shape[1]), float('-inf'))  # log-sum-exp
+    # Keep the log-sum-exp accumulator in fp32 for numerical stability, and on the
+    # same device as q_local -- a default `torch.full` would land on CPU and the
+    # first `torch.maximum` below would raise a device-mismatch error.
+    lse_acc = torch.full(
+        q_local.shape[:2], float('-inf'),
+        device=q_local.device, dtype=torch.float32,
+    )  # (T/N, H) log-sum-exp
 
     k_chunk = k_local.clone()
     v_chunk = v_local.clone()
@@ -513,14 +519,29 @@ def ring_attention_forward(
             lse_acc = m + torch.log(exp_old + exp_new)
             output_acc = (output_acc * exp_old.unsqueeze(-1) + new_out * exp_new.unsqueeze(-1)) / (exp_old + exp_new).unsqueeze(-1)
 
-        # Rotate KV to next GPU in ring (overlap with next step's compute in real code)
-        next_rank = (rank + 1) % world_size
-        prev_rank = (rank - 1) % world_size
-        dist.send(k_chunk, dst=next_rank)
-        dist.recv(k_chunk, src=prev_rank)
-        dist.send(v_chunk, dst=next_rank)
-        dist.recv(v_chunk, src=prev_rank)
-        kv_rank = (kv_rank - 1) % world_size  # the received chunk came from one step earlier
+        # Rotate KV to next GPU in ring (overlap with this step's compute in real code).
+        # Two things matter here:
+        #  1. Use NON-blocking, batched p2p. If every rank issues a blocking
+        #     `dist.send` before any rank issues the matching `dist.recv`, the ring
+        #     deadlocks: rank r's recv cannot start until its send completes, which
+        #     needs rank r+1's recv, and so on all the way around.
+        #  2. Double-buffer. Receiving into the same tensor you are sending would
+        #     overwrite the outgoing chunk mid-flight.
+        if step < world_size - 1:
+            next_rank = (rank + 1) % world_size
+            prev_rank = (rank - 1) % world_size
+            k_next = torch.empty_like(k_chunk)
+            v_next = torch.empty_like(v_chunk)
+            reqs = dist.batch_isend_irecv([
+                dist.P2POp(dist.isend, k_chunk, next_rank),
+                dist.P2POp(dist.irecv, k_next, prev_rank),
+                dist.P2POp(dist.isend, v_chunk, next_rank),
+                dist.P2POp(dist.irecv, v_next, prev_rank),
+            ])
+            for req in reqs:
+                req.wait()
+            k_chunk, v_chunk = k_next, v_next
+            kv_rank = (kv_rank - 1) % world_size  # received chunk is one step earlier in the ring
 
     return output_acc
 ```
@@ -553,12 +574,12 @@ In practice, the two approaches compose: one might use tensor parallelism for we
     **Model weights (parameters):** 70 B × 2 bytes = **140 GB**. Requires at minimum 8 × A100 80 GB GPUs under model parallelism.
 
     **Activations per attention layer (without ring attention):**
-    - Q, K, V projections: $3 \times 128{,}000 \times 8192 \times 2 \approx 6.3\;\text{GB}$
+    - Q, K, V projections: under GQA, Q is $64 \times 128 = 8192$ wide but K and V are only $8 \times 128 = 1024$ wide each, so $128{,}000 \times (8192 + 1024 + 1024) \times 2 \approx 2.6\;\text{GB}$
     - Score matrix (if not FlashAttention): $64 \times 128{,}000^2 \times 2 \approx 2\;\text{TB}$ — clearly impossible.
     - With FlashAttention: score matrix never materialised; only $O(\text{block size})$ in SRAM.
 
     **Activations per attention layer (with FlashAttention + ring attention over 8 GPUs):**
-    - Each GPU holds Q/K/V for $128{,}000 / 8 = 16{,}000$ tokens: $3 \times 16{,}000 \times 8192 \times 2 \approx 786\;\text{MB}$
+    - Each GPU holds Q/K/V for $128{,}000 / 8 = 16{,}000$ tokens: $16{,}000 \times 10{,}240 \times 2 \approx 328\;\text{MB}$
     - The FlashAttention block size is ~128 tokens; only that block of scores lives in SRAM at once.
     - Per-layer ring overhead: 2 × KV chunk per round = $2 \times 16{,}000 \times 8 \times 128 \times 2 \approx 65\;\text{MB}$ in transit.
 
@@ -587,7 +608,7 @@ For chunked prefill — processing a 128 K context in chunks rather than all at 
 
     **A:** Three approaches, ascending in reliability:
 
-    1. **Zero-shot RoPE scaling (NTK-aware or Dynamic NTK):** Rescale the RoPE base at inference time with no additional training. Works surprisingly well for modest extensions (~4x) because it keeps high-frequency (short-range) dimensions in-distribution. The model's attention patterns were never trained at long range, so quality degrades on tasks requiring global reasoning, but short-range dependencies remain intact. Zero cost; no GPU required.
+    1. **Zero-shot RoPE scaling (NTK-aware or Dynamic NTK):** Rescale the RoPE base at inference time with no additional training. Works surprisingly well for modest extensions (~4x) because it stretches the under-rotated low-frequency dimensions back inside their trained angle range while leaving the high-frequency (short-range) dimensions' resolution essentially intact. The model's attention patterns were never trained at long range, so quality degrades on tasks requiring global reasoning, but short-range dependencies remain intact. Zero cost; no GPU required.
 
     2. **RoPE + continued pretraining (PI or YaRN):** Apply a scaling method such as YaRN to the positional embeddings, then continue pretraining on long documents for a few hundred to a few thousand steps at a reduced learning rate. The model learns genuine long-range attention patterns, not just in-distribution positional angles. Requires on the order of 5–20 B tokens of long training data and 100–1 000 GPU-hours for a 7 B model. Recovers most of the short-context performance if the mix includes sufficient short documents.
 
@@ -674,7 +695,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 
 !!! warning "Common pitfall: forgetting to update max_position_embeddings"
 
-    HuggingFace models cache `max_position_embeddings` in `config.json`. If you update the RoPE scaling factor but leave `max_position_embeddings = 4096`, the model will refuse to generate beyond 4 096 tokens at inference time even though it was trained at 32 K. Always set `max_position_embeddings` to the *new* target length. Similarly, vLLM reads `max_model_len` from the config or CLI; failing to set it will cause silent truncation.
+    HuggingFace models record `max_position_embeddings` in `config.json`. Leaving it at 4 096 while updating the RoPE scaling does *not* raise an error — `transformers` builds RoPE on the fly for whatever `position_ids` it is given, so `generate()` happily runs past 4 096. The failure is silent and worse: for `rope_type: "dynamic"` or `"yarn"` the scaling factors are computed *relative to* `max_position_embeddings`, so a stale value means the model is served with different rotations than it was trained with, and quality degrades with no warning. Always set `max_position_embeddings` to the *new* target length. Serving stacks are stricter — vLLM derives `max_model_len` from the config and will hard-error or truncate if you ask for more than the config implies.
 
 !!! tip "Practitioner tip: use dynamic NTK for zero-shot quick evaluation"
 
@@ -708,7 +729,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 
     - [Peng et al., *YaRN: Efficient Context Window Extension of Large Language Models* (2023)](https://arxiv.org/abs/2309.00071) — per-frequency interpolation + attention temperature scaling; became the practical default adopted by Mistral, Qwen, and DeepSeek.
     - [Liu et al., *Ring Attention with Blockwise Transformers for Near-Infinite Context* (2023)](https://arxiv.org/abs/2310.01889) — sequence parallelism via a GPU ring; enables training at 128K+ tokens without approximations.
-    - [Chen et al., *LongLoRA: Efficient Fine-tuning of Long-Context Large Language Models* (2023)](https://arxiv.org/abs/2309.12307) — shifted sparse attention cuts the compute cost of long-context fine-tuning 16x while preserving full attention at inference.
+    - [Chen et al., *LongLoRA: Efficient Fine-tuning of Long-Context Large Language Models* (2023)](https://arxiv.org/abs/2309.12307) — shifted sparse attention (S2-Attn) restricts fine-tuning attention to groups of ~1/4 the context, shifting half the heads by half a group so information still crosses group boundaries — roughly a 4x cut in attention FLOPs, while the model still uses full attention at inference.
     - [Ding et al., *LongRoPE: Extending LLM Context Window Beyond 2 Million Tokens* (2024)](https://arxiv.org/abs/2402.13753) — non-uniform positional interpolation search pushes verified context to 2M tokens with only 1K fine-tuning steps.
     - [Meta AI, *The Llama 4 Herd* (2025)](https://ai.meta.com/blog/llama-4-multimodal-intelligence/) — Scout's 10M-token window via iRoPE (interleaved layers without positional embeddings plus inference-time attention temperature scaling), the current production high-water mark for context length.
 
@@ -743,15 +764,15 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 
 ## Exercises
 
-**1.** The chapter's table lists a 16 MB (fp16) score matrix *per head* at $T = 2{,}048$. Using the $\mathcal{O}(T^2)$ scaling of the attention score matrix, (a) compute the per-head score-matrix size at $T = 16{,}384$, (b) compute the total across a 32-head layer, and (c) state in one sentence why FlashAttention removes this memory cost even though the attention *FLOPs* remain $\mathcal{O}(T^2)$.
+**1.** The chapter's table lists an 8 MB (fp16) score matrix *per head* at $T = 2{,}048$. Using the $\mathcal{O}(T^2)$ scaling of the attention score matrix, (a) compute the per-head score-matrix size at $T = 16{,}384$, (b) compute the total across a 32-head layer, and (c) state in one sentence why FlashAttention removes this memory cost even though the attention *FLOPs* remain $\mathcal{O}(T^2)$.
 
 ??? note "Solution"
     (a) The score matrix scales with $T^2$, so the ratio in memory is the square of the ratio in sequence length:
     $$\left(\frac{16{,}384}{2{,}048}\right)^2 = 8^2 = 64.$$
-    Per-head size $= 16\ \text{MB} \times 64 = 1{,}024\ \text{MB} = 1\ \text{GB per head}$.
+    Per-head size $= 8\ \text{MB} \times 64 = 512\ \text{MB per head}$. (Check directly: $16{,}384^2 \times 2\ \text{bytes} = 536{,}870{,}912$ bytes.)
 
     (b) A 32-head layer stores 32 independent score matrices:
-    $$1\ \text{GB} \times 32 = 32\ \text{GB}.$$
+    $$512\ \text{MB} \times 32 = 16\ \text{GB}.$$
 
     (c) FlashAttention never materialises the full $S \in \mathbb{R}^{T\times T}$ in HBM; it fuses the score computation, softmax, and value product tile-by-tile so only an $\mathcal{O}(\text{block size})$ slice of scores ever lives in SRAM, reducing the HBM footprint from $\mathcal{O}(T^2)$ to $\mathcal{O}(T)$ activations. The multiply-adds are still all performed (FLOPs unchanged); they are just computed in tiles rather than staged through a materialised matrix.
 
@@ -762,7 +783,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 
     (b) A sinusoidal encoding *does* yield a well-defined vector at any position (the formula extends smoothly), so the failure is different: the attention heads were never trained to interpret the sinusoid values that occur beyond $T_{\text{train}}$. The mapping from those unseen positional patterns to useful attention behaviour was never learned, so scores degrade sharply.
 
-    (c) RoPE encodes position as a rotation angle $m\theta_i$. During training, $m$ never exceeds $T_{\text{train}}$, so each dimension's angle stays inside $[0, T_{\text{train}}\theta_i]$. For the high-frequency dimensions ($\theta_i \approx 1$), pushing $m > T_{\text{train}}$ drives the angle into phase territory the model never saw during training, producing pathological attention scores even though the rotation itself is perfectly well-defined.
+    (c) RoPE encodes position as a rotation angle $m\theta_i$. During training, $m$ never exceeds $T_{\text{train}}$, so each dimension's angle stays inside $[0, T_{\text{train}}\theta_i]$. The high-frequency dimensions ($\theta_i \approx 1$) are fine: their wavelength $2\pi/\theta_i$ is only a handful of tokens, so they wrapped through every phase thousands of times inside the training window and $\cos/\sin$ periodicity makes any larger $m$ land on a phase already seen. The damage comes from the *low*-frequency dimensions (large $i$, tiny $\theta_i$), whose wavelengths exceed $T_{\text{train}}$: at $d=128$, $b=10{,}000$, $T_{\text{train}}=4{,}096$ the last pair only sweeps $\approx 0.47$ rad — under 8% of one period — so pushing $m > T_{\text{train}}$ drives it into phase territory the model genuinely never saw, producing pathological attention scores even though the rotation itself is perfectly well-defined.
 
     (d) RoPE's dot product $q_m \cdot k_n$ depends only on the *relative* position $m-n$ (because $R_m^\top R_n = R_{m-n}$), and every angle is a linear function of position. Position Interpolation exploits this linearity: rescaling the input position $m \mapsto m' = m \cdot T_{\text{train}}/T_{\text{target}}$ maps the whole target window back into the trained angle range $[0, T_{\text{train}}\theta_i]$, so no dimension ever sees an out-of-distribution phase.
 

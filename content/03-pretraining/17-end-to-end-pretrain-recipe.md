@@ -29,7 +29,7 @@ We do not re-derive any internal here; every stage links to the chapter that bui
 
 {{fig:pretrain-pipeline-spine}}
 
-What we *do* provide is concrete configs at **four scales** — a laptop/CPU toy (~10M params), a single GPU (~124M, GPT-2-small-sized), an 8-GPU node (~1-2B), and a multi-node cluster (~7B) — with the exact `torchrun` invocation, the exact hyperparameters, and the exact order-of-magnitude numbers you should expect to see at each one. By the end you will have run (or at least be able to run, verbatim) the smallest of these on a laptop in an afternoon, and understand precisely which three flags change to scale the same code to a cluster.
+What we *do* provide is concrete configs at **four scales** — a laptop/CPU toy (~18M params, most of which is the 50304-row embedding), a single GPU (~124M, GPT-2-small-sized), an 8-GPU node (~1-2B), and a multi-node cluster (~7B) — with the exact `torchrun` invocation, the exact hyperparameters, and the exact order-of-magnitude numbers you should expect to see at each one. By the end you will have run (or at least be able to run, verbatim) the smallest of these on a laptop in an afternoon, and understand precisely which flags change to scale the same code to a cluster.
 
 Here is the stage-to-deep-chapter map you'll use throughout:
 
@@ -85,7 +85,7 @@ We lay the project out exactly the way `train.py` (from chapter 3.5) expects to 
 `-- ckpt_hf/             # exported HF-format model + tokenizer
 ```
 
-**The one running example, carried through every scale.** For the laptop toy we use **TinyStories** (Eldan & Li) — a corpus of short, simple children's stories deliberately small in vocabulary and complexity, so a ~10M-parameter model can learn *something coherent* in an afternoon on a CPU. For every GPU-scale run we switch to the **FineWeb-Edu `sample-10BT`** subset (Penedo et al., via the HuggingFace `datasets` library) — a deduplicated, quality-filtered, education-focused slice of the web, small enough to stream comfortably but large enough to feel like real pretraining. We deliberately do **not** re-derive where such a corpus comes from or how it was cleaned and deduplicated here — that is the full subject of [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) and [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html). This chapter assumes that work is done and starts from a `datasets.load_dataset(..., streaming=True)` call.
+**The one running example, carried through every scale.** For the laptop toy we use **TinyStories** (Eldan & Li) — a corpus of short, simple children's stories deliberately small in vocabulary and complexity, so a ~18M-parameter model (only ~4.7M of it outside the embedding table) can learn *something coherent* in an afternoon on a CPU. For every GPU-scale run we switch to the **FineWeb-Edu `sample-10BT`** subset (Penedo et al., via the HuggingFace `datasets` library) — a deduplicated, quality-filtered, education-focused slice of the web, small enough to stream comfortably but large enough to feel like real pretraining. We deliberately do **not** re-derive where such a corpus comes from or how it was cleaned and deduplicated here — that is the full subject of [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) and [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html). This chapter assumes that work is done and starts from a `datasets.load_dataset(..., streaming=True)` call.
 
 Fix two seeds before anything else, and keep them fixed across every run you compare:
 
@@ -114,7 +114,7 @@ print("EOT token id:", enc.eot_token)   # 50256 -- the document/sequence separat
 
 **Why 50304 and not 50257.** `tiktoken`'s `gpt2` encoding has exactly 50257 entries (256 byte tokens + 50,000 BPE merges + 1 special `<|endoftext|>` token). But 50257 is an awkward number for a GPU matmul — it is not a multiple of 64 (or 128, the tile size on newer tensor cores), so the final `lm_head` matmul and the softmax over it fall off the fast tensor-core path. The standard fix, and the one chapter 3.5's `train.py` bakes in as its default (`vocab=50304`), is to **pad the embedding table and output head up to the next multiple of 64** — 50304 — and simply never train the extra 47 rows (they start near-zero and stay there, or you can mask them out of the loss). This is a pure efficiency trick with zero effect on model quality; it is exactly why every config in this chapter uses `vocab=50304` rather than `50257`.
 
-If you *do* need your own tokenizer — a smaller vocabulary for the TinyStories toy scale (roughly 8k merges is a reasonable choice for such a narrow, simple corpus), a non-English corpus, or a code-specific vocabulary — the from-scratch BPE trainer, complete with the pre-tokenization regex and merge-selection algorithm, lives in [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html). In production you would train it with HuggingFace **`tokenizers`** (the Rust-backed library behind `transformers`): a `models.BPE` model, `pre_tokenizers.ByteLevel` + `decoders.ByteLevel` for the lossless byte alphabet, and `trainers.BpeTrainer(vocab_size=..., special_tokens=["<|endoftext|>"])` fed by `train_from_iterator` over your corpus, then `tokenizer.save("tokenizer.json")` — a file `tiktoken`, `transformers`, and `llama.cpp`'s GGUF converter can all consume. The capstone trains exactly such a tokenizer from scratch and then exports it to all three formats in [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html). Everything downstream in this chapter is agnostic to which tokenizer produced the integer IDs; only the `vocab_size` argument to `GPT` changes.
+If you *do* need your own tokenizer — a smaller vocabulary for the TinyStories toy scale (roughly 8k merges is a reasonable choice for such a narrow, simple corpus), a non-English corpus, or a code-specific vocabulary — the from-scratch BPE trainer, complete with the pre-tokenization regex and merge-selection algorithm, lives in [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html). In production you would train it with HuggingFace **`tokenizers`** (the Rust-backed library behind `transformers`): a `models.BPE` model, `pre_tokenizers.ByteLevel` + `decoders.ByteLevel` for the lossless byte alphabet, and `trainers.BpeTrainer(vocab_size=..., special_tokens=["<|endoftext|>"])` fed by `train_from_iterator` over your corpus, then `tokenizer.save("tokenizer.json")` — a file `transformers` (via `PreTrainedTokenizerFast`), vLLM, and `llama.cpp`'s GGUF converter all consume directly. `tiktoken` is the exception: it has no `tokenizer.json` loader at all (its only file reader, `tiktoken.load.load_tiktoken_bpe`, parses the base64 `.tiktoken` rank format), so feeding a `tiktoken.Encoding` from your own vocabulary means converting the merge table into a `mergeable_ranks: dict[bytes, int]` by hand. The capstone trains exactly such a tokenizer from scratch and then exports it to all three formats in [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html). Everything downstream in this chapter is agnostic to which tokenizer produced the integer IDs; only the `vocab_size` argument to `GPT` changes.
 
 Once you have integer token IDs, the next step is turning them into vectors — the embedding table lookup that opens [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html).
 
@@ -206,7 +206,7 @@ wrote ./data/train_001.bin: 100,000,000 tokens (0.200 GB)
 total: 9,842,113,207 tokens, 19.68 GB on disk (uint16)
 ```
 
-**The dtype reconciliation, stated explicitly.** [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) works with `int32` token buffers in its production sharding/streaming discussion, because that chapter is agnostic to any particular vocabulary size and wants headroom for tokenizers with vocabularies above 65,536 (e.g. 128k+ multilingual vocabularies). Here, because we've fixed `vocab=50304 < 65536`, every token ID fits in an *unsigned 16-bit* integer, so we use `np.uint16` — this is the nanoGPT convention, and it halves both the on-disk footprint and the dataloader's memory-mapped I/O relative to `int32`, for zero loss of information. The one rule that must never be violated: **the writer's dtype and the loader's dtype must match exactly.** `prepare.py` writes `uint16`; `ShardedTokenLoader` in 3.5 opens with `np.memmap(f, dtype=np.uint16, mode="r")`. If you ever swap to a >65k vocabulary, you must change *both* sides to `uint32`/`int32` together, or every token ID silently wraps and corrupts training.
+**The dtype reconciliation, stated explicitly.** [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html) works with `int32` token buffers in its production sharding/streaming discussion, because that chapter is agnostic to any particular vocabulary size and wants headroom for tokenizers with vocabularies above 65,536 (e.g. 128k+ multilingual vocabularies). Here, because we've fixed `vocab=50304 < 65536`, every token ID fits in an *unsigned 16-bit* integer, so we use `np.uint16` — this is the nanoGPT convention, and it halves both the on-disk footprint and the dataloader's memory-mapped I/O relative to `int32`, for zero loss of information. The one rule that must never be violated: **the writer's dtype and the loader's dtype must match exactly.** `prepare.py` writes `uint16`; `ShardedTokenLoader` in 3.5 opens with `np.memmap(f, dtype=np.uint16, mode="r")`. If you ever swap to a >65k vocabulary, you must change *both* sides to `uint32`/`int32` together. How that failure surfaces depends on which NumPy path the out-of-range ID takes, and it is worth knowing both: `np.array(list_of_python_ints, dtype=np.uint16)` — the form `write_shards` uses — raises `OverflowError: Python integer 70000 out of bounds for uint16` under NumPy 2's NEP 50 casting rules, a loud failure at shard-write time; but an ndarray-to-ndarray cast such as `np.asarray(buf).astype(np.uint16)` (and, on NumPy 1.x, both forms) **silently wraps modulo 65,536** and hands you a corrupt shard with no error at all.
 
 The `val_*.bin` shard is a small, held-out slice used only for the perplexity computation in Stage 8 — it never appears in a training batch. Production pipelines hold out entire documents or domains chosen deliberately (not a stream prefix, which can correlate with crawl order); see [Pretraining Data](../03-pretraining/01-pretraining-data.html) for the real-world version of this split.
 
@@ -220,7 +220,7 @@ The model is not reprinted here. The runnable one is the compact, weight-tied `G
 
 | Scale | `n_layer` | `n_head` | `d_model` | `ctx` | Params |
 |---|---|---|---|---|---|
-| Laptop / CPU toy | 6 | 8 | 256 | 256 | ~10M |
+| Laptop / CPU toy | 6 | 8 | 256 | 256 | ~18M (~4.7M non-embedding) |
 | Single GPU | 12 | 12 | 768 | 1024 | 124M |
 | 8-GPU node | 24 | 16 | 2048 | 1024 | ~1.3B |
 | Multi-node | 32 | 32 | 4096 | 4096 | ~7B |
@@ -233,7 +233,7 @@ $$
 \text{params} \approx 12 \cdot n_{\text{layer}} \cdot d_{\text{model}}^2 + \text{vocab} \cdot d_{\text{model}}
 $$
 
-The first term is the four large matmuls per block (Q, K, V-and-output projections at roughly $4 d^2$, plus an MLP up/down pair at roughly $8d^2$, i.e. $12d^2$ per block) and the second is the (tied) embedding/head. Worked once for the 124M row: $12 \times 12 \times 768^2 = 84{,}934{,}656$, plus $50304 \times 768 = 38{,}633{,}472$, totalling $\approx 123.6\text{M}$ — matching the "124M" label (this is, not coincidentally, GPT-2-small's exact shape).
+The first term is the four large matmuls per block (Q, K, V-and-output projections at roughly $4 d^2$, plus an MLP up/down pair at roughly $8d^2$, i.e. $12d^2$ per block) and the second is the (tied) embedding/head. Worked once for the 124M row: $12 \times 12 \times 768^2 = 84{,}934{,}656$, plus $50304 \times 768 = 38{,}633{,}472$, totalling $\approx 123.6\text{M}$ — matching the "124M" label (this is, not coincidentally, GPT-2-small's exact shape). Worked again for the laptop toy row, where the answer is less intuitive: $12 \times 6 \times 256^2 = 4{,}718{,}592$, plus $50304 \times 256 = 12{,}877{,}824$, totalling $\approx 17.6\text{M}$. The vocabulary is a fixed 50304 rows at *every* scale, so at $d_{\text{model}}=256$ the embedding is 73% of the whole model — the toy is a ~18M-parameter model with only ~4.7M parameters of actual transformer in it. (Shrinking the toy further means shrinking the *vocabulary*, i.e. training the ~8k-merge TinyStories tokenizer mentioned in Stage 1 and passing that vocab to both `prepare.py` and `GPT` — not shrinking $d_{\text{model}}$.)
 
 **Modern upgrades are one swap each.** Every knob above describes the *original* GPT-2-style block. Swapping in RoPE (rotary position embeddings, replacing the learned positional table), GQA (grouped-query attention, shrinking the KV heads), SwiGLU (replacing the GELU MLP), and RMSNorm (replacing LayerNorm) — the Llama-family recipe — is exactly the `ModernGPT` assembled in the "A Modern GPT, Assembled" section of [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html); nothing in this chapter's data pipeline, optimizer, or training loop changes when you make that swap, only the `Block` and `GPT` class definitions imported by `train.py`. The multi-node 7B row in this chapter's table is written in that modern style deliberately, since essentially no one trains a 7B-class model with the vanilla GPT-2 block anymore.
 
@@ -283,7 +283,7 @@ $$
 T_{\text{wall}} = \frac{6 \times 1.24{\times}10^{8} \times 3{\times}10^{9}}{0.40 \times 312{\times}10^{12}} = \frac{2.23{\times}10^{18}}{1.25{\times}10^{14}} \approx 1.8{\times}10^{4}\,\text{s} \approx 5\ \text{hours.}
 $$
 
-Cross-check it against the throughput route: $3\times10^9$ tokens at the 170k tokens/s measured in Stage 6 is $1.76\times10^4$ s — the same answer, because MFU and tokens/s are two views of one number. On a consumer 4090 (bf16 dense on the order of 165 TFLOP/s) at a more realistic 35% MFU the same run is roughly 11 hours. Multiply by your cloud's hourly rate and you have the budget before you launch; do this arithmetic *first*, because it is also how you discover that a config you were about to run costs a month. The capstone does exactly this accounting for its ~20 GPU-hour run in [Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html), including the correction terms where $6ND$ under-counts (attention's $O(T^2)$ work, and the `lm_head` matmul that dominates a small model's FLOPs).
+Cross-check it against the throughput route: $3\times10^9$ tokens at the 170k tokens/s measured in Stage 6 is $1.76\times10^4$ s — the same answer, because MFU and tokens/s are two views of one number. On a consumer 4090 (bf16 dense on the order of 165 TFLOP/s) at a more realistic 35% MFU the same run is roughly 11 hours. Multiply by your cloud's hourly rate and you have the budget before you launch; do this arithmetic *first*, because it is also how you discover that a config you were about to run costs a month. The capstone does exactly this accounting for its ~20 GPU-hour run in [Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html), including the correction term where $6ND$ under-counts: attention's *parameter-free* $O(T^2)$ score-and-weighted-sum work, which $6N$ cannot see because it has no parameters to count, and which adds ~31% on top of $6ND$ at the capstone's shape. Note the `lm_head` matmul is *not* a correction term under this chapter's convention — because the head is weight-tied to the embedding, its matrix is already inside the $N$ we use (38.6M of the 124M), and $6N$ charges it exactly $6 \cdot V \cdot d$, which is precisely its true forward+backward cost. It only becomes a missing term if you take $N$ to be the *non-embedding* parameter count, as scaling-law papers usually do.
 
 For the deeper theory of warmup's role in taming Adam's early-training variance, the critical-batch-size regime where larger batches stop helping, and $\mu$P (maximal-update parameterization) for transferring a small model's tuned hyperparameters to a larger one without re-sweeping, see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
 
@@ -311,7 +311,17 @@ if step > 0 and step % args.ckpt_every == 0:
     save_checkpoint(model, step, args.ckpt_dir, rank)
 ```
 
-And here are the exact four launches — the same file, four flag changes:
+**One three-line patch to `train.py` first.** 3.5's script exposes the data, parallelism, batch, schedule and checkpoint flags — but *not* the model shape. It builds the model as `model = GPT(ctx=args.ctx)`, which pins `d=768, h=12, n_layers=12` to the constructor's defaults, so out of the box every command below would train the same 124M GPT-2-small no matter which row of the Stage-3 table you were aiming at. Add the three missing flags — the same three `eval_ppl.py`, `export_hf.py` and `sample.py` already take, so the whole chapter agrees on how a config is spelled — before you run anything but the single-GPU row:
+
+```python
+ap.add_argument("--d", type=int, default=768)          # d_model
+ap.add_argument("--h", type=int, default=12)           # attention heads
+ap.add_argument("--n-layers", type=int, default=12)    # transformer blocks
+# ... and pass them through where train.py constructs the model:
+model = GPT(d=args.d, h=args.h, n_layers=args.n_layers, ctx=args.ctx).to(device)
+```
+
+With that in place, here are the exact four launches — one file, one set of flags per scale:
 
 ```bash
 # --- Laptop / CPU (or Apple Silicon via MPS): learning, not speed. -----------------
@@ -319,21 +329,27 @@ And here are the exact four launches — the same file, four flag changes:
 # goes through torchrun; and since there's no NCCL on CPU, pass --backend gloo
 # (train.py selects a CPU device automatically on the gloo backend).
 torchrun --nproc_per_node=1 train.py --data ./data --parallel ddp --backend gloo \
+    --d 256 --h 8 --n-layers 6 \
     --ctx 256 --local-bsz 8 --grad-accum 1 --steps 2000 --warmup 100
 
 # --- Single GPU: ordinary DDP with world_size=1 (no-op all-reduce). ----------------
 torchrun --nproc_per_node=1 train.py --data ./data --parallel ddp \
+    --d 768 --h 12 --n-layers 12 \
     --ctx 1024 --local-bsz 8 --grad-accum 40 --steps 9000 --warmup 200 --lr 6e-4
 
 # --- 8-GPU node: FSDP FULL_SHARD = ZeRO-3 across the eight ranks. ------------------
 torchrun --nproc_per_node=8 train.py --data ./data --parallel fsdp \
+    --d 2048 --h 16 --n-layers 24 \
     --ctx 1024 --local-bsz 16 --grad-accum 4 --steps 40000 --warmup 1000 --lr 3e-4
 
 # --- 2+ nodes: same file, add --nnodes and a shared rendezvous endpoint. -----------
 torchrun --nnodes=2 --node_rank=$RANK --nproc_per_node=8 \
     --rdzv_endpoint=$HEAD:29500 train.py --data ./data --parallel fsdp \
+    --d 4096 --h 32 --n-layers 32 \
     --ctx 4096 --local-bsz 4 --grad-accum 3 --steps 200000 --warmup 2000 --lr 1.5e-4
 ```
+
+Whatever `--d/--h/--n-layers` you train with, pass the *same* three values to `eval_ppl.py`, `export_hf.py` and `sample.py` in Stages 8 and 9 — their defaults are the 124M row, so a 1.3B checkpoint loaded with the defaults fails on a shape mismatch (loudly, fortunately).
 
 `--parallel {ddp,fsdp}` is the entire switch between "replicate the model" and "shard it." Under `fsdp`, `ShardingStrategy.FULL_SHARD` gives you ZeRO-3 semantics (parameters, gradients, and optimizer state all sharded across the group), and bf16 arrives via FSDP's `MixedPrecision` config rather than a separate autocast call — see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for why bf16, not fp16, is the default here (its wider dynamic range avoids the overflow failure mode in Stage 7 below).
 
@@ -552,7 +568,12 @@ def main():
     hf = GPT2LMHeadModel(cfg)
     missing, unexpected = hf.load_state_dict(convert(sd, args.n_layers), strict=False)
     assert not unexpected, f"keys we produced that HF does not want: {unexpected}"
-    # `missing` legitimately contains HF's non-persistent causal-mask buffers only.
+    # `missing` should come back EMPTY. It cannot contain HF's causal-mask buffer:
+    # that buffer is registered with persistent=False, and `load_state_dict` builds
+    # its "expected keys" set from parameters + PERSISTENT buffers only, so a
+    # non-persistent buffer never appears in `missing_keys`. Anything listed here
+    # is therefore a key name we got wrong above, not a benign omission.
+    assert not missing, f"keys HF wants that we did not produce: {missing}"
 
     # The check that makes the export trustworthy: run both models on the same
     # input and compare logits. Skip this and a missed .T becomes a bad benchmark
@@ -658,7 +679,7 @@ python sample.py --ckpt ckpt/step_2000.pt --prompt "Once upon a time" \
     --temperature 0.8 --top_k 200
 ```
 
-What to expect, per scale: the **TinyStories toy** (a few thousand steps on ~10-20M tokens) produces a short, coherent children's story — simple sentences, consistent characters within the passage, correct grammar, because that is exactly the narrow distribution it was trained on. The **124M single-GPU model**, trained on a few billion tokens of FineWeb-Edu, produces text that is locally fluent — grammatical clauses, plausible next words, topically consistent for a sentence or two — but wanders globally, losing the thread of an argument or drifting topic over a paragraph; this is the classic signature of a model with enough capacity and data to nail local statistics but not yet enough to hold long-range coherence.
+What to expect, per scale: the **TinyStories toy** (2000 steps on ~4M tokens, per the Stage-5 launch line) produces recognizable children's-story prose — simple sentences, mostly correct grammar, recurring character names, and often a coherent two- or three-sentence arc — because that is exactly the narrow distribution it was trained on. Do not expect a whole story to hold together: 4M tokens against ~18M parameters is far below any compute-optimal budget, and if you want the toy to actually finish a story, raise `--steps` (10k steps is ~20M tokens and still an afternoon). The **124M single-GPU model**, trained on a few billion tokens of FineWeb-Edu, produces text that is locally fluent — grammatical clauses, plausible next words, topically consistent for a sentence or two — but wanders globally, losing the thread of an argument or drifting topic over a paragraph; this is the classic signature of a model with enough capacity and data to nail local statistics but not yet enough to hold long-range coherence.
 
 Everything past this point — KV-cache management, continuous batching, multi-request serving — is production **inference serving**, not sampling theory, and is explicitly out of scope here; it begins in [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html). The theory behind the sampling knobs themselves — temperature, top-k, top-p/nucleus, min-p, and beam search, with the entropy and calibration arguments for when to use which — is developed in full in [Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html).
 
@@ -670,7 +691,7 @@ The one artifact worth keeping open in a pinned tab — every config, launch com
 
 | Scale | Hardware | Model (config) | Params | Tokens | Wall-clock (ballpark) | Final val loss / ppl | MFU | Launch |
 |---|---|---|---|---|---|---|---|---|
-| Laptop / CPU toy | 1 laptop CPU (or MPS / 1 small GPU) | n_layer=6, d_model=256, n_head=8, ctx=256, TinyStories | ~10M | ~10-20M (~1 short epoch) | ~30-90 min CPU; ~5-15 min MPS/GPU | loss ~1.2-1.5 / ppl ~3.5-4.5 | not meaningful on CPU | `python train.py --data ./data --parallel ddp --ctx 256` |
+| Laptop / CPU toy | 1 laptop CPU (or MPS / 1 small GPU) | n_layer=6, d_model=256, n_head=8, ctx=256, TinyStories | ~18M | ~4M (a small slice of one epoch) | ~30-90 min CPU; ~5-15 min MPS/GPU | loss ~1.2-1.5 / ppl ~3.5-4.5 | not meaningful on CPU | `torchrun --nproc_per_node=1 train.py --data ./data --parallel ddp --backend gloo --ctx 256` |
 | Single GPU | 1x A100/H100 (or 4090) | GPT-2 small: n_layer=12, d_model=768, n_head=12, ctx=1024 | 124M | 2-3B (FineWeb-Edu) | ~5-6 h on 1 A100, ~11 h on a 4090 (from the $6ND$ arithmetic in Stage 4) | loss ~3.0-3.3 / ppl ~20-28 | ~35-45% (bf16 + torch.compile) | `torchrun --nproc_per_node=1 train.py --parallel ddp` |
 | 8-GPU node | 8x H100/A100 (NVLink) | n_layer=24, d_model=2048, n_head=16, ctx=1024-2048 | ~1.3B | ~25-40B | ~1-2 days | loss ~2.5-2.8 / ppl ~12-16 | ~40-50% (FSDP FULL_SHARD) | `torchrun --nproc_per_node=8 train.py --parallel fsdp` |
 | Multi-node | 2-8 nodes x 8 GPU (16-64 GPUs, InfiniBand) | Llama-style 7B (RoPE/GQA/SwiGLU/RMSNorm), ctx=4096 | ~7B | 140B (Chinchilla) to 1T+ | days to weeks | loss ~1.9-2.2 / ppl ~7-9 | ~40-50% (HYBRID_SHARD, or FSDP+TP) | `torchrun --nnodes=N --node_rank=$RANK --nproc_per_node=8 --rdzv_endpoint=$HEAD:29500 train.py --parallel fsdp` |
@@ -698,7 +719,7 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
     - The run's duration is arithmetic, not a guess: $T_{\text{wall}} = 6ND / (\text{MFU} \times G \times P_{\text{peak}})$ — a 124M model on 3B tokens at 40% MFU is about 5 hours on one A100. Compute it (and the resulting cloud bill) before you launch, not after.
     - Target MFU of roughly 40-55% on GPU scales as your north-star efficiency number; below ~30% with idle-looking GPUs points at a dataloader, kernel, or communication bottleneck, not a model problem.
     - Compute held-out **perplexity before** reaching for a standard benchmark at small scale — benchmark scores near the random floor at 124M and below are the expected, correct outcome, not a sign anything is broken.
-    - The laptop-scale run (TinyStories, ~10M params) exercises every piece of this chapter's glue in an afternoon; treat it as the cheapest possible integration test before spending a GPU-day on anything larger.
+    - The laptop-scale run (TinyStories, ~18M params) exercises every piece of this chapter's glue in an afternoon; treat it as the cheapest possible integration test before spending a GPU-day on anything larger.
 
 **Further reading**
 
@@ -787,10 +808,12 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 
     Why the embedding matters less: the block term grows as $d_{\text{model}}^2$ while the embedding term grows only linearly as $\text{vocab}\cdot d_{\text{model}}$, so as the model widens and deepens the $12\,n_{\text{layer}}\,d^2$ transformer stack dominates. Concretely the embedding is only $103\text{M}/1311\text{M} \approx 7.9\%$ of the 1.3B model, versus $38.6\text{M}/123.6\text{M} \approx 31\%$ of the 124M model — the vocabulary is a fixed 50304 rows at both scales, so its relative weight shrinks as everything else grows.
 
-**4.** (Conceptual, the dtype contract.) You decide to switch from GPT-2's 50304-padded vocabulary to a 128k-entry multilingual tokenizer, and you change only the `vocab` argument passed to `GPT` (and the `50304` in the loss `view`). You leave `prepare.py` writing `np.uint16` and `ShardedTokenLoader` reading `np.uint16`. Training runs without crashing, but the loss never drops below a high plateau. What exactly went wrong at the byte level, and what is the two-part fix the chapter insists on?
+**4.** (Conceptual, the dtype contract.) You decide to switch from GPT-2's 50304-padded vocabulary to a 128k-entry multilingual tokenizer, and you change only the `vocab` argument passed to `GPT` (and the `50304` in the loss `view`). You leave `prepare.py` writing `np.uint16` and `ShardedTokenLoader` reading `np.uint16`. A teammate has also "tidied" `write_shards` to build each shard with `np.asarray(buf).astype(np.uint16)` instead of `np.array(buf, dtype=np.uint16)`. Training runs without crashing, but the loss never drops below a high plateau. What exactly went wrong at the byte level, what is the two-part fix the chapter insists on — and what would you have seen *instead* without that one-line "tidy-up"?
 
 ??? note "Solution"
-    `np.uint16` can represent only the integers $0$ through $65{,}535$. A 128k-vocabulary tokenizer emits IDs up to $\approx 131{,}071$, so the moment `prepare.py` calls `np.array(buf, dtype=np.uint16)`, every token ID above 65,535 **silently wraps modulo 65,536** — token $70{,}000$ becomes $70{,}000 - 65{,}536 = 4{,}464$, token $131{,}071$ becomes $65{,}535$, and so on. No exception is raised; NumPy just truncates. The on-disk shard now contains corrupted IDs that collide two distinct real tokens onto the same stored value, destroying the correspondence between the bytes on disk and the tokenizer's actual vocabulary. The loader faithfully reads these wrapped values back as `uint16`, so training "works" but is learning from scrambled targets — hence the high loss plateau.
+    `np.uint16` can represent only the integers $0$ through $65{,}535$. A 128k-vocabulary tokenizer emits IDs up to $\approx 131{,}071$, so the moment `prepare.py` casts the buffer with `.astype(np.uint16)`, every token ID above 65,535 **silently wraps modulo 65,536** — token $70{,}000$ becomes $70{,}000 - 65{,}536 = 4{,}464$, token $131{,}071$ becomes $65{,}535$, and so on. No exception is raised; an ndarray-to-ndarray `.astype` cast is defined to truncate. The on-disk shard now contains corrupted IDs that collide two distinct real tokens onto the same stored value, destroying the correspondence between the bytes on disk and the tokenizer's actual vocabulary. The loader faithfully reads these wrapped values back as `uint16`, so training "works" but is learning from scrambled targets — hence the high loss plateau.
+
+    **Without the "tidy-up"** you would have gotten a much friendlier failure. The chapter's original line, `np.array(buf, dtype=np.uint16)`, converts a list of *Python* ints, and under NumPy 2's NEP 50 rules an out-of-range Python int is an error, not a wrap: `OverflowError: Python integer 70000 out of bounds for uint16`, raised during shard creation, long before any training starts. (On NumPy 1.x both forms wrap silently, which is why this bug has a long history.) The lesson generalizes: prefer the loud path, and never "optimize" a range-checked conversion into an unchecked one.
 
     The chapter's rule is: **the writer's dtype and the loader's dtype must match exactly, and both must be wide enough for the vocabulary.** For a vocabulary above 65,536 the two-part fix is to change *both sides together* to a 32-bit integer type — `prepare.py`'s `np.array(..., dtype=np.uint32)` **and** the loader's `np.memmap(f, dtype=np.uint32, mode="r")`. Changing only one side (or only the `GPT(vocab=...)` argument, as in this problem) is precisely the silent-corruption failure the "dtype reconciliation" box warns about. `uint16` is safe only because the chapter *fixed* `vocab=50304 < 65536`.
 
@@ -825,7 +848,7 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 
     If you had used `num_params=124e6`, the numerator would shrink by the ratio $124\text{M}/1{,}310\text{M} \approx 0.0946$, i.e. by about $10.6\times$. MFU is *linear* in `num_params`, so your reported figure would be $\approx 44\% \times 0.0946 \approx 4.2\%$ — **too low, by roughly a factor of 10.** (This is the classic MFU footgun: MFU is only meaningful when $N$ is the model's *actual* parameter count.)
 
-**6.** (Implementation, hard.) Stage 7 lists a "skip-bad-batch guard that discards steps with implausibly high loss before they reach the optimizer" as one of the standing defenses against Adam-amplified loss spikes. Implement it. Modify the Stage-5 per-step body so that a step whose loss is more than `SKIP_FACTOR` times a running baseline is thrown away (gradients zeroed, no `opt.step()`), and the baseline is updated only from *accepted* steps. Keep the gradient-accumulation and DDP `no_sync()` structure intact, and keep the chapter's code style.
+**6.** (Implementation, hard.) Stage 7 lists a "skip-bad-batch guard that discards steps with implausibly high loss before they reach the optimizer" as one of the standing defenses against Adam-amplified loss spikes. Implement it. Modify the Stage-5 per-step body so that a step whose loss is more than `SKIP_FACTOR` times a running baseline is thrown away (gradients zeroed, no `opt.step()`), and the baseline is updated only from *accepted* steps. Keep the gradient-accumulation and DDP `no_sync()` structure intact, and keep the chapter's code style. One trap to watch for: the guard must be *safe under `world_size > 1`*, where every rank sees a different local loss.
 
 ??? note "Solution"
     Maintain an exponential moving average of the accepted per-step loss as the baseline, and compare each new step against it *after* accumulation but *before* clipping and the optimizer step. Because each micro-batch loss is already divided by `grad_accum`, summing `loss.item()` over the micro-loop reconstructs the mean loss for the step:
@@ -852,6 +875,14 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
                 loss.backward()
             step_loss += loss.item()          # sum of (already /grad_accum) -> mean over micro-batches
 
+        # step_loss so far is LOCAL: ShardedTokenLoader strides each rank's window
+        # start by rank*(ctx+1), so every rank saw different tokens and disagrees
+        # about how bad this step was. Make the decision COLLECTIVE before branching.
+        if world > 1:
+            t = torch.tensor([step_loss], device=device)
+            dist.all_reduce(t, op=dist.ReduceOp.SUM)   # SUM/world, not AVG: gloo lacks AVG
+            step_loss = t.item() / world
+
         # skip-bad-batch guard: throw the step away before it can reach the optimizer.
         if loss_ema is not None and step_loss > SKIP_FACTOR * loss_ema:
             opt.zero_grad(set_to_none=True)   # discard this step's (anomalous) gradients
@@ -870,6 +901,7 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
     Key points, all grounded in the chapter:
 
     - The guard fires *after* `loss.backward()` (we still need the forward/backward to know the loss) but *before* `clip()` and `opt.step()`, so an anomalous batch's gradient is computed and then thrown away with `zero_grad` — it never updates the AdamW moment buffers. This is what stops the Stage-7 amplification mechanism, where Adam's $\hat m_t / \sqrt{\hat v_t}$ turns one bad gradient into an outsized step.
+    - **The all-reduce is not optional.** Without it the guard is a rank-local decision made on rank-local data, and the first anomalous batch that lands on some ranks but not others makes rank A run `opt.step()` while rank B runs `continue`. Nothing errors — no collective is called on the skip path — but the replicas' weights have now permanently diverged, which is precisely the failure DDP exists to prevent, and their `loss_ema` baselines diverge with them. The skip path is also where `save_checkpoint`'s `dist.barrier()` gets skipped, so a disagreeing rank set can hang the job outright at the next checkpoint step. Reducing `step_loss` first makes every rank evaluate the identical predicate and take the identical branch. (The same rule applies to any data-dependent control flow in a distributed loop: reduce first, branch second.)
     - The baseline is an EMA of **accepted** steps only (`continue` skips the update), so a run of spikes cannot ratchet the threshold up to accept itself.
     - `loss_ema is None` accepts the first real step unconditionally (there is no baseline yet). One practical caveat: during the first ~`warmup` steps the loss is still falling fast from $\ln(50304)\approx 10.83$, so `step_loss` is generally *below* the baseline and the guard stays silent — exactly when you want it to (early loss drops are legitimate, not spikes). If you find warmup steps being skipped, gate the guard behind `step >= args.warmup`.
     - `SKIP_FACTOR` and `EMA_DECAY` are the two knobs: too small a factor discards useful hard batches; too large and genuine spikes slip through. Values of $3$-$5$ are typical, consistent with the mini-table's "repeated spikes >5x baseline" cause-for-concern threshold.

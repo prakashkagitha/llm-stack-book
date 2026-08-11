@@ -129,7 +129,8 @@ def batch_anomaly_score(
         tokens = input_ids[b].tolist()
 
         # Signal 1: n-gram repetition fraction
-        ngrams = [tuple(tokens[i:i+ngram_n]) for i in range(T - ngram_n)]
+        # A length-T sequence contains T - n + 1 n-grams (starts 0 .. T-n).
+        ngrams = [tuple(tokens[i:i+ngram_n]) for i in range(T - ngram_n + 1)]
         if ngrams:
             counts = Counter(ngrams)
             # fraction of positions that are a repeated n-gram
@@ -172,7 +173,7 @@ At bf16, the representable range is roughly $\pm 3.4 \times 10^{38}$ (same 8 exp
 
 At fp16, overflow occurs above $65\,504$, and activations can silently become inf or NaN during the forward pass if any intermediate value — typically in the attention softmax or MLP feedforward — exceeds this. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for the full picture.
 
-**The attention logit overflow problem.** Without QK normalization or attention bias clipping, the logits $QK^\top / \sqrt{d_k}$ can grow arbitrarily large. For a model with $d_k = 128$, the scale factor is $1/\sqrt{128} \approx 0.088$. If query and key vectors both have L2 norm $\approx 100$ (feasible in a large model at late training), the maximum logit magnitude is $\approx 100 \times 100 \times 0.088 = 880$, which is within fp16 range but causes the softmax distribution to collapse to a single-token delta. The exponential sum underflows, producing NaN gradients.
+**The attention logit overflow problem.** Without QK normalization or attention bias clipping, the logits $QK^\top / \sqrt{d_k}$ can grow arbitrarily large. For a model with $d_k = 128$, the scale factor is $1/\sqrt{128} \approx 0.088$. If query and key vectors both have L2 norm $\approx 100$ (feasible in a large model at late training), the maximum logit magnitude is $\approx 100 \times 100 \times 0.088 = 880$, which is still within fp16 range but causes the softmax distribution to saturate into a near one-hot delta on a single token. That is already fatal for learning: the softmax Jacobian $p_i(\delta_{ij} - p_j)$ is $\approx 0$ once $p$ is one-hot, so gradients through attention vanish. Outright `NaN` requires one more step — the *logit itself* overflowing fp16 ($> 65\,504$) to `inf`, at which point the max-subtraction inside every softmax kernel computes $\infty - \infty$. (Note that `F.softmax` and every FlashAttention kernel subtract the row max before exponentiating, so the normalizing sum is always $\geq 1$ and cannot underflow on its own.)
 
 ### Embedding table instabilities
 
@@ -220,8 +221,9 @@ class QKNormAttention(nn.Module):
         self.W_o = nn.Linear(d_model, d_model, bias=False)
 
         # Learnable scale parameters, one per head dimension.
-        # RMSNorm without learned scale would fix norm to 1.0;
-        # a learnable scale restores representational flexibility.
+        # RMSNorm without a learned scale fixes each vector's RMS to 1.0
+        # (so its L2 norm to sqrt(d_k)); the learnable gain restores
+        # representational flexibility.
         self.q_norm = nn.RMSNorm(self.d_k, eps=eps)
         self.k_norm = nn.RMSNorm(self.d_k, eps=eps)
 
@@ -334,13 +336,16 @@ def z_loss(logits: torch.Tensor, beta: float = 1e-4) -> torch.Tensor:
 The variance of activations through the network is set by initialization. The classical analysis by He et al. and the subsequent improvements (μP, Transformers specific scaling) give concrete recipes:
 
 - **Embedding matrix:** Initialize with $\mathcal{N}(0, \sigma^2)$ where $\sigma = d_\text{model}^{-0.5}$ (this keeps embedding norms $\approx 1$ immediately, avoiding early logit explosions).
-- **Residual projections (output of attention and MLP):** Scale down by $1/\sqrt{2L}$ where $L$ is the number of layers. This is the "depth scaling" trick — each layer contributes $1/\sqrt{2L}$ to the residual stream, keeping the cumulative norm growth bounded.
-- **QKV projections:** Initialize so that the expected logit variance is $\approx 1$. With head dimension $d_k$, this means $\sigma_{QK} = d_k^{-0.25}$ (so that $QK^\top / \sqrt{d_k}$ has variance 1).
+- **Residual projections (output of attention and MLP):** Scale the *base* std down by $1/\sqrt{2L}$, i.e. $\sigma_\text{resid} = \sigma_\text{base}/\sqrt{2L}$ with $\sigma_\text{base} = 0.02$ the GPT-2 default and $L$ the number of layers (the $2$ counts the two residual writes per block, attention and MLP). This is the "depth scaling" trick — each layer's contribution to the residual stream shrinks as $1/\sqrt{2L}$, keeping the cumulative norm growth bounded at $O(1)$ instead of $O(\sqrt{L})$.
+- **QKV projections:** Initialize with fan-in scaling, $\sigma_{QK} = d_\text{model}^{-0.5}$, so that the attention logits have variance $\approx 1$. The check: with unit-variance inputs, $\operatorname{Var}(q_i) = \operatorname{Var}(k_i) = d_\text{model}\sigma_{QK}^2$, so $\operatorname{Var}(q\cdot k) = d_k\,(d_\text{model}\sigma_{QK}^2)^2$ and dividing by the $\sqrt{d_k}$ attention scale gives $\operatorname{Var}(QK^\top/\sqrt{d_k}) = (d_\text{model}\sigma_{QK}^2)^2 = 1$. Note the $d_k$ cancels — the head dimension is already accounted for by the $1/\sqrt{d_k}$ scale, so only fan-in enters.
 
 ```python
+import math
 import torch.nn as nn
 
-def init_transformer_weights(model: nn.Module, n_layers: int, d_model: int):
+def init_transformer_weights(
+    model: nn.Module, n_layers: int, d_model: int, base_std: float = 0.02
+):
     """
     Stability-oriented weight initialization for a GPT-style transformer.
     Based on the GPT-2/NanoGPT pattern with depth scaling.
@@ -356,19 +361,21 @@ def init_transformer_weights(model: nn.Module, n_layers: int, d_model: int):
 
         elif 'c_proj' in name or 'out_proj' in name:
             # Residual-path output projections (attn output + MLP output).
-            # Scaled down by 1/sqrt(2 * n_layers) so that the residual stream
-            # norm grows as O(1) rather than O(sqrt(L)) at initialization.
-            std = (2 * n_layers) ** -0.5
-            nn.init.normal_(param, mean=0.0, std=std)
+            # The BASE std is divided by sqrt(2 * n_layers) -- exactly nanoGPT's
+            # `0.02 / math.sqrt(2 * n_layer)` -- so the residual stream norm
+            # grows as O(1) rather than O(sqrt(L)) at initialization.
+            nn.init.normal_(param, mean=0.0, std=base_std / math.sqrt(2 * n_layers))
 
         elif 'q_proj' in name or 'k_proj' in name:
-            # Query/Key projections: initialize so logit std ≈ 1
-            d_k = param.shape[0]  # assuming (d_k, d_model) layout
-            nn.init.normal_(param, mean=0.0, std=d_k ** -0.25)
+            # Query/Key projections: fan-in scaling so the attention logits
+            # QK^T / sqrt(d_k) have variance ~= 1. nn.Linear weights are
+            # (out_features, in_features), so fan-in is shape[1].
+            fan_in = param.shape[1]
+            nn.init.normal_(param, mean=0.0, std=fan_in ** -0.5)
 
         else:
-            # Default: Kaiming/He for everything else
-            nn.init.normal_(param, mean=0.0, std=0.02)
+            # Default: GPT-2's flat small init for everything else
+            nn.init.normal_(param, mean=0.0, std=base_std)
 ```
 
 ### Embedding norm clipping
@@ -474,7 +481,10 @@ def training_step(
     if not math.isfinite(grad_norm) or grad_norm > grad_skip_threshold * grad_clip:
         optimizer.zero_grad(set_to_none=True)
         if scaler is not None:
-            scaler.update()          # let the scaler back off its scale factor
+            # Advance the scaler without stepping. It backs the scale factor OFF
+            # only if unscale_ actually found inf/NaN; on a merely large-but-
+            # finite norm it counts this as a clean iteration and keeps growing.
+            scaler.update()
         return {
             'loss': loss.item(),
             'grad_norm': grad_norm,
@@ -607,7 +617,7 @@ class TrainingMonitor:
 | `loss` smoothed over 100 steps | Run progress vs. scaling law prediction | Flat for > 500 steps → reduce LR or check data |
 | `loss_spike_delta` (window) | Spike severity in progress | > 0.1 nats → alert |
 | Embedding row norm max | Embedding divergence | > 10 → apply clip |
-| Attention logit max (sampled) | fp16 overflow risk | > 50 000 in fp16 → add QK norm |
+| Attention logit max (sampled) | Logit runaway → softmax saturation | > ~100 in any dtype → add QK-norm / QK-clip (healthy scale is $O(\sqrt{d_k})$, i.e. 8–12) |
 | MLP pre-activation RMS | Activation explosion | > 100 → add norm before MLP |
 | LM head output logit std | Logit scale | > 30 → add z-loss |
 | QK-clip trigger count per interval | Attention-logit drift (see above) | any sustained rise → LR too high |
@@ -656,7 +666,7 @@ Every modern LLM training run has seen this: things are fine for weeks, then at 
 
 ### Story 3: The fp16 attention NaN cascade
 
-In a 13B model trained in fp16 (not bf16), at step 42 000 the loss becomes NaN. Debugging with activation hooks reveals that the attention logits for the last layer's head 7 are producing values near 60 000 before the softmax — approaching the fp16 max of 65 504. A batch with a 32 000-token nearly-identical sequence (a repeated copyright boilerplate) pushed query and key norms to an extreme. The softmax then produces Inf, the backward pass propagates NaN, and all parameters are corrupted. Fix: add QK-Norm (see above) and switch to bf16, which has a much larger dynamic range. The retrospective also added a maximum logit monitor to the activation hooks.
+In a 13B model trained in fp16 (not bf16), at step 42 000 the loss becomes NaN. Debugging with activation hooks reveals that the attention logits for the last layer's head 7 are producing values near 60 000 before the softmax — approaching the fp16 max of 65 504. A batch with a 32 000-token nearly-identical sequence (a repeated copyright boilerplate) pushed query and key norms to an extreme; on the next step the logit crossed 65 504 and became `inf`, so the softmax's max-subtraction computed $\infty - \infty$ = `NaN`, the backward pass propagated it, and all parameters were corrupted. (The heads had in fact been useless for a while before that: at a logit of 60 000 the softmax was already a hard one-hot with zero gradient.) Fix: add QK-Norm (see above) and switch to bf16, which has a much larger dynamic range. The retrospective also added a maximum logit monitor to the activation hooks.
 
 ### Story 4: The zombie GPU
 
@@ -804,9 +814,11 @@ def diagnose(act_norms: Dict[str, float], grad_norms: Dict[str, float]) -> str:
     elif max_grad > 50:
         layer = max(grad_norms, key=grad_norms.get)
         return "VERDICT: gradient explosion at '{}' (norm={:.1f}). Check data batch or reduce LR.".format(layer, max_grad)
+    elif not grad_norms:
+        return "VERDICT: no gradients captured -- did backward() run? Check requires_grad / graph."
     elif max_grad < 1e-6:
-        layer = max(grad_norms, key=grad_norms.get)
-        return "VERDICT: vanishing gradient (max_grad={:.2e}). Check depth or init.".format(max_grad)
+        layer = min(grad_norms, key=grad_norms.get)
+        return "VERDICT: vanishing gradient (max_grad={:.2e}, weakest layer '{}'). Check depth or init.".format(max_grad, layer)
     else:
         return "VERDICT: no clear activation/gradient anomaly. Check data content and LR schedule."
 ```
@@ -845,7 +857,7 @@ OPTIMIZER
       if you see spikes -- a larger eps floors the denominator, so a
       collapsed v_hat can no longer produce an unbounded effective LR
       (Molybog et al., 2023, recommend exactly this)
-  [ ] Warmup ≥ 1% of total steps (for 1T-token run: ≥ 1B tokens)
+  [ ] Warmup ≥ 1% of total steps (for a 1T-token run: ≥ 10B tokens)
   [ ] Weight decay ≠ 0 (0.1 is standard; reduces weight growth)
   [ ] No weight decay on embeddings / normalization parameters
 
@@ -892,7 +904,7 @@ MONITORING
 
     - [Zoph et al., *ST-MoE: Designing Stable and Transferable Sparse Expert Models* (2022)](https://arxiv.org/abs/2202.08906) — Introduces z-loss regularization and provides the canonical analysis of MoE training instability; z-loss is now standard in dense and MoE runs alike.
     - [Dehghani et al., *Scaling Vision Transformers to 22 Billion Parameters* (2023)](https://arxiv.org/abs/2302.05442) — Popularises QK-norm as the key technique for preventing attention-logit overflow at scale.
-    - [Yang et al., *Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer* (2022)](https://arxiv.org/abs/2203.03466) — The μP framework that justifies $\alpha \propto 1/\sqrt{d}$ LR scaling and provides a principled basis for stable init across model widths.
+    - [Yang et al., *Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer* (2022)](https://arxiv.org/abs/2203.03466) — The μP framework that prescribes per-layer $\alpha \propto 1/\text{fan-in}$ ($\approx 1/d$) LR scaling for hidden matrices — sharper than the standard-parametrization $1/\sqrt{d}$ heuristic — and provides a principled basis for stable init across model widths.
 
     **Recent advances (2023–2026)**
 
@@ -915,7 +927,7 @@ MONITORING
 
 - **Zoph et al., "ST-MoE: Designing Stable and Transferable Sparse Expert Models" (2022)** — Introduces z-loss and provides a thorough analysis of instability in MoE training, with ablations on every stability technique discussed in this chapter.
 - **Wortsman et al., "Small-scale proxies for large-scale Transformer training instabilities" (2023)** — Systematically studies which instabilities are predictable at small scale, providing a framework for the pre-run hardening approach.
-- **Yang et al., "Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer" (2022)** — The μP framework that underpins principled LR and init scaling, explaining why $\alpha \propto 1/\sqrt{d}$ keeps training stable across widths.
+- **Yang et al., "Tensor Programs V: Tuning Large Neural Networks via Zero-Shot Hyperparameter Transfer" (2022)** — The μP framework that underpins principled LR and init scaling, explaining why per-layer $\alpha \propto 1/\text{fan-in}$ (rather than standard parametrization's $1/\sqrt{d}$) keeps training stable and hyperparameters transferable across widths.
 - **Grattafiori et al., "The Llama 3 Herd of Models" (Meta AI, 2024)** — The technical report contains candid discussion of training instabilities encountered during Llama 3 pretraining and the mitigations applied.
 - **Anil et al., "PaLM 2 Technical Report" (Google, 2023)** — Documents the training stability experience for a series of large models including the use of bf16, careful init, and monitoring infrastructure.
 - **Molybog et al., "A Theory on Adam Instability in Large-Scale Machine Learning" (Meta AI, 2023)** — Analytical backing for the Adam amplification model described in this chapter, including the argument that *increasing* Adam's epsilon damps the instability.
@@ -974,7 +986,7 @@ MONITORING
     \text{logit}_\text{max} = \frac{62\,500}{\sqrt{64}} = \frac{62\,500}{8} = 7\,812.5.
     $$
 
-    This is comfortably within the fp16 range ($< 65\,504$), so no overflow yet. It is still dangerous because $\exp(7812.5)$ overflows fp16 in the softmax: the exponential of a logit this large is `inf`, the distribution collapses to a one-hot delta on the max-logit token, and the normalizing sum underflows/overflows — producing `NaN` gradients in the backward pass. Softmax collapse and gradient `NaN` occur long before the *logit itself* reaches the fp16 ceiling.
+    This is comfortably within the fp16 range ($< 65\,504$), so no overflow yet. It is still dangerous because the softmax *saturates*. Every kernel (`F.softmax`, FlashAttention) subtracts the row max before exponentiating, so there is no `inf` and no `NaN` here — but a logit gap of thousands of nats means every non-maximal entry exponentiates to exactly $0$ and the distribution is a hard one-hot. The softmax Jacobian $p_i(\delta_{ij}-p_j)$ is then $\approx 0$, so *no gradient flows back through attention*: the head is frozen and learns nothing. Saturation therefore bites long before the *logit itself* reaches the fp16 ceiling; `NaN` only appears once the logit overflows to `inf` and the max-subtraction computes $\infty-\infty$.
 
     **(b)** RMSNorm sets each vector's root-mean-square component to $1$, so $\sqrt{\tfrac{1}{d_k}\sum_i x_i^2} = 1 \Rightarrow \sum_i x_i^2 = d_k \Rightarrow \|x\|_2 = \sqrt{d_k} = \sqrt{64} = 8$ (before the learnable scale, which is $O(1)$). The maximum logit is now
 

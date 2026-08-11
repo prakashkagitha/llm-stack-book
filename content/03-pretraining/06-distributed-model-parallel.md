@@ -137,8 +137,11 @@ class RowParallelLinear(nn.Module):
         assert in_f % tp == 0
         self.in_local = in_f // tp
         self.weight = nn.Parameter(torch.empty(out_f, self.in_local))
-        # bias is added ONCE, after the reduce, so only rank 0 should hold it
-        self.bias = nn.Parameter(torch.zeros(out_f)) if (bias and rank == 0) else None
+        # The bias is NOT sharded: it is replicated (full `out_f` on every rank) and
+        # added *after* the all-reduce, so every rank leaves the region with the same
+        # tensor. Giving it to rank 0 only would make rank 0's output differ from the
+        # others' and silently break the replicated-output invariant.
+        self.bias = nn.Parameter(torch.zeros(out_f)) if bias else None
         nn.init.normal_(self.weight, std=0.02)
 
     def forward(self, x):                         # x sharded along features
@@ -205,8 +208,12 @@ def vocab_parallel_cross_entropy(logits_local, target, tp_group, vocab_start, vo
     # logits_local: [N, V_loc] fp32;  target: [N] global token ids
     V_loc = logits_local.shape[-1]
 
-    # 1) global row-max via all-reduce MAX
-    m = logits_local.max(dim=-1).values                           # [N]
+    # 1) global row-max via all-reduce MAX. `.detach()` is essential: the shift m is
+    #    mathematically a constant (log-sum-exp is invariant to it), but an attached
+    #    local max would inject a spurious gradient into each rank's local argmax logit
+    #    (the collective is not an autograd op, so the graph would think the *global*
+    #    max came from this rank).
+    m = logits_local.max(dim=-1).values.detach()                  # [N]
     dist.all_reduce(m, op=dist.ReduceOp.MAX, group=tp_group)
 
     # 2) global normalizer Z via all-reduce SUM of local exp-sums
@@ -281,7 +288,11 @@ for block in model.layers:
 parallelize_module(model, tp_mesh, {
     "tok_emb":   RowwiseParallel(input_layouts=Replicate(), output_layouts=Shard(1)),
     "final_norm": SequenceParallel(),
-    "lm_head":   ColwiseParallel(output_layouts=Shard(-1), use_local_output=False),
+    # input arrives sequence-sharded from the SequenceParallel final_norm, so declare
+    # Shard(1) explicitly — the default Replicate() would skip the all-gather and leave
+    # DTensor to bail the plan out with an unplanned redistribute.
+    "lm_head":   ColwiseParallel(input_layouts=Shard(1), output_layouts=Shard(-1),
+                                 use_local_output=False),
 })
 
 logits = model(input_ids)                  # DTensor, still sharded on the vocab dim
@@ -366,10 +377,10 @@ def run_1f1b(stage, p, num_micro, fwd_step, bwd_step, recv_act, send_act,
 We can shrink the bubble *without* more microbatches. **Interleaved 1F1B** (Megatron-LM, Narayanan et al., 2021) gives each physical GPU *several non-contiguous* chunks of layers — "virtual stages." With $v$ virtual stages per device, the pipeline has $p \cdot v$ logical stages, and the bubble shrinks to
 
 $$
-\text{bubble fraction} = \frac{1}{v} \cdot \frac{p - 1}{m + p - 1}.
+\text{bubble fraction} = \frac{p - 1}{v\,m + p - 1}.
 $$
 
-A factor $v$ improvement in the bubble. The cost is $v\times$ more point-to-point communication (more, smaller sends) and a more intricate schedule. With fast intra-cluster links this is usually a great trade, and interleaving is standard in large Megatron runs.
+(Each chunk costs $1/v$ of a stage-time, so fill/drain is $(p-1)$ chunk-times against $v m + p - 1$ chunk-times total; setting $v = 1$ recovers the plain 1F1B formula.) That is *nearly* a factor $v$ improvement in the bubble — exactly $1/v$ in Megatron's bubble-over-ideal convention $\frac{p-1}{vm}$, and close to it whenever $m \gg p$. The cost is $v\times$ more point-to-point communication (more, smaller sends) and a more intricate schedule. With fast intra-cluster links this is usually a great trade, and interleaving is standard in large Megatron runs.
 
 ```text
 Interleaved (v=2): each GPU owns TWO chunks. GPU0 = {layers 0-1, 8-9}, etc.
@@ -496,8 +507,12 @@ def run_local_experts(recv_buf, experts_local, recv_counts, E_local):
 def moe_forward(x, gate, experts_local, E, e, ep_group, k=1):
     # x: [tokens, h];  gate: Linear(h, E);  experts_local: list of FFNs on this rank
     logits = gate(x)                                   # [tokens, E]
-    topk = logits.topk(k, dim=-1)                      # choose k experts/token
-    probs = F.softmax(topk.values, dim=-1)             # routing weights, [tokens, k]
+    # Softmax over ALL E experts FIRST, then select. Softmaxing over the top-k values
+    # instead would be identically 1.0 for k=1 (Switch-style routing) — a no-op weight
+    # whose derivative is zero, so the router would receive no gradient at all.
+    all_probs = F.softmax(logits, dim=-1)              # [tokens, E]
+    topk = all_probs.topk(k, dim=-1)                   # choose k experts/token
+    probs = topk.values                                # routing weights, [tokens, k]
     expert_ids = topk.indices                          # [tokens, k]
 
     # Build send buffers: bucket tokens by the DEVICE that owns their expert.
@@ -541,11 +556,13 @@ The deciding factor for EP performance is **load balance**. If the router sends 
 
 ## Combining Everything: 3D, 4D & 5D Parallelism
 
-No single axis suffices at frontier scale. Real systems compose them. The total number of GPUs is the product:
+No single axis suffices at frontier scale. Real systems compose them. The total number of GPUs is the product of the four *partitioning* axes:
 
 $$
-G = \underbrace{d}_{\text{DP}} \times \underbrace{t}_{\text{TP}} \times \underbrace{p}_{\text{PP}} \times \underbrace{c}_{\text{CP}} \times \underbrace{e}_{\text{EP}} .
+G = \underbrace{d}_{\text{DP}} \times \underbrace{t}_{\text{TP}} \times \underbrace{p}_{\text{PP}} \times \underbrace{c}_{\text{CP}} .
 $$
+
+**Expert parallelism is the exception: it is not an extra factor in the GPU count.** EP is carved *out of* the data-parallel group — an EP degree $e$ must divide $d$, and the MoE weights are then split $e$ ways while each expert is replicated across the remaining $d/e$ "expert-data-parallel" ranks. (Megatron-Core states the same constraint over the combined DP$\times$CP ranks.) So a 5D config on 64 GPUs with $t=p=c=1$ and $e=8$ still has $d = 64$: the dense parameters are replicated 64 ways and the experts are spread over 8 ranks, replicated 8 times. Multiplying $e$ into $G$ would double-count those GPUs.
 
 Each GPU belongs to one *group* per axis. The orchestration trick is **mapping these groups onto the physical network topology** so that the chattiest collectives ride the fastest links. The canonical ordering, fastest-comm axis innermost:
 
@@ -568,7 +585,7 @@ A useful way to think about it: **TP and PP both reduce per-device memory and le
 
     **Step 3 — Data parallelism.** We have used $t \times p = 64$ GPUs for one replica. The cluster has 512, so $d = 512/64 = 8$ data-parallel replicas. Layer in ZeRO-1 (shard optimizer state across the 8 DP ranks) to shave static memory further.
 
-    **Step 4 — Bubble check.** With $p = 8$ and a global batch of, say, $m = 64$ microbatches per replica, the 1F1B bubble is $\frac{p-1}{m+p-1} = \frac{7}{71} \approx 9.9\%$. Add interleaving with $v = 2$ and it halves to $\approx 5\%$.
+    **Step 4 — Bubble check.** With $p = 8$ and a global batch of, say, $m = 64$ microbatches per replica, the 1F1B bubble is $\frac{p-1}{m+p-1} = \frac{7}{71} \approx 9.9\%$. Add interleaving with $v = 2$ and it drops to $\frac{p-1}{vm+p-1} = \frac{7}{135} \approx 5.2\%$.
 
     **Result:** a **3D config TP=8 × PP=8 × DP=8 = 512 GPUs**, model fits with headroom, pipeline bubble ~5–10%, and every heavy collective (TP all-reduce) stays on NVLink. This is a realistic, near-optimal layout — and exactly the kind of back-of-envelope an interviewer wants to see.
 
@@ -616,9 +633,9 @@ The visualizer below puts all four of the load-bearing axes side by side on one 
 ## Key Takeaways
 
 !!! key "Key Takeaways"
-    - **Three orthogonal model-parallel axes** plus DP: TP splits *within* a layer (matmuls), PP splits *across* layers, CP/SP splits *along the sequence*, EP splits *across MoE experts*. They compose multiplicatively into 3D/4D/5D parallelism, and total GPUs $= d \cdot t \cdot p \cdot c \cdot e$.
+    - **Three orthogonal model-parallel axes** plus DP: TP splits *within* a layer (matmuls), PP splits *across* layers, CP/SP splits *along the sequence*, EP splits *across MoE experts*. They compose multiplicatively into 3D/4D/5D parallelism, with total GPUs $= d \cdot t \cdot p \cdot c$; EP is not a fifth factor in that product but a re-slicing of the DP group ($e \mid d$, leaving $d/e$ replicas of each expert).
     - **Tensor parallelism = column-then-row matmul partitioning.** A column-parallel layer feeding a row-parallel layer needs exactly one all-reduce per region (two per transformer block forward), with the nonlinearity acting on sharded features in between. It is bandwidth-heavy and *must stay inside the NVLink domain* ($t \le 8$).
-    - **Pipeline parallelism trades the bubble for cheap point-to-point comms.** GPipe streams $m$ microbatches; 1F1B keeps the same $\frac{p-1}{m+p-1}$ bubble but bounds activation memory; interleaving divides the bubble by $v$; zero-bubble schedules push it toward zero. Keep $m \gg p$ and load-balance the stages.
+    - **Pipeline parallelism trades the bubble for cheap point-to-point comms.** GPipe streams $m$ microbatches; 1F1B keeps the same $\frac{p-1}{m+p-1}$ bubble but bounds activation memory; interleaving with $v$ virtual stages takes it to $\frac{p-1}{vm+p-1}$ (nearly a factor $v$); zero-bubble schedules push it toward zero. Keep $m \gg p$ and load-balance the stages.
     - **Context parallelism (Ring Attention)** shards the token sequence and rotates K/V around a ring, using the FlashAttention online softmax to fold in remote blocks while overlapping communication with compute — the key to million-token context. Mind causal-mask load imbalance.
     - **Expert parallelism** places experts on different devices and pays two all-to-all collectives (dispatch + combine) per MoE layer; its performance is gated by **router load balance** and expert capacity.
     - **Place axes by communication intensity:** TP and EP (per-layer collectives) on the fastest links; PP and DP (boundary/per-step) on slower fabric. This single placement principle drives most real configs.
@@ -689,11 +706,13 @@ The visualizer below puts all four of the load-bearing axes side by side on one 
 
     So $m = 135$ microbatches (round up), giving exactly $\frac{15}{150} = 0.10 = 10\%$.
 
-    (b) Interleaving divides the bubble by $v$:
+    (b) Interleaving shrinks fill/drain to $(p-1)$ chunk-times out of $vm + p - 1$:
 
     $$
-    \frac{1}{v}\cdot\frac{p-1}{m+p-1} = \frac{1}{4}\cdot\frac{15}{135+15} = \frac{1}{4}\cdot 0.10 = 0.025 = 2.5\% .
+    \frac{p-1}{v\,m+p-1} = \frac{15}{4\cdot 135+15} = \frac{15}{555} \approx 0.027 = 2.7\% ,
     $$
+
+    i.e. very nearly (but not exactly) a quarter of the 10% non-interleaved bubble.
 
     (c) The bubble formula is identical for GPipe and 1F1B, so 1F1B buys **no bubble reduction** — it buys **bounded activation memory**. GPipe runs all $m$ forwards before any backward, so every stage must stash the activations of all $m$ in-flight microbatches: peak activation memory scales as $O(m)$. 1F1B interleaves one forward with one backward in steady state, so a stage only holds activations for the microbatches currently in flight through it — at most $\sim p$ (independent of $m$). This is what lets you crank $m$ up to 135 (small bubble) without the activation memory blowing up.
 

@@ -70,7 +70,12 @@ class BatchGenerator:
             model=model,                       # any 1-8B instruct model will do
             tensor_parallel_size=tensor_parallel_size,
             quantization=quantization,         # e.g. "fp8" / "awq" -> ~2x throughput
-            gpu_memory_utilization=0.90,       # leave headroom for the KV cache
+            gpu_memory_utilization=0.90,       # share of GPU memory vLLM may use
+                                               # for weights + activations + KV
+                                               # cache; the other 10% is slack for
+                                               # other processes. RAISING this
+                                               # grows the KV cache -> bigger
+                                               # batches -> more throughput.
             max_model_len=8192,
         )
         self.tokenizer = self.llm.get_tokenizer()
@@ -124,12 +129,13 @@ class WrapConfig:
     styles_per_doc: int = 1          # how many rephrasings per source doc
 
 def build_prompts(docs, cfg: WrapConfig):
-    """Yield (doc_id, style, prompt) for batched generation."""
+    """Yield (doc_id, doc, style, prompt) for batched generation. We carry the
+    source `doc` through so the writer can emit it alongside its rephrasing."""
     for doc_id, doc in docs:
         doc = doc[: cfg.max_input_chars]
         for _ in range(cfg.styles_per_doc):
             style = random.choice(list(STYLE_PROMPTS))
-            yield doc_id, style, STYLE_PROMPTS[style].format(doc=doc)
+            yield doc_id, doc, style, STYLE_PROMPTS[style].format(doc=doc)
 
 def rephrase_corpus(docs, llm, cfg: WrapConfig):
     """
@@ -138,16 +144,23 @@ def rephrase_corpus(docs, llm, cfg: WrapConfig):
     what dominates cost when rewriting trillions of tokens.
     """
     items = list(build_prompts(docs, cfg))
-    prompts = [p for (_, _, p) in items]
+    prompts = [p for (_, _, _, p) in items]
     outputs = llm.generate(
         prompts,
         sampling_params=dict(temperature=cfg.temperature,
                              max_tokens=cfg.max_new_tokens),
     )
-    for (doc_id, style, _), out in zip(items, outputs):
+    emitted = set()
+    for (doc_id, doc, style, _), out in zip(items, outputs):
         text = out.outputs[0].text.strip()
-        # Emit BOTH the original (once) and the rephrasing. Keeping the
-        # original preserves grounding and natural diversity.
+        # Emit BOTH the original (once, even if it was rephrased several times)
+        # and the rephrasing. Keeping the original preserves grounding and
+        # natural diversity -- emitting only the synthetic record would put you
+        # in the "replace" regime this chapter warns about.
+        if doc_id not in emitted:
+            emitted.add(doc_id)
+            yield {"doc_id": doc_id, "kind": "natural",
+                   "style": None, "text": doc}
         yield {"doc_id": doc_id, "kind": "synthetic",
                "style": style, "text": text}
 ```
@@ -338,12 +351,32 @@ build an SFT dataset of (problem -> correct trace).
 import re
 from collections import defaultdict
 
+def extract_boxed(trace: str):
+    r"""Return the contents of the LAST \boxed{...}, with BALANCED braces.
+    The tempting one-liner re.search(r"\\boxed\{([^}]*)\}", trace) stops at the
+    FIRST '}', so it mangles every nested answer: \boxed{\frac{1}{2}} comes back
+    as '\frac{1'. That silently rejects most correct math traces (any fraction,
+    root, matrix, or \text{...}). Scan forward tracking brace depth instead."""
+    i = trace.rfind(r"\boxed{")
+    if i < 0:
+        return None
+    j = i + len(r"\boxed{")
+    depth = 1
+    for k in range(j, len(trace)):
+        if trace[k] == "{":
+            depth += 1
+        elif trace[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return trace[j:k]
+    return None                     # unterminated box -> treat as no answer
+
 def extract_final_answer(trace: str):
     """Pull the boxed/'final answer' from a CoT trace. Robust parsing matters;
     a bad extractor silently throws away good traces or keeps bad ones."""
-    m = re.search(r"\\boxed\{([^}]*)\}", trace)
-    if m:
-        return m.group(1).strip()
+    boxed = extract_boxed(trace)
+    if boxed is not None:
+        return boxed.strip()
     m = re.search(r"(?:final answer|answer)\s*[:=]\s*(.+)", trace, re.I)
     return m.group(1).strip() if m else None
 
@@ -518,13 +551,13 @@ This is exactly why every good recipe above keeps the original: WRAP keeps the s
 
 ### A toy model of collapse: the shrinking Gaussian
 
-The cleanest way to *feel* collapse is the Gaussian re-estimation chain. Suppose generation 0 is the true distribution $\mathcal{N}(\mu, \sigma^2)$. Each generation draws $n$ samples, fits a Gaussian by maximum likelihood, and the *next* generation samples from that fitted Gaussian — the "replace" regime. The fitted variance $\hat\sigma^2_{t}$ is an unbiased estimate of $\sigma^2_{t-1}$, but it has *sampling noise*, and that noise systematically erodes variance over time. The expected variance decays:
+The cleanest way to *feel* collapse is the Gaussian re-estimation chain. Suppose generation 0 is the true distribution $\mathcal{N}(\mu, \sigma^2)$. Each generation draws $n$ samples, fits a Gaussian by maximum likelihood, and the *next* generation samples from that fitted Gaussian — the "replace" regime. The maximum-likelihood variance $\hat\sigma^2_{t}$ is a *biased* estimate of $\sigma^2_{t-1}$: it divides by $n$ rather than $n-1$, so $\mathbb{E}[\hat\sigma^2_t \mid \sigma^2_{t-1}] = \frac{n-1}{n}\,\sigma^2_{t-1} = (1 - 1/n)\,\sigma^2_{t-1}$. Compounding that shrinkage generation after generation is what erodes the variance. The expected variance decays:
 
 $$
 \mathbb{E}[\hat\sigma^2_t] \approx \sigma^2 \left(1 - \frac{1}{n}\right)^{t}
 $$
 
-so after $t$ generations the variance has shrunk by a factor $(1-1/n)^t$. With finite samples the tails progressively disappear; the distribution collapses toward its mean. Now contrast the **accumulate** regime, where each fit uses the *original* real samples plus all synthetic so far — the real samples keep re-injecting the true variance, and the decay halts. Let us watch it happen.
+so after $t$ generations the variance has shrunk by a factor $(1-1/n)^t$. With finite samples the tails progressively disappear; the distribution collapses toward its mean. (Switching to the unbiased $n-1$ estimator only removes the *systematic* shrinkage — the expectation is then preserved, but the chain is still a random walk in $\log\sigma^2$ that hits zero almost surely, so it degenerates anyway, just less predictably. Bias sets the rate; finiteness of $n$ is what makes collapse inevitable.) Now contrast the **accumulate** regime, where each fit uses the *original* real samples plus all synthetic so far — the real samples keep re-injecting the true variance, and the decay halts. Let us watch it happen.
 
 {{fig:syndata-collapse-replace-vs-accumulate}}
 
@@ -604,22 +637,29 @@ Order your filters cheapest-first so you discard junk before paying for expensiv
 A cheapest-first verification ladder for a synthetic shard. Each stage drops
 records so later, costlier stages process fewer items. Returns survivors + stats.
 """
+import hashlib
+
 def verify_shard(records, edu_head, embed_fn, judge_llm=None):
     stats = {"in": len(records)}
     out = []
-    seen_ngrams = set()
+    seen_prefixes = set()
 
     for r in records:
         t = r["text"]
         # Stage 1: format / length / language (cheap string ops)
         if not (50 <= len(t.split()) <= 4000):
             continue
-        # Stage 2: cheap near-dup via 13-gram fingerprint set
+        # Stage 2: cheap exact-prefix fingerprint -- hashes ONLY the first 13
+        # words, so it catches boilerplate openings and nothing else, and it
+        # will drop two genuinely different docs that share an opening line.
+        # It is a pre-filter, not near-dup detection: real MinHash/LSH over the
+        # full 13-gram set runs downstream (`datatrove`). md5, not builtin
+        # hash(), so fingerprints are comparable across sharded workers.
         toks = t.lower().split()
-        fp = hash(" ".join(toks[:13]))
-        if fp in seen_ngrams:
+        fp = hashlib.md5(" ".join(toks[:13]).encode()).hexdigest()
+        if fp in seen_prefixes:
             continue
-        seen_ngrams.add(fp)
+        seen_prefixes.add(fp)
         out.append(r)
     stats["after_dedup"] = len(out)
 
@@ -645,7 +685,7 @@ def llm_judge_ok(judge_llm, text: str) -> bool:
     return verdict.startswith("YES")
 ```
 
-For *verifiable* domains (math, code), stage 4 is a real executor in a sandbox — see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html). For everything else, stage 5 is an LLM-as-judge pass; understand its biases before you trust it ([LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html)).
+For *verifiable* domains (math, code), stage 4 is a real executor in a sandbox — see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html). For everything else, stage 4 is the LLM-as-judge pass shown above; understand its biases before you trust it ([LLM-as-a-Judge & Automated Evaluation](../11-evaluation/02-llm-as-judge.html)).
 
 ### Contamination: the silent killer of synthetic data
 
@@ -806,7 +846,7 @@ The throughline across all six: **synthetic data converts compute into targeted,
 **1.** A colleague sets up a training loop where each new model generation is trained *only* on text sampled from the previous generation, discarding the original web corpus to "save storage." After a dozen rounds the outputs are bland and repetitive. Name the failure mode, explain the mechanism in one or two sentences, and describe the single change that would have prevented it — connecting your answer to why WRAP keeps the source document and why FineWeb-Edu is safe by construction.
 
 ??? note "Solution"
-    This is **model collapse** driven by **recursive replacement**. The mechanism: each generation fits a distribution to finite samples of the previous generation's output. Maximum-likelihood variance estimates carry sampling noise, and because the next round samples *from the fitted distribution*, that noise systematically erodes variance round after round — the tails (rare words, unusual constructions, long-tail facts) disappear and the distribution narrows toward its mean. The toy Gaussian in the chapter makes this exact: expected variance decays like $\mathbb{E}[\hat\sigma^2_t] \approx \sigma^2 (1 - 1/n)^t$.
+    This is **model collapse** driven by **recursive replacement**. The mechanism: each generation fits a distribution to finite samples of the previous generation's output. The maximum-likelihood variance estimate is biased low by a factor $(n-1)/n = 1 - 1/n$, and because the next round samples *from the fitted distribution*, that shrinkage compounds round after round — the tails (rare words, unusual constructions, long-tail facts) disappear and the distribution narrows toward its mean. The toy Gaussian in the chapter makes this exact: expected variance decays like $\mathbb{E}[\hat\sigma^2_t] \approx \sigma^2 (1 - 1/n)^t$.
 
     The single change: **accumulate instead of replace** — keep the full original real corpus and *add* synthetic on top of it each round rather than throwing the real data away. The real data re-injects the true variance every round and re-anchors the distribution, which halts the decay. This is why every good recipe in the chapter keeps the real data: WRAP keeps the source document (so facts are inherited and the natural distribution is preserved), instruction-augmentation interleaves the original passage, and FineWeb-Edu *is* real data (it only *selects* the web, never replacing it). The failure mode is recursive replacement, not synthetic data per se.
 

@@ -187,8 +187,11 @@ def param_groups(model, weight_decay=0.1):
             {"params": no_decay, "weight_decay": 0.0}]
 
 # The 99% case: PyTorch's fused AdamW. `fused=True` runs the whole elementwise
-# update as one multi-tensor CUDA kernel (params must be CUDA + floating point);
-# the default `foreach=True` path is the CPU/other-backend fallback.
+# update as one multi-tensor kernel (params must be floating point on a device
+# with a fused kernel -- CUDA, XPU, MPS, and since 2.3 also CPU). If you leave
+# `fused` unset, PyTorch defaults to the `foreach` (multi-tensor) path on CUDA,
+# which still batches the math across tensors; the plain single-tensor Python
+# loop is the last-resort fallback when neither implementation applies.
 opt = torch.optim.AdamW(param_groups(model), lr=3e-4, betas=(0.9, 0.95),
                         eps=1e-8, fused=torch.cuda.is_available())
 
@@ -285,7 +288,7 @@ The trade-off is real: Adafactor's factored second moment and missing momentum m
 
 ## Lion: Learning the Sign of the Update
 
-Lion (Chen et al., *Symbolic Discovery of Optimization Algorithms*, 2023) was discovered by a program-search procedure over optimizer programs, and the winner is startlingly simple. "Lion" stands for **Evo**lved **Si**gn **Mo**me**n**tum. It keeps a *single* momentum buffer (so only **4 extra bytes/param** versus Adam's 8) and the update direction is the **sign** of an interpolated momentum:
+Lion (Chen et al., *Symbolic Discovery of Optimization Algorithms*, 2023) was discovered by a program-search procedure over optimizer programs, and the winner is startlingly simple. "Lion" stands for Evo**l**ved S**i**gn M**o**me**n**tum. It keeps a *single* momentum buffer (so only **4 extra bytes/param** versus Adam's 8) and the update direction is the **sign** of an interpolated momentum:
 
 $$
 c_t = \beta_1 m_{t-1} + (1-\beta_1) g_t, \qquad
@@ -396,8 +399,11 @@ def muon_step(W, G, momentum_buf, lr=0.02, mu=0.95, ns_steps=5):
     # Reference implementations default to Nesterov here, i.e. orthogonalize
     # (G + mu * momentum_buf) instead of the buffer itself.
     update = newton_schulz5(momentum_buf, steps=ns_steps)  # orthogonalize
-    # Scale by sqrt(max(rows,cols)) so RMS of update ~ 1, matching AdamW's scale
-    scale = (max(W.shape) ** 0.5)
+    # UV^T has min(n,m) unit singular values over n*m entries, so its RMS is
+    # 1/sqrt(max(n,m)). Multiplying by 0.2*sqrt(max(n,m)) cancels that shape
+    # dependence and lands the update RMS at 0.2 -- the measured RMS band of an
+    # AdamW update (Moonlight's rule; drop the 0.2 and every step is 5x too big).
+    scale = 0.2 * (max(W.shape) ** 0.5)
     W.add_(update, alpha=-lr * scale)
 ```
 
@@ -407,7 +413,7 @@ Muon's properties make it a compelling AdamW replacement for the bulk of an LLM'
 
 - **Memory.** Like momentum SGD and Lion, it stores **one** buffer per parameter (momentum), not two — half of Adam's optimizer-state memory. There is no second-moment tensor at all.
 - **Only for 2-D weights.** Orthogonalization is defined for matrices. The standard recipe is **hybrid**: use Muon for the 2-D hidden weight matrices (attention and MLP projections) and a small **AdamW for the 1-D parameters and the input embedding / output head**, which are not matrix-multiplied in the same sense and behave better under Adam.
-- **Scale matching.** The $\sqrt{\max(n,m)}$ factor makes Muon's update RMS comparable to AdamW's, so learning-rate intuition transfers and you can reuse much of an AdamW schedule.
+- **Scale matching.** The orthogonalized update $UV^\top$ has element RMS $1/\sqrt{\max(n,m)}$, so a bare $O_t$ moves matrices of different shapes by different relative amounts. Multiplying by $0.2\sqrt{\max(n,m)}$ (Moonlight's rule) cancels the shape dependence and fixes the update RMS at $0.2$ — the band a *measured* AdamW update sits in — so one learning rate serves every matrix and much of an AdamW schedule transfers.
 - **Reported gains.** On small-scale benchmarks (nanoGPT speedruns) and, more recently, at MoE scale (Moonshot's 16B/3B-active Moonlight on 5.7T tokens), Muon reaches a target loss in meaningfully fewer steps/tokens than tuned AdamW — roughly $2\times$ compute efficiency at the compute-optimal frontier — while using less memory.
 
 The mechanism connects cleanly to Shampoo: orthogonalizing $M = U\Sigma V^\top$ to $UV^\top$ is exactly applying the preconditioner $(MM^\top)^{-1/2}M$, a "whitening" of the update — the same spectral idea as Shampoo's inverse-root preconditioning, but computed cheaply with matmuls and applied to the momentum rather than accumulated second moments. Muon can be read as a streamlined, GPU-friendly descendant of the Shampoo line.
@@ -420,11 +426,18 @@ The mechanism connects cleanly to Shampoo: orthogonalizing $M = U\Sigma V^\top$ 
 "Hybrid" means two optimizer objects over two disjoint parameter sets, both stepped every iteration. That is all there is to it:
 
 ```python
+from collections import OrderedDict
 import torch
 
-model = torch.nn.Sequential(              # stand-in for your transformer
-    torch.nn.Embedding(1000, 64), torch.nn.LayerNorm(64), torch.nn.Linear(64, 64)
-)
+# Stand-in for your transformer. The submodules are *named* on purpose: the
+# routing below is by name, so an nn.Sequential of bare positional modules
+# ("0.weight", "1.weight", ...) would silently send the embedding to Muon.
+model = torch.nn.Sequential(OrderedDict([
+    ("embed", torch.nn.Embedding(1000, 64)),
+    ("norm", torch.nn.LayerNorm(64)),
+    ("mlp", torch.nn.Linear(64, 64)),
+    ("lm_head", torch.nn.Linear(64, 1000)),
+]))
 
 # Muon for the 2-D hidden weights; AdamW for embeddings, LM head, norms, biases.
 hidden, others = [], []

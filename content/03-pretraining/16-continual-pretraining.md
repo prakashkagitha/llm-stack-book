@@ -107,7 +107,7 @@ def make_cpt_schedule(
 #             num_decay_steps=4_000, final_lr_frac=0.05)
 ```
 
-In real training stacks you rarely write this from scratch — you configure it. With Hugging Face `transformers`, the cleanest route is to build the `LambdaLR` above and hand it to `Trainer(optimizers=(opt, sched))`, since the built-in `get_scheduler("cosine", ...)` has no re-warm/re-decay concept. With **Megatron-LM / Megatron-Core** the whole recipe is command-line flags: `--finetune` loads the model weights but resets the optimizer state, RNG state, and iteration counter (exactly the "reset and re-warm" move); `--override-opt_param-scheduler` makes your new `--lr`, `--lr-warmup-iters`, and `--lr-decay-style` win over the schedule saved in the checkpoint — forget that flag and Megatron will silently resume the *base* run's schedule at its floor LR, which is the single most common CPT configuration bug. `--no-load-optim` / `--no-load-rng` give finer-grained control if you want weights-only loading without `--finetune`'s counter reset. MosaicML **llm-foundry** exposes the same idea as `load_path` plus `load_weights_only: true` in YAML, and **torchtitan** and **nanotron** both support weights-only warm starts. See [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html) for the surrounding launch configuration.
+In real training stacks you rarely write this from scratch — you configure it. With Hugging Face `transformers`, the cleanest route is to build the `LambdaLR` above and hand it to `Trainer(optimizers=(opt, sched))`, since the built-in `get_scheduler("cosine", ...)` has no re-warm/re-decay concept. With **Megatron-LM / Megatron-Core** the whole recipe is command-line flags: `--finetune` loads the model weights but resets the optimizer state, RNG state, and iteration counter (exactly the "reset and re-warm" move); `--override-opt_param-scheduler` makes your new `--lr`, `--lr-warmup-iters`, and `--lr-decay-style` win over the schedule saved in the checkpoint. Learn the three-way behaviour, because getting it wrong is the single most common CPT configuration bug: on a *plain* resume (neither flag set) Megatron **asserts** that each of your CLI schedule values equals the checkpoint's and aborts the job when they differ; `--override-opt_param-scheduler` makes your CLI values win; `--use-checkpoint-opt_param-scheduler` makes the *checkpoint's* values win, which is what silently resumes the base run's schedule at its floor LR. Note that `--finetune` already skips loading the optimizer *and* scheduler state entirely, so in that combination the override flag is belt-and-braces rather than load-bearing. `--no-load-optim` / `--no-load-rng` give finer-grained control if you want weights-only loading without `--finetune`'s counter reset. MosaicML **llm-foundry** exposes the same idea as `load_path` plus `load_weights_only: true` in YAML, and **torchtitan** and **nanotron** both support weights-only warm starts. See [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html) for the surrounding launch configuration.
 
 !!! warning "Common pitfall: skipping re-warmup causes a worse spike than doing it"
     It is tempting to think "the model is already trained, so I can jump straight to my target CPT learning rate with no warmup." Don't. Resuming a converged checkpoint and immediately applying a 10x-higher LR than it finished at produces a large gradient step into a region the optimizer's stale Adam second-moment estimates ($v_t$) are not calibrated for — you get a sharp loss spike and sometimes divergence. Always re-warm over at least a few hundred steps, and re-initialize or carefully load the optimizer state (see below).
@@ -338,7 +338,7 @@ def net2wider_linear(W_in: torch.Tensor, W_out: torch.Tensor, new_width: int,
 
 ### Dense-to-MoE upcycling
 
-**Sparse upcycling** turns a trained *dense* model into a *sparse* Mixture-of-Experts model, reusing the dense weights. The recipe (Komatsuzaki et al., 2022; used at scale for several production MoEs): replace each (or every other) dense MLP block with an MoE layer whose $E$ experts are each **initialized as a copy of the original dense MLP**. The router is added fresh (small random init). At step 0, every expert is identical, so — if the router is roughly uniform — the MoE layer computes approximately the original dense MLP's output, preserving the function. Continued pretraining then *differentiates* the experts. This buys you a high-capacity MoE (more parameters, same or modestly higher FLOPs per token) for the cost of a CPT pass, rather than training an MoE from scratch.
+**Sparse upcycling** turns a trained *dense* model into a *sparse* Mixture-of-Experts model, reusing the dense weights. The recipe (Komatsuzaki et al., 2022; used at scale for several production MoEs): replace each (or every other) dense MLP block with an MoE layer whose $E$ experts are each **initialized as a copy of the original dense MLP**. The router is added fresh (small random init). At step 0, every expert is identical, so — if the router is roughly uniform — the MoE layer computes approximately the original dense MLP's output, preserving the function. Continued pretraining then *differentiates* the experts. This buys you a high-capacity MoE (more parameters, same or modestly higher FLOPs per token) for the cost of a CPT pass, rather than training an MoE from scratch. The regime matters: upcycling wins when the *additional* budget is small relative to the original dense run, while a from-scratch MoE catches up and overtakes if you are willing to spend a large additional budget.
 
 ```python
 import torch, torch.nn as nn, copy
@@ -380,7 +380,7 @@ See [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-exp
 
 When you change the tokenizer — extending the vocab for a new domain/language, or swapping to a different tokenizer entirely — the embedding matrix $E \in \mathbb{R}^{|V|\times d}$ and the output (unembedding) matrix must change shape, and the new rows must be initialized. Random init for new tokens is wasteful; the trained model already "knows" the meaning of the *pieces* of a new token. Two standard moves:
 
-- **Mean-of-subtokens init**: a new token (e.g., a whole word that the old tokenizer split into pieces) gets its embedding initialized to the **mean of its old sub-token embeddings**. This is the heuristic behind FOCUS and the widely-used embedding-init utilities, and it dramatically shortens the CPT needed to make the new tokens useful.
+- **Mean-of-subtokens init**: a new token (e.g., a whole word that the old tokenizer split into pieces) gets its embedding initialized to the **mean of its old sub-token embeddings**. This is the heuristic behind the widely-used embedding-init utilities (Hewitt, 2021; Gee et al., *Fast Vocabulary Transfer*, 2022), and it dramatically shortens the CPT needed to make the new tokens useful. Do not confuse it with **FOCUS** (Dobler & de Melo, 2023), a stronger but heavier initializer that goes the other way round: it composes each new token from the embeddings of the tokens the two vocabularies *share*, weighted by a sparsemax over similarities in an auxiliary fastText space trained on target-domain text.
 - **Shared-token preservation**: tokens present in *both* vocabularies keep their trained embeddings exactly. Only genuinely new tokens are initialized.
 
 ```python
@@ -394,7 +394,7 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
       new_vocab     : dict {new_token_str -> new_id}
       old_tokenizer : can encode a string into OLD ids
     Shared tokens copy their trained vector; new tokens are initialized to the
-    mean of the OLD sub-token embeddings of their surface string (FOCUS-style).
+    mean of the OLD sub-token embeddings of their surface string.
     Falls back to the overall mean (a safe centroid) when no sub-tokens exist.
     """
     d = old_emb.shape[1]
@@ -405,7 +405,14 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
         if tok in old_vocab:                     # shared: copy trained vector
             new_emb[new_id] = old_emb[old_vocab[tok]]
         elif mean_init:                          # new: mean of OLD sub-tokens
-            sub_ids = old_tokenizer.encode(tok, add_special_tokens=False)
+            # `tok` is a VOCAB KEY, not a surface string: byte-level BPE and
+            # SentencePiece put a word-boundary marker on it ("Ġmedical",
+            # "▁medical"). Encoding the key raw would re-encode that marker as
+            # literal text (GPT-2: "Ġmedical" -> ['Ä','ł','medical']) and
+            # pollute the mean with junk byte fragments. Recover the surface
+            # form (" medical") first, then encode that.
+            surface = old_tokenizer.convert_tokens_to_string([tok])
+            sub_ids = old_tokenizer.encode(surface, add_special_tokens=False)
             if sub_ids:
                 new_emb[new_id] = old_emb[torch.tensor(sub_ids)].mean(0)
             else:
@@ -417,7 +424,7 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
 
 Three details that bite in practice. **(1) The output head.** If the model *unties* input and output embeddings, you must initialize the new `lm_head` rows too — run the same sub-token-mean procedure on the unembedding matrix (and on the output bias, if any). If weights are tied, resizing the input embedding is enough, but then a mean-initialized row is simultaneously an input vector and a logit direction, which is one reason tied models sometimes need a few hundred extra steps to stop over-predicting new tokens. **(2) Padding.** Round the new vocabulary size up to a multiple of 64 (128 with tensor parallelism) with dummy tokens; unaligned vocab sizes cost real throughput in the final GEMM, and Megatron's `--make-vocab-size-divisible-by` does this for you. **(3) Order of operations.** After re-initializing embeddings you almost always **CPT the whole model** (not just the embeddings) so the body learns to use the new vocabulary; a common warm-up is to first train *only* the new rows for a few hundred steps with the rest frozen, then unfreeze everything.
 
-The library path mirrors the code above. Train the new merges with Hugging Face `tokenizers` (or `SentencePiece`) on target-domain text, splice them in with `tokenizer.add_tokens([...])` — or, for a language pass, train a fresh tokenizer and take the union of vocabularies — then call `model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=64)`. Recent `transformers` versions default to `mean_resizing=True`, which draws new rows from a distribution fitted to the existing embeddings rather than from a plain $\mathcal{N}(0,\sigma^2)$; that is strictly better than random but is *not* sub-token-aware, so for a serious vocabulary transfer overwrite those rows with the FOCUS-style means computed above. See [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) for how the merges that define new tokens are produced, [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html) for embedding/unembedding tying, and [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) for the capstone's own vocabulary, whose 100M-scale embedding table makes these tradeoffs cheap to measure.
+The library path mirrors the code above. Train the new merges with Hugging Face `tokenizers` (or `SentencePiece`) on target-domain text, splice them in with `tokenizer.add_tokens([...])` — or, for a language pass, train a fresh tokenizer and take the union of vocabularies — then call `model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=64)`. Recent `transformers` versions default to `mean_resizing=True`, which draws new rows from a distribution fitted to the existing embeddings rather than from a plain $\mathcal{N}(0,\sigma^2)$; that is strictly better than random but is *not* sub-token-aware, so for a serious vocabulary transfer overwrite those rows with the sub-token means computed above (or run FOCUS, if you have enough target-domain text to fit its auxiliary embeddings). See [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) for how the merges that define new tokens are produced, [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html) for embedding/unembedding tying, and [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) for the capstone's own vocabulary, whose 100M-scale embedding table makes these tradeoffs cheap to measure.
 
 ## Planning CPT Compute With Loss-Trajectory Models
 
@@ -429,7 +436,7 @@ $$
 \mathcal{L}_{\text{new}}(D) \approx \mathcal{L}_\infty + \frac{A}{(D_0 + D)^{\alpha}},
 $$
 
-where $D_0$ encodes the "head start" the base model already has on the new domain, and $A,\alpha,\mathcal{L}_\infty$ are fit from a short pilot. Run a small pilot at, say, 1 B, 2 B, 4 B tokens, fit the curve, and extrapolate to find the *knee* where additional tokens stop paying. The same machinery is developed in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html); CPT just adds the $D_0$ offset that represents transferred knowledge.
+where $D_0$ encodes the "head start" the base model already has on the new domain, and $A,\alpha,\mathcal{L}_\infty$ are fit from a short pilot. Run a small pilot at, say, 1, 2, 4, 8 and 16 B tokens — you need strictly more measurement points than the four free parameters, or the fit is under-determined and the solver refuses it — then fit the curve and extrapolate to find the *knee* where additional tokens stop paying. The same machinery is developed in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html); CPT just adds the $D_0$ offset that represents transferred knowledge.
 
 **2. How much forgetting?** Model the *base*-domain loss as *rising* with CPT tokens at a rate damped by the replay ratio $r$. A serviceable empirical form is
 
@@ -451,14 +458,29 @@ def fit_cpt_trajectory(tokens, losses):
     """
     Fit L(D) = L_inf + A / (D0 + D)**alpha to pilot (tokens, loss) points,
     then return a predictor and the token count to hit a target loss.
-    tokens : array of CPT token counts (e.g. [1e9, 2e9, 4e9])
+    tokens : array of CPT token counts (e.g. [1e9, 2e9, 4e9, 8e9, 1.6e10]).
+             The law has FOUR free parameters, so you need at least 5 pilot
+             points -- curve_fit raises on an under-determined system, and a
+             merely exactly-determined fit (4 points) has zero slack and
+             happily lands on absurd parameter values.
     losses : measured new-domain loss at each.
     """
+    tokens = np.asarray(tokens, dtype=float)
+    losses = np.asarray(losses, dtype=float)
+    if tokens.size < 5:
+        raise ValueError("need >= 5 pilot points to fit 4 parameters")
+
     def law(D, L_inf, A, D0, alpha):
         return L_inf + A / np.power(D0 + D, alpha)
-    p0 = [min(losses) * 0.9, 1.0, 1e9, 0.3]            # rough initial guess
-    popt, _ = curve_fit(law, np.asarray(tokens), np.asarray(losses),
-                        p0=p0, maxfev=20000)
+
+    alpha0 = 0.3
+    # scale A's guess to the data: A0 / D_min**alpha0 ~ the observed loss drop.
+    # (A flat p0 like A=1.0 starts orders of magnitude off and the fit stalls.)
+    A0 = max(losses.max() - losses.min(), 1e-6) * tokens.min() ** alpha0
+    p0 = [losses.min() * 0.9, A0, tokens.min(), alpha0]
+    # keep A, D0, alpha positive so (D0 + D)**alpha is never NaN inside the fit
+    bounds = ([-np.inf, 0.0, 0.0, 1e-3], [np.inf, np.inf, np.inf, 2.0])
+    popt, _ = curve_fit(law, tokens, losses, p0=p0, bounds=bounds, maxfev=20000)
     L_inf, A, D0, alpha = popt
 
     def predict(D):                                    # loss at D tokens
@@ -471,11 +493,11 @@ def fit_cpt_trajectory(tokens, losses):
 
     return predict, tokens_for_target, popt
 
-# Example usage:
+# Example usage (5 pilot points for 4 parameters):
 # predict, tokens_for, params = fit_cpt_trajectory(
-#     [1e9, 2e9, 4e9], [2.41, 2.30, 2.22])
+#     [1e9, 2e9, 4e9, 8e9, 1.6e10], [2.41, 2.30, 2.22, 2.16, 2.12])
 # print(predict(40e9))           # extrapolated loss at the full 40B budget
-# print(tokens_for(2.10))        # tokens needed to reach loss 2.10
+# print(tokens_for(2.05))        # tokens needed to reach loss 2.05
 ```
 
 !!! interview "Interview Corner"
@@ -505,7 +527,7 @@ def fit_cpt_trajectory(tokens, losses):
 
     - [Gururangan et al., *Don't Stop Pretraining* (2020)](https://arxiv.org/abs/2004.10964) — the empirical case for domain-adaptive and task-adaptive pretraining (DAPT/TAPT) that established the practice.
     - [Ke et al., *Continual Pre-training of Language Models* (ICLR 2023)](https://arxiv.org/abs/2302.03241) — introduces soft-masking over important parameters to prevent forgetting while enabling knowledge transfer across sequential domains.
-    - [Komatsuzaki et al., *Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints* (2022)](https://arxiv.org/abs/2212.05055) — the canonical dense-to-MoE upcycling recipe showing ~50% compute savings vs. training an MoE from scratch.
+    - [Komatsuzaki et al., *Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints* (2022)](https://arxiv.org/abs/2212.05055) — the canonical dense-to-MoE upcycling recipe: upcycled models beat their dense parents while spending additional compute equal to only ~50% of the original dense pretraining cost, and beat from-scratch MoEs in the low-additional-budget regime.
 
     **Recent advances (2023–2026)**
 
@@ -524,7 +546,7 @@ def fit_cpt_trajectory(tokens, losses):
 
     **Go deeper**
 
-    - [Dobler & de Melo, *FOCUS: Effective Embedding Initialization for Monolingual Specialization* (EMNLP 2023)](https://arxiv.org/abs/2305.14481) — sub-token-mean embedding init for vocabulary transfer; the standard reference for initializing new tokens when extending a tokenizer.
+    - [Dobler & de Melo, *FOCUS: Effective Embedding Initialization for Monolingual Specialization* (EMNLP 2023)](https://arxiv.org/abs/2305.14481) — initializes each new token as a sparsemax-weighted combination of the embeddings of tokens *shared* by the old and new vocabularies, with weights from an auxiliary fastText space; the strongest off-the-shelf alternative to plain sub-token means when extending a tokenizer.
     - [AMD ROCm Blog, *Continued Pretraining: A Practical Playbook for Language-Specific LLM Adaptation* (2024)](https://rocm.blogs.amd.com/artificial-intelligence/multilingual-continued-pretraining/README.html) — end-to-end walkthrough of building a Finnish Llama 3.1 variant with data mixing, schedule tuning, and alignment.
 
 ## Further Reading
@@ -536,7 +558,7 @@ def fit_cpt_trajectory(tokens, losses):
 - **Chen et al., "Net2Net: Accelerating Learning via Knowledge Transfer" (2015)** — function-preserving net2wider/net2deeper transformations underlying model growth.
 - **Gong et al., "Efficient Training of BERT by Progressively Stacking" (2019)** and **Chen et al., "bert2BERT: Towards Reusable Pretrained Language Models" (2021)** — depth/width growth with weight reuse for transformers.
 - **Komatsuzaki et al., "Sparse Upcycling: Training Mixture-of-Experts from Dense Checkpoints" (2022)** — the dense-to-MoE upcycling recipe.
-- **Dobler & de Melo, "FOCUS: Effective Embedding Initialization for Monolingual Specialization of Multilingual Models" (EMNLP 2023)** — sub-token-mean embedding initialization for vocabulary/tokenizer transfer.
+- **Dobler & de Melo, "FOCUS: Effective Embedding Initialization for Monolingual Specialization of Multilingual Models" (EMNLP 2023)** — embedding initialization for vocabulary/tokenizer transfer by sparsemax-weighted combination of shared-vocabulary tokens.
 - **Wu et al., "BloombergGPT" (2023)** and **Chen et al., "Meditron" / SaulLM legal-LM reports (2023–2024)** — real domain-adaptive pretraining recipes for finance, medicine, and law.
 
 ## Exercises
@@ -677,6 +699,6 @@ def fit_cpt_trajectory(tokens, losses):
     print("function preserved at init: OK")
     ```
 
-    Running this prints `layers: 6` and a max abs difference at the level of floating-point noise (`~1e-7`), and the assertion passes.
+    Running this prints `layers: 6` and `max abs diff: 0.0`, and the assertion passes. The equality is *bitwise* exact, not merely within floating-point noise: zeroing both the weight and the bias of `o_proj`/`down_proj` makes each sublayer emit an exactly-zero tensor, and `x + 0.0 == x` in IEEE-754, so the twin block is a bit-identical pass-through and every downstream layer sees bit-identical input. (Contrast the width-growth code, where the difference genuinely is ~1e-6 even with `noise=0`, because the sum over replicated neurons is re-associated.)
 
     **Why it works:** the lines `twin.attn.o_proj.weight.zero_()` and `twin.mlp.down_proj.weight.zero_()` (and their bias zeroing) make each inserted block's attention and MLP sublayers output exactly $0$, so — because the block is residual, $x \mapsto x + f(x)$ with $f(x) = 0$ — the twin is the identity map and passes its input through unchanged, leaving the whole network's function identical at step 0.

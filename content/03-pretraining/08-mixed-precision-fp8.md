@@ -23,7 +23,7 @@ A floating-point number is `sign × mantissa × 2^exponent`. The split between e
 
 Read this table as the key to everything that follows. The two 16-bit formats have the *same size* but make opposite trades:
 
-- **FP16** keeps 10 mantissa bits (good precision) but only 5 exponent bits, so its maximum value is **65504** and its smallest normal is ~6e-5. Gradients in a transformer routinely live below 6e-5, so they **underflow to zero in fp16**. This is why fp16 *requires loss scaling* (we cover it below).
+- **FP16** keeps 10 mantissa bits (good precision) but only 5 exponent bits, so its maximum value is **65504** and its smallest normal is ~6e-5. A large fraction of transformer gradients live below 6e-5, where fp16 can only represent them as **subnormals** that shed mantissa bits as they get smaller — and below $2^{-24} \approx 6\times10^{-8}$ they **flush to zero entirely**. Either way the small-gradient tail is quantized to mush or lost. This is why fp16 *requires loss scaling* (we cover it below).
 - **BF16** is simply "FP32 with the bottom 16 mantissa bits chopped off." It keeps all 8 exponent bits, so it has the **same dynamic range as fp32** — it will never overflow or underflow where fp32 wouldn't. The price is only 7 mantissa bits, i.e. ~2-3 decimal digits of precision. For training, *range matters more than precision*, which is why bf16 has become the default and **bf16 needs no loss scaling.**
 
 **TF32** deserves a note because it is the one row that is not a storage format. TensorFloat-32 is a tensor-core *compute mode* on Ampere and later: your tensors stay fp32 in memory and the API still says `float32`, but the multiplier internally rounds each input mantissa to 10 bits (fp32's exponent, fp16's precision) and accumulates in fp32. It is nearly free accuracy-wise and several times faster than a true fp32 CUDA-core matmul (on the order of 8× at peak on A100/H100), and PyTorch leaves it **off by default for matmuls** — so an "fp32 baseline" you did not configure is needlessly slow, and any bf16-vs-fp32 speedup you measure against it is inflated. Turn it on with one line before you benchmark anything:
@@ -70,7 +70,7 @@ One caveat to file away for the FP8 section: "accumulates in fp32" is a promise 
 
 Let's make the failure concrete. Consider a single weight $w = 1.0$ and a tiny gradient times learning rate, $\eta g = 2 \times 10^{-4}$. We want $w \leftarrow w - \eta g = 0.9998$.
 
-In fp16, the representable numbers near $1.0$ are spaced $2^{-10} \approx 9.77 \times 10^{-4}$ apart (that is the ulp — unit in the last place). Our desired update $2 \times 10^{-4}$ is **smaller than half an ulp**, so when we round $1.0 - 0.0002$ to the nearest fp16 value we get... exactly $1.0$. **The update is silently lost.** Worse, this happens at *every* step late in training when gradients shrink, so the model stops learning even though loss looks vaguely fine.
+In fp16, the representable numbers just *above* $1.0$ are spaced $2^{-10} \approx 9.77 \times 10^{-4}$ apart (that is the ulp — unit in the last place), and just *below* $1.0$ the spacing halves to $2^{-11} \approx 4.88 \times 10^{-4}$, because ulps halve every time you cross a power of two going down. Round-to-nearest therefore snaps any *decrement* smaller than half of that lower spacing, $2^{-12} \approx 2.44 \times 10^{-4}$, straight back to $1.0$ — and our $2 \times 10^{-4}$ update qualifies. Rounding $1.0 - 0.0002$ to the nearest fp16 value gives... exactly $1.0$. **The update is silently lost.** Worse, this happens at *every* step late in training when gradients shrink, so the model stops learning even though loss looks vaguely fine.
 
 This is the **swamping** or **stagnation** problem, and it has nothing to do with overflow — it is pure precision loss when you add a small number to a large one in the same low-precision format. There are two complementary fixes, and you need both for fp16:
 
@@ -147,7 +147,7 @@ The widget below makes both failure modes concrete. Slide the loss scale and wat
 
 ### bf16 needs no loss scaling — here is exactly why
 
-This is a favorite interview question, so be precise. Loss scaling exists to combat gradient **underflow**, which is a *range* problem: fp16's smallest normal is ~6e-5, and gradients live below that. bf16 has the **same exponent width as fp32**, so its smallest normal is ~1.2e-38 — gradients simply never underflow there. There is nothing to rescue, so loss scaling adds complexity for zero benefit. You drop the `GradScaler` entirely. (You still keep fp32 master weights inside the optimizer if you want the most precise updates, though with bf16 + a state-fp32 optimizer like Adam this is often handled implicitly — see below.) The trade you accept is bf16's coarser 7-bit mantissa, but the network tolerates that rounding noise.
+This is a favorite interview question, so be precise. Loss scaling exists to combat gradient **underflow**, which is a *range* problem: fp16's smallest normal is ~6e-5, and a large fraction of gradients live below that — subnormal and losing mantissa bits, or below $2^{-24} \approx 6\times10^{-8}$ and gone. bf16 has the **same exponent width as fp32**, so its smallest normal is ~1.2e-38 — gradients simply never underflow there. There is nothing to rescue, so loss scaling adds complexity for zero benefit. You drop the `GradScaler` entirely. (You still keep fp32 master weights inside the optimizer if you want the most precise updates, though with bf16 + a state-fp32 optimizer like Adam this is often handled implicitly — see below.) The trade you accept is bf16's coarser 7-bit mantissa, but the network tolerates that rounding noise.
 
 !!! warning "Common pitfall: using a GradScaler with bf16"
 
@@ -215,7 +215,7 @@ The five non-obvious correctness points, in order:
 
 In the loop above the model's own `nn.Parameter`s are fp32 — they *are* the master copy. `autocast` casts them to bf16/fp16 *on the fly* for each matmul and discards the cast; the fp32 originals are what AdamW updates. This is the standard PyTorch AMP pattern and the simplest mental model: **parameters fp32, compute low-precision, optimizer touches fp32.**
 
-A second pattern, common in large-scale frameworks (DeepSpeed, Megatron, FSDP with `MixedPrecision`), stores the *parameters themselves* in bf16 to halve parameter memory and communication, and keeps a **separate fp32 master copy plus fp32 optimizer state** (momentum, variance). The optimizer steps in fp32, then copies the result back into the bf16 parameter. This is what people mean by the canonical "mixed precision" recipe from Micikevicius et al.'s *Mixed Precision Training* (2017). The memory accounting (per parameter): 2 bytes bf16 weight + 4 bytes fp32 master + 4 + 4 bytes Adam states = **14 bytes/param**, versus 16 bytes for the all-fp32 recipe — and crucially the *communication* (all-reduce of gradients, all-gather of weights) moves in 2-byte bf16, halving network traffic. One subtlety there: summing bf16 gradients across hundreds of ranks is itself a long reduction in an 8-mantissa-bit format, so frameworks expose a separate *reduction* dtype — FSDP's `MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)` gathers weights in bf16 but reduce-scatters gradients in fp32, which costs a little bandwidth and removes a real source of drift. See [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) for how ZeRO shards exactly these fp32 states.
+A second pattern, common in large-scale frameworks (DeepSpeed, Megatron, FSDP with `MixedPrecision`), stores the *parameters themselves* in bf16 to halve the bytes gathered, communicated, and fed to the GEMMs, and keeps a **separate fp32 master copy plus fp32 optimizer state** (momentum, variance). The optimizer steps in fp32, then copies the result back into the bf16 parameter. This is what people mean by the canonical "mixed precision" recipe from Micikevicius et al.'s *Mixed Precision Training* (2017). The memory accounting (per parameter): 2 bytes bf16 weight + 4 bytes fp32 master + 4 + 4 bytes Adam states = **14 bytes/param**, versus 12 bytes for the all-fp32 recipe (4 weight + 4 + 4 Adam) — or **16 versus 16** once you count gradients, 2-byte bf16 in the mixed recipe and 4-byte fp32 in the pure one. Read that carefully: mixed precision **does not save weight-plus-optimizer memory** — the bf16 copy is pure overhead on top of the fp32 master. What you buy is tensor-core throughput, halved activation bytes, and crucially the *communication* (all-reduce of gradients, all-gather of weights) moves in 2-byte bf16, halving network traffic. One subtlety there: summing bf16 gradients across hundreds of ranks is itself a long reduction in an 8-mantissa-bit format, so frameworks expose a separate *reduction* dtype — FSDP's `MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)` gathers weights in bf16 but reduce-scatters gradients in fp32, which costs a little bandwidth and removes a real source of drift. See [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) for how ZeRO shards exactly these fp32 states.
 
 !!! example "Worked example: memory and the cost of master weights"
 
@@ -256,15 +256,20 @@ import torch
 FP8_E4M3_MAX = 448.0
 
 class DelayedScale:
-    def __init__(self, history_len=16, margin=1.0):
+    def __init__(self, history_len=16, margin=0.5):
         self.amax_history = torch.zeros(history_len)
         self.ptr = 0
-        self.margin = margin
+        self.margin = margin          # alpha <= 1; 1.0 means zero headroom
 
     def compute_scale(self):
-        amax = self.amax_history.max().clamp_min(1e-12)   # max over recent history
-        # scale maps amax -> FP8 max, with a safety margin < 1
-        return (FP8_E4M3_MAX / amax) * self.margin
+        amax = self.amax_history.max()
+        # WARM-UP: on step 0 the history is all zeros. Without this guard the
+        # clamp below would give scale = 448/1e-12 = 4.5e14 and the whole first
+        # tensor would saturate to +/-448 -- sign bits only, signal destroyed.
+        if amax == 0:
+            return torch.tensor(1.0)                      # no scaling until warmed
+        # scale maps amax -> FP8 max, with a safety margin <= 1
+        return (FP8_E4M3_MAX / amax.clamp_min(1e-12)) * self.margin
 
     def cast_to_fp8(self, x: torch.Tensor):
         scale = self.compute_scale()                 # uses PAST amax (delayed)
@@ -394,7 +399,7 @@ FP8 run no faster than bf16     cast/amax kernels unfused, or the     torch.comp
 
     **Q:** Your colleague switches a training run from bf16 to fp16 to "get more precision" and it starts producing `NaN`s after a few hundred steps. What's going on, and what would you change?
 
-    **A:** fp16 has *more mantissa* (10 vs 7 bits) but *much less dynamic range* — only 5 exponent bits, max value 65504, smallest normal ~6e-5. Two failures follow. (1) **Overflow:** an activation or attention logit exceeds 65504 → `inf` → `NaN`. (2) **Gradient underflow:** small gradients fall below ~6e-5 and round to zero. The `NaN`s are usually the overflow path. The fix is *not* to add precision but to manage range: enable a **dynamic GradScaler** so the loss (and hence all gradients) is multiplied up out of the underflow zone, with inf-checking that skips corrupted steps and backs off the scale; and ensure **fp32 master weights** so the recovered updates actually stick. But the cleaner answer is: on any Ampere/Hopper GPU, **just use bf16** — same 16 bits, fp32-equal range, no loss scaling, no overflow, marginally coarser mantissa that the optimizer absorbs. fp16 is essentially legacy for pre-Ampere hardware. The "more precision" intuition is a trap: for training, *range beats precision*.
+    **A:** fp16 has *more mantissa* (10 vs 7 bits) but *much less dynamic range* — only 5 exponent bits, max value 65504, smallest normal ~6e-5. Two failures follow. (1) **Overflow:** an activation or attention logit exceeds 65504 → `inf` → `NaN`. (2) **Gradient underflow:** small gradients fall below ~6e-5 into the subnormal range, where they progressively lose mantissa bits, and below $2^{-24} \approx 6\text{e-}8$ they round to zero outright. The `NaN`s are usually the overflow path. The fix is *not* to add precision but to manage range: enable a **dynamic GradScaler** so the loss (and hence all gradients) is multiplied up out of the underflow zone, with inf-checking that skips corrupted steps and backs off the scale; and ensure **fp32 master weights** so the recovered updates actually stick. But the cleaner answer is: on any Ampere/Hopper GPU, **just use bf16** — same 16 bits, fp32-equal range, no loss scaling, no overflow, marginally coarser mantissa that the optimizer absorbs. fp16 is essentially legacy for pre-Ampere hardware. The "more precision" intuition is a trap: for training, *range beats precision*.
 
 !!! key "Key Takeaways"
 
@@ -457,7 +462,7 @@ FP8 run no faster than bf16     cast/amax kernels unfused, or the     torch.comp
     Two failures follow from fp16's narrow range:
 
     - **Overflow:** an attention logit, a large matmul output, or a loss spike can exceed 65504, producing `inf` that becomes `NaN` in the backward pass.
-    - **Gradient underflow:** transformer gradients routinely live below ~6e-5, so in fp16 they round to zero and are lost.
+    - **Gradient underflow:** a large fraction of transformer gradients live below ~6e-5, where fp16 can only hold them as subnormals that shed mantissa bits — and below $2^{-24} \approx 6\times10^{-8}$ they round to zero and are lost outright.
 
     bf16 avoids *both* by construction because its exponent matches fp32: gradients essentially never underflow and activations essentially never overflow where fp32 wouldn't. That is exactly why **bf16 needs no loss scaling**, whereas fp16 needs a (dynamic) `GradScaler` to lift gradients out of the underflow zone plus inf-checking to skip corrupted steps. The "more precision" intuition is a trap: for training, *range beats precision*, and the coarser 7-bit bf16 mantissa is rounding noise the optimizer absorbs.
 
@@ -486,31 +491,37 @@ FP8 run no faster than bf16     cast/amax kernels unfused, or the     torch.comp
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
     ```
 
-**3.** Take a single fp16 weight $w = 2.0$ and an update $\eta g = 5 \times 10^{-4}$, so we want $w \leftarrow 1.9995$. (a) What is the fp16 ulp near $2.0$, and does the update "stick" if the weight is stored in fp16? (b) If instead the authoritative copy is an fp32 master, how many identical steps must accumulate before the *cast fp16* weight first ticks down by one representable step?
+**3.** Take a single fp16 weight $w = 2.0$ and an update $\eta g = 4 \times 10^{-4}$, so we want $w \leftarrow 1.9996$. (a) What is the fp16 ulp near $2.0$ — careful, the spacing is not the same on both sides of a power of two — and does the update "stick" if the weight is stored in fp16? (b) If instead the authoritative copy is an fp32 master, how many identical steps must accumulate before the *cast fp16* weight first ticks down by one representable step?
 
 ??? note "Solution"
 
-    **(a)** fp16 has a 10-bit mantissa. For a value in the binade $[2, 4)$ the exponent is $1$, so the spacing between representable numbers is
+    **(a)** fp16 has a 10-bit mantissa. For a value in the binade $[2, 4)$ the exponent is $1$, so the spacing between representable numbers *above* $2.0$ is
 
     $$
-    \text{ulp} = 2^{\,1 - 10} = 2^{-9} = \frac{1}{512} \approx 1.953 \times 10^{-3}.
+    \text{ulp}_{[2,4)} = 2^{\,1 - 10} = 2^{-9} = \frac{1}{512} \approx 1.953 \times 10^{-3}.
     $$
 
-    Round-to-nearest loses any change smaller than half an ulp:
+    But we are stepping *down*, and below $2.0$ we are in the binade $[1, 2)$, where the spacing halves:
 
     $$
-    \tfrac{1}{2}\,\text{ulp} = 2^{-10} \approx 9.766 \times 10^{-4}.
+    \text{ulp}_{[1,2)} = 2^{-10} \approx 9.766 \times 10^{-4},
     $$
 
-    Our update $\eta g = 5\times10^{-4} < 9.766\times10^{-4}$, so $2.0 - 0.0005 = 1.9995$ rounds back to exactly $2.0$. **The update is silently lost** — this is the swamping / stagnation problem.
-
-    **(b)** With an fp32 master weight, $2.0$ is representable to ~1e-7, so each $5\times10^{-4}$ update sticks and they accumulate in fp32. The re-cast fp16 weight only changes once the accumulated drop crosses half an ulp below $2.0$:
+    so the largest fp16 value below $2.0$ is $2 - 2^{-10} = 1.9990234375$. Round-to-nearest therefore snaps back to $2.0$ any decrement smaller than *half of the lower* spacing:
 
     $$
-    n \cdot 5\times10^{-4} \ge 9.766\times10^{-4} \;\Rightarrow\; n \ge 1.95 \;\Rightarrow\; n = 2.
+    \tfrac{1}{2}\,\text{ulp}_{[1,2)} = 2^{-11} \approx 4.883 \times 10^{-4}.
     $$
 
-    So after **2 steps** the fp16 weight first ticks down. This is precisely why fp32 master weights rescue late-training progress that pure-fp16 storage would throw away.
+    Our update $\eta g = 4\times10^{-4} < 4.883\times10^{-4}$, so $2.0 - 0.0004 = 1.9996$ rounds back to exactly $2.0$. **The update is silently lost** — this is the swamping / stagnation problem. (Note how easy the trap is: had you used the $[2,4)$ half-ulp of $9.766\times10^{-4}$ you would get the right answer here for the wrong reason, and the wrong answer for any update between $4.883\times10^{-4}$ and $9.766\times10^{-4}$.)
+
+    **(b)** With an fp32 master weight, $2.0$ is representable to ~1e-7, so each $4\times10^{-4}$ update sticks and they accumulate in fp32. The re-cast fp16 weight only changes once the accumulated drop crosses the rounding midpoint $2^{-11}$ below $2.0$:
+
+    $$
+    n \cdot 4\times10^{-4} \ge 4.883\times10^{-4} \;\Rightarrow\; n \ge 1.22 \;\Rightarrow\; n = 2.
+    $$
+
+    So after **2 steps** the fp16 weight first ticks down, to $1.9990234375$ (check: $2 - 8\times10^{-4} = 1.9992$, which is below the midpoint $1.99951171875$). This is precisely why fp32 master weights rescue late-training progress that pure-fp16 storage would throw away.
 
 **4.** You want to train a 13B-parameter model with the canonical recipe: bf16 weights + fp32 master + AdamW (fp32 first and second moments). (a) Compute the bytes per parameter and the total memory for weights + master + optimizer state. (b) Add bf16 gradients. (c) Given 80 GB H100s, how many GPUs' worth of memory is this (ignoring activations), and what does that tell you about single-GPU training?
 

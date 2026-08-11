@@ -357,7 +357,7 @@ Unpacked (padded):
   [Doc C: 128 tokens | PAD x 896]       — 88% waste
 
 Packed:
-  [Doc A: 300 | SEP | Doc B: 512 | SEP | Doc C: 128 | PAD x 83]
+  [Doc A: 300 | SEP | Doc B: 512 | SEP | Doc C: 128 | PAD x 82]
   — only 8% waste
 ```
 
@@ -385,30 +385,25 @@ def build_packed_loss_mask(
     doc_ids: torch.Tensor,  # (B, T) — integer doc ID for each token position
 ) -> torch.Tensor:
     """
-    Returns a loss mask (B, T) where position t is 1 (active) unless it is
-    the first token of a new document (in which case its loss is contaminated
-    by the previous document's context and should be excluded).
+    Returns a loss mask (B, T) that is aligned to the *shifted targets*: entry t
+    gates the prediction of token t+1. It is 1 (active) unless token t+1 starts a
+    new document, in which case that prediction is contaminated by the previous
+    document's context and should be excluded.
 
     doc_ids example for one sequence:
        [0, 0, 0, 1, 1, 1, 1, 2, 2]
-    First positions of docs 1 and 2 (indices 3 and 7) get mask=0.
+    Entries 2 and 6 get mask=0 — these are exactly the entries that score the
+    first tokens of docs 1 and 2 (at indices 3 and 7), so the returned mask is
+    [1, 1, 0, 1, 1, 1, 0, 1, 1].
     """
     B, T = doc_ids.shape
-    # A position starts a new document when its doc_id differs from the previous one
-    # Position 0 is also the start of a document, but it has no "poisoned" context
-    # so we keep it active (its input is just the BOS or the context start).
+    # There is no mask entry that scores token 0 itself: entry t scores token t+1,
+    # so the only thing to detect is "does the NEXT token start a new document?"
     mask = torch.ones(B, T, dtype=torch.long, device=doc_ids.device)
 
-    # Detect document boundaries: where doc_id[t] != doc_id[t-1]
-    # doc_ids[:, 1:] != doc_ids[:, :-1] gives True at boundary positions (t >= 1)
-    boundary = (doc_ids[:, 1:] != doc_ids[:, :-1])  # (B, T-1)
-
-    # The first token AFTER a boundary (i.e., position t where boundary[t-1] is True)
-    # has its loss masked out. In the targets tensor (which is shifted by 1),
-    # we mask the target at position t-1 when boundary[t-1] is True.
-    # Equivalently: in the loss over targets[:, t], mask when doc changes at t.
     # Targets are tokens[:, 1:], so target[t] corresponds to predicting token t+1
-    # from prefix up to token t. If token t+1 starts a new doc, mask it.
+    # from the prefix up to token t. If token t+1 starts a new doc, the prefix is
+    # from the wrong document, so mask entry t (not entry t+1).
     new_doc_at_next = doc_ids[:, 1:] != doc_ids[:, :-1]  # (B, T-1): True when t+1 starts new doc
     mask[:, :-1][new_doc_at_next] = 0  # mask positions t where next token is a new doc
 
@@ -492,21 +487,23 @@ def loss_mask_from_doc_ids(
     doc_ids: torch.Tensor,   # (T,)  — -1 for padding
 ) -> torch.Tensor:
     """
-    Build loss mask of shape (T,).
-    Active (1) unless:
-      - padding position (doc_id == -1)
-      - first token of a new document that follows a different document
-        (cross-doc context contamination)
+    Build loss mask of shape (T,), aligned to the shifted targets: entry t gates
+    the prediction of token t+1, so it is decided by BOTH t and t+1.
+    Active (1) only when:
+      - neither t nor t+1 is padding (doc_id == -1), so no padding is ever
+        predicted and no padding is ever used as context, and
+      - t and t+1 belong to the same document (otherwise the prediction is
+        cross-doc context contamination)
+    The last entry is always 0: position T-1 has no next token in this array.
     """
     T = doc_ids.shape[0]
-    mask = (doc_ids >= 0).long()   # 0 at padding, 1 elsewhere
+    mask = torch.zeros(T, dtype=torch.long, device=doc_ids.device)
 
-    # Also zero out the target positions where the *next* token starts a new doc.
-    # Target at position t is tokens[t+1]; if tokens[t+1] belongs to a new doc,
-    # the model's context (tokens[:t+1]) is from the wrong doc, so mask it.
+    # Target at position t is tokens[t+1]. If tokens[t+1] is padding, or belongs
+    # to a new doc, the pair (context, target) is not a valid training signal.
     for t in range(T - 1):
-        if doc_ids[t] >= 0 and doc_ids[t + 1] >= 0 and doc_ids[t] != doc_ids[t + 1]:
-            mask[t] = 0   # predicting the first token of doc[t+1] from doc[t] context
+        if doc_ids[t] >= 0 and doc_ids[t + 1] >= 0 and doc_ids[t] == doc_ids[t + 1]:
+            mask[t] = 1   # predicting the next token of the same doc — valid
     return mask
 
 
@@ -573,7 +570,7 @@ if __name__ == "__main__":
 
     print(f"Tokens shape: {tokens_1d.shape}")
     print(f"Active positions: {mask_1d.sum().item()} / {CONTEXT}")
-    print(f"Doc boundaries masked: {(mask_1d == 0).sum().item()} positions")
+    print(f"Masked (boundary + padding): {(mask_1d == 0).sum().item()} positions")
 
     # Batch of 2 sequences (in real training, batch of hundreds)
     tokens_batch   = tokens_1d.unsqueeze(0).expand(2, -1).clone()      # (2, 64)
@@ -719,7 +716,7 @@ During pretraining the model sees a mixture of all three modes with different sa
 
 ### Prefix Language Modeling
 
-A middle ground between masked LM and causal LM is the **prefix LM** (or **non-causal prefix** model): the input portion attends bidirectionally (full attention), while the output portion attends causally. This is the architecture of GLM (General Language Model, Du et al.) and PaLM's initial pretraining variant. The loss is computed only on the output (continuation) portion.
+A middle ground between masked LM and causal LM is the **prefix LM** (or **non-causal prefix** model): the input portion attends bidirectionally (full attention), while the output portion attends causally. This is the architecture of UniLM (Dong et al.), GLM (General Language Model, Du et al.), and T5's "prefix LM" ablation; it is also what UL2's S-denoising mode trains. The loss is computed only on the output (continuation) portion.
 
 Architecture variants and their relationship to these objectives are covered in depth in [Architecture Variants: Encoder-Decoder, Decoder-Only & Prefix-LM](../02-transformer/08-architecture-variants.html).
 
@@ -778,7 +775,7 @@ This averages per-sequence first, then averages sequences. It implicitly weights
 
 ### Label Smoothing
 
-**Label smoothing** replaces the one-hot target with a softer distribution: instead of probability 1 on the true token, the true token gets $1 - \epsilon$ and each other token gets $\epsilon / (V-1)$:
+**Label smoothing** replaces the one-hot target with a softer distribution: the one-hot spike is scaled down by $1 - \epsilon$ and a uniform floor of $\epsilon / V$ is spread over *every* token, so the true token ends up with $1 - \epsilon + \epsilon/V$ and each other token with $\epsilon / V$ (this is the convention PyTorch implements):
 
 $$
 \tilde{p}(v) = (1 - \epsilon) \cdot \mathbb{1}[v = x_t] + \frac{\epsilon}{V}
@@ -788,7 +785,7 @@ With $\epsilon = 0.1$, this has been shown to improve calibration and slightly r
 
 ### Z-Loss for Softmax Stability
 
-At scale, the logits fed to the softmax can grow very large, causing numerical instability (the softmax exponentials overflow in float16). One solution is **z-loss** (Chowdhery et al., PaLM, 2022), which adds a regularizer to penalize large logit norms:
+At scale, the logits fed to the softmax can drift to very large magnitudes. The max-shift inside a stable log-softmax (above) keeps the exponentials themselves safe — after subtracting the row max every exponent is $\le 0$, so it can only underflow, never overflow. What unbounded logit growth *does* cost you is precision: a log-partition far from $0$ means the logits and their gradients occupy the coarse end of the bf16/fp16 range, round-trip badly through low-precision storage, and empirically correlate with loss spikes. One solution is **z-loss** (Chowdhery et al., PaLM, 2022), which adds a regularizer pulling $\log Z$ back toward $0$ and thus penalizing large logit norms:
 
 $$
 \mathcal{L}_\text{z} = \alpha \cdot \log^2\!\left(\sum_{v} e^{z_v}\right)
@@ -960,7 +957,7 @@ Compute the bits-per-byte for each (use $\log_2 e \approx 1.4427$) and state whi
     \mathcal{L}_{\text{z}} = \alpha \cdot (30)^2 = 10^{-4} \times 900 = 0.09.
     $$
 
-    (c) Because cross-entropy alone cannot "see" the common offset $c$, logits are free to drift to very large magnitudes during training; z-loss adds a gradient that pulls the log-partition (and thus the raw logit scale) back toward $0$, preventing the softmax exponentials from overflowing in low-precision arithmetic and reducing loss spikes.
+    (c) Because cross-entropy alone cannot "see" the common offset $c$, logits are free to drift to very large magnitudes during training; z-loss adds a gradient that pulls the log-partition (and thus the raw logit scale) back toward $0$, keeping logits in the range that bf16/fp16 represents accurately (the max-shift already protects the exponentials themselves) and empirically reducing loss spikes.
 
 **5.** Implement per-document (sequence-normalized) loss and compare to token-normalized loss. The chapter contrasts token-normalized and sequence-normalized loss and warns that sequence-normalization "implicitly weights short sequences more heavily." Implement a function `sequence_normalized_loss(logits, tokens, mask)` that computes the loss by first averaging over the active positions *within each sequence*, then averaging those per-sequence means across the batch. Then, using the chapter's masking conventions, construct a 2-sequence batch where one sequence has far fewer active tokens than the other and demonstrate numerically that the sequence-normalized value differs from the standard token-normalized `compute_lm_loss_masked`.
 

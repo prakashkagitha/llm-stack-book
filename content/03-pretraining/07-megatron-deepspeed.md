@@ -64,12 +64,17 @@ def initialize_model_parallel(
             _TP_GROUP = group
 
     # --- Pipeline-parallel groups ---
-    # Stride by TP; each group of PP elements (spaced TP apart) is a PP group.
-    for i in range(tensor_model_parallel_size * dp_size):
-        ranks = list(range(i, world_size, tensor_model_parallel_size))[:pipeline_model_parallel_size]
-        group = dist.new_group(ranks)
-        if rank in ranks:
-            _PP_GROUP = group
+    # Rank layout is TP-fastest: rank = tp + TP * pp + TP * PP * dp.
+    # A PP group fixes (tp, dp) and strides by TP within one DP replica's block
+    # of TP * PP ranks, so the groups partition the world exactly.
+    tp_pp = tensor_model_parallel_size * pipeline_model_parallel_size
+    for dp in range(dp_size):
+        for tp in range(tensor_model_parallel_size):
+            start = dp * tp_pp + tp
+            ranks = list(range(start, start + tp_pp, tensor_model_parallel_size))
+            group = dist.new_group(ranks)
+            if rank in ranks:
+                _PP_GROUP = group
 
     # --- Data-parallel groups ---
     for i in range(tensor_model_parallel_size * pipeline_model_parallel_size):
@@ -146,9 +151,12 @@ zero3_config = {
         "overlap_comm": True,      # overlap reduce-scatter with backward pass
         "contiguous_gradients": True,
         "sub_group_size": 1e9,     # process params in 1B-element chunks
-        "reduce_bucket_size": "auto",
-        "stage3_prefetch_bucket_size": "auto",
-        "stage3_param_persistence_threshold": "auto",
+        # These must be real integers when you hand the JSON to deepspeed.initialize()
+        # yourself. The "auto" placeholder you see in HuggingFace examples is resolved
+        # by Trainer/accelerate (from the model config) *before* DeepSpeed parses it.
+        "reduce_bucket_size": 5e8,
+        "stage3_prefetch_bucket_size": 5e8,
+        "stage3_param_persistence_threshold": 1e5,
         "stage3_max_live_parameters": 1e9,
         "stage3_max_reuse_distance": 1e9,
     },
@@ -240,7 +248,7 @@ Megatron-Core's `MoELayer` handles the EP dimension natively (`--expert-model-pa
 
 For long-context runs there is one more independent axis. **Context parallelism (CP)** shards the *sequence* across CP ranks and computes attention with a ring exchange of K/V blocks (Ring Attention), so activation memory and attention FLOPs per GPU both fall by CP× while the model weights stay replicated across the CP group. Megatron-Core exposes it as `--context-parallel-size`, and the full grid becomes $N = \text{DP} \times \text{TP} \times \text{PP} \times \text{CP} \times \text{EP}$.
 
-Do not confuse CP with the *sequence parallelism* described above: Megatron's SP is a memory optimization strictly *inside* a TP group (it shards the norm/dropout regions along sequence and is free, so it is always on whenever TP > 1), whereas CP is a genuine extra dimension of the GPU grid that you spend GPUs on. The rule of thumb is to leave CP=1 until sequence length pushes activation memory past what recomputation can absorb — typically 32K tokens and beyond — then raise CP before raising TP, because the ring exchange is point-to-point and overlappable while the TP all-reduce is not. The mechanism is developed in [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html) and [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html).
+Do not confuse CP with the *sequence parallelism* described above: Megatron's SP is a memory optimization strictly *inside* a TP group (it shards the norm/dropout regions along sequence and is nearly free, so you should turn it on — `--sequence-parallel`, which Megatron only accepts when TP > 1 — in essentially every TP run), whereas CP is a genuine extra dimension of the GPU grid that you spend GPUs on. The rule of thumb is to leave CP=1 until sequence length pushes activation memory past what recomputation can absorb — typically 32K tokens and beyond — then raise CP before raising TP, because the ring exchange is point-to-point and overlappable while the TP all-reduce is not. The mechanism is developed in [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html) and [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html).
 
 ## Choosing Parallelism Degrees: A Systematic Approach
 
@@ -263,7 +271,7 @@ With 8× H100 80 GB per node (640 GB HBM), you need at least $\lceil 1120 / 80 \
 TP is constrained by intra-node bandwidth (NVLink). The all-reduce inside a TP column-parallel GEMM must finish before the next GEMM begins; it sits on the critical path.
 
 - TP=1: no communication, maximum arithmetic intensity.
-- TP=2: doubles memory for attention and FFN weight distribution; all-reduce is 2× 25 GB/s NVLink streams.
+- TP=2: halves the per-GPU attention and FFN weight (and gradient / optimizer-state) memory, at the cost of one all-reduce per layer — cheap when both GPUs sit on the same NVLink domain.
 - TP=4 or TP=8: recommended for nodes with 4 or 8 GPUs respectively and NVLink.
 - TP > 8: crosses PCIe/InfiniBand; avoid unless forced.
 
@@ -424,21 +432,20 @@ print(f"MFU: {mfu:.2%}")  # prints ~54.9% (~55%) for a well-configured run, incl
 
     **Setup**: 70B parameter model, bf16, 512 H100-80GB GPUs, TP=8, PP=8, DP=8, GBS=4M tokens, seq_len=4096.
 
-    **Model state (per DP rank, ZeRO-1)**:
-    - bf16 parameters: $70 \times 10^9 \times 2 = 140$ GB total, 140/1 per DP rank (ZeRO-1 does not shard params)
-    - With TP=8, PP=8: each GPU holds $\frac{1}{8 \times 8} = \frac{1}{64}$ of the model = $140/64 \approx 2.2$ GB bf16 params
-    - fp32 master weight copy: $140 \times 2 = 280$ GB total / 64 = 4.4 GB per GPU
-    - Adam states: same as master copy = 4.4 GB per GPU
-    - **Subtotal model state per GPU**: $2.2 + 4.4 + 4.4 = 11$ GB
+    **Model state (per GPU, ZeRO-1 optimizer sharding over DP=8)**:
+    - bf16 parameters: $70 \times 10^9 \times 2 = 140$ GB total. ZeRO-1 does not shard params, but TP=8 and PP=8 do: each GPU holds $\frac{1}{8 \times 8} = \frac{1}{64}$ of the model = $140/64 \approx 2.2$ GB
+    - bf16 gradients: also unsharded by ZeRO-1, so another $140/64 \approx 2.2$ GB per GPU
+    - Optimizer state — fp32 master weights (4 B/param) + Adam first and second moments (4 + 4 B/param) = 12 B/param = $840$ GB total. TP×PP already cuts it by 64, and ZeRO-1 shards it once more across DP=8: $840 / (64 \times 8) \approx 1.6$ GB per GPU
+    - **Subtotal model state per GPU**: $2.2 + 2.2 + 1.6 \approx 6.0$ GB
 
     **Activation memory** (one pipeline stage, without recomputation):
     - Layers per pipeline stage: $80 / 8 = 10$ layers
-    - Activations per layer ≈ $2 \times B \times S \times H$ bytes (input and output of attention block)
-    - With MBS=2, $S=4096$, $H=8192$: $2 \times 2 \times 4096 \times 8192 \times 2 \approx 537$ MB per layer
-    - 10 layers: $\approx 5.4$ GB activations per stage (before recompute)
-    - With selective recompute (e.g., recompute attention blocks only): reduce by $\sim$40% → 3.2 GB
+    - Activations per layer ≈ two $B \times S \times H$ tensors in bf16 (input and output of the attention block)
+    - With MBS=2, $S=4096$, $H=8192$: $2 \times 2 \times 4096 \times 8192 \times 2 \text{ B} \approx 268$ MB per layer
+    - 10 layers: $\approx 2.7$ GB activations per stage (before recompute)
+    - With selective recompute (e.g., recompute attention blocks only): reduce by $\sim$40% → 1.6 GB
 
-    **Total per GPU (approximate)**: $11 + 3.2 + 2$ (buffers/gradients) $= 16.2$ GB — well within 80 GB.
+    **Total per GPU (approximate)**: $6.0 + 1.6 + 2$ (comm buffers, fragmentation) $\approx 9.6$ GB — comfortably within 80 GB, which is why this config has room for a larger micro-batch or a longer sequence.
 
     **MFU check**:
     - FLOPs per token: $6 \times 70 \times 10^9 = 4.2 \times 10^{11}$
@@ -494,11 +501,12 @@ PP=8
 DP=8  # implicit: 512 / (8*8)
 
 # ---- Batch configuration ----
-# Global batch size: ~4M tokens per step
-# Seq len 4096, MBS=1 per GPU, GAS=128 → GBS = 1 * 512 * 128 * 4096 = 268M tokens... too large
-# More typically: MBS=2, GAS=32 → GBS = 2 * 512 * 32 * 4096 = ~134M tokens/step — still large
-# In practice: GBS set to 1M tokens = 244 sequences of 4096 tokens
-# With DP=8, MBS=1, GAS=ceil(244/8/GAS_factor): tune per run
+# Only the DP ranks consume distinct micro-batches; the TP and PP ranks all work
+# on the *same* micro-batch. So tokens/step = MBS * DP * GAS * SEQ_LEN — the DP
+# degree, not the 512-GPU world size.
+#   MBS=1, GAS=128 → 1 * 8 * 128 * 4096 = 4.2M tokens/step
+#   MBS=2, GAS=64  → 2 * 8 *  64 * 4096 = 4.2M tokens/step (same budget, fatter micro-batch)
+# Megatron's --global-batch-size counts SEQUENCES, not tokens.
 SEQ_LEN=4096
 GLOBAL_BATCH_SIZE=2048      # sequences per step = 2048 × 4096 = 8.4M tokens
 MICRO_BATCH_SIZE=2
@@ -544,6 +552,7 @@ torchrun \
   --clip-grad $CLIP_GRAD \
   --bf16 \
   --use-flash-attn \
+  --sequence-parallel \
   --recompute-activations \
   --recompute-granularity selective \
   --use-distributed-optimizer \
@@ -563,7 +572,7 @@ torchrun \
   --wandb-project llm-stack-70b
 ```
 
-The four performance flags are the ones worth memorizing. `--recompute-activations` selects the *selective* recomputation policy of Korthikanti et al. (attention softmax/dropout only); `--use-distributed-optimizer` turns on Megatron's own optimizer-state sharding across the DP group — that is ZeRO-1, implemented natively inside Megatron-Core; `--overlap-grad-reduce` hides the DP reduce-scatter behind the backward pass; and `--overlap-param-gather` hides the distributed optimizer's parameter all-gather behind the forward pass. Add `--tp-comm-overlap` (which requires Transformer Engine's userbuffers) to additionally overlap the TP all-gather/reduce-scatter with the GEMMs they bracket.
+The five performance flags are the ones worth memorizing. `--sequence-parallel` shards the norm/dropout regions between the TP GEMMs along the sequence dimension (it is *not* on by default, and Megatron only accepts it when TP > 1); `--recompute-activations` selects the *selective* recomputation policy of Korthikanti et al. (attention softmax/dropout only); `--use-distributed-optimizer` turns on Megatron's own optimizer-state sharding across the DP group — that is ZeRO-1, implemented natively inside Megatron-Core; `--overlap-grad-reduce` hides the DP reduce-scatter behind the backward pass; and `--overlap-param-gather` hides the distributed optimizer's parameter all-gather behind the forward pass. Add `--tp-comm-overlap` (which requires Transformer Engine's userbuffers) to additionally overlap the TP all-gather/reduce-scatter with the GEMMs they bracket.
 
 !!! note "Do you still need DeepSpeed?"
 
@@ -627,11 +636,11 @@ for line in sys.stdin:
 
 ### The TP Communication Bottleneck
 
-Tensor parallelism sits on the critical path of the forward pass. If TP all-reduces are slow (e.g., because TP spans InfiniBand instead of NVLink), you can lose 20-40% of throughput. Always profile with `nsys profile` and check that `ncclAllReduce` calls within a TP group run at NVLink speed (≈ 600 GB/s aggregate bidirectional).
+Tensor parallelism sits on the critical path of the forward pass. If TP all-reduces are slow (e.g., because TP spans InfiniBand instead of NVLink), you can lose 20-40% of throughput. Always profile with `nsys profile` and check that `ncclAllReduce` calls within a TP group run at NVLink speed. On the H100 SXM5 nodes above the NVLink peak is ≈ 900 GB/s bidirectional per GPU, and a healthy intra-node all-reduce reaches a large fraction of it; if you instead measure something near the ≈ 50 GB/s of a 400 Gb/s InfiniBand link, the TP group has spilled off the node.
 
 ### Pipeline Bubble vs. Memory Tradeoff
 
-Increasing PP reduces per-GPU memory but increases the bubble fraction. For PP=8 and $m=32$ micro-batches, the bubble is $(8-1)/(8-1+32) \approx 18\%$. Doubling micro-batches (increasing global batch or reducing MBS) drops this to 9%. Interleaved schedules (virtual PP) halve it again but increase inter-stage communication by a factor of $v$.
+Increasing PP reduces per-GPU memory but increases the bubble fraction. For PP=8 and $m=32$ micro-batches, the bubble is $(8-1)/(8-1+32) \approx 18\%$. Doubling micro-batches to $m=64$ (increasing global batch or reducing MBS) drops this to $7/71 \approx 10\%$. Interleaved schedules (virtual PP) halve it again but increase inter-stage communication by a factor of $v$.
 
 ### Activation Recomputation Granularity
 
@@ -707,7 +716,7 @@ This halves the bubble at the cost of sending twice as many pipeline messages pe
 
     **Q:** You are given a 256-GPU cluster (8 GPUs/node, NVLink intra-node, InfiniBand inter-node) and asked to train a 70B dense model. Walk through how you would choose TP, PP, and DP, and justify each choice.
 
-    **A:** Start with TP=8 — one full node — because all tensor-parallel all-reduces then stay on NVLink (fast) and never touch InfiniBand (slow). With TP=8 and 8 nodes remaining in the config, we choose PP=4 which gives 8/8=1 set of 4-stage pipelines per TP group and leaves DP=256/(8×4)=8. Verify memory: 70B params × 16 bytes / (8×4 TP×PP sharding) ≈ 35 GB model state per GPU, plus ~5-10 GB activations with selective recompute → comfortably fits 80 GB. For MFU, PP=4 with interleaved schedule (v=2) and 32+ micro-batches gives a bubble below 10%. If we needed more DP, we would scale the cluster rather than reducing TP/PP. If DP gradient communication shows up as exposed time in the profile, note that moving ZeRO-1 → ZeRO-2 would *not* help — both move the same reduce-scatter + all-gather volume, ZeRO-2 only saves gradient memory. The real levers are overlap (`--overlap-grad-reduce`, `--overlap-param-gather`), larger reduce buckets, and, if the DP group spans many nodes, ZeRO++-style hierarchical or quantized collectives.
+    **A:** Start with TP=8 — one full node — because all tensor-parallel all-reduces then stay on NVLink (fast) and never touch InfiniBand (slow). The cluster is 256/8 = 32 nodes, and TP=8 fills exactly one node, so there are 32 TP groups. Choosing PP=4 chains four of those nodes into each pipeline, giving 32/4 = 8 pipelines, i.e. DP=256/(8×4)=8. Verify memory: 70B params × 16 bytes / (8×4 TP×PP sharding) ≈ 35 GB model state per GPU, plus ~5-10 GB activations with selective recompute → comfortably fits 80 GB. For MFU, PP=4 with interleaved schedule (v=2) and 32+ micro-batches gives a bubble below 10%. If we needed more DP, we would scale the cluster rather than reducing TP/PP. If DP gradient communication shows up as exposed time in the profile, note that moving ZeRO-1 → ZeRO-2 would *not* help — both move the same reduce-scatter + all-gather volume, ZeRO-2 only saves gradient memory. The real levers are overlap (`--overlap-grad-reduce`, `--overlap-param-gather`), larger reduce buckets, and, if the DP group spans many nodes, ZeRO++-style hierarchical or quantized collectives.
 
 ## Combining Megatron-Core with External Libraries
 
@@ -774,7 +783,7 @@ For inference serving after training, the parallelism story shifts toward pure T
     - [Shoeybi et al., *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism* (2019)](https://arxiv.org/abs/1909.08053) — introduced tensor parallelism for transformers; the column/row parallel GEMM design still used today.
     - [Narayanan et al., *Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM* (2021)](https://arxiv.org/abs/2104.04473) — established the 3D (TP × PP × DP) parallelism framework and the 1F1B pipeline schedule.
     - [Rajbhandari et al., *ZeRO: Memory Optimizations Toward Training Trillion Parameter Models* (2020)](https://arxiv.org/abs/1910.02054) — the three-stage ZeRO optimizer sharding scheme; foundational for all large-scale runs.
-    - [Chowdhery et al., *PaLM: Scaling Language Modeling with Pathways* (2022)](https://arxiv.org/abs/2204.02311) — introduced the MFU metric and reported 57.8% MFU on 6144 TPUs; the benchmark for hardware efficiency analysis.
+    - [Chowdhery et al., *PaLM: Scaling Language Modeling with Pathways* (2022)](https://arxiv.org/abs/2204.02311) — introduced the MFU metric and reported 46.2% MFU (and 57.8% *hardware* FLOPs utilization) for PaLM 540B on 6144 TPU v4 chips; the benchmark for hardware efficiency analysis.
 
     **Recent advances (2023–2026)**
 
@@ -990,16 +999,16 @@ For inference serving after training, the parallelism story shifts toward pure T
     i=3 -> ranks [6, 7]
     ```
 
-    **PP groups** — loop `i` in `range(TP * dp_size) = range(4)`, ranks `range(i, 8, TP)[:PP]` = stride 2, take 2:
+    **PP groups** — nested loop over `dp` in `range(2)` and `tp` in `range(2)`; each group starts at `dp * TP * PP + tp = dp*4 + tp` and strides by `TP = 2` for `PP = 2` entries:
 
     ```text
-    i=0 -> range(0,8,2)[:2] = [0, 2]
-    i=1 -> range(1,8,2)[:2] = [1, 3]
-    i=2 -> range(2,8,2)[:2] = [2, 4]
-    i=3 -> range(3,8,2)[:2] = [3, 5]
+    dp=0, tp=0 -> range(0, 4, 2) = [0, 2]
+    dp=0, tp=1 -> range(1, 5, 2) = [1, 3]
+    dp=1, tp=0 -> range(4, 8, 2) = [4, 6]
+    dp=1, tp=1 -> range(5, 9, 2) = [5, 7]
     ```
 
-    (Note: with this simplified stride-by-TP construction the PP groups are not disjoint — e.g. rank 2 appears in the `i=0` and `i=2` groups. The real Megatron code partitions more carefully; the chapter's version is labeled "simplified" and is meant to convey the striding idea, not exact production group assignment.)
+    (Note the `dp * TP * PP` offset: without it the groups would be built from starting ranks 0..3 and would both overlap — rank 2 landing in two groups — and leave ranks 6 and 7 in none, so `_PP_GROUP` would stay `None` on those ranks and the first pipeline collective would crash. With the offset the four groups exactly partition the 8 ranks, consistent with the TP-fastest layout `rank = tp + TP*pp + TP*PP*dp`.)
 
     **DP groups** — loop `i` in `range(TP * PP) = range(4)`, ranks `range(i, 8, TP*PP)` = stride 4:
 

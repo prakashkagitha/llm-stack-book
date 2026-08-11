@@ -143,8 +143,8 @@ def fixed_chunk(
         tokens = text.split()
         decode = lambda ids: " ".join(ids)  # noqa: E731
     else:
-        tokens = tokenizer(text)
-        decode = tokenizer.decode  # type: ignore[attr-defined]
+        tokens = tokenizer.encode(text)      # list[int]
+        decode = tokenizer.decode            # list[int] -> str
 
     step = chunk_size - overlap
     if step <= 0:
@@ -1162,15 +1162,22 @@ def compute_recall_at_k(
     k: int,
 ) -> float:
     """
-    Recall@k: for each query, was at least one relevant document in top-k?
-    Averaged over all queries.
+    Recall@k = |relevant ∩ retrieved[:k]| / |relevant|, averaged over queries.
+
+    Note the definition: it is the *fraction* of a query's gold documents that
+    made the top-k, not "did at least one land". The two coincide when every
+    query has exactly one gold document, which is why the looser phrasing is so
+    common — but with multiple gold documents the "at least one" variant is
+    hit-rate / success@k and reports systematically higher numbers than the
+    Recall@k that BEIR and `ir_measures` publish.
     """
     assert len(relevant_ids) == len(retrieved_ids), "Must align by query"
-    hits = sum(
-        1 for rel, ret in zip(relevant_ids, retrieved_ids)
-        if rel & set(ret[:k])
-    )
-    return hits / len(relevant_ids)
+    recalls = [
+        len(rel & set(ret[:k])) / len(rel)
+        for rel, ret in zip(relevant_ids, retrieved_ids)
+        if rel  # queries with no gold documents are undefined; skip them
+    ]
+    return sum(recalls) / max(len(recalls), 1)
 
 
 def compute_mrr(
@@ -1194,16 +1201,16 @@ def compute_mrr(
 # --- Exercise with a tiny hand-computed fixture ---
 _relevant = [{"docA"}, {"docX", "docY"}, {"docZ"}]
 _retrieved = [
-    ["doc1", "docA", "doc2"],   # docA at rank 2 -> recall@3 hit, RR=1/2
-    ["docX", "doc3", "doc4"],   # docX at rank 1 -> recall hit, RR=1
-    ["doc5", "doc6", "doc7"],   # no relevant doc retrieved -> miss, RR=0
+    ["doc1", "docA", "doc2"],   # 1 of 1 gold in top-3 -> recall 1.0, RR=1/2
+    ["docX", "doc3", "doc4"],   # 1 of 2 gold in top-3 -> recall 0.5, RR=1
+    ["doc5", "doc6", "doc7"],   # 0 of 1 gold retrieved -> recall 0.0, RR=0
 ]
 
 recall_at_3 = compute_recall_at_k(_relevant, _retrieved, k=3)
 mrr = compute_mrr(_relevant, _retrieved)
 print(f"Recall@3: {recall_at_3:.4f}  MRR: {mrr:.4f}")
 
-assert abs(recall_at_3 - (2 / 3)) < 1e-9
+assert abs(recall_at_3 - ((1.0 + 0.5 + 0.0) / 3)) < 1e-9
 assert abs(mrr - ((1 / 2 + 1 / 1 + 0) / 3)) < 1e-9
 
 metrics = RetrievalMetrics(

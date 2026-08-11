@@ -68,14 +68,18 @@ Extract entities and relationships from the text below.
 Return JSON only, no commentary.
 
 Format:
-{
-  "entities": [{"id": "E1", "name": "...", "type": "person|org|concept|event"}],
-  "relations": [{"src": "E1", "dst": "E2", "label": "..."}]
-}
+{{
+  "entities": [{{"id": "E1", "name": "...", "type": "person|org|concept|event"}}],
+  "relations": [{{"src": "E1", "dst": "E2", "label": "..."}}]
+}}
 
 Text:
 {text}
 """
+# NOTE: every literal brace in the JSON schema is doubled. `str.format` treats a
+# single `{` as the start of a replacement field, so writing the schema with bare
+# braces makes `EXTRACT_PROMPT.format(text=...)` raise KeyError before any API
+# call. This bites every prompt template that shows the model a JSON example.
 
 
 def extract_graph_elements(text: str) -> Dict:
@@ -256,7 +260,7 @@ $$
 q_0 \xrightarrow{\text{LLM decompose}} \{q_1, q_2, \ldots\} \xrightarrow{\text{retrieve}} \{D_1, D_2, \ldots\} \xrightarrow{\text{LLM reason}} q_{1}^{(2)}, q_{2}^{(2)}, \ldots
 $$
 
-Each round of retrieval produces evidence that informs the next query. The depth of the chain is bounded by a maximum step count or by the LLM deciding it has enough information. This architecture was formalised in IRCoT (Trivedi et al., 2022) and later in BeamRAG and various implementations.
+Each round of retrieval produces evidence that informs the next query. The depth of the chain is bounded by a maximum step count or by the LLM deciding it has enough information. This architecture was formalised in IRCoT (Trivedi et al., 2022), with closely related formulations in Self-Ask (Press et al., 2022) and ITER-RETGEN (Shao et al., 2023), and it is the shape of most production multi-hop pipelines today.
 
 ```python
 """
@@ -324,9 +328,12 @@ def multihop_rag(
         current_query = response
 
     # Fallback: force an answer with whatever we have
+    # Slice the *joined string*, not the list: accumulated_context is a list of
+    # chunks, so `accumulated_context[:6000]` would cap the number of chunks
+    # (never reached) instead of the character budget.
     final_prompt = (
         f"Based on the following information, answer: {original_question}\n\n"
-        + "\n---\n".join(accumulated_context[:5000])
+        + "\n---\n".join(accumulated_context)[:6000]
     )
     return llm(final_prompt)
 ```
@@ -738,40 +745,73 @@ from typing import List, Dict
 def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
     """
     Parse Python source with AST and return one chunk per function/class.
-    Each chunk includes: the full source text, a context string with
-    the module docstring and all parent class names.
+    Each chunk carries its source text plus a context string holding the module
+    docstring and the *dotted qualified name* (`Trainer.step`, not `step`).
+
+    Two things this deliberately does NOT do, both of which are easy to get
+    wrong. It does not use `ast.walk`: that yields every nested definition in
+    addition to its enclosing class, so each method's source would be indexed
+    twice — once inside the ClassDef chunk and once on its own — inflating the
+    index and letting duplicate text occupy several top-k slots. And it does not
+    emit the class body verbatim: the class chunk is a *skeleton* (header +
+    docstring) and the methods are the leaf chunks, so no line is indexed twice.
     """
     try:
         tree = ast.parse(source)
     except SyntaxError:
-        # Fall back to whole-file chunking if parsing fails
-        return [{"text": source, "context": filepath, "type": "file"}]
+        # Fall back to whole-file chunking if parsing fails. Include
+        # `embedded_text` — index_repository() below reads that key on every
+        # chunk, so omitting it here makes one unparseable file kill the run.
+        return [{
+            "text": source,
+            "context": filepath,
+            "embedded_text": f"File: {filepath}\n\n{source}",
+            "type": "file",
+            "lineno": 1,
+        }]
 
     module_doc = ast.get_docstring(tree) or ""
-    chunks = []
+    lines = source.splitlines()
+    chunks: List[Dict] = []
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            start = node.lineno - 1
-            end = node.end_lineno  # Python 3.8+
-            code_lines = source.splitlines()[start:end]
-            code_text = "\n".join(code_lines)
+    def emit(node, qualname: str, code_text: str) -> None:
+        context = (
+            f"File: {filepath}\n"
+            f"Module context: {module_doc[:200]}\n"
+            f"Definition: {qualname}"
+        )
+        chunks.append({
+            "text": code_text,
+            "context": context,
+            "embedded_text": f"{context}\n\n{code_text}",  # what gets embedded
+            "type": type(node).__name__,
+            "qualname": qualname,
+            "lineno": node.lineno,
+        })
 
-            # Build a context string: module doc + qualified name
-            qualname = node.name
-            context = (
-                f"File: {filepath}\n"
-                f"Module context: {module_doc[:200]}\n"
-                f"Definition: {qualname}"
-            )
-            chunks.append({
-                "text": code_text,
-                "context": context,
-                "embedded_text": f"{context}\n\n{code_text}",  # what gets embedded
-                "type": type(node).__name__,
-                "lineno": node.lineno,
-            })
+    def class_skeleton(node: ast.ClassDef) -> str:
+        """The `class ...:` header plus its docstring — no method bodies."""
+        if ast.get_docstring(node) is not None:
+            end = node.body[0].end_lineno
+        elif node.body:
+            end = node.body[0].lineno - 1   # last line of a multi-line header
+        else:
+            end = node.end_lineno
+        return "\n".join(lines[node.lineno - 1:max(end, node.lineno)])
 
+    def visit(body: List[ast.stmt], prefix: str) -> None:
+        """Recursive descent with an explicit parent stack (the `prefix`)."""
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                # A function is a leaf: nested helpers stay inside its text.
+                emit(node, prefix + node.name,
+                     "\n".join(lines[node.lineno - 1:node.end_lineno]))
+            elif isinstance(node, ast.ClassDef):
+                qualname = prefix + node.name
+                emit(node, qualname, class_skeleton(node))
+                visit(node.body, qualname + ".")   # → `Foo.bar`, `Foo.Inner.baz`
+
+    visit(tree.body, "")
     return chunks
 
 
@@ -805,7 +845,7 @@ The most important architectural decision in 2026 is whether to retrieve at all.
 
 Let $n$ be the number of documents in the corpus, $\bar{L}$ the average document length in tokens, and $d$ the model's context window size.
 
-**Trivially fits in context:** if $n \cdot \bar{L} \ll d$, just put everything in the context. Retrieval adds engineering complexity for no gain. For a 200k-token window, this means corpora up to roughly 150 books worth of text at 1,000 words each.
+**Trivially fits in context:** if $n \cdot \bar{L} \ll d$, just put everything in the context. Retrieval adds engineering complexity for no gain. Calibrate the units before trusting the condition: at roughly $1.33$ tokens per English word, a 200k-token window holds about 150,000 words — some 150 short documents of 1,000 words each, or *one and a half* average-length books (a book is 80k–100k words). That is the *ceiling*, i.e. $n\bar{L} \approx d$, not $n\bar{L} \ll d$; for the "trivially fits, with slack" regime think a few dozen such documents (tens of thousands of tokens), leaving the rest of the window for the query, the reasoning, and the answer.
 
 **Attention cost at long contexts:** for a prefill of $L$ tokens, the score-and-mix part of attention costs $\Theta(L^2 d_{\text{model}})$ FLOPs per layer — about $4 L^2 d_{\text{model}}$, since the per-head cost $L^2 d_k$ sums over heads and $\sum_h d_k = d_{\text{model}}$ — while the projections and MLP cost roughly $24 L d_{\text{model}}^2$ per layer, which is *linear* in $L$. Their ratio is therefore about $L / (6 d_{\text{model}})$: for a 4096-wide model the quadratic term only overtakes the rest somewhere in the tens of thousands of tokens, but past that crossover, doubling the context asymptotically quadruples the prefill FLOPs. Per-token API pricing is linear in $L$ and so *understates* the compute you are asking for at long contexts.
 
@@ -847,7 +887,7 @@ Mitigation strategies:
 
 - **Relevance-order placement**: put the most relevant retrieved chunk first, not interleaved at random.
 - **Recency bias correction**: for time-stamped corpora, recent documents tend to be more relevant and should be placed near the query.
-- **Chain-of-density reranking**: rerank retrieved chunks by predicted reading order, not retrieval score.
+- **Prompt compression**: shorten the context itself so there is less "middle" to get lost in. LongLLMLingua (Jiang et al., 2023) does question-aware, perplexity-based token dropping plus document reordering, and reports that the reordering alone recovers part of the lost-in-the-middle gap.
 
 !!! interview "Interview Corner"
     **Q:** A candidate says "My corpus is only 50,000 tokens, so I'll just throw it all in the context window every time. RAG is unnecessary complexity." How do you evaluate this claim?
@@ -1064,12 +1104,16 @@ For indexing, the Anthropic contextual retrieval finding is almost universally a
 
     Each query is constructed from the *evidence returned by the previous hop*, which is exactly what single-shot retrieval cannot do.
 
-**2.** Anthropic's contextual retrieval prepends an LLM-generated context sentence to each chunk before embedding. (a) Using the chapter's own example ("the plaintiff argued..."), explain *mechanically* why this changes the chunk's position in embedding space and improves retrieval. (b) The chapter says this technique is "acceptable for corpora that do not change frequently, expensive for streaming ingestion." Quantify the indexing cost driver and explain the streaming-ingestion problem.
+**2.** Anthropic's contextual retrieval prepends an LLM-generated context sentence to each chunk before embedding. (a) Using the chapter's own example ("the plaintiff argued..."), explain *mechanically* why this changes the chunk's position in embedding space and improves retrieval. (b) The chapter argues the technique is affordable for slowly-changing corpora but awkward for streaming ingestion. Quantify the indexing cost driver — being careful about *which* term dominates — explain why prefix caching collapses it, and explain the streaming-ingestion problem.
 
 ??? note "Solution"
     (a) An embedding model maps text to a vector based on the tokens present. The bare chunk "the plaintiff argued..." contains no tokens indicating *which case, what year, or what legal issue*, so its embedding lands in a generic "legal argument" region, far from a query like "2019 constructive dismissal employment case." Prepending "This chunk is from a 2019 employment discrimination ruling in which the plaintiff argues constructive dismissal..." injects the tokens *2019, employment, discrimination, constructive dismissal* into the text that is embedded. Those tokens shift the resulting vector toward the region occupied by such queries — the chapter's `advrag-contextual-retrieval-embedding-shift` figure. The stored/returned text can still be the raw chunk; only the *embedded* text carries the prefix (see `embedded_text` vs. raw chunk in the code).
 
-    (b) The cost driver is **one additional LLM call per chunk at index time** (the `CONTEXT_PROMPT` call in `build_contextual_chunks`). For a static corpus of $N$ chunks this is a one-time cost of $N$ LLM calls, amortised over all future queries — cheap per query. For **streaming ingestion**, documents arrive continuously, so every new chunk incurs its LLM call *at ingest latency*, and the per-chunk LLM call sits on the write path adding both cost and latency to every insert. A corpus churning millions of chunks/day pays the full $N$-call cost repeatedly and continuously, which is why the technique is favored for slowly-changing corpora where the one-time index cost is dwarfed by query volume.
+    (b) The naive count is **one additional LLM call per chunk at index time** (the `CONTEXT_PROMPT` call in `build_contextual_chunks`) — but the call count is not the dominant term. Each of those $N$ calls re-sends the *entire document* in its prompt, so for a document of $D$ tokens split into $c$ chunks the input volume is $\approx c \cdot D$ tokens, quadratic in document length rather than linear. That, not the $N$ round-trips, is the bill.
+
+    **Prefix caching is what collapses it.** The document sits in a fixed prompt *prefix* that is byte-identical across all $c$ calls for that document, so if you issue them within the cache TTL you pay a full prefill for the document once and cache-read rates (roughly an order of magnitude cheaper) for the other $c - 1$ calls: $c \cdot D \rightarrow D + (c-1) \cdot D \cdot (\text{cache-read discount})$, i.e. about one document-prefill per document. Self-hosting gets the same win for free via vLLM's automatic prefix caching or SGLang's RadixAttention, and a 1–8B instruct model is adequate for writing a one-sentence situating blurb.
+
+    For a static corpus this whole cost is one-time, amortised over all future queries — negligible per query. For **streaming ingestion** it never amortises: documents arrive continuously, the per-chunk LLM call sits on the *write path* adding both cost and latency to every insert, and the caching trick weakens because a document arriving alone offers fewer sibling chunks to share its cached prefix. That is why the technique is favoured for slowly-changing corpora where the one-time index cost is dwarfed by query volume.
 
 **3.** The chapter states that for a prefill of $L$ tokens, the score-and-mix part of attention costs $\Theta(L^2 d_{\text{model}})$ FLOPs, so "doubling the context quadruples the FLOPs." A team is deciding between sending a 12,000-token retrieved context and a 48,000-token long-context prompt to the same model. Ignoring all non-attention costs, by what factor does the attention computation grow, and what does this imply about the cost framing in the chapter's "long context vs. RAG" comparison?
 
@@ -1171,7 +1215,7 @@ For indexing, the Anthropic contextual retrieval finding is almost universally a
 
     The strongest chunk `A` sits first and the second-strongest `B` sits last — both in high-attention positions — while the weakest chunk `E` lands dead center, exactly where the chapter says the model under-attends. This matches the chapter's guidance to "put the most relevant material at the beginning or end."
 
-**6.** HippoRAG runs Personalized PageRank via the power iteration $r \leftarrow \alpha\, p + (1-\alpha)\, A^{\top} r$ from the chapter's `personalized_pagerank` code, where $A$ is the row-normalized (out-degree) transition matrix and $p$ is the seed personalization vector. Consider a tiny directed entity graph with edges $A \to B$, $B \to C$, $C \to A$ (a 3-node cycle). The query matches only entity $A$, so the seed set is $\{A\}$ and $p = [1, 0, 0]$ (order $A, B, C$). Using teleport probability $\alpha = 0.15$ and starting from $r_0 = p$, run **two** power iterations by hand. Which entity ends up with the highest PPR score, and what does that illustrate about the method?
+**6.** HippoRAG runs Personalized PageRank via the power iteration $r \leftarrow \alpha\, p + (1-\alpha)\, A^{\top} r$ from the chapter's `personalized_pagerank` code, where $A$ is the row-normalized (out-degree) transition matrix and $p$ is the seed personalization vector. Consider a tiny directed entity graph with edges $A \to B$, $B \to C$, $C \to A$ (a 3-node cycle). The query matches only entity $A$, so the seed set is $\{A\}$ and $p = [1, 0, 0]$ (order $A, B, C$). Using teleport probability $\alpha = 0.15$ and starting from $r_0 = p$, run **two** power iterations by hand. Which entity leads after exactly two iterations? Then answer the harder half: the chapter's code runs to convergence (`max_iter=100, tol=1e-6`), so compute the fixed point in closed form and say which entity leads *there*. What does the difference between the two answers tell you about reading a non-converged iterate?
 
 ??? note "Solution"
     **Set up the matrices.** With row = "from", column = "to", the adjacency matrix is
@@ -1214,6 +1258,16 @@ For indexing, the Anthropic contextual retrieval finding is almost universally a
         = [\,0.15,\;0.1275,\;0.7225\,].
     $$
 
-    **Result.** After two iterations the scores are $A = 0.15$, $B = 0.1275$, $C = 0.7225$, so **entity $C$ has the highest PPR score** — even though the query matched only $A$, and $C$ is two hops away ($A \to B \to C$).
+    **Result after two iterations.** The scores are $A = 0.15$, $B = 0.1275$, $C = 0.7225$, so at this point **entity $C$ leads** — even though the query matched only $A$, and $C$ is two hops away ($A \to B \to C$).
 
-    **What it illustrates.** This is exactly the "transitive relevance" the chapter highlights: PPR propagates importance from the seed through the graph's edges, so an entity several hops from the query seed can accumulate high score without ever matching the query directly. Chunks attached to $C$ would be retrieved as relevant, giving multi-hop reasoning *without* the explicit LLM sub-query generation that IRCoT-style pipelines require.
+    **But that is a transient, not the answer.** Two iterations is nowhere near convergence, and on a pure cycle the leader rotates every step: $r_3 = [0.7641, 0.1275, 0.1084]$, $r_4 = [0.2421, 0.6495, 0.1084]$, and so on. The fixed point is available in closed form. Since $A^{\top}$ is a cyclic permutation, unrolling $r = \alpha p + (1-\alpha) A^{\top} r$ gives $r = \alpha \sum_{k \ge 0} (1-\alpha)^k (A^{\top})^k p$, and every third power returns to the seed, so
+
+    $$
+    r_A = \frac{\alpha}{1 - (1-\alpha)^3} = \frac{0.15}{1 - 0.85^3} = 0.3887,
+    \quad r_B = 0.85\,r_A = 0.3304,
+    \quad r_C = 0.85^2 r_A = 0.2809.
+    $$
+
+    (Power iteration reaches this in ~90 steps; the chapter's `max_iter=100, tol=1e-6` gets there.) **At convergence $A > B > C$** — the seed leads and score decays monotonically with hop distance. A reader who runs the chapter's own `personalized_pagerank` on this graph gets $A$ on top, not $C$.
+
+    **What it illustrates.** Two lessons, and the second is the important one. (1) Never read a ranking off a non-converged iterate: mid-iteration mass is a snapshot of a random walk in flight, not a relevance score, and here it inverts the true ordering. (2) A symmetric cycle is the *wrong* graph for demonstrating transitive relevance — with one path in and one path out of every node, PPR mass can only decay with distance from the seed. Transitive relevance is about *accumulation over multiple paths*. Add a node that two paths reach: edges $A \to B$, $A \to C$, $B \to D$, $C \to D$, same seed $\{A\}$ and $\alpha = 0.15$. The fixed point is $r_A = 0.15$, $r_B = r_C = 0.85 \cdot 0.15 / 2 = 0.0638$, $r_D = 0.85^2 \cdot 0.15 = 0.1084$. Now the *two-hop* entity $D$ outranks both *one-hop* entities, at convergence, because it accumulates from two paths. That is the effect HippoRAG exploits: chunks attached to $D$ are retrieved as relevant, giving multi-hop reasoning *without* the explicit LLM sub-query generation IRCoT-style pipelines require. (The scores here sum to less than 1 because $D$ is dangling and this implementation lets its mass leak — see the practitioner tip above; the ranking is unaffected.)

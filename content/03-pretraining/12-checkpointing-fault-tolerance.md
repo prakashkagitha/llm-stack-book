@@ -14,7 +14,7 @@ A complete checkpoint for a training job contains four categories of state:
 
 **1. Model parameters** — the weight tensors themselves. For a model with $P$ parameters stored in bf16, that is $2P$ bytes. A 70B-parameter model uses approximately 140 GB.
 
-**2. Optimizer state** — for Adam, two additional copies of every parameter (the first and second moment estimates $m_t$ and $v_t$), typically kept in fp32 even when the model is in bf16. That is $4 \times P \times 4 = 16P$ bytes — for the 70B model, roughly 1.1 TB.
+**2. Optimizer state** — for Adam under mixed precision, three fp32 buffers per parameter: the first and second moment estimates $m_t$ and $v_t$, plus the fp32 master copy of the weights that the optimizer actually updates (the model itself is bf16). That is $3 \times P \times 4 = 12P$ bytes — for the 70B model, roughly 840 GB. This is the standard ZeRO accounting; if you keep the moments in fp32 but no fp32 master weights, it drops to $8P$ bytes.
 
 **3. Random-number generator (RNG) state** — the state of every RNG in the system: the CPU `torch` RNG, the CUDA RNG on each device, and potentially the data-loader's Python `random` and `numpy` RNG states. This is tiny (a few kilobytes per device) but critical for reproducibility.
 
@@ -94,7 +94,9 @@ from torch.distributed.checkpoint import (
     FileSystemWriter,
     FileSystemReader,
 )
-from torch.distributed.checkpoint.metadata import BytesStorageMetadata
+from torch.distributed.checkpoint.optimizer import (
+    load_sharded_optimizer_state_dict,
+)
 from pathlib import Path
 import random
 import numpy as np
@@ -166,16 +168,18 @@ def save_checkpoint(
         storage_writer=FileSystemWriter(ckpt_path / "model_optim"),
     )
 
-    # 3. Per-rank RNG state (tiny, but critical for exact reproducibility)
-    rng_path = ckpt_path / f"rng_state_rank{rank}.pt"
-    torch.save(get_rng_state(), rng_path)
+    # 3. Per-rank state: RNG (tiny, critical for reproducibility) and the
+    #    data-loader cursor. The cursor is per-rank — each DP rank reads its
+    #    own slice of the stream — so it must NOT go in the shared metadata
+    #    file, or every rank would replay rank 0's data after a resume.
+    torch.save(get_rng_state(), ckpt_path / f"rng_state_rank{rank}.pt")
+    torch.save(data_loader_state, ckpt_path / f"dataloader_rank{rank}.pt")
 
-    # 4. Training metadata — only rank 0 writes the shared metadata file
+    # 4. Rank-invariant training metadata — only rank 0 writes the shared file
     if rank == 0:
         metadata = {
             "step": step,
             "lr_scheduler": lr_scheduler.state_dict(),
-            "data_loader": data_loader_state,
         }
         with open(ckpt_path / "metadata.json", "w") as f:
             json.dump(metadata, f, indent=2)
@@ -212,16 +216,31 @@ def load_checkpoint(
         StateDictType.SHARDED_STATE_DICT,
         ShardedStateDictConfig(offload_to_cpu=True),
     ):
-        state_dict = {"model": model.state_dict(), "optimizer": {}}
+        # `load` fills the dict IN PLACE and only reads keys that are already
+        # present with the right shapes — so the model entry must be a real
+        # (freshly constructed) state dict, not an empty one.
+        state_dict = {"model": model.state_dict()}
         load(
             state_dict,
             storage_reader=FileSystemReader(ckpt_path / "model_optim"),
         )
         model.load_state_dict(state_dict["model"])
-        optim_state = FSDP.optim_state_dict_to_load(
-            model, optimizer, state_dict["optimizer"]
+
+        # The optimizer cannot be pre-shaped the same way (its state does not
+        # exist until the first step), so DCP ships a dedicated loader that
+        # derives the shardings from the model state dict. Passing an empty
+        # `{"optimizer": {}}` into `load` above would silently read NOTHING
+        # and leave the optimizer un-restored — the exact silent failure this
+        # chapter warns about.
+        optim_state = load_sharded_optimizer_state_dict(
+            model_state_dict=state_dict["model"],
+            optimizer_key="optimizer",
+            storage_reader=FileSystemReader(ckpt_path / "model_optim"),
         )
-        optimizer.load_state_dict(optim_state)
+        flattened_osd = FSDP.optim_state_dict_to_load(
+            model, optimizer, optim_state["optimizer"]
+        )
+        optimizer.load_state_dict(flattened_osd)
 
     # 2. Restore per-rank RNG state.
     #    weights_only=False is required here: since PyTorch 2.6 `torch.load`
@@ -234,9 +253,16 @@ def load_checkpoint(
             torch.load(rng_path, map_location="cpu", weights_only=False)
         )
 
-    # 3. Load shared metadata (every rank reads it for the scheduler / step)
+    # 3. Load shared, rank-invariant metadata (step and LR schedule)
     with open(ckpt_path / "metadata.json") as f:
         metadata = json.load(f)
+
+    # 4. Attach this rank's own data-loader cursor (never rank 0's)
+    dl_path = ckpt_path / f"dataloader_rank{rank}.pt"
+    metadata["data_loader"] = (
+        torch.load(dl_path, map_location="cpu", weights_only=False)
+        if dl_path.exists() else None
+    )
 
     dist.barrier()
     return metadata
@@ -415,6 +441,9 @@ class AsyncCheckpointer:
         self.save_fn = save_fn
         self.interval = checkpoint_interval
         self.root_dir = root_dir
+        initialized = dist.is_available() and dist.is_initialized()
+        self.rank = dist.get_rank() if initialized else 0
+        self.world_size = dist.get_world_size() if initialized else 1
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._pending_error: Exception | None = None
@@ -465,14 +494,20 @@ class AsyncCheckpointer:
             start = time.time()
             ckpt_path = Path(self.root_dir) / f"step_{step:08d}"
             ckpt_path.mkdir(parents=True, exist_ok=True)
+            # One file PER RANK: this state dict is each rank's shard, so a
+            # single shared checkpoint.pt would have every rank write the
+            # same path concurrently and keep only the last writer's shard.
             torch.save(
                 {"model": model_state, "optimizer": optim_state,
                  "metadata": metadata},
-                ckpt_path / "checkpoint.pt"
+                ckpt_path / f"checkpoint_rank{self.rank}.pt"
             )
-            (ckpt_path / "COMPLETE").touch()
+            # Each rank announces its own completion; a loader must see all
+            # `world_size` sentinels before trusting the directory.
+            (ckpt_path / f"COMPLETE_rank{self.rank}").touch()
             elapsed = time.time() - start
-            print(f"[async ckpt] step {step} written in {elapsed:.1f}s")
+            print(f"[async ckpt] rank {self.rank} step {step} "
+                  f"written in {elapsed:.1f}s")
         except Exception as e:
             with self._lock:
                 self._pending_error = e
@@ -531,18 +566,36 @@ Production systems use more sophisticated shared-memory mechanisms
 (e.g., mmap, Ray's plasma store).
 """
 
-from torch.distributed.checkpoint.storage import StorageWriter, StorageReader
-from torch.distributed.checkpoint.metadata import Metadata, StorageMeta
+import torch
+from torch.futures import Future
+from torch.distributed.checkpoint.storage import (
+    StorageWriter, StorageReader, WriteResult,
+)
+from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex
 from io import BytesIO
-import io
 
 
-_IN_MEMORY_STORE: dict[str, bytes] = {}  # In a real system: cross-rank store
+_IN_MEMORY_STORE: dict = {}  # In a real system: cross-rank store
+
+
+def _key(index: MetadataIndex) -> str:
+    """Chunk key. The fqn alone is not enough: a sharded tensor contributes
+    several chunks under the same name, distinguished by their offset."""
+    return f"{index.fqn}@{tuple(index.offset) if index.offset else ()}"
 
 
 class InMemoryWriter(StorageWriter):
     def __init__(self):
         self._buffers: dict[str, bytes] = {}
+
+    # `reset` and `validate_checkpoint_id` are abstract on the base class:
+    # omit them and the subclass cannot even be instantiated.
+    def reset(self, checkpoint_id=None) -> None:
+        self._buffers.clear()
+
+    @classmethod
+    def validate_checkpoint_id(cls, checkpoint_id) -> bool:
+        return True  # this backend ignores paths entirely
 
     def set_up_storage_writer(self, is_coordinator: bool) -> None:
         pass  # no-op for in-memory
@@ -554,20 +607,38 @@ class InMemoryWriter(StorageWriter):
         return global_plans
 
     def write_data(self, plan, planner):
-        # Write each planned chunk to an in-memory buffer
-        futures = []
-        for bucket in plan.items:
-            data = planner.resolve_data(bucket)
+        # Write each planned chunk to an in-memory buffer. Note the field is
+        # `WriteItem.index` — `storage_index` exists only on ReadItem.
+        results = []
+        for item in plan.items:
+            data = planner.resolve_data(item)
             buf = BytesIO()
             torch.save(data, buf)
-            self._buffers[bucket.storage_index.fqn] = buf.getvalue()
+            blob = buf.getvalue()
+            self._buffers[_key(item.index)] = blob
+            results.append(
+                WriteResult(index=item.index, size_in_bytes=len(blob),
+                            storage_data=_key(item.index))
+            )
         _IN_MEMORY_STORE.update(self._buffers)
+        # DCP calls .wait() on whatever write_data returns, so it must be a
+        # Future[list[WriteResult]] — here already completed.
+        fut: Future = Future()
+        fut.set_result(results)
+        return fut
 
     def finish(self, metadata, results):
         _IN_MEMORY_STORE["__metadata__"] = metadata
 
 
 class InMemoryReader(StorageReader):
+    def reset(self, checkpoint_id=None) -> None:
+        pass
+
+    @classmethod
+    def validate_checkpoint_id(cls, checkpoint_id) -> bool:
+        return True
+
     def read_metadata(self) -> Metadata:
         return _IN_MEMORY_STORE["__metadata__"]
 
@@ -582,8 +653,13 @@ class InMemoryReader(StorageReader):
 
     def read_data(self, plan, planner):
         for req in plan.items:
-            data = torch.load(BytesIO(_IN_MEMORY_STORE[req.storage_index.fqn]))
+            blob = _IN_MEMORY_STORE[_key(req.storage_index)]
+            data = torch.load(BytesIO(blob), weights_only=False)
             planner.commit_tensor(req, data)
+        # read_data must likewise return a Future (of None).
+        fut: Future = Future()
+        fut.set_result(None)
+        return fut
 ```
 
 ---
@@ -658,20 +734,27 @@ its position within a sharded dataset.
 import json
 from pathlib import Path
 import torch
-from torch.utils.data import DataLoader, IterableDataset
+import torch.distributed as dist
+from torch.utils.data import DataLoader, IterableDataset, get_worker_info
 
 
 class ShardedTextDataset(IterableDataset):
     """
     Streams tokens from pre-tokenised shard files (.pt tensors).
     Saves and restores its cursor for exact reproducibility.
+
+    An IterableDataset is *replicated* into every DataLoader worker process
+    and onto every data-parallel rank, and PyTorch does not partition it for
+    you: without the round-robin split in `__iter__` below, each sample would
+    be emitted `world_size * num_workers` times. Each (rank, worker) pair
+    therefore owns a disjoint slice of the shard list and its own cursor.
     """
 
     def __init__(
         self,
         shard_paths: list[str],
         seq_len: int,
-        start_shard: int = 0,
+        start_shard: int | None = None,   # None -> this reader's first shard
         start_offset: int = 0,
     ):
         self.shard_paths = shard_paths
@@ -679,6 +762,18 @@ class ShardedTextDataset(IterableDataset):
         # Restored cursor positions
         self.start_shard = start_shard
         self.start_offset = start_offset
+        self._current_shard, self._current_offset = 0, 0
+
+    def _reader_slot(self) -> tuple[int, int]:
+        """(stride, slot): this (rank, worker) pair's place among all readers."""
+        info = get_worker_info()
+        num_workers = info.num_workers if info is not None else 1
+        worker_id = info.id if info is not None else 0
+        if dist.is_available() and dist.is_initialized():
+            rank, world_size = dist.get_rank(), dist.get_world_size()
+        else:
+            rank, world_size = 0, 1
+        return num_workers * world_size, rank * num_workers + worker_id
 
     def get_state(self) -> dict:
         """Call after every batch to get the current cursor state."""
@@ -688,21 +783,29 @@ class ShardedTextDataset(IterableDataset):
         }
 
     def __iter__(self):
-        self._current_shard = self.start_shard
+        stride, slot = self._reader_slot()
+        # Fresh start: this reader begins at shard `slot` and steps by
+        # `stride`. Resume: the restored cursor already names one of its
+        # own shards, so we continue from there with the same stride.
+        first_shard = slot if self.start_shard is None else self.start_shard
+        self._current_shard = first_shard
         self._current_offset = self.start_offset
 
-        for shard_idx in range(self.start_shard, len(self.shard_paths)):
+        for shard_idx in range(first_shard, len(self.shard_paths), stride):
             tokens = torch.load(self.shard_paths[shard_idx])  # 1D tensor
-            start = self.start_offset if shard_idx == self.start_shard else 0
+            start = self.start_offset if shard_idx == first_shard else 0
             self._current_shard = shard_idx
 
             pos = start
             while pos + self.seq_len + 1 <= len(tokens):
                 x = tokens[pos : pos + self.seq_len]
                 y = tokens[pos + 1 : pos + self.seq_len + 1]
+                pos += self.seq_len
+                # The cursor must name the NEXT unconsumed position. Recording
+                # the start of the batch we are about to yield would make every
+                # resume replay one already-trained-on batch per reader.
                 self._current_offset = pos
                 yield x, y
-                pos += self.seq_len
 
             # Move to next shard
             self.start_offset = 0  # only use start_offset for first shard
@@ -757,8 +860,8 @@ def compute_rank_start_offset(
     tokens_per_rank_per_step: int,
 ) -> int:
     """
-    Given the global number of tokens consumed so far, compute the
-    starting offset for this rank in the new topology.
+    Given the global number of tokens consumed so far, compute this rank's
+    starting offset *into the global token stream* under the new topology.
 
     global_token_offset: total tokens processed before the crash
     world_size: new number of data-parallel ranks
@@ -767,10 +870,13 @@ def compute_rank_start_offset(
     """
     # Tokens consumed per global step
     tokens_per_step = tokens_per_rank_per_step * world_size
-    # Completed steps so far
+    # Completed steps so far (truncate a partial step: its tokens are replayed)
     steps_done = global_token_offset // tokens_per_step
-    # This rank's start offset in the new topology
-    return steps_done * tokens_per_rank_per_step + rank * tokens_per_rank_per_step
+    # Global position of the first unconsumed token, then this rank's slice
+    # of the next step. The `world_size` factor is what keeps every unit in
+    # the SAME global-stream currency — dropping it would restart all ranks
+    # near the beginning of the stream.
+    return steps_done * tokens_per_step + rank * tokens_per_rank_per_step
 ```
 
 Truly elastic training — dynamically adding or removing nodes mid-run without restarting — is more complex. PyTorch's `torchrun` with `--nnodes=MIN:MAX` and `torch.distributed.elastic` (TorchElastic) support this. DeepSpeed also has elastic training support. The key mechanisms are:
@@ -918,7 +1024,7 @@ from torch.distributed.checkpoint.format_utils import dcp_to_torch_save
 dcp_to_torch_save('ckpt/step_00050000/model_optim', 'ckpt/consolidated.pt')
 "
 
-# 2. Strip optimizer state (~89% of the bytes) and re-serialise the weights
+# 2. Strip optimizer state (~86% of the bytes) and re-serialise the weights
 #    as safetensors — the format the HF ecosystem loads by default. It is a
 #    zero-copy mmap-able layout with no pickle, so loading it cannot execute
 #    code, and it is what you publish.
@@ -1103,8 +1209,12 @@ def main():
         loss = model(x, labels=y).loss
         loss.backward()
 
-        # Gradient clipping — important for training stability
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        # Gradient clipping — important for training stability.
+        # Use FSDP's own method, not torch.nn.utils.clip_grad_norm_: gradients
+        # are sharded, so the plain utility would norm each rank's local shard
+        # only and scale every rank by a different, too-small factor. FSDP's
+        # version all-reduces the partial norms first.
+        model.clip_grad_norm_(max_norm=1.0)
 
         optimizer.step()
         scheduler.step()
@@ -1143,7 +1253,7 @@ if __name__ == "__main__":
 
     First, apply Daly's formula for optimal checkpoint interval: $T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}} = \sqrt{2 \times 8 \times 90} \approx 38$ minutes. So checkpoint every ~38 minutes, not every 90.
 
-    Second, switch to asynchronous checkpointing. The critical path is the GPU-to-CPU tensor snapshot (roughly 30–60 seconds for a 70B model, since the 1.1 TB of optimizer state must be copied to pinned CPU RAM). Once on CPU, disk write happens in the background while training continues. This reduces the hard blocking time from 8 minutes to ~1 minute.
+    Second, switch to asynchronous checkpointing. The critical path is the GPU-to-CPU tensor snapshot (roughly 30–60 seconds for a 70B model, since the ~840 GB of optimizer state must be copied to pinned CPU RAM). Once on CPU, disk write happens in the background while training continues. This reduces the hard blocking time from 8 minutes to ~1 minute.
 
     Third, use PyTorch DCP sharded checkpoints: all 2048 ranks write in parallel to a distributed filesystem, achieving near-linear I/O scaling versus serialised saves through rank 0.
 
@@ -1230,17 +1340,17 @@ if __name__ == "__main__":
     2 \times 13 \times 10^9 = 26 \times 10^9 \text{ bytes} = 26 \text{ GB}.
     $$
 
-    (b) The chapter accounts Adam optimizer state at $16P$ bytes (fp32 master/moment state at $4 \times P \times 4$):
+    (b) The chapter accounts Adam optimizer state at $12P$ bytes (three fp32 buffers per parameter — $m_t$, $v_t$ and the fp32 master weights, at $3 \times P \times 4$):
     $$
-    16 \times 13 \times 10^9 = 208 \times 10^9 \text{ bytes} = 208 \text{ GB}.
+    12 \times 13 \times 10^9 = 156 \times 10^9 \text{ bytes} = 156 \text{ GB}.
     $$
 
     (c) Total (RNG and metadata are negligible, a few KB per rank):
     $$
-    26 + 208 = 234 \text{ GB}.
+    26 + 156 = 182 \text{ GB}.
     $$
 
-    The optimizer state is $16P/2P = 8\times$ larger than the weights, so roughly $208/234 \approx 89\%$ of the bytes written every checkpoint are optimizer state. That is why a checkpoint that saves only weights ("sufficient for inference") is not just incorrect for resume but also misleadingly cheap: the expensive-to-write portion is exactly the part it omits.
+    The optimizer state is $12P/2P = 6\times$ larger than the weights, so roughly $156/182 \approx 86\%$ of the bytes written every checkpoint are optimizer state. That is why a checkpoint that saves only weights ("sufficient for inference") is not just incorrect for resume but also misleadingly cheap: the expensive-to-write portion is exactly the part it omits.
 
 **3.** You are running on a cluster of $N = 512$ nodes, each with an hourly failure rate $\lambda = 10^{-3}$ failures per node per hour. (a) Compute the expected cluster-level mean time between failures. (b) A synchronous checkpoint save takes $T_{\text{save}} = 2$ minutes. Use the chapter's optimal-interval (Daly/Young) formula to find the checkpoint interval $T^*$ that minimises wasted compute. (c) Interpret the result relative to the MTBF.
 
@@ -1312,9 +1422,9 @@ compute the wasted-compute fraction (a) for synchronous checkpointing with $T_{\
     $$
     \text{steps\_done} = \left\lfloor \frac{8{,}388{,}608}{2{,}097{,}152} \right\rfloor = \lfloor 4.0 \rfloor = 4.
     $$
-    Then `compute_rank_start_offset` returns `steps_done * tokens_per_rank_per_step + rank * tokens_per_rank_per_step`:
+    Then `compute_rank_start_offset` returns `steps_done * tokens_per_step + rank * tokens_per_rank_per_step`:
 
-    - Rank 0: $4 \times 8192 + 0 \times 8192 = 32{,}768$.
-    - Rank 255: $4 \times 8192 + 255 \times 8192 = 32{,}768 + 2{,}088{,}960 = 2{,}121{,}728$.
+    - Rank 0: $4 \times 2{,}097{,}152 + 0 \times 8192 = 8{,}388{,}608$.
+    - Rank 255: $8{,}388{,}608 + 255 \times 8192 = 8{,}388{,}608 + 2{,}088{,}960 = 10{,}477{,}568$.
 
-    So every rank resumes at the boundary of the 5th global step (steps 0-3 done), with rank $r$ offset a further $r \times 8192$ tokens into the stream — reconstructing a clean, non-overlapping partition of the data at the new world size purely from the global offset, without trusting any stale per-rank cursor.
+    So every rank resumes at the boundary of the 5th global step (steps 0-3 done, exactly the 8,388,608 tokens already consumed), with rank $r$ reading the slice $[8{,}388{,}608 + r \times 8192,\ 8{,}388{,}608 + (r{+}1) \times 8192)$ — reconstructing a clean, non-overlapping partition of the data at the new world size purely from the global offset, without trusting any stale per-rank cursor. Note the two different multipliers: the *step* count advances by `tokens_per_step` (all ranks), while the within-step rank offset advances by `tokens_per_rank_per_step`; mixing them up rewinds the whole cluster to near the start of the stream.

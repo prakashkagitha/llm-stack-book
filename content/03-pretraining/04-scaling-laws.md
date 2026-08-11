@@ -100,7 +100,7 @@ def inference_flops(n_params: int, n_tokens: int) -> float:
 ```
 
 !!! warning "Caveats to 6ND that interviewers love"
-    The $6ND$ rule counts only the dense matmul FLOPs. Two corrections matter in practice. (1) **Attention** adds a term proportional to $L \cdot d \cdot T^2$ per layer ($T$ = sequence length); for short contexts it is negligible, but for very long contexts it dominates and $6ND$ undercounts — see [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html). (2) For **Mixture-of-Experts** models, $N$ in the FLOP formula is the *active* (per-token) parameter count, not the *total* parameter count, because each token routes to only a few experts — see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html). MoE breaks the tidy coupling between "model capacity" and "compute," which is precisely why it is attractive.
+    The $6ND$ rule counts only the dense matmul FLOPs. Two corrections matter in practice. (1) **Attention** adds a term of order $12 \cdot L \cdot d \cdot T^2$ per sequence across the whole model — i.e. $\sim d \cdot T^2$ *per layer*, summed over the $L$ layers ($T$ = sequence length); for short contexts it is negligible, but for very long contexts it dominates and $6ND$ undercounts — see [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html). (2) For **Mixture-of-Experts** models, $N$ in the FLOP formula is the *active* (per-token) parameter count, not the *total* parameter count, because each token routes to only a few experts — see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html). MoE breaks the tidy coupling between "model capacity" and "compute," which is precisely why it is attractive.
 
 ### Hardware FLOPs vs. model FLOPs
 
@@ -239,7 +239,15 @@ $$
 a = \frac{\beta}{\alpha + \beta}, \qquad b = \frac{\alpha}{\alpha + \beta}, \qquad a + b = 1.
 $$
 
-The two exponents must sum to 1 (because $C = 6ND$ forces it), and they are *equal* exactly when $\alpha = \beta$. Chinchilla's fitted $\alpha$ and $\beta$ came out close to each other, which is *why* $a \approx b \approx 0.5$ and *why* the token-per-parameter ratio is roughly constant. The whole "20× rule" falls out of $\alpha \approx \beta$.
+The two exponents must sum to 1 (because $C = 6ND$ forces it), and they are *equal* exactly when $\alpha = \beta$. Chinchilla's fitted $\alpha$ and $\beta$ came out close to each other, which is *why* $a \approx b \approx 0.5$ and *why* the token-per-parameter ratio is roughly constant across scales. Be precise about what $\alpha \approx \beta$ buys you, though: dividing the two boxed solutions gives
+
+$$
+\frac{D_{\text{opt}}}{N_{\text{opt}}} = \left[\frac{\beta B}{\alpha A}\right]^{\frac{2}{\alpha+\beta}} \left(\frac{C}{6}\right)^{\frac{\alpha-\beta}{\alpha+\beta}}
+\;\xrightarrow{\;\alpha=\beta\;}\;
+\left(\frac{B}{A}\right)^{1/\alpha}
+$$
+
+so $\alpha \approx \beta$ makes the ratio **scale-invariant**, while its *numerical value* is set by the fitted coefficient ratio $B/A$. The "20× rule" is therefore "constant" because of the exponents and "20" because of the coefficients — both halves come from the fit.
 
 ```python
 import numpy as np
@@ -278,7 +286,7 @@ C=1e+23  N=1.46e+10  D=1.14e+12  tok/param=78.2  L=2.005
 C=1e+25  N=1.17e+11  D=1.43e+13  tok/param=122.1  L=1.845
 ```
 
-With these *Approach-3* constants alpha != beta (0.34 vs 0.28), so the ratio D/N scales as C^{(alpha-beta)/(alpha+beta)} = C^{0.097} -- it grows about 1.25x per decade of compute, drifting from ~32 to ~122 tokens/param across six decades and sitting well above the folk "20x" number at every frontier budget. The clean, *constant* ~20x rule is a property of the regime alpha ~ beta: Chinchilla's Approaches 1 and 2 fitted allocation exponents a ~ b ~ 0.5 (equivalently alpha ~ beta), which is exactly what makes tokens/param scale-invariant. Set alpha = beta = 0.34 in the call above and the tok/param column collapses to a single constant; the slow drift you see here is the honest signature of the Approach-3 parametric fit, not a contradiction of Chinchilla.
+With these *Approach-3* constants alpha != beta (0.34 vs 0.28), so the ratio D/N scales as C^{(alpha-beta)/(alpha+beta)} = C^{0.097} -- it grows about 1.25x per decade of compute, drifting from ~32 to ~122 tokens/param across six decades and sitting well above the folk "20x" number at every frontier budget. The clean, *constant* ~20x rule is a property of the regime alpha ~ beta: Chinchilla's Approaches 1 and 2 fitted allocation exponents a ~ b ~ 0.5 (equivalently alpha ~ beta), which is exactly what makes tokens/param scale-invariant. Set alpha = beta = 0.34 in the call above and the tok/param column does collapse to a single constant across all four budgets -- but that constant is (B/A)^(1/alpha) = 1.03, not 20, because with A = 406.4 and B = 410.7 the coefficient ratio is essentially 1. That is the point of the formula above: equal exponents buy scale-invariance, and the *level* of the ratio has to come from the fitted coefficients (you would need B/A = 20^0.34 ~ 2.8 to land on 20 at this alpha). The slow drift you see in the printed table is the honest signature of the Approach-3 parametric fit, not a contradiction of Chinchilla.
 
 ---
 
@@ -444,7 +452,7 @@ C_slices = np.array([1e18, 3e18, 1e19, 3e19, 1e20])   # 5 isoFLOP budgets
 N_opt = []
 for C in C_slices:
     N_center = np.sqrt(C / 120.0)                     # ~20x-rule optimum for slice
-    Ns = N_center * np.logspace(-0.6, 0.6, 7)         # 7 models, span ~1.5 dex
+    Ns = N_center * np.logspace(-0.6, 0.6, 7)         # 7 models, span 1.2 dex
     Ds = C / (6.0 * Ns)                               # D fixed so 6*N*D == C
     Ls = true_loss(Ns, Ds) * (1.0 + 0.01*rng.standard_normal(len(Ns)))
     c2, c1, c0 = np.polyfit(np.log(Ns), Ls, 2)        # parabola in log N
@@ -580,7 +588,7 @@ Let us plan an actual run end to end.
 This is the arithmetic that frontier labs run before every campaign. Notice it has exactly four inputs — GPU count, peak FLOP/s, wall-clock, and MFU — and the 20× rule. You can do it on a napkin.
 
 !!! note "Is my real run on-curve? Loss milestones"
-    The toy check -- first loss ~ ln(V) at init -- from [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) tells you training *started* correctly. To know a real BPE run is *on-curve*, anchor to these order-of-magnitude held-out targets at the Chinchilla-optimal point (English web text, GPT-2-style BPE at ~4 bytes/token; exact numbers depend on tokenizer and corpus, so treat as ballparks, not pass/fail):
+    The toy check -- first loss ~ ln(V) at init -- from [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) tells you training *started* correctly. To know a real BPE run is *on-curve*, anchor to these order-of-magnitude held-out targets at the Chinchilla-optimal point (English web text, GPT-2-style BPE at ~4.3 bytes/token; exact numbers depend on tokenizer and corpus, so treat as ballparks, not pass/fail):
 
     - **125M params, ~2.5B tokens (~20 tok/param):** ~3.2-3.4 nats/token held-out, BPB ~1.0-1.2. For reference, a 124M GPT-2 pushed to ~300B tokens (heavily *over*-trained) reaches ~2.85 nats/token on OpenWebText -- the Chinchilla-optimal point is higher because it sees far fewer tokens.
     - **1B params, ~20B tokens (~20 tok/param):** ~2.6-2.8 nats/token, BPB ~0.85-0.95.
@@ -669,9 +677,9 @@ import numpy as np
 def smooth_per_token_accuracy(N):
     """Per-token correctness improves SMOOTHLY (power-law) with scale."""
     # Clip to a valid probability: the raw power law goes negative below
-    # N ~ 4.2e8, so clamp to [0, 1]. Per-token correctness still improves
-    # SMOOTHLY (power-law) with scale.
-    return np.clip(1.0 - 0.9 * (N / 1e9) ** (-0.12), 0.0, 1.0)
+    # N ~ 7.7e7, just under the grid swept below, so clamp to [0, 1] as a
+    # guard. Per-token correctness still improves SMOOTHLY (power-law).
+    return np.clip(1.0 - 0.9 * (N / 1e8) ** (-0.4), 0.0, 1.0)
 
 def exact_match(N, k_tokens):
     """All-or-nothing metric: need ALL k tokens correct simultaneously."""
@@ -683,7 +691,9 @@ print(f"{'N':>10} {'per-token':>10} {'EM(k=1)':>9} {'EM(k=30)':>10}")
 for N in Ns:
     print(f"{N:10.1e} {smooth_per_token_accuracy(N):10.3f} "
           f"{exact_match(N,1):9.3f} {exact_match(N,30):10.3f}")
-# per-token rises gently; EM(k=30) stays ~0 then "emerges" sharply -- same model!
+# per-token rises gently (0.100 -> 0.432 -> ... -> 0.977) while EM(k=30) sits at
+# 0.000 for four rungs and then "emerges": 0.010, 0.059, 0.173, 0.335, 0.504.
+# Same model, same smooth improvement -- the cliff lives in the metric.
 ```
 
 The synthesis most researchers now hold: **emergence is real as a phenomenon of how we measure and use models** (a model genuinely *can* suddenly do a multi-step task once its per-step reliability crosses a threshold), but it is **not a discontinuity in the underlying learning** — the loss was improving smoothly the whole time. For *planning*, the takeaway is reassuring: you can predict loss reliably from scaling laws, but you **cannot** reliably predict the exact scale at which a specific downstream capability will "click," because that depends on the metric's threshold and the task's token-length. Predict loss; treat capability thresholds as uncertain.
@@ -729,7 +739,7 @@ The grand picture: scaling laws turned LLM development from alchemy into enginee
     - Language-model loss follows clean **power laws** in parameters and data: $L(N,D) = E + A N^{-\alpha} + B D^{-\beta}$, with a small irreducible floor $E$ (the entropy of text) and small exponents, so returns diminish but never vanish.
     - Training compute for a dense transformer is **$C \approx 6ND$** (2 forward + 4 backward FLOPs per parameter per token); inference is $\approx 2ND$. Convert to wall-clock/dollars via **MFU** (typically 0.3–0.55) — and verify the rule against a real measurement with `torch.utils.flop_counter.FlopCounterMode`, since $6ND$ undercounts attention and small-model embedding matmuls.
     - **Kaplan (2020)** concluded "grow the model fast" ($N \propto C^{0.73}$); **Chinchilla (2022)** corrected a learning-rate-schedule confound and found you should **scale $N$ and $D$ together** ($a \approx b \approx 0.5$).
-    - The famous heuristic is **$\approx 20$ tokens per parameter** at the compute-optimal point — it falls out of $\alpha \approx \beta$ in the Lagrange-multiplier optimization, and Chinchilla beat the 4×-larger Gopher to prove it.
+    - The famous heuristic is **$\approx 20$ tokens per parameter** at the compute-optimal point — $\alpha \approx \beta$ is what makes that ratio *constant across scales* in the Lagrange-multiplier optimization, while the value 20 itself comes from the fitted coefficients $B/A$ — and Chinchilla beat the 4×-larger Gopher to prove it.
     - **Fit scaling laws in log space with a robust (Huber) loss**, exclude under-converged runs, and validate by *extrapolating* to a held-out large run — not just interpolating.
     - **Inference-aware over-training** (Llama-style: hundreds to thousands of tokens/param) is rational when you will serve the model heavily: accept higher training loss for a permanently cheaper, smaller model.
     - The **data wall** means repeated tokens are worth less; up to ~4 epochs is roughly free, beyond ~16 epochs returns collapse — so data quality and synthetic data become scaling levers.

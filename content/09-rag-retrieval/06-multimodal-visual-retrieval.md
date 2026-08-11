@@ -136,7 +136,7 @@ The magic is in step 2. Because the patch embeddings come from a VLM that was pr
 
 ### Training ColPali
 
-ColPali is fine-tuned with a contrastive in-batch loss on (query, positive-page) pairs, where the negatives are the other pages in the batch. The score is the MaxSim, and the loss is the same InfoNCE softmax over MaxSim scores. A common refinement adds a margin-aware or in-batch hard-negative term. The training data is the crux: synthetic and curated **document-query pairs** spanning tables, figures, infographics, and full pages, so the model learns the document query distribution that CLIP never saw.
+ColPali is fine-tuned with a contrastive in-batch loss on (query, positive-page) pairs, where the negatives are the other pages in the batch. The score is the MaxSim, and the reference recipe uses a *pairwise* loss against the **hardest** in-batch negative, $\frac{1}{b}\sum_{k}\log\!\big(1 + \exp(s_k^- - s_k^+)\big)$, where $s_k^+$ is the positive page's MaxSim and $s_k^-$ is the largest MaxSim among the batch's other pages. The full in-batch InfoNCE softmax over MaxSim scores (shown below) is the simpler variant; `colpali-engine` ships both. The training data is the crux: synthetic and curated **document-query pairs** spanning tables, figures, infographics, and full pages, so the model learns the document query distribution that CLIP never saw.
 
 ```python
 import torch
@@ -164,7 +164,7 @@ def colbert_scores(Qb, Db, q_mask, d_mask):
 def colpali_loss(Qb, Db, q_mask, d_mask):
     S = colbert_scores(Qb, Db, q_mask, d_mask)   # [B, B], diagonal = positives
     labels = torch.arange(S.size(0), device=S.device)
-    # Standard in-batch InfoNCE over MaxSim scores (both directions optional).
+    # In-batch InfoNCE over MaxSim scores (softmax variant; both directions optional).
     return F.cross_entropy(S, labels)
 ```
 
@@ -183,7 +183,7 @@ def colpali_loss(Qb, Db, q_mask, d_mask):
     **Full corpus:**
 
     $$
-    100{,}000 \times 256 \text{ KiB} \approx 25.6 \text{ GiB}
+    100{,}000 \times 256 \text{ KiB} = 25{,}600{,}000 \text{ KiB} = 25{,}000 \text{ MiB} \approx 24.4 \text{ GiB} \;(26.2 \text{ GB})
     $$
 
     Compare a single-vector SigLIP index at the same $d=128$ and fp16: $100{,}000 \times 128 \times 2 = 25.6$ MB — a **1000×** difference, because each page now holds 1024 vectors instead of 1. That factor of 1024 is the price of late interaction and the reason indexing strategy matters enormously.
@@ -191,12 +191,12 @@ def colpali_loss(Qb, Db, q_mask, d_mask):
     **Scoring cost (brute force) for one query** with $n = 20$ query tokens against all pages:
 
     $$
-    100{,}000 \text{ pages} \times 1024 \text{ patches} \times 20 \text{ q-tokens} \times 128 \text{ flops/dot} \approx 2.6 \times 10^{11} \text{ FLOPs}
+    100{,}000 \text{ pages} \times 1024 \text{ patches} \times 20 \text{ q-tokens} \times 256 \text{ flops/dot} \approx 5.2 \times 10^{11} \text{ FLOPs}
     $$
 
-    That is ~260 GFLOPs of dot products **per query** if you score every page exhaustively. On a modern GPU this is milliseconds of compute but tens of GiB of memory traffic — memory bandwidth, not arithmetic, is the bottleneck (see the [Roofline Model](../04-kernels-efficiency/01-roofline-performance.html)). At scale you cannot brute-force every query; you need an approximate candidate-generation stage (next section) and only run full MaxSim on a shortlist.
+    (a $d = 128$ dot product is 128 multiply-accumulates, i.e. $2 \times 128 = 256$ FLOPs under the $2mnk$ convention used throughout this book.) That is ~520 GFLOPs of dot products **per query** if you score every page exhaustively. On a modern GPU this is milliseconds of compute but tens of GiB of memory traffic — memory bandwidth, not arithmetic, is the bottleneck (see the [Roofline Model](../04-kernels-efficiency/01-roofline-performance.html)). At scale you cannot brute-force every query; you need an approximate candidate-generation stage (next section) and only run full MaxSim on a shortlist.
 
-    **Binary quantization** (1 bit/dim instead of 16) shrinks the index from 25.6 GiB to **1.6 GiB** at a small recall cost — often the single highest-leverage optimization for multi-vector indexes.
+    **Binary quantization** (1 bit/dim instead of 16) shrinks the index from 24.4 GiB to **1.53 GiB** at a small recall cost — often the single highest-leverage optimization for multi-vector indexes.
 
 ## Indexing Multi-Vector Embeddings at Scale
 
@@ -365,7 +365,8 @@ with torch.no_grad():
 # Exact MaxSim against all pages (small corpus; use the index at scale).
 def maxsim(q, d):
     return (q @ d.T).max(dim=1).values.sum()
-scores = torch.tensor([maxsim(q_emb[0].float(), d.float()) for d in page_embeddings])
+q_vec = q_emb[0].float().cpu()          # page_embeddings live on the CPU -> match devices
+scores = torch.stack([maxsim(q_vec, d.float()) for d in page_embeddings])
 top = scores.topk(3).indices.tolist()
 retrieved_images = [pages[i] for i in top]
 

@@ -44,7 +44,7 @@ $$
 w_i = \frac{n_i^{\alpha}}{\sum_{j=1}^{k} n_j^{\alpha}}, \qquad \alpha = \frac{1}{T}.
 $$
 
-At $\alpha = 1$ ($T = 1$) this is exactly the natural mixture. As $\alpha \to 0$ ($T \to \infty$) it flattens toward uniform, $w_i = 1/k$ — every domain gets an equal share of every batch regardless of how much of it you own. (mT5 used $\alpha = 0.3$; XLM and mBERT used $\alpha = 0.7$.) The knob does exactly one thing: it slides you between "sample what I have" and "give every domain a voice." And by the epoch identity above, **the price of flattening is always paid in repetition** — $e_i = w_i D / n_i$ means the smallest pool is the one that gets re-read the most.
+At $\alpha = 1$ ($T = 1$) this is exactly the natural mixture. As $\alpha \to 0$ ($T \to \infty$) it flattens toward uniform, $w_i = 1/k$ — every domain gets an equal share of every batch regardless of how much of it you own. (mT5 and XLM-R used $\alpha = 0.3$; XLM used $\alpha = 0.5$; mBERT used exponentially smoothed weighting with exponent $0.7$.) The knob does exactly one thing: it slides you between "sample what I have" and "give every domain a voice." And by the epoch identity above, **the price of flattening is always paid in repetition** — $e_i = w_i D / n_i$ means the smallest pool is the one that gets re-read the most.
 
 **UniMax** (Chung et al., 2023) makes that price explicit instead of implicit. Rather than choosing $\alpha$ and discovering the epochs afterward, you choose the epoch budget $c$ and ask for the flattest mixture subject to $w_i D \le c \, n_i$. The allocation is a water-fill: hand out equal shares, cap any domain that would exceed $c$ epochs at exactly $c \, n_i$ tokens, redistribute the freed budget among the domains that still have unused unique tokens, and repeat until nothing is over. UniMax outperformed temperature sampling across mT5 scales — unsurprisingly, since character-count temperature can silently drive a small language to dozens of epochs, whereas a cap cannot.
 
@@ -157,7 +157,7 @@ Excess loss answers a sharper question: *"On which domain is the proxy still far
 DoReMi runs three steps:
 
 1. **Train a reference model** $\theta_{\text{ref}}$ (small, e.g. 280 M) on the natural mixture $w^{\text{nat}}$. Record its per-domain losses $\ell_i(\theta_{\text{ref}})$. (Used only to define the excess-loss baseline.)
-2. **Train a proxy model** $\theta$ of the *same small size* with **online Group-DRO**: at each step, evaluate the proxy's per-domain excess loss, multiplicatively update domain weights toward high-excess domains, and use those weights to draw the next batch. Average the weights over all steps to get $\bar{w}$.
+2. **Train a proxy model** $\theta$ of the *same small size* with **online Group-DRO**: at each step, evaluate the proxy's per-domain excess loss, multiplicatively update domain weights toward high-excess domains, and use those weights to **reweight the per-domain loss** in the proxy's next gradient step. (The minibatches themselves are drawn from the fixed reference mixture, so every domain is observed — and its excess loss estimable — at every step.) Average the weights over all steps to get $\bar{w}$.
 3. **Train the large target model** on the *fixed* averaged mixture $\bar{w}$ from step 2. The expensive run uses a static mixture; all the adaptivity happened cheaply in the proxy.
 
 The online update in step 2 is **exponentiated gradient ascent** on the weights (multiplicative weights / Hedge). Let $\lambda_i^{(t)}$ be the clamped excess loss of domain $i$ at step $t$. The weight update with step size $\eta$ is
@@ -182,11 +182,11 @@ Three things make this attractive in practice. The proxy runs are embarrassingly
 
 ### Online / adaptive mixing during the real run
 
-DoReMi freezes the mixture for the target run. An alternative is to keep adapting *during* the large run — **online data mixing**. The appeal is that the optimal mixture genuinely changes over training (a model that has mastered easy web text may benefit from shifting weight to math later). The risk is instability and the cost of computing per-domain signals on the fly. Practical online schemes (e.g., Albalak et al.'s *Online Data Mixing*, and bandit-style approaches) treat each domain as an arm of a multi-armed bandit and use a reward signal — typically the *rate of loss decrease* on that domain (its learning *velocity*) — to shift weight toward domains where the model is currently learning fastest, while a smoothing/exploration term keeps every domain sampled. This connects directly to RL-style curriculum (see [RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html)), where the same "train on what you're learning from right now" intuition drives sample selection.
+DoReMi freezes the mixture for the target run. An alternative is to keep adapting *during* the large run — **online data mixing**. The appeal is that the optimal mixture genuinely changes over training (a model that has mastered easy web text may benefit from shifting weight to math later). The risk is instability and the cost of computing per-domain signals on the fly. Practical online schemes (e.g., Albalak et al.'s *Online Data Mixing*, and bandit-style approaches) treat each domain as an arm of a multi-armed bandit and pick a reward that can be read off the training step essentially for free. Albalak et al.'s ODM uses the **per-domain training loss itself** as the reward — motivated as a cheap proxy for *information gain* — plugged into the EXP3 adversarial-bandit update, which is what makes it nearly overhead-free. Other adaptive schemes (learning-progress / velocity curricula) instead use the *rate of loss decrease* on a domain, shifting weight toward wherever the model is currently learning fastest. Either way, an exploration/smoothing term keeps every domain sampled. This connects directly to RL-style curriculum (see [RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html)), where the same "train on what you're learning from right now" intuition drives sample selection.
 
 !!! note "Group-DRO vs. online bandit mixing — same family, different reward"
 
-    Both treat domains as the thing to reweight and both use multiplicative-weights updates. The difference is the signal: **DoReMi's Group-DRO uses excess loss (a level)** — "how far is this domain from achievable?" — and is run on a cheap proxy to produce a static target mixture. **Online bandit mixing uses loss velocity (a derivative)** — "where am I improving fastest right now?" — and is run during the real training. Excess loss says "fix what's broken"; velocity says "ride what's working." They can disagree: a domain can have high excess loss yet near-zero velocity (stuck), in which case more weight wastes compute.
+    Both treat domains as the thing to reweight and both use multiplicative-weights updates. The difference is the signal, and it is a difference of *baseline* and of *order*. **DoReMi's Group-DRO uses excess loss** — raw loss measured against a reference model, "how far is this domain from achievable?" — and is run on a cheap proxy to produce a static target mixture. **Online bandit mixing computes its signal during the real run** with no reference model: ODM's EXP3 reward is the **raw per-domain loss** (an information-gain proxy), while learning-progress schemes use **loss velocity**, a *derivative* — "where am I improving fastest right now?". Excess loss says "fix what's broken *that is fixable*"; raw loss says "fix what's broken"; velocity says "ride what's working." They can disagree: a domain can have high excess loss yet near-zero velocity (stuck), in which case more weight wastes compute.
 
 {{fig:mixing-level-vs-velocity}}
 
@@ -210,7 +210,7 @@ rng = np.random.default_rng(0)
 # -----------------------------------------------------------------------------
 domains = ["web", "code", "math", "books", "multi"]
 floor = np.array([1.70, 1.10, 1.55, 1.80, 2.30])   # math & multi are "hard"
-scale = np.array([2.0, 3.5, 4.0, 1.8, 2.2])        # code & math have big headroom
+scale = np.array([2.0, 3.5, 4.0, 1.8, 0.6])        # code & math: big headroom; multi: tiny
 rate  = np.array([0.32, 0.28, 0.22, 0.30, 0.18])   # math & multi learn slowly
 k = len(domains)
 
@@ -225,7 +225,11 @@ def domain_loss(tokens_seen):
 # -----------------------------------------------------------------------------
 pool = np.array([3000., 250., 30., 80., 400.])     # unique tokens (in B), illustrative
 w_nat = pool / pool.sum()                          # natural mixture
-REF_TOKENS = 5.0e4                                 # arbitrary proxy-scale token units
+# Give the reference a LARGE budget so its per-domain losses really stand for
+# "what is achievable at this scale". With a weak reference, the proxy trivially
+# out-trains it on the tiny domains, their clamped excess pins at 0 forever, and
+# the weights degenerate to the smoothing fixed point (see the caveat below).
+REF_TOKENS = 5.0e6                                 # proxy-scale token units
 
 ref_tokens_per_domain = w_nat * REF_TOKENS
 ref_loss = domain_loss(ref_tokens_per_domain)
@@ -236,9 +240,12 @@ print("reference loss   :", np.round(ref_loss, 3))
 # 3. Proxy model with online Group-DRO (DoReMi step 2).
 #    - w:        current sampling weights over domains (the adversary's play)
 #    - seen:     cumulative tokens per domain (the proxy's "knowledge")
-#    Each step we draw a batch split by w, accumulate tokens, recompute the
+#    Each step we split a batch by w, accumulate tokens, recompute the
 #    proxy's per-domain loss, form CLAMPED excess loss vs the reference, and
 #    apply an exponentiated-gradient (multiplicative-weights) update to w.
+#    Simplification: real DoReMi samples from a FIXED mixture and uses w to
+#    weight the per-domain loss; with no real parameters here, letting w decide
+#    how much each domain "absorbs" per step plays the same role.
 # -----------------------------------------------------------------------------
 STEPS        = 4000
 BATCH_TOKENS = 10.0          # tokens added per step (proxy-scale units)
@@ -276,14 +283,21 @@ Running this prints something like:
 
 ```text
 natural mixture  : [0.798 0.066 0.008 0.021 0.106]
-reference loss   : [1.767 1.461 2.621 2.022 2.77 ]
-final-step weights: [0.305 0.174 0.174 0.174 0.174]
-AVERAGED weights  : [0.361 0.172 0.133 0.136 0.198]
+reference loss   : [1.715 1.2   1.939 1.856 2.356]
+
+final-step weights: [0.177 0.358 0.213 0.131 0.121]
+AVERAGED weights  : [0.143 0.363 0.294 0.111 0.089]
 vs natural        : [0.798 0.066 0.008 0.021 0.106]
-upweight factor   : [ 0.45  2.59 16.62  6.4   1.86]
+upweight factor   : [ 0.18  5.45 36.88  5.24  0.84]
 ```
 
-Read the result. The natural mixture is 80% web; DoReMi-style reweighting collapses web from 80% to ~36% and dramatically upweights the small high-headroom domains — code ~2.6x, math ~17x, books ~6x. This is exactly the qualitative behavior reported for real DoReMi: it pulls weight *out* of the abundant, lower-headroom domain (web) and *into* domains where the proxy still has the most room to improve relative to the reference. The math domain, despite a high floor (it is genuinely hard), gets heavily upweighted because its *excess* — the gap the proxy can still close — is large. Note the multilingual domain, which has the highest floor *and* the slowest rate (small headroom relative to its difficulty), is upweighted only modestly: high raw loss alone does not earn weight; **closeable** loss does. That separation is the entire reason DoReMi uses excess loss instead of raw loss.
+Read the result. The natural mixture is 80% web; DoReMi-style reweighting collapses web from 80% to ~14% and pours the freed budget into the small high-headroom domains — code ~5.5x, math ~37x, books ~5.2x. This is exactly the qualitative behavior reported for real DoReMi: it pulls weight *out* of the abundant, lower-headroom domain (web) and *into* domains where the proxy still has the most room to improve relative to the reference. The math domain, despite a high floor (it is genuinely hard), gets heavily upweighted because its *excess* — the gap the proxy can still close — is large. Read the *ratios* with care, though: math's 37x is inflated by its tiny natural weight (0.008); the load-bearing comparison is the **absolute** weight, where math goes from a rounding error to 0.29 of every batch.
+
+The multilingual domain is the control. It has the **highest reference loss of all five** (2.356 nats/token — it is genuinely the hardest text here), yet it comes out at 0.089 versus a natural weight of 0.106: a slight *down*weight, 0.84x. The reason is visible in the parameters: `multi` has a high `floor` but a small `scale`, so almost all of its loss is irreducible and there is very little for the proxy to close. High raw loss alone does not earn weight; **closeable** loss does. That separation is the entire reason DoReMi uses excess loss instead of raw loss.
+
+!!! warning "A caveat this toy makes visible: the reference must actually be strong"
+
+    Each domain's loss here depends only on that domain's own token count, so the clamped excess is positive exactly while the proxy has seen *fewer* tokens of a domain than the reference did. Shrink `REF_TOKENS` to `5.0e4` and the pathology appears: the proxy out-trains that weak reference on `math` by step ~360 and on every other small domain well before the run ends, so all four excesses pin at zero and the update degenerates to the affine contraction $w \leftarrow 0.95\,w/Z + 0.01$ — whose fixed point is *identical* for every zero-excess domain. The final-step weights come out as `[0.300 0.175 0.175 0.175 0.175]`: `code`, `math`, `books` and `multi` land on exactly the same number, and the eye-catching "upweight factors" are then nothing but $\text{const}/w^{\text{nat}}_i$ — a restatement of "smaller pools give bigger ratios," carrying no information about headroom at all. The lesson generalizes to real runs: excess loss is only informative while the reference is a genuinely competitive baseline. If your proxy beats the reference everywhere, DoReMi's signal has gone silent and the averaged weights are reporting smoothing, not headroom.
 
 Two experiments to build intuition (left as exercises you can run in seconds):
 
@@ -440,7 +454,7 @@ The decisions in this chapter compose into a repeatable workflow:
 3. **Find base weights.** Either run manual mixture ablations at a proxy scale, run a DoReMi-style reference+proxy pass to get $\bar{w}$ via excess-loss Group-DRO, or fit a RegMix-style regression surrogate over many tiny proxy runs and optimize it.
 4. **Convert to an epoch budget** and check no domain exceeds the repetition danger zone (~4–6 epochs); upsample small high-value domains, downsample abundant low-value ones.
 5. **Validate at one intermediate scale** before committing the full run.
-6. **Design the schedule** $w(t)$: broad stable phase, optional online velocity-based nudges, a long-context phase that upweights long documents, and a final annealing phase that concentrates the highest-quality data as the LR decays.
+6. **Design the schedule** $w(t)$: broad stable phase, optional online (bandit-style) mixing nudges, a long-context phase that upweights long documents, and a final annealing phase that concentrates the highest-quality data as the LR decays.
 7. **Account for annealing in the epoch math** so your best small domains are not silently over-repeated.
 
 Get these right and you buy capability gains that would otherwise cost a substantial model-size increase — at zero extra FLOPs. Data mixing is one of the highest-leverage, lowest-cost levers in the entire pretraining stack.
@@ -452,7 +466,7 @@ Get these right and you buy capability gains that would otherwise cost a substan
     - Mixing is fundamentally an **epoch-budget** decision: $e_i = w_i D / n_i$. **Deduplicate first** (to make epochs honest), **then upsample deliberately** (small high-value domains to ~2–4 epochs; beyond ~4–6, returns to repeated data decay and memorization rises).
     - A mixture is only real when the **dataloader** realizes it: pack *within* domains, draw a domain per sequence, seed the draw from the global step so resumption is exact, and log realized weights and epochs. In practice this is `interleave_datasets(probabilities=...)` (HF `datasets`), weighted `--data-path` blends (Megatron-Core), or `Stream(proportion=...)` (MosaicML `streaming`).
     - **Manual ablations** at a proxy scale are the robust workhorse; **DoReMi** automates this with a reference + proxy run using **Group-DRO on excess loss** (closeable loss, not raw loss) to avoid over-investing in intrinsically hard domains, while **RegMix** fits a regression surrogate over many tiny proxy runs and optimizes it over the simplex.
-    - **Online/adaptive mixing** uses loss *velocity* ("ride what's improving") rather than DoReMi's excess-loss *level* ("fix what's broken"); both use multiplicative-weights updates with smoothing to avoid starving any domain.
+    - **Online/adaptive mixing** computes its reward during the real run with no reference model — ODM feeds the *raw per-domain loss* (an information-gain proxy) to EXP3, while learning-progress schemes use loss *velocity* ("ride what's improving") — in contrast to DoReMi's *excess*-loss level ("fix what's broken *and* fixable") measured on a proxy; all use multiplicative-weights updates with smoothing to avoid starving any domain.
     - The optimal mixture **drifts with model scale and with training progress** — always validate proxy-derived weights at an intermediate scale before the full run.
     - **Annealing / mid-training** is the highest-impact schedule trick: in the final ~10–20% of tokens, decay the LR sharply *and* shift the mixture to the best, most target-relevant data — late, low-LR steps imprint capabilities most strongly (the WSD recipe).
     - **Context-length ramps** are a near-universal curriculum over sequence length; the mixture upweights long documents in the long-context phase.
@@ -538,13 +552,15 @@ Compute the effective epochs $e_i$ for each domain. Which domain is at the edge 
 
     (Weights sum to $1.0$, as required.) **Math, at 6.0 epochs, sits right at the top of the ~4-6 epoch danger zone** the chapter flags: past roughly 4 epochs returns to repeated data decay sharply, and by ~6 you risk memorization and reduced generalization. Options: (a) lower $w_{\text{math}}$ so math lands nearer 3-4 epochs; (b) enlarge the *unique* math pool with synthetic generation so 6.0 real epochs becomes fewer effective repeats of any one token; or (c) keep 6 epochs only if you have deliberately budgeted for it and are watching for memorization. Also remember to include any later annealing-phase math exposure in this count before deciding.
 
-**3.** Explain why DoReMi measures each domain by *excess* loss $\text{excess}_i(\theta) = \ell_i(\theta) - \ell_i(\theta_{\text{ref}})$ (clamped at zero) rather than raw loss $\ell_i(\theta)$. In the chapter's toy run, the `multi` domain has the highest reference loss of all domains yet is upweighted only ~1.9x, while `math` (also high-loss) is upweighted ~17x. Reconcile these two facts.
+**3.** Explain why DoReMi measures each domain by *excess* loss $\text{excess}_i(\theta) = \ell_i(\theta) - \ell_i(\theta_{\text{ref}})$ (clamped at zero) rather than raw loss $\ell_i(\theta)$. In the chapter's toy run, the `multi` domain has the highest reference loss of all domains yet ends up slightly *below* its natural weight (0.84x), while `math` (also high-loss) is upweighted ~37x. Reconcile these two facts.
 
 ??? note "Solution"
 
     Some domains are *intrinsically harder* — they have higher irreducible entropy (loss floor). A naive Group-DRO adversary using **raw** loss would dump all weight onto the highest-floor domain forever (e.g., noisy multilingual text), even though extra weight there cannot lower that floor and so does not help. Excess loss instead asks the sharper question: *"On which domain is the proxy still far from what is achievable?"* A high-floor domain has high loss for *both* proxy and reference, so once the proxy catches up to the reference its excess is small and the adversary stops over-investing. A domain where the proxy lags the reference (lots of headroom) keeps a large excess and gets upweighted. Clamping at zero encodes "you cannot beat the reference for free."
 
-    Reconciling `multi` vs `math`: raw loss is not what earns weight — **closeable** (excess) loss is. `math` has a high floor but *large headroom* (big `scale`, and a substantial gap the proxy can still close relative to the reference), so its excess stays large and it is upweighted ~17x. `multi` has the highest floor *and* the slowest learning rate (small headroom relative to its difficulty): its raw loss is high but its *excess* — the gap the proxy can actually close — is modest, so it earns only a ~1.9x upweight. This separation of "hard" from "improvable" is the entire reason DoReMi uses excess loss instead of raw loss.
+    Reconciling `multi` vs `math`: raw loss is not what earns weight — **closeable** (excess) loss is. In the toy the excess is $\text{scale}_i\big[(\text{seen}_i+1)^{-\text{rate}_i} - (\text{ref}_i+1)^{-\text{rate}_i}\big]$ — note that `floor` **cancels out entirely**, which is precisely the point of subtracting a reference. So difficulty *per se* is invisible to the adversary; only `scale` (how much loss sits above the floor) and `rate` (how fast it comes down) matter. `math` has `scale = 4.0` and the second-slowest `rate`, so a large gap remains open for the whole run and it is upweighted ~37x. `multi` has the highest floor but `scale = 0.6` — almost all of its 2.36 nats/token is irreducible — so there is barely anything to close and it settles at 0.84x, marginally *below* its natural weight. This separation of "hard" from "improvable" is the entire reason DoReMi uses excess loss instead of raw loss.
+
+    One number-reading caution: the 37x is a *ratio* against a natural weight of 0.008, so it exaggerates. The honest statement is the absolute one — math moves from 0.8% to 29% of the batch, and `multi`, the hardest domain in the corpus, moves from 10.6% to 8.9%.
 
 **4.** You have a training budget of $D = 800$ B tokens and these deduplicated pools: web 2000 B, code 200 B, math 20 B, books 60 B. You decide on target epoch counts based on quality and repetition tolerance: web 0.2, code 2, math 5, books 3. Following the chapter's epoch-budget procedure, convert these into normalized mixture weights $w_i$, and report the *realized* epochs after normalization. Does any domain exceed the danger zone?
 
@@ -601,7 +617,7 @@ Compute the effective epochs $e_i$ for each domain. Which domain is at the edge 
 
     Result $w^{(t+1)} = (0.464, 0.245, 0.291)$, which sums to $1.0$. Domain 3 (highest excess) gained the most weight, domain 2 (zero excess) lost weight. **Smoothing guaranteed every domain keeps a floor** of at least $c/k = 0.0333$, so no domain — including domain 2 with zero excess this step — can be starved to zero and stop being sampled.
 
-**6.** *Implementation.* The chapter's toy uses DoReMi-style *excess loss* (a level: "how far is this domain from achievable?"). The chapter contrasts this with **online bandit mixing**, which uses *loss velocity* (a derivative: "where am I improving fastest right now?") and needs no reference model. Modify the toy's proxy loop to implement velocity-based online mixing: replace the clamped excess signal with the per-step loss *decrease* per domain, and drop the reference model entirely. Then describe one qualitative way the resulting weights should differ from the excess-loss version.
+**6.** *Implementation.* The chapter's toy uses DoReMi-style *excess loss* (a level: "how far is this domain from achievable?"). The chapter contrasts this with **online bandit mixing**, whose reward is computed live and needs no reference model — here take the *learning-progress* variant, which uses *loss velocity* (a derivative: "where am I improving fastest right now?"). Modify the toy's proxy loop to implement velocity-based online mixing: replace the clamped excess signal with the per-step loss *decrease* per domain, and drop the reference model entirely. Then describe one qualitative way the resulting weights should differ from the excess-loss version.
 
 ??? note "Solution"
 

@@ -38,7 +38,7 @@ def fixed_chunk(
     text: str,
     chunk_size: int = 512,
     overlap: int = 64,
-    tokenizer=None,      # a callable str->list[int]; falls back to whitespace split
+    tokenizer=None,      # a tokenizer *object* with .encode/.decode; else whitespace
 ) -> Iterator[str]:
     """
     Yield overlapping token-level chunks of `text`.
@@ -47,8 +47,13 @@ def fixed_chunk(
         text:        The raw document string.
         chunk_size:  Maximum tokens per chunk.
         overlap:     Number of tokens to repeat from the previous chunk.
-        tokenizer:   Optional callable returning token ids. When None, we split
-                     on whitespace as a proxy (fast for prototyping).
+        tokenizer:   Optional tokenizer object exposing `.encode(str) -> list[int]`
+                     and `.decode(list[int]) -> str` (e.g. a HuggingFace
+                     `PreTrainedTokenizer` or a `tiktoken` encoding). Note we call
+                     `.encode`, not the tokenizer itself: calling a HuggingFace
+                     tokenizer returns a `BatchEncoding` dict, not a token-id list.
+                     When None, we split on whitespace as a proxy (fast for
+                     prototyping).
 
     Yields:
         Decoded string chunks.
@@ -63,8 +68,8 @@ def fixed_chunk(
         tokens = text.split()
         decode = lambda ids: " ".join(ids)  # noqa: E731
     else:
-        tokens = tokenizer(text)
-        decode = tokenizer.decode  # type: ignore[attr-defined]
+        tokens = tokenizer.encode(text)      # list[int]
+        decode = tokenizer.decode            # list[int] -> str
 
     step = chunk_size - overlap
     if step <= 0:
@@ -347,8 +352,17 @@ def late_chunk_document(
     Returns:
         List of LateChunk named tuples with text + contextual embedding.
     """
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name).to(device).eval()
+    # `trust_remote_code=True` is required: jina-embeddings-v2 declares
+    # `model_type: "bert"` but ships its own ALiBi-based `JinaBertModel` via
+    # `auto_map`. Without the flag, transformers resolves the *local* BERT class
+    # (a local model type always wins by default), silently loading a stock
+    # `BertModel` with randomly initialized position embeddings — and no 8k context.
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    model = (
+        AutoModel.from_pretrained(model_name, trust_remote_code=True)
+        .to(device)
+        .eval()
+    )
 
     # Tokenize entire document, keep char-to-token mapping
     encoding = tokenizer(
@@ -369,10 +383,14 @@ def late_chunk_document(
 
     chunks: list[LateChunk] = []
     for start_char, end_char in chunk_boundaries:
-        # Find which token indices correspond to this character span
+        # Find which token indices correspond to this character span.
+        # The third clause drops zero-length offsets: fast tokenizers give
+        # [CLS]/[SEP]/padding the span (0, 0), which would otherwise be pulled
+        # into every chunk whose start_char is 0 and contaminate its mean pool.
         token_mask = (
             (offset_mapping[:, 0] >= start_char) &
-            (offset_mapping[:, 1] <= end_char)
+            (offset_mapping[:, 1] <= end_char) &
+            (offset_mapping[:, 1] > offset_mapping[:, 0])
         )
         span_embeddings = token_embeddings[token_mask]  # (span_len, D)
 
@@ -598,11 +616,11 @@ def hybrid_search(
 
     | Doc | BM25 rank | Dense rank | BM25 term | Dense term | RRF score |
     |-----|-----------|-----------|-----------|------------|-----------|
-    | D1  | 2         | 1         | 1/62      | 1/61       | 0.0323    |
-    | D2  | 1         | 3         | 1/61      | 1/63       | 0.0321    |
-    | D3  | 3         | 2         | 1/63      | 1/62       | 0.0319    |
-    | D4  | 4         | 5         | 1/64      | 1/65       | 0.0311    |
-    | D5  | 5         | 4         | 1/65      | 1/64       | 0.0311    |
+    | D1  | 2         | 1         | 1/62      | 1/61       | 0.0325    |
+    | D2  | 1         | 3         | 1/61      | 1/63       | 0.0323    |
+    | D3  | 3         | 2         | 1/63      | 1/62       | 0.0320    |
+    | D4  | 4         | 5         | 1/64      | 1/65       | 0.0310    |
+    | D5  | 5         | 4         | 1/65      | 1/64       | 0.0310    |
 
     D1 wins in the fused ranking despite being second in BM25, because its
     dense rank of 1 contributes a large term. The $k=60$ constant prevents any
@@ -1177,8 +1195,10 @@ def run_rag_pipeline(
     # Map back to document texts
     all_docs = bm25_index.docs
     fused_chunks = [(all_docs[idx].text, score) for idx, score in fused]
-    rrf_scores = [s for _, s in fused_chunks]
     candidate_texts = [t for t, _ in fused_chunks]
+    # Keep a text -> fused-score map so the reported RRF scores can be realigned
+    # to whatever order the reranker returns (see the return statement).
+    rrf_by_text = dict(fused_chunks)
 
     logger.info(
         "Hybrid retrieval: %d BM25 + %d dense → %d fused candidates",
@@ -1200,12 +1220,15 @@ def run_rag_pipeline(
         reranker_scores = [float(s) for _, s in reranked]
     else:
         final_chunks = candidate_texts[:config.reranker_top_k]
-        reranker_scores = rrf_scores[:config.reranker_top_k]
+        reranker_scores = [rrf_by_text[t] for t in final_chunks]
 
     return RAGResult(
         query=query,
         retrieved_chunks=final_chunks,
-        rrf_scores=rrf_scores[:config.reranker_top_k],
+        # Realign to the *final* ordering: reranking permutes (and prunes)
+        # the fused list, so slicing the fused scores would attach each RRF
+        # score to the wrong chunk.
+        rrf_scores=[rrf_by_text[t] for t in final_chunks],
         reranker_scores=reranker_scores,
         hyde_hypothesis=hyde_hypothesis,
     )
@@ -1238,7 +1261,7 @@ from typing import NamedTuple
 
 
 class RetrievalMetrics(NamedTuple):
-    recall_at_k: float        # fraction of queries where relevant doc is in top-k
+    recall_at_k: float        # mean fraction of a query's relevant docs found in top-k
     mrr: float                # mean reciprocal rank
     ndcg_at_k: float          # normalized discounted cumulative gain at k
     latency_p50_ms: float
@@ -1251,15 +1274,22 @@ def compute_recall_at_k(
     k: int,
 ) -> float:
     """
-    Recall@k: for each query, was at least one relevant document in top-k?
-    Averaged over all queries.
+    Recall@k = |relevant ∩ retrieved[:k]| / |relevant|, averaged over queries.
+
+    Note the definition: it is the *fraction* of a query's gold documents that
+    made the top-k, not "did at least one land". The two coincide when every
+    query has exactly one gold document, which is why the looser phrasing is so
+    common — but with multiple gold documents the "at least one" variant is
+    hit-rate / success@k and reports systematically higher numbers than the
+    Recall@k that BEIR and `ir_measures` publish.
     """
     assert len(relevant_ids) == len(retrieved_ids), "Must align by query"
-    hits = sum(
-        1 for rel, ret in zip(relevant_ids, retrieved_ids)
-        if rel & set(ret[:k])
-    )
-    return hits / len(relevant_ids)
+    recalls = [
+        len(rel & set(ret[:k])) / len(rel)
+        for rel, ret in zip(relevant_ids, retrieved_ids)
+        if rel  # queries with no gold documents are undefined; skip them
+    ]
+    return sum(recalls) / max(len(recalls), 1)
 
 
 def compute_mrr(
@@ -1395,8 +1425,8 @@ def compute_ndcg_at_k(
 - Robertson & Zaragoza, "The Probabilistic Relevance Framework: BM25 and Beyond" (2009) — the canonical reference for BM25 derivation and tuning.
 - Cormack, Clarke & Buettcher, "Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods" (SIGIR 2009) — original RRF paper with empirical comparisons.
 - Nogueira & Cho, "Passage Re-ranking with BERT" (2019) — introduced the cross-encoder reranking paradigm for neural IR; the MS MARCO models trace to this work.
-- Gao et al., "Precise Zero-Shot Dense Retrieval without Relevance Labels" (ACL 2022) — the HyDE paper, with ablations showing when it helps and when it hurts.
-- Günther et al., "Jina Embeddings 2: 8192-Token General-Purpose Text Embeddings for Long Documents" (2023) — introduces late chunking and benchmarks it against standard chunking.
+- Gao et al., "Precise Zero-Shot Dense Retrieval without Relevance Labels" (arXiv 2022; ACL 2023) — the HyDE paper, with ablations showing when it helps and when it hurts.
+- Günther et al., "Jina Embeddings 2: 8192-Token General-Purpose Text Embeddings for Long Documents" (2023) — the ALiBi long-context bi-encoder that late chunking runs on; the method itself is introduced separately in Günther et al., "Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models" (arXiv 2409.04701, 2024), which benchmarks it against standard chunking.
 - Liu et al., "Lost in the Middle: How Language Models Use Long Contexts" (2023) — empirical evidence that LLMs underweight information placed in the middle of long contexts; directly motivates context ordering in RAG prompts.
 - Guu et al., "REALM: Retrieval-Augmented Language Model Pre-Training" (ICML 2020) — early end-to-end trainable RAG architecture that motivates the field.
 - Ma et al., "Query Rewriting in Retrieval-Augmented Large Language Models" (EMNLP 2023) — systematic study of query rewriting strategies including multi-query expansion.

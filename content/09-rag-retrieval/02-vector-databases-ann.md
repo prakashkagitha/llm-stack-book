@@ -102,11 +102,11 @@ for d in [2, 10, 100, 1000]:
     # "contrast": how much farther the farthest point is vs the nearest
     print(f"d={d:5d}  dmin={dmin:7.3f}  dmax={dmax:7.3f}  "
           f"ratio dmax/dmin={dmax/dmin:5.2f}")
-# d=    2  ... ratio ~ 50x      (nearest is dramatically nearer)
+# d=    2  ... ratio ~ 256x     (nearest is dramatically nearer)
 # d= 1000  ... ratio ~ 1.1x     (everything is roughly equidistant)
 ```
 
-At $d=2$ the farthest point is dozens of times farther than the nearest, so "nearest neighbor" is meaningful and a tree can prune aggressively. At $d=1000$ the ratio collapses toward 1: the nearest and farthest neighbors are almost the same distance away.
+At $d=2$ the farthest point is hundreds of times farther than the nearest, so "nearest neighbor" is meaningful and a tree can prune aggressively. At $d=1000$ the ratio collapses toward 1: the nearest and farthest neighbors are almost the same distance away.
 
 {{fig:curse-distance-concentration}}
 
@@ -176,7 +176,8 @@ class IVFFlat:
     def search(self, q, k=10, n_probe=8):
         # 1) find the n_probe nearest centroids to the query
         cd = np.einsum("kd,kd->k", self.centroids - q, self.centroids - q)
-        probes = np.argpartition(cd, n_probe)[:n_probe]
+        # clamp kth: n_probe == n_list must degrade to a full scan, not crash
+        probes = np.argpartition(cd, min(n_probe, len(cd) - 1))[:n_probe]
         # 2) gather candidate ids from those lists and do exact distances
         cand = np.concatenate([self.lists[j] for j in probes])
         if len(cand) == 0:
@@ -335,7 +336,7 @@ print(I.shape, np.array(top).shape)         # (4, 10) (4, 10)
 
 ### IVF + PQ: the workhorse of billion-scale search
 
-The legendary FAISS index `IVF{n_list},PQ{m}` combines all of the above. IVF restricts the search to a handful of cells (solving *speed*); PQ compresses each vector to $m$ bytes (solving *memory*). A common refinement, **IVFADC with residuals**, quantizes not the raw vector but its *residual* after subtracting its coarse centroid, which dramatically improves accuracy because residuals are small and well-clustered. A final, optional **re-ranking** step (`IndexRefineFlat`) fetches the top candidates' full vectors from disk and re-scores them exactly to recover the recall that quantization lost.
+The legendary FAISS index `IVF{n_list},PQ{m}` combines all of the above. IVF restricts the search to a handful of cells (solving *speed*); PQ compresses each vector to $m$ bytes (solving *memory*). A common refinement, **IVFADC with residuals**, quantizes not the raw vector but its *residual* after subtracting its coarse centroid, which dramatically improves accuracy because residuals are small and well-clustered. A final, optional **re-ranking** step (`IndexRefineFlat`) keeps the full-precision vectors alongside the compressed index — in RAM for FAISS's `IndexRefineFlat`, on SSD in disk-backed systems such as DiskANN or LanceDB — and re-scores the shortlist exactly to recover the recall that quantization lost. Note the trade: an in-RAM refine index gives back the memory PQ just saved, which is exactly why the disk-backed designs exist.
 
 !!! example "Worked example: sizing a billion-vector IVF-PQ index"
 
@@ -347,7 +348,7 @@ The legendary FAISS index `IVF{n_list},PQ{m}` combines all of the above. IVF res
 
     **Speed:** with $n_{\text{list}} = 2^{16} \approx 65{,}536$ and $n_{\text{probe}} = 64$, you scan $\approx 10^9 \cdot 64 / 65{,}536 \approx 9.8 \times 10^5$ codes per query. Each scored vector costs only $m=64$ byte-lookups-and-adds via the ADC LUT — no float multiplies. That is the difference between a billion full dot products and ~1M cache-friendly table lookups.
 
-    **Cost:** the recall drop. With $m=64$ bytes and re-ranking the top ~1000 candidates against full vectors on disk, you can typically recover recall@10 into the high 0.9s — but you *measure* this against brute force, never assume it.
+    **Cost:** the recall drop. With $m=64$ bytes and re-ranking the top ~1000 candidates against full vectors held on SSD (keeping them in RAM would undo the 72 GB saving), you can typically recover recall@10 into the high 0.9s — but you *measure* this against brute force, never assume it.
 
 ## HNSW: Navigable Small-World Graphs
 
@@ -474,14 +475,14 @@ class HNSW:
         return [n for _, n in W[:k]]
 ```
 
-When we ran this on 8,000 random 32-d vectors and measured recall@10 against brute force, sweeping the search beam width `ef` produced exactly the behavior the theory predicts — a smooth recall-latency dial:
+When we ran this on 8,000 uniform random 32-d vectors in $[0,1]^{32}$ (100 held-out queries, `M=16`, `ef_construction=100`, `seed=0`) and measured recall@10 against brute force, sweeping the search beam width `ef` produced exactly the behavior the theory predicts — a smooth recall-latency dial:
 
 ```text
-ef= 10   recall@10 = 0.500     (fast, low recall)
-ef= 25   recall@10 = 0.673
-ef= 50   recall@10 = 0.823
-ef=100   recall@10 = 0.895
-ef=200   recall@10 = 0.955     (slow, high recall)
+ef= 10   recall@10 = 0.706     (fast, low recall)
+ef= 25   recall@10 = 0.886
+ef= 50   recall@10 = 0.967
+ef=100   recall@10 = 0.997
+ef=200   recall@10 = 0.999     (slow, high recall)
 ```
 
 That table *is* the recall-latency tradeoff, made concrete. You turn one knob, `ef`, and slide along the curve.
@@ -514,7 +515,7 @@ That table *is* the recall-latency tradeoff, made concrete. You turn one knob, `
 
 HNSW gives the best recall-per-latency of any method for in-memory data, with no training step (unlike IVF/PQ's $k$-means). Its costs are real, though:
 
-- **Memory.** It stores full vectors *plus* the graph. Each node holds up to $M$ neighbor ids per layer; layer 0 alone is $\sim 2M$ ids $\times$ 4–8 bytes. For $M=16$, that is ~64–128 bytes of graph overhead per vector *on top of* the $4d$ bytes of the vector itself. HNSW is memory-hungry, which is why billion-scale systems combine it with PQ (`IndexHNSWPQ`).
+- **Memory.** It stores full vectors *plus* the graph. Each node holds up to $M$ neighbor ids per layer; layer 0 alone is $\sim 2M$ ids $\times$ 4–8 bytes. For $M=16$ that is ~32 ids, i.e. ~128–256 bytes of graph overhead per vector *on top of* the $4d$ bytes of the vector itself. HNSW is memory-hungry, which is why billion-scale systems combine it with PQ (`IndexHNSWPQ`).
 - **Build time.** Insertion is $O(\log N)$ per node but with a large constant; building a 100M-node graph takes hours and is the dominant offline cost.
 - **Updates.** Deletes are awkward (you typically tombstone and periodically rebuild). High churn favors IVF, which re-clusters more gracefully.
 
@@ -699,7 +700,7 @@ The filtering caveat from above applies here too: with a selective `WHERE`, an H
 
     3. **Graph (HNSW)** as the coarse quantizer for fast cell selection, with `efSearch` as the recall-latency dial.
 
-    Concretely I'd build `IVF_HNSW,PQ64` in FAISS/Milvus, set the metric to inner product on L2-normalized vectors (so cosine = L2), shard across machines by id, replicate for QPS, and — critically — **measure recall@10 against brute force on a held-out set** and against the end-to-end RAG eval, then pick the *cheapest* `n_probe`/`efSearch`/$m$ that clears the bar. The approximation is principled and *measured*, never assumed. If there are metadata filters, I'd use filtered-HNSW that skips non-matching nodes during traversal rather than naive pre/post-filtering.
+    Concretely I'd build `IVF65536_HNSW32,PQ64` in FAISS/Milvus (the factory grammar needs the cell count and the HNSW degree spelled out — bare `IVF_HNSW,PQ64` does not parse), set the metric to inner product on L2-normalized vectors (so cosine = L2), shard across machines by id, replicate for QPS, and — critically — **measure recall@10 against brute force on a held-out set** and against the end-to-end RAG eval, then pick the *cheapest* `n_probe`/`efSearch`/$m$ that clears the bar. The approximation is principled and *measured*, never assumed. If there are metadata filters, I'd use filtered-HNSW that skips non-matching nodes during traversal rather than naive pre/post-filtering.
 
 ## Putting It Together: A Tiny End-to-End Benchmark
 
@@ -752,7 +753,7 @@ if __name__ == "__main__":
 
 The shape of the output is always the same story: Flat is exact but its latency grows with $N$; IVF and HNSW each expose one knob (`n_probe`, `ef`) that buys recall with latency; and if you swapped the data store to PQ codes you would watch memory drop while recall takes a measured hit. That is the entire chapter, in one runnable file.
 
-**Where this lands in the capstone.** Stack-100M's narrow auto-research agent retrieves over a corpus of roughly $10^5$–$10^6$ chunks — three to four orders of magnitude below where ANN becomes necessary. The right index there is `IndexFlatIP` on unit-normalized vectors: exact, zero-parameter, no training, no recall to measure, a few milliseconds per query, and a few hundred megabytes of RAM. Resist the urge to reach for HNSW; the whole point of this chapter's first section is knowing when brute force *is* the answer. See [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) for how that index is wired into the agent's tool loop, and [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for the laptop-scale latency budget it has to fit inside.
+**Where this lands in the capstone.** Stack-100M's narrow auto-research agent retrieves over a corpus of roughly $10^5$–$10^6$ chunks — three to four orders of magnitude below where ANN becomes necessary. The right index there is `IndexFlatIP` on unit-normalized vectors: exact, zero-parameter, no training, no recall to measure, a few milliseconds per query, and — at $d = 768$ float32 — ~300 MB of RAM at $10^5$ chunks rising to ~3 GB at $10^6$. Resist the urge to reach for HNSW; the whole point of this chapter's first section is knowing when brute force *is* the answer. See [A Narrow Auto-Research Agent: ReAct, Tool-Use & Retrieval by Distillation](../14-capstone/10-agentic-narrow.html) for how that index is wired into the agent's tool loop, and [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for the laptop-scale latency budget it has to fit inside.
 
 For how these retrievers slot into a generation pipeline — query construction, multi-vector retrieval, fusion with keyword search — continue to [Retrieval-Augmented Generation Architectures](../09-rag-retrieval/03-rag-architectures.html) and [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html). For the embeddings that feed all of this, revisit [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html). And because retrieval lives in the latency budget of an LLM call, the serving concerns in [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) apply directly.
 
@@ -763,7 +764,7 @@ For how these retrievers slot into a generation pipeline — query construction,
     - **Three algorithm families** cover the field: **IVF** (partition into cells, probe a few — buys *latency*), **quantization** (buys *memory*), and **HNSW** (greedy search on a hierarchical small-world graph, log-$N$ hops — best *recall/latency* but memory-hungry). The historical fourth family, **LSH**, lost because it is data-independent while all three winners are data-dependent.
     - **The compression ladder, cheapest first:** truncate Matryoshka dims (free) → **SQ8** scalar quantization (4×, no training) → **PQ/OPQ** (up to ~100–400× via ADC lookup tables) → **binary/RaBitQ** (~32×, `xor`+`popcount` first stage). Every rung after the first should be paired with a full-precision **re-ranking** stage over the shortlist.
     - **Every deployment is a point in the recall–latency–memory triangle.** You get two corners cheap; the third is the cost. One knob per method slides you along the curve: `n_probe` (IVF), `ef` (HNSW), bytes $m$ (PQ).
-    - **Production systems stack the families** — e.g. `IVF_HNSW,PQ` with a full-precision **re-ranking** stage — to hit all three corners, and that is exactly what FAISS factory strings express.
+    - **Production systems stack the families** — e.g. `IVF{nlist}_HNSW{M},PQ{m}` with a full-precision **re-ranking** stage — to hit all three corners, and that is exactly what FAISS factory strings express.
     - **ScaNN's lesson generalizes:** optimize the quantizer for the *task metric* (ranking by inner product), not a generic reconstruction MSE.
     - **A vector database = ANN library + persistence + sharding + metadata filtering.** FAISS is a library; Milvus/Qdrant/Weaviate/pgvector are databases. **Filtered ANN** (search under structured predicates) is the production frontier and a frequent interview probe.
     - **Watch the metric mismatch footgun:** for text embeddings, L2-normalize at index and query time so cosine = inner product = L2, and sanity-check that a vector retrieves itself with similarity 1.0.

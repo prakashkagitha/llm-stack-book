@@ -52,7 +52,7 @@ The quick brown fox jumps over the lazy dog. Lorem ipsum ...
 
 ### Crawl Anatomy
 
-Common Crawl's crawler is built on Apache Nutch, seeded from the previous crawl's link graph and a set of highly-linked root domains, and expanded breadth-first. Because it respects `robots.txt` and applies politeness delays, the crawl takes weeks per snapshot. The resulting corpus is *not* a uniform sample of the web — high-PageRank domains are over-represented, low-resource languages are under-represented, and large static-content sites (PDFs, images) are excluded.
+Common Crawl's crawler is built on Apache Nutch, seeded from the previous crawl's link graph and a set of highly-linked root domains, and expanded breadth-first. Because it respects `robots.txt` and applies politeness delays, the crawl takes weeks per snapshot. The resulting corpus is *not* a uniform sample of the web — high-PageRank domains are over-represented, low-resource languages are under-represented, and non-HTML resources (PDFs, images) are captured only incidentally and are never converted to WET text, so you must filter them out yourself when reading WARC (as the extraction code below does).
 
 This non-uniformity is both a feature and a bug. English Wikipedia is crawled in its entirety every month. Some low-resource languages appear only in a handful of documents. Any downstream model will inherit these imbalances unless they are explicitly corrected through domain up/down-weighting.
 
@@ -236,9 +236,9 @@ Repeating data is not free — multiple passes over the same text lead to memori
     | Wikipedia | 0.04 | 4B tokens | $\approx 20.0$ |
     | Other curated | 0.04 | 60B tokens | $\approx 1.33$ |
 
-    Wikipedia is seen roughly 20 times despite comprising only 0.2% of the raw token count. This is by design — its per-token quality justifies heavy up-weighting. Code and arXiv approach 1–2 epochs, which is acceptable. Web crawl is comfortably under 1 epoch, so no repetition memorization.
+    Wikipedia is seen roughly 20 times despite comprising only ~0.1% of the pooled raw corpus (4B of 3.54T tokens). This is by design — its per-token quality justifies heavy up-weighting. Code and arXiv approach 1–2 epochs, which is acceptable. Web crawl is comfortably under 1 epoch, so no repetition memorization.
 
-    The practical implication: if you reduce $N$ (train shorter, e.g., 1T tokens), you cut every epoch count proportionally, meaning Wikipedia moves to ~10 epochs and you may see slightly more memorization of Wikipedia text.
+    The practical implication: if you reduce $N$ (train shorter, e.g., 1T tokens), you cut every epoch count proportionally, meaning Wikipedia moves to ~10 epochs and you should see somewhat *less* memorization of Wikipedia text — though 10 epochs is still well above the ~4-epoch ceiling.
 
 {{fig:mixture-weights-to-epochs}}
 
@@ -254,7 +254,7 @@ The Pile was one of the first carefully documented, publicly released pretrainin
 
 ### C4 (Raffel et al., T5, 2019)
 
-Colossal Clean Crawled Corpus (C4) is a 750 GB English-only filtered version of a single Common Crawl snapshot. The cleaning pipeline applied heuristic filters: remove lines without terminal punctuation, remove documents under 5 sentences, remove documents containing JavaScript warnings, and deduplicate at the three-sentence-span level (any span of three consecutive sentences occurring more than once in the corpus was removed). C4 became the standard pretraining corpus for the T5 family and remains a useful ablation baseline.
+Colossal Clean Crawled Corpus (C4) is a 750 GB English-only filtered version of a single Common Crawl snapshot. The cleaning pipeline applied heuristic filters: remove lines without terminal punctuation, remove documents under 5 sentences, remove documents containing JavaScript warnings, and deduplicate at the three-sentence-span level (all but one copy of any span of three consecutive sentences occurring more than once in the corpus was discarded). C4 became the standard pretraining corpus for the T5 family and remains a useful ablation baseline.
 
 ### RedPajama (Together AI, 2023)
 
@@ -582,9 +582,11 @@ In production, the outer loop over WET files is parallelized — each worker pic
 
 ### Shard Layout for Streaming Training
 
-Training reads shards in random order to approximate i.i.d. sampling. Each shard is a flat binary file of `int32` token IDs arranged in rows of `context_len` tokens. The training dataloader memory-maps these files:
+Training reads shards in random order to approximate i.i.d. sampling. Each shard is a flat binary file of `int32` token IDs arranged in rows of `context_len + 1` tokens (the +1 supplies the label shift). The training dataloader memory-maps these files:
 
 ```python
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset
@@ -794,7 +796,7 @@ The credible alternatives at this layer: AI2's **[`dolma` toolkit](https://githu
 
 Beyond static mixture weights, researchers have explored *dynamic* data curricula — changing the mixture as training progresses.
 
-**Skill-it! (Chen et al., 2023)** showed that ordering data by increasing difficulty (measured by loss on a held-out probe set) can improve downstream performance, analogous to curriculum learning in classical ML.
+**Skill-It! (Chen et al., 2023)** infers a graph of *skill prerequisites* from per-skill validation losses, then dynamically up-weights the prerequisite skills of whatever the model is currently failing at, instead of sampling domains at fixed proportions. The result is a learned, loss-driven ordering over skills rather than a hand-specified difficulty curriculum.
 
 **DoReMi (Xie et al., 2023)** framed mixture weight selection as a distributionally robust optimization (DRO) problem: train a small proxy model and a domain weight learner simultaneously, with the weight learner trying to equalize worst-case domain loss. The resulting weights outperform human-tuned weights on average across downstream tasks.
 
@@ -853,7 +855,7 @@ The obvious weakness is that this is a per-crawler allow/deny list with no way t
 
     1. **Source selection and acquisition**: Pull the `warc.paths.gz` manifests for several recent Common Crawl dumps (~90k files, ~90 TB compressed each) and re-extract main content with `trafilatura`/`resiliparse` rather than trusting the ready-made WET text — that extraction gap is worth real downstream points. Add curated high-quality corpora: Wikipedia (up-weight heavily), deduplicated GitHub code filtered for permissive licenses, arXiv LaTeX source, and a cleaned books corpus. Each source is tracked with a provenance record (URL, license tier, crawl date). If the goal is a model rather than a curation result, I would say so explicitly and stream FineWeb-Edu or Dolma from the Hub instead.
 
-    2. **Per-document filtering**: Stream each WARC file through (a) a URL blocklist first, since it is the cheapest reject, (b) language ID (fastText; keep only desired languages), (c) Gopher/C4 heuristics (word count, symbol ratio, line-ending punctuation, repetition rate), and (d) an optional perplexity filter or an educational-quality classifier à la FineWeb-Edu. Expect to retain roughly 30–50% of raw Common Crawl by document count but higher by quality-adjusted token value. I would implement this with `datatrove` rather than by hand — its `URLFilter`/`Trafilatura`/`LanguageFilter`/`GopherQualityFilter` blocks are the reference implementations, and its executors give resumability and per-filter drop statistics for free.
+    2. **Per-document filtering**: Stream each WARC file through (a) a URL blocklist first, since it is the cheapest reject, (b) language ID (fastText; keep only desired languages), (c) Gopher/C4 heuristics (word count, symbol ratio, line-ending punctuation, repetition rate), and (d) an optional perplexity filter or an educational-quality classifier à la FineWeb-Edu. Expect these filters alone to keep only about 20–25% of raw Common Crawl documents — RefinedWeb's MDR pipeline is in that range before deduplication, which then cuts the survivors down again in phase 3 — but the documents that remain are worth far more per token than the average discarded one, which is the whole point. I would implement this with `datatrove` rather than by hand — its `URLFilter`/`Trafilatura`/`LanguageFilter`/`GopherQualityFilter` blocks are the reference implementations, and its executors give resumability and per-filter drop statistics for free.
 
     3. **Deduplication**: Apply MinHash LSH at 13-gram shingle level to remove near-duplicate documents across the full corpus. This is the most computationally intensive step — covered in the [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) chapter. Expect 15–30% additional token reduction.
 
@@ -919,7 +921,7 @@ The obvious weakness is that this is a per-crawler allow/deny list with no way t
 - **Xie et al.** — *DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining*, NeurIPS, 2023. Principled approach to mixture weight selection.
 - **Muennighoff et al.** — *Scaling Data-Constrained Language Models*, NeurIPS, 2023. Quantifies the cost of data repetition.
 - **Together AI** — *RedPajama*, 2023. Open replication of the LLaMA data recipe, including v2 with attached quality signals.
-- **BigCode Project** — *The Stack*, 2022. Permissively licensed code corpus across 86 programming languages.
+- **BigCode Project** — *The Stack*, 2022. Permissively licensed code corpus — 30 languages at v1.0, extended to 358 in v1.1 (StarCoder trained on an 86-language subset).
 - **Common Crawl** — `commoncrawl.org`. Primary source of web data for nearly all open LLM corpora.
 
 ---
@@ -1036,17 +1038,25 @@ Walk through the four checks in order and determine whether the document is kept
         iters = dict(domain_iters)
         names = list(iters)
 
-        for _ in range(n_docs):
+        emitted = 0
+        while emitted < n_docs:
             live = [n for n in names if iters[n] is not None]
             if not live:
                 return                      # every domain exhausted
             w = [weights[n] for n in live]  # renormalized inside choices()
             name = rng.choices(live, weights=w, k=1)[0]
             try:
-                yield name, next(iters[name])
+                doc = next(iters[name])
             except StopIteration:
-                iters[name] = None          # drop and retry on next iteration
+                iters[name] = None          # drop it and redraw; no draw is lost
+                continue
+            yield name, doc
+            emitted += 1
     ```
+
+    The `while emitted < n_docs` loop (rather than `for _ in range(n_docs)`)
+    matters: an exhausted domain must not consume a draw, or the generator
+    silently yields fewer than `n_docs` documents — one fewer per exhaustion.
 
     A quick check that the empirical draw proportions track the weights:
 
