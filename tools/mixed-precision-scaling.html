@@ -1,0 +1,842 @@
+<div class="viz-tool" id="tool-mixed-precision-scaling">
+  <div class="vt-title">Mixed precision: fp16 gradient underflow and loss scaling</div>
+  <div class="vt-hint">A model's gradient magnitudes span many powers of two, and every low-precision format can only represent a window of them. Pick a format, then slide the loss scale <span class="mps-code">S = 2<sup>k</sup></span>: multiplying the loss by <span class="mps-code">S</span> multiplies every gradient by <span class="mps-code">S</span>, which is exactly a <b>translation</b> of the distribution along the log axis. Slide it too far left and gradients flush to zero; too far right and they overflow to <span class="mps-code">inf</span> and the step is thrown away. Every number below is computed from the real IEEE-style thresholds of the selected format (derived from its exponent/mantissa widths, round-to-nearest-even included) and the exact log-normal tail integrals &mdash; nothing is a lookup table.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="mixed-precision-scaling-fmt">Gradient storage format
+      <select id="mixed-precision-scaling-fmt">
+        <option value="fp16" selected>fp16 &mdash; E5M10 (needs a GradScaler)</option>
+        <option value="bf16">bf16 &mdash; E8M7 (fp32's exponent range)</option>
+        <option value="e5m2">FP8 E5M2 &mdash; the FP8 gradient format</option>
+        <option value="e4m3">FP8 E4M3 &mdash; the FP8 forward format</option>
+      </select>
+    </label>
+    <label for="mixed-precision-scaling-scale">Loss scale <span class="vt-val" id="mixed-precision-scaling-scaleval">S = 2<sup>0</sup> = 1</span>
+      <input id="mixed-precision-scaling-scale" type="range" min="-8" max="30" step="1" value="0">
+    </label>
+    <label for="mixed-precision-scaling-mu">Median gradient magnitude <span class="vt-val" id="mixed-precision-scaling-muval">2<sup>&minus;22</sup></span>
+      <input id="mixed-precision-scaling-mu" type="range" min="-34" max="-4" step="0.5" value="-22">
+    </label>
+    <label for="mixed-precision-scaling-sigma">Spread &sigma; (in powers of 2) <span class="vt-val" id="mixed-precision-scaling-sigmaval">3.50</span>
+      <input id="mixed-precision-scaling-sigma" type="range" min="0.5" max="8" step="0.25" value="3.5">
+    </label>
+    <label for="mixed-precision-scaling-nel">Gradient elements per step
+      <select id="mixed-precision-scaling-nel">
+        <option value="1e6">1M (a toy net)</option>
+        <option value="1.25e8">125M</option>
+        <option value="1.5e9" selected>1.5B</option>
+        <option value="7e9">7B</option>
+        <option value="7e10">70B</option>
+      </select>
+    </label>
+    <label for="mixed-precision-scaling-lr">Learning rate (for the master-weight test)
+      <select id="mixed-precision-scaling-lr">
+        <option value="3e-3">3e&minus;3</option>
+        <option value="1e-3" selected>1e&minus;3</option>
+        <option value="3e-4">3e&minus;4</option>
+        <option value="1e-4">1e&minus;4</option>
+        <option value="3e-5">3e&minus;5</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="vt-actions" id="mixed-precision-scaling-presets">
+    <span class="mps-preset-label">Try:</span>
+    <button type="button" class="vt-reset" data-fmt="fp16" data-k="0">fp16, no scaling</button>
+    <button type="button" class="vt-reset" data-fmt="fp16" data-k="15">fp16, S = 2<sup>15</sup></button>
+    <button type="button" class="vt-reset" data-fmt="fp16" data-k="28">fp16, S far too big</button>
+    <button type="button" class="vt-reset" data-fmt="bf16" data-k="0">bf16, no scaling</button>
+    <button type="button" class="vt-reset" data-fmt="e4m3" data-k="0">FP8 E4M3</button>
+    <button type="button" class="vt-reset" id="mixed-precision-scaling-reset">Reset</button>
+  </div>
+
+  <div class="mps-chart-block">
+    <div class="mps-chart-title">Gradient magnitudes vs the format's representable window</div>
+    <div class="mps-chart-sub" id="mixed-precision-scaling-hist-caption"></div>
+    <div class="mps-svg-wrap">
+      <svg id="mixed-precision-scaling-svg-hist" viewBox="0 0 680 312" preserveAspectRatio="xMidYMid meet" role="img"
+           aria-label="Distribution of gradient magnitudes on a log-2 axis, shaded by what the selected floating-point format does to each magnitude: flush to zero, subnormal, normal, or overflow to infinity"></svg>
+    </div>
+    <div class="mps-legend" id="mixed-precision-scaling-legend"></div>
+  </div>
+
+  <div class="vt-out" id="mixed-precision-scaling-out" aria-live="polite"></div>
+
+  <div class="mps-flow-block">
+    <div class="mps-chart-title">One AMP step &mdash; where this state hurts</div>
+    <div class="mps-flow" id="mixed-precision-scaling-flow" aria-live="polite"></div>
+  </div>
+
+  <div class="mps-chart-block">
+    <div class="mps-chart-title">Dynamic loss scaling: the AIMD controller finding the ceiling</div>
+    <div class="mps-chart-sub" id="mixed-precision-scaling-dyn-caption"></div>
+    <div class="mps-svg-wrap">
+      <svg id="mixed-precision-scaling-svg-dyn" viewBox="0 0 680 214" preserveAspectRatio="xMidYMid meet" role="img"
+           aria-label="Loss scale versus training step for a dynamic GradScaler: it doubles after a run of clean steps and halves on every overflow, producing a sawtooth just under the largest safe scale"></svg>
+    </div>
+  </div>
+
+  <div class="vt-note" id="mixed-precision-scaling-note"></div>
+
+  <style>
+    #tool-mixed-precision-scaling{
+      --mps-zero:#c0483a;      /* flushed to zero      */
+      --mps-sub:#8f5c07;       /* subnormal            */
+      --mps-norm:#2f7d5b;      /* normal, full precision */
+      --mps-ovf:#8b4a9c;       /* overflow to inf      */
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); font-family:var(--sans,sans-serif);
+    }
+    #tool-mixed-precision-scaling .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-mixed-precision-scaling .vt-hint{ font-size:.8rem; color:var(--muted,#6d675d); margin-bottom:14px; line-height:1.6; }
+    #tool-mixed-precision-scaling .mps-code{ font-family:var(--mono,monospace); font-size:.92em; color:var(--ink-soft,#45413a); white-space:nowrap; }
+
+    #tool-mixed-precision-scaling .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px 18px; }
+    #tool-mixed-precision-scaling label{ display:flex; flex-direction:column; gap:6px; font-size:.8rem; color:var(--muted,#6d675d); }
+    #tool-mixed-precision-scaling .vt-val{ color:var(--ink,#211f1b); font-variant-numeric:tabular-nums; font-weight:600; font-family:var(--mono,monospace); }
+    #tool-mixed-precision-scaling select{ font:inherit; font-size:.82rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); max-width:100%; min-width:0; }
+    #tool-mixed-precision-scaling input[type="range"]{ width:100%; accent-color:var(--accent,#c15b39); min-width:0; }
+    #tool-mixed-precision-scaling select:focus-visible,
+    #tool-mixed-precision-scaling input:focus-visible,
+    #tool-mixed-precision-scaling button:focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-mixed-precision-scaling .vt-actions{ margin-top:12px; display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    #tool-mixed-precision-scaling .mps-preset-label{ font-size:.76rem; color:var(--muted,#6d675d); margin-right:2px; }
+    #tool-mixed-precision-scaling .vt-reset{ font:inherit; font-size:.76rem; padding:5px 10px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-mixed-precision-scaling .vt-reset:hover{ background:var(--surface-3,#ece7da); }
+    #tool-mixed-precision-scaling #mixed-precision-scaling-reset{ border-color:var(--accent,#c15b39); color:var(--accent,#c15b39); }
+
+    #tool-mixed-precision-scaling .mps-chart-block,
+    #tool-mixed-precision-scaling .mps-flow-block{ margin-top:18px; }
+    #tool-mixed-precision-scaling .mps-chart-title{ font-size:.82rem; font-weight:600; color:var(--ink,#211f1b); margin-bottom:2px; }
+    #tool-mixed-precision-scaling .mps-chart-sub{ font-size:.72rem; color:var(--muted,#6d675d); margin-bottom:5px; line-height:1.55; }
+    #tool-mixed-precision-scaling .mps-svg-wrap{ width:100%; overflow-x:auto; }
+    #tool-mixed-precision-scaling svg{ width:100%; height:auto; min-width:340px; display:block; }
+
+    #tool-mixed-precision-scaling .mps-legend{ display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:7px; font-size:.71rem; color:var(--muted,#6d675d); }
+    #tool-mixed-precision-scaling .mps-legend span{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-mixed-precision-scaling .mps-sw{ width:13px; height:13px; border-radius:3px; display:inline-block; }
+    #tool-mixed-precision-scaling .mps-sw.is-zero{ background:var(--mps-zero); }
+    #tool-mixed-precision-scaling .mps-sw.is-sub{ background:var(--mps-sub); }
+    #tool-mixed-precision-scaling .mps-sw.is-norm{ background:var(--mps-norm); }
+    #tool-mixed-precision-scaling .mps-sw.is-ovf{ background:var(--mps-ovf); }
+    #tool-mixed-precision-scaling .mps-sw.is-ghost{ background:transparent; border:1px dashed var(--muted,#6d675d); }
+
+    #tool-mixed-precision-scaling .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(178px,1fr)); gap:10px; }
+    #tool-mixed-precision-scaling .vt-stat{ border:1px solid var(--border,#e7e1d4); border-radius:8px; padding:8px 10px; background:var(--surface-2,#f3efe6); }
+    #tool-mixed-precision-scaling .vt-stat .n{ font-size:1rem; font-weight:700; color:var(--ink,#211f1b); font-variant-numeric:tabular-nums;
+      font-family:var(--mono,monospace); overflow-wrap:anywhere; }
+    #tool-mixed-precision-scaling .vt-stat .l{ font-size:.68rem; color:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.03em; margin-top:3px; line-height:1.35; }
+    #tool-mixed-precision-scaling .vt-stat .s{ font-size:.68rem; color:var(--muted,#6d675d); margin-top:3px; line-height:1.4; text-transform:none; letter-spacing:0; }
+    #tool-mixed-precision-scaling .vt-stat.is-bad .n{ color:var(--mps-zero); }
+    #tool-mixed-precision-scaling .vt-stat.is-warn .n{ color:var(--mps-sub); }
+    #tool-mixed-precision-scaling .vt-stat.is-good .n{ color:var(--mps-norm); }
+    #tool-mixed-precision-scaling .vt-stat.is-ovf .n{ color:var(--mps-ovf); }
+
+    #tool-mixed-precision-scaling .mps-flow{ display:flex; flex-wrap:wrap; align-items:stretch; gap:6px; margin-top:6px; }
+    #tool-mixed-precision-scaling .mps-chip{ border:1px solid var(--border-2,#d8d1c0); border-radius:8px; padding:6px 9px;
+      background:var(--surface-2,#f3efe6); min-width:0; flex:1 1 118px; }
+    #tool-mixed-precision-scaling .mps-chip-t{ display:block; font-size:.73rem; font-weight:600; color:var(--ink,#211f1b); line-height:1.3; }
+    #tool-mixed-precision-scaling .mps-chip-s{ display:block; font-size:.66rem; color:var(--muted,#6d675d); margin-top:2px; line-height:1.35;
+      font-family:var(--mono,monospace); }
+    #tool-mixed-precision-scaling .mps-chip.is-bad{ border-color:var(--mps-zero); }
+    #tool-mixed-precision-scaling .mps-chip.is-bad .mps-chip-s{ color:var(--mps-zero); }
+    #tool-mixed-precision-scaling .mps-chip.is-warn{ border-color:var(--mps-sub); }
+    #tool-mixed-precision-scaling .mps-chip.is-warn .mps-chip-s{ color:var(--mps-sub); }
+    #tool-mixed-precision-scaling .mps-chip.is-good{ border-color:var(--mps-norm); }
+    #tool-mixed-precision-scaling .mps-chip.is-good .mps-chip-s{ color:var(--mps-norm); }
+    #tool-mixed-precision-scaling .mps-chip.is-ovf{ border-color:var(--mps-ovf); }
+    #tool-mixed-precision-scaling .mps-chip.is-ovf .mps-chip-s{ color:var(--mps-ovf); }
+    #tool-mixed-precision-scaling .mps-arrow{ align-self:center; color:var(--muted,#6d675d); font-size:.8rem; }
+
+    #tool-mixed-precision-scaling .mps-axis{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-mixed-precision-scaling .mps-grid{ stroke:var(--border,#e7e1d4); stroke-width:1; stroke-dasharray:2 4; }
+    #tool-mixed-precision-scaling .mps-tick{ fill:var(--muted,#6d675d); font-size:10px; font-family:var(--mono,monospace); }
+    #tool-mixed-precision-scaling .mps-axis-title{ fill:var(--muted,#6d675d); font-size:10px; font-family:var(--sans,sans-serif); }
+    #tool-mixed-precision-scaling .mps-reg{ opacity:.13; }
+    #tool-mixed-precision-scaling .mps-reg.is-zero{ fill:var(--mps-zero); }
+    #tool-mixed-precision-scaling .mps-reg.is-sub{ fill:var(--mps-sub); }
+    #tool-mixed-precision-scaling .mps-reg.is-norm{ fill:var(--mps-norm); }
+    #tool-mixed-precision-scaling .mps-reg.is-ovf{ fill:var(--mps-ovf); }
+    #tool-mixed-precision-scaling .mps-reg-label{ font-size:9.5px; font-family:var(--sans,sans-serif); font-weight:700; }
+    #tool-mixed-precision-scaling .mps-reg-label.is-zero{ fill:var(--mps-zero); }
+    #tool-mixed-precision-scaling .mps-reg-label.is-sub{ fill:var(--mps-sub); }
+    #tool-mixed-precision-scaling .mps-reg-label.is-norm{ fill:var(--mps-norm); }
+    #tool-mixed-precision-scaling .mps-reg-label.is-ovf{ fill:var(--mps-ovf); }
+    #tool-mixed-precision-scaling .mps-bar.is-zero{ fill:var(--mps-zero); opacity:.85; }
+    #tool-mixed-precision-scaling .mps-bar.is-sub{ fill:var(--mps-sub); opacity:.85; }
+    #tool-mixed-precision-scaling .mps-bar.is-norm{ fill:var(--mps-norm); opacity:.85; }
+    #tool-mixed-precision-scaling .mps-bar.is-ovf{ fill:var(--mps-ovf); opacity:.85; }
+    #tool-mixed-precision-scaling .mps-thresh{ stroke:var(--ink-soft,#45413a); stroke-width:1.2; stroke-dasharray:4 3; opacity:.75; }
+    #tool-mixed-precision-scaling .mps-thresh-label{ fill:var(--ink-soft,#45413a); font-size:9.5px; font-family:var(--mono,monospace); }
+    #tool-mixed-precision-scaling .mps-ghost{ fill:none; stroke:var(--muted,#6d675d); stroke-width:1.3; stroke-dasharray:3 3; opacity:.9; }
+    #tool-mixed-precision-scaling .mps-shift{ stroke:var(--accent,#c15b39); stroke-width:1.6; }
+    #tool-mixed-precision-scaling .mps-shift-head{ fill:var(--accent,#c15b39); }
+    #tool-mixed-precision-scaling .mps-shift-label{ fill:var(--accent,#c15b39); font-size:10.5px; font-weight:700; font-family:var(--mono,monospace); }
+    #tool-mixed-precision-scaling .mps-off{ fill:var(--muted,#6d675d); font-size:9.5px; font-family:var(--sans,sans-serif); }
+    #tool-mixed-precision-scaling .mps-trace{ fill:none; stroke:var(--accent,#c15b39); stroke-width:1.8; }
+    #tool-mixed-precision-scaling .mps-skip{ fill:var(--mps-ovf); }
+    #tool-mixed-precision-scaling .mps-ceiling{ stroke:var(--mps-ovf); stroke-width:1.3; stroke-dasharray:5 4; }
+    #tool-mixed-precision-scaling .mps-eqline{ stroke:var(--mps-norm); stroke-width:1.3; stroke-dasharray:5 4; }
+    #tool-mixed-precision-scaling .mps-userline{ stroke:var(--ink-soft,#45413a); stroke-width:1.1; stroke-dasharray:2 3; opacity:.8; }
+    #tool-mixed-precision-scaling .mps-legend-txt{ fill:var(--muted,#6d675d); font-size:9.5px; font-family:var(--sans,sans-serif); }
+
+    #tool-mixed-precision-scaling .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.65;
+      border-top:1px dashed var(--border,#e7e1d4); padding-top:10px; }
+    #tool-mixed-precision-scaling .vt-note b{ color:var(--ink-soft,#45413a); }
+
+    @media (prefers-color-scheme: dark){
+      #tool-mixed-precision-scaling{ --mps-zero:#e0705f; --mps-sub:#dda427; --mps-norm:#4fbf8f; --mps-ovf:#b78ad0; }
+    }
+    html[data-theme="dark"] #tool-mixed-precision-scaling{ --mps-zero:#e0705f; --mps-sub:#dda427; --mps-norm:#4fbf8f; --mps-ovf:#b78ad0; }
+    html[data-theme="light"] #tool-mixed-precision-scaling{ --mps-zero:#c0483a; --mps-sub:#8f5c07; --mps-norm:#2f7d5b; --mps-ovf:#8b4a9c; }
+  </style>
+
+  <script>(function(){
+    var NS='http://www.w3.org/2000/svg';
+    var root=document.getElementById('tool-mixed-precision-scaling');
+    if(!root) return;
+
+    var LN2=Math.LN2, LN10=Math.LN10;
+    function L2(x){ return Math.log(x)/LN2; }
+
+    /* ------------------------------------------------------------------ numerics
+       erfc: Numerical-Recipes Chebyshev fit, fractional error < 1.2e-7 everywhere
+       (relative, so the far tails stay usable -- we need probabilities down to 1e-12). */
+    function erfc(x){
+      var z=Math.abs(x), t=1/(1+0.5*z);
+      var ans=t*Math.exp(-z*z-1.26551223+t*(1.00002368+t*(0.37409196+t*(0.09678418+
+        t*(-0.18628806+t*(0.27886807+t*(-1.13520398+t*(1.48851587+
+        t*(-0.82215223+t*0.17087277)))))))));
+      return x>=0?ans:2-ans;
+    }
+    function Phi(z){ return 0.5*erfc(-z/Math.SQRT2); }   /* P(Z <= z) */
+    function Q(z){ return 0.5*erfc(z/Math.SQRT2); }      /* P(Z >  z) */
+    /* P(a < Z <= b), evaluated on whichever side avoids cancellation */
+    function mass(a,b){
+      if(b<=a) return 0;
+      if(a>=0) return Q(a)-Q(b);
+      if(b<=0) return Phi(b)-Phi(a);
+      return (0.5-Phi(a))+(0.5-Q(b));
+    }
+    /* Acklam's inverse normal CDF; relative error < 1.15e-9 on (0,1). */
+    var PA=[-3.969683028665376e+01,2.209460984245205e+02,-2.759285104469687e+02,
+             1.383577518672690e+02,-3.066479806614716e+01,2.506628277459239e+00],
+        PB=[-5.447609879822406e+01,1.615858368580409e+02,-1.556989798598866e+02,
+             6.680131188771972e+01,-1.328068155288572e+01],
+        PC=[-7.784894002430293e-03,-3.223964580411365e-01,-2.400758277161838e+00,
+            -2.549732539343734e+00,4.374664141464968e+00,2.938163982698783e+00],
+        PD=[7.784695709041462e-03,3.224671290700398e-01,2.445134137142996e+00,3.754408661907416e+00];
+    function probit(p){
+      if(!(p>0)) return -40;
+      if(p>=1) return 40;
+      var lo=0.02425, q, r;
+      if(p<lo){
+        q=Math.sqrt(-2*Math.log(p));
+        return (((((PC[0]*q+PC[1])*q+PC[2])*q+PC[3])*q+PC[4])*q+PC[5])/
+               ((((PD[0]*q+PD[1])*q+PD[2])*q+PD[3])*q+1);
+      }
+      if(p<=1-lo){
+        q=p-0.5; r=q*q;
+        return (((((PA[0]*r+PA[1])*r+PA[2])*r+PA[3])*r+PA[4])*r+PA[5])*q/
+               (((((PB[0]*r+PB[1])*r+PB[2])*r+PB[3])*r+PB[4])*r+1);
+      }
+      q=Math.sqrt(-2*Math.log(1-p));
+      return -((((((PC[0]*q+PC[1])*q+PC[2])*q+PC[3])*q+PC[4])*q+PC[5])/
+               ((((PD[0]*q+PD[1])*q+PD[2])*q+PD[3])*q+1));
+    }
+    /* z such that P(Z > z) = q, for small q (the upper quantile) */
+    function zUpper(q){ if(!(q>0)) q=1e-300; if(q>=1) return -40; return -probit(q); }
+
+    /* seeded PRNG (mulberry32): the dynamic-scaler run is identical on every load */
+    function mulberry32(seed){
+      return function(){
+        seed|=0; seed=(seed+0x6D2B79F5)|0;
+        var t=Math.imul(seed^(seed>>>15),1|seed);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+
+    /* --------------------------------------------------- format thresholds (derived)
+       Everything is computed from the exponent/mantissa widths, so the numbers below
+       are the real ones: fp16 -> subnormals to 2^-24, max 65504, inf at 65520; etc.
+         bias        = 2^(E-1) - 1
+         min normal  = 2^(1-bias)
+         min subnorm = 2^(1-bias-M)
+         flush to 0  = anything <= 2^(-bias-M)  (half the min subnormal; RNE ties to even = 0)
+         max finite  = (2 - 2^-M) * 2^bias      (E4M3FN: top mantissa code is NaN, so 2 - 2^(1-M))
+         -> inf      = max finite + half an ulp (E4M3FN saturates here instead) */
+    function mkFmt(id,label,short_,E,M,fn){
+      var bias=Math.pow(2,E-1)-1;
+      var minNormE=1-bias, minSubE=1-bias-M, zeroE=-bias-M;
+      var maxE=fn?bias+1:bias;
+      var maxFinite=(2-Math.pow(2,fn?1-M:-M))*Math.pow(2,maxE);
+      var ovf=maxFinite+Math.pow(2,maxE-M-1);
+      return { id:id, label:label, short:short_, E:E, M:M, sat:!!fn,
+               minNormE:minNormE, minSubE:minSubE, zeroE:zeroE,
+               maxFinite:maxFinite, ovfL:L2(ovf), ovf:ovf };
+    }
+    var FMT={
+      fp16:mkFmt('fp16','fp16 (E5M10)','fp16',5,10,false),
+      bf16:mkFmt('bf16','bf16 (E8M7)','bf16',8,7,false),
+      e5m2:mkFmt('e5m2','FP8 E5M2','E5M2',5,2,false),
+      e4m3:mkFmt('e4m3','FP8 E4M3','E4M3',4,3,true)
+    };
+
+    /* ------------------------------------------------------------------- formatting */
+    function pct(p){
+      if(!(p>0)) return '0%';
+      var v=p*100;
+      /* every consumer of pct() writes into innerHTML, so the comparators are entities */
+      if(v>=99.95) return '&gt;99.9%';
+      if(v>=1) return v.toFixed(1)+'%';
+      if(v>=0.01) return v.toFixed(3)+'%';
+      if(v<1e-10) return '&lt;1e-10%';
+      return v.toExponential(1)+'%';
+    }
+    /* consumers write cnt() into innerHTML, so the comparator is an entity */
+    function cnt(n){
+      if(!(n>0)) return '0';
+      if(n<0.01) return '&lt;0.01';
+      if(n<1000) return n.toFixed(n<10?2:0);
+      return n.toExponential(2);
+    }
+    function sci(x,d){
+      if(!isFinite(x)) return '--';
+      if(x===0) return '0';
+      var a=Math.abs(x);
+      if(a>=1e-4 && a<1e6){
+        if(Math.abs(x-Math.round(x))<1e-9*a) return String(Math.round(x));
+        var s=x.toPrecision(d===undefined?4:d);
+        if(s.indexOf('e')<0 && s.indexOf('.')>=0) s=s.replace(/0+$/,'').replace(/\.$/,'');
+        return s;
+      }
+      return x.toExponential(d===undefined?3:d);
+    }
+    /* element counts read better as 1.5B than as 1.500e+9 */
+    function nEls(m){
+      if(m>=1e9) return (m/1e9<10?(m/1e9).toFixed(1):(m/1e9).toFixed(0))+'B';
+      if(m>=1e6) return (m/1e6<10?(m/1e6).toFixed(1):(m/1e6).toFixed(0))+'M';
+      return String(Math.round(m));
+    }
+    function powHTML(k){ return '2<sup>'+(k<0?('&minus;'+Math.abs(k)):k)+'</sup>'; }
+    function powTxt(k){ return '2^'+k; }
+
+    /* --------------------------------------------------------------------- elements */
+    var fmtIn=root.querySelector('#mixed-precision-scaling-fmt');
+    var scaleIn=root.querySelector('#mixed-precision-scaling-scale');
+    var muIn=root.querySelector('#mixed-precision-scaling-mu');
+    var sigIn=root.querySelector('#mixed-precision-scaling-sigma');
+    var nelIn=root.querySelector('#mixed-precision-scaling-nel');
+    var lrIn=root.querySelector('#mixed-precision-scaling-lr');
+    var scaleVal=root.querySelector('#mixed-precision-scaling-scaleval');
+    var muVal=root.querySelector('#mixed-precision-scaling-muval');
+    var sigVal=root.querySelector('#mixed-precision-scaling-sigmaval');
+    var svgH=root.querySelector('#mixed-precision-scaling-svg-hist');
+    var svgD=root.querySelector('#mixed-precision-scaling-svg-dyn');
+    var capH=root.querySelector('#mixed-precision-scaling-hist-caption');
+    var capD=root.querySelector('#mixed-precision-scaling-dyn-caption');
+    var legEl=root.querySelector('#mixed-precision-scaling-legend');
+    var outEl=root.querySelector('#mixed-precision-scaling-out');
+    var flowEl=root.querySelector('#mixed-precision-scaling-flow');
+    var noteEl=root.querySelector('#mixed-precision-scaling-note');
+    if(!fmtIn||!scaleIn||!muIn||!sigIn||!nelIn||!lrIn||!svgH||!svgD) return;
+
+    function el(tag,attrs,text){
+      var e=document.createElementNS(NS,tag),k;
+      for(k in attrs) if(Object.prototype.hasOwnProperty.call(attrs,k)) e.setAttribute(k,attrs[k]);
+      if(text!==undefined) e.textContent=text;
+      return e;
+    }
+    function clear(s){ while(s.firstChild) s.removeChild(s.firstChild); }
+    /* "2" with a superscript exponent, as one <text> */
+    function powText(x,y,expv,cls,anchor){
+      var t=el('text',{x:x.toFixed(1),y:y.toFixed(1),class:cls,'text-anchor':anchor||'middle'});
+      t.appendChild(document.createTextNode('2'));
+      var s=document.createElementNS(NS,'tspan');
+      s.setAttribute('dy','-4'); s.setAttribute('font-size','8');
+      s.textContent=(expv<0?'−':'')+Math.abs(expv);
+      t.appendChild(s);
+      return t;
+    }
+
+    /* ---------------------------------------------------------------- chart 1 geometry */
+    var W1=680,H1=312,L1=54,R1=20,T1=36,B1=58;
+    var pw1=W1-L1-R1, ph1=H1-T1-B1;
+    var NBINS=88;
+
+    var FATECLS={zero:'is-zero',sub:'is-sub',norm:'is-norm',ovf:'is-ovf'};
+    function fateOf(x,f){
+      if(x<=f.zeroE) return 'zero';
+      if(x<f.minNormE) return 'sub';
+      if(x>=f.ovfL) return 'ovf';
+      return 'norm';
+    }
+
+    function renderHist(st){
+      clear(svgH);
+      var f=st.f, xlo=st.xlo, xhi=st.xhi, span=xhi-xlo;
+      function X(v){ var t=(v-xlo)/span; if(t<0)t=0; if(t>1)t=1; return L1+t*pw1; }
+      var yTop=Math.log(st.M)/LN10;                 /* an element count can never exceed M */
+      if(yTop<1) yTop=1;
+      function Y(c){
+        if(!(c>1)) return T1+ph1;
+        var l=Math.log(c)/LN10; if(l>yTop) l=yTop;
+        return T1+ph1-(l/yTop)*ph1;
+      }
+
+      /* --- fate regions (clipped to the visible domain) --- */
+      var regs=[
+        {a:-1e9,          b:f.zeroE,    cls:'is-zero', t:'flush to 0'},
+        {a:f.zeroE,       b:f.minNormE, cls:'is-sub',  t:'subnormal'},
+        {a:f.minNormE,    b:f.ovfL,     cls:'is-norm', t:'normal'},
+        {a:f.ovfL,        b:1e9,        cls:'is-ovf',  t:(f.sat?'clipped to max':'overflow → inf')}
+      ],ri;
+      for(ri=0;ri<regs.length;ri++){
+        var rg=regs[ri];
+        var a=Math.max(rg.a,xlo), b=Math.min(rg.b,xhi);
+        if(b<=a) continue;
+        var x0=X(a), x1=X(b);
+        svgH.appendChild(el('rect',{x:x0.toFixed(1),y:T1,width:Math.max(0.5,x1-x0).toFixed(1),
+          height:ph1,class:'mps-reg '+rg.cls}));
+        if(x1-x0>76) svgH.appendChild(el('text',{x:((x0+x1)/2).toFixed(1),y:(T1+12).toFixed(1),
+          class:'mps-reg-label '+rg.cls,'text-anchor':'middle'},rg.t));
+      }
+
+      /* --- y grid + ticks: 1, 1e3, 1e6, ... elements --- */
+      var d;
+      for(d=0;d<=yTop+1e-9;d+=3){
+        var yy=T1+ph1-(d/yTop)*ph1;
+        svgH.appendChild(el('line',{x1:L1,y1:yy.toFixed(1),x2:(L1+pw1),y2:yy.toFixed(1),class:'mps-grid'}));
+        svgH.appendChild(el('text',{x:(L1-7).toFixed(1),y:(yy+3.4).toFixed(1),class:'mps-tick',
+          'text-anchor':'end'},d===0?'1':('1e'+d)));
+      }
+
+      /* --- bins: expected element counts under log2|g| ~ Normal(mu, sigma) ---
+         A uniform bin can straddle a fate boundary, which would paint (say) green
+         to the left of the "min normal" line. So each bar keeps its full height —
+         the expected count for that uniform bin, which is what the y-axis means —
+         but is painted piecewise, cut at every threshold that falls inside it. */
+      var THR=[f.zeroE,f.minNormE,f.ovfL];
+      var bw=span/NBINS, i, ghostPts=[], anyGhost=(st.k!==0);
+      for(i=0;i<NBINS;i++){
+        var a2=xlo+i*bw, b2=a2+bw;
+        var za=(a2-st.muS)/st.sig, zb=(b2-st.muS)/st.sig;
+        var n=st.M*mass(za,zb);
+        if(anyGhost){
+          var zga=(a2-st.mu)/st.sig, zgb=(b2-st.mu)/st.sig;
+          ghostPts.push([X(a2),Y(st.M*mass(zga,zgb)),X(b2)]);
+        }
+        if(n>1){
+          var yb=Y(n), hgt=Math.max(0.8,T1+ph1-yb);
+          var cuts=[a2], ti, si;
+          for(ti=0;ti<THR.length;ti++) if(THR[ti]>a2&&THR[ti]<b2) cuts.push(THR[ti]);
+          cuts.push(b2);
+          cuts.sort(function(p,q){ return p-q; });
+          var xL=X(a2)+0.3, xR=X(b2)-0.3;
+          if(xR-xL<0.6) xR=xL+0.6;
+          for(si=0;si<cuts.length-1;si++){
+            var xa=si===0?xL:Math.min(Math.max(X(cuts[si]),xL),xR);
+            var xb=si===cuts.length-2?xR:Math.min(Math.max(X(cuts[si+1]),xL),xR);
+            if(xb-xa<0.35) continue;                       /* sub-pixel sliver: skip */
+            svgH.appendChild(el('rect',{x:xa.toFixed(1),y:yb.toFixed(1),
+              width:(xb-xa).toFixed(1),height:hgt.toFixed(1),
+              class:'mps-bar '+FATECLS[fateOf((cuts[si]+cuts[si+1])/2,f)]}));
+          }
+        }
+      }
+
+      /* --- dashed outline of the UNSCALED distribution + the shift arrow --- */
+      if(anyGhost){
+        var pathd='', j;
+        for(j=0;j<ghostPts.length;j++){
+          var g=ghostPts[j];
+          pathd+=(j===0?'M':'L')+g[0].toFixed(1)+' '+g[1].toFixed(1)+'L'+g[2].toFixed(1)+' '+g[1].toFixed(1);
+        }
+        svgH.appendChild(el('path',{d:pathd,class:'mps-ghost'}));
+        var ya=T1+ph1*0.30, xA=X(st.mu), xB=X(st.muS);
+        if(Math.abs(xB-xA)>26 && xA>L1+1 && xA<L1+pw1-1 && xB>L1+1 && xB<L1+pw1-1){
+          var dir=(xB>xA)?1:-1;
+          svgH.appendChild(el('line',{x1:xA.toFixed(1),y1:ya.toFixed(1),
+            x2:(xB-dir*7).toFixed(1),y2:ya.toFixed(1),class:'mps-shift'}));
+          svgH.appendChild(el('path',{d:'M'+xB.toFixed(1)+' '+ya.toFixed(1)+
+            'l'+(-dir*8)+' -4 l0 8 z',class:'mps-shift-head'}));
+          svgH.appendChild(el('text',{x:((xA+xB)/2).toFixed(1),y:(ya-6).toFixed(1),
+            class:'mps-shift-label','text-anchor':'middle'},'× S = × 2^'+st.k));
+        }
+      }
+
+      /* --- threshold lines --- */
+      var th=[{v:f.zeroE,lab:'≤ '+powTxt(f.zeroE)+' → 0'},
+              {v:f.minNormE,lab:powTxt(f.minNormE)+' min normal'},
+              {v:f.ovfL,lab:sci(f.maxFinite,4)+(f.sat?' max (clip)':' max → inf')}];
+      for(ri=0;ri<th.length;ri++){
+        var tv=th[ri].v;
+        if(tv<=xlo||tv>=xhi) continue;
+        var xt=X(tv), lx=xt, anc='middle';
+        if(xt>L1+pw1-66){ lx=L1+pw1; anc='end'; }        /* keep the label inside the viewBox */
+        else if(xt<L1+66){ lx=L1; anc='start'; }
+        svgH.appendChild(el('line',{x1:xt.toFixed(1),y1:T1,x2:xt.toFixed(1),y2:(T1+ph1),class:'mps-thresh'}));
+        svgH.appendChild(el('text',{x:lx.toFixed(1),y:(T1-(ri===1?18:6)).toFixed(1),
+          class:'mps-thresh-label','text-anchor':anc},th[ri].lab));
+      }
+      /* thresholds that are off the chart entirely (bf16's are, by a mile) */
+      if(f.zeroE<xlo) svgH.appendChild(el('text',{x:(L1+4).toFixed(1),y:(T1+ph1-8).toFixed(1),
+        class:'mps-off','text-anchor':'start'},'← flushes to 0 only below '+powTxt(f.zeroE)));
+      if(f.ovfL>xhi) svgH.appendChild(el('text',{x:(L1+pw1-4).toFixed(1),y:(T1+ph1-8).toFixed(1),
+        class:'mps-off','text-anchor':'end'},(f.sat?'clips':'overflows')+' only above '+sci(f.maxFinite,4)+' →'));
+
+      /* --- axes --- */
+      svgH.appendChild(el('line',{x1:L1,y1:(T1+ph1),x2:(L1+pw1),y2:(T1+ph1),class:'mps-axis'}));
+      svgH.appendChild(el('line',{x1:L1,y1:T1,x2:L1,y2:(T1+ph1),class:'mps-axis'}));
+
+      var cands=[2,5,10,20,25,50], stp=cands[cands.length-1], ci;
+      for(ci=0;ci<cands.length;ci++){ if(span/cands[ci]<=11){ stp=cands[ci]; break; } }
+      var first=Math.ceil(xlo/stp)*stp, v;
+      for(v=first;v<=xhi+1e-9;v+=stp){
+        var xv=X(v);
+        svgH.appendChild(el('line',{x1:xv.toFixed(1),y1:(T1+ph1),x2:xv.toFixed(1),y2:(T1+ph1+4),class:'mps-axis'}));
+        svgH.appendChild(powText(xv,T1+ph1+16,Math.round(v),'mps-tick','middle'));
+      }
+      svgH.appendChild(el('text',{x:(L1+pw1/2).toFixed(1),y:(T1+ph1+34).toFixed(1),
+        class:'mps-axis-title','text-anchor':'middle'},'gradient magnitude |g| after scaling  (log₂ axis)'));
+      svgH.appendChild(el('text',{x:(-(T1+ph1/2)).toFixed(1),y:14,class:'mps-axis-title',
+        'text-anchor':'middle',transform:'rotate(-90)'},'expected elements per bin'));
+    }
+
+    /* ---------------------------------------------------------------- chart 2: AIMD */
+    var W2=680,H2=214,L2x=54,R2=20,T2=24,B2=46;
+    var pw2=W2-L2x-R2, ph2=H2-T2-B2;
+    var STEPS=240, GROWTH=25, K0=16;
+
+    function simulate(st){
+      var rng=mulberry32(0x1B873593);
+      var s=K0, good=0, tr=[], skipped=0, i;
+      for(i=0;i<STEPS;i++){
+        var u=rng(); if(!(u>0)) u=1e-12;
+        /* exact draw of the per-step amax: max of M iid magnitudes, via its CDF F^M */
+        var q=-Math.expm1(Math.log(u)/st.M);        /* = 1 - u^(1/M), the upper tail prob */
+        var amaxL=st.mu+st.sig*zUpper(q)+s;         /* log2 of the SCALED amax */
+        var over=(amaxL>=st.f.ovfL);
+        tr.push({s:s,over:over});
+        if(over){ s-=1; good=0; skipped++; }
+        else { good++; if(good>=GROWTH){ s+=1; good=0; } }
+      }
+      return {tr:tr,skipped:skipped};
+    }
+
+    function renderDyn(st,sim){
+      clear(svgD);
+      var tr=sim.tr, i;
+      /* the trace always sets the y-range; every reference level joins it only if it is
+         close enough not to squash the sawtooth (bf16's ceiling sits ~112 octaves up, so
+         it gets an off-scale note instead of a line) */
+      var lo=tr[0].s, hi=tr[0].s;
+      for(i=0;i<tr.length;i++){ if(tr[i].s<lo) lo=tr[i].s; if(tr[i].s>hi) hi=tr[i].s; }
+      var refs=[st.kSafe,st.kEq,st.k], rj;
+      for(rj=0;rj<refs.length;rj++){
+        var rv=refs[rj];
+        if(!isFinite(rv)) continue;
+        if(rv<lo && rv>lo-7) lo=rv;
+        if(rv>hi && rv<hi+7) hi=rv;
+      }
+      lo-=1.5; hi+=1.5;
+      if(hi-lo<4){ var mid=(hi+lo)/2; lo=mid-2; hi=mid+2; }
+      /* step j occupies [X(j), X(j+1)), so the axis tick labelled STEPS sits at the right edge */
+      function X(i2){ return L2x+(i2/STEPS)*pw2; }
+      function Y(v){ var t=(v-lo)/(hi-lo); if(t<0)t=0; if(t>1)t=1; return T2+ph2-t*ph2; }
+
+      /* y grid at integer powers of two (at most ~8 lines) */
+      var stepY=Math.max(1,Math.ceil((hi-lo)/8)), v;
+      for(v=Math.ceil(lo/stepY)*stepY;v<=hi;v+=stepY){
+        var yy=Y(v);
+        svgD.appendChild(el('line',{x1:L2x,y1:yy.toFixed(1),x2:(L2x+pw2),y2:yy.toFixed(1),class:'mps-grid'}));
+        svgD.appendChild(powText(L2x-7,yy+3.4,Math.round(v),'mps-tick','end'));
+      }
+
+      /* hard ceiling: at this scale the MEDIAN step already overflows (P = 1/2) */
+      if(st.kSafe>lo&&st.kSafe<hi){
+        var yc=Y(st.kSafe);
+        svgD.appendChild(el('line',{x1:L2x,y1:yc.toFixed(1),x2:(L2x+pw2),y2:yc.toFixed(1),class:'mps-ceiling'}));
+        svgD.appendChild(el('text',{x:(L2x+pw2-3).toFixed(1),y:(yc-4).toFixed(1),
+          class:'mps-legend-txt','text-anchor':'end'},'2^'+st.kSafe.toFixed(1)+': half of all steps overflow'));
+      }
+      /* where the controller balances: +1 octave per GROWTH clean steps vs -1 per overflow */
+      if(st.kEq>lo&&st.kEq<hi){
+        var ye=Y(st.kEq);
+        svgD.appendChild(el('line',{x1:L2x,y1:ye.toFixed(1),x2:(L2x+pw2),y2:ye.toFixed(1),class:'mps-eqline'}));
+        svgD.appendChild(el('text',{x:(L2x+pw2-3).toFixed(1),y:(ye+11).toFixed(1),
+          class:'mps-legend-txt','text-anchor':'end'},'2^'+st.kEq.toFixed(1)+': predicted AIMD equilibrium'));
+      }
+      /* bf16's ceiling is ~112 octaves above the trace: say so rather than squashing the plot */
+      if(st.kSafe>=hi) svgD.appendChild(el('text',{x:(L2x+pw2-3).toFixed(1),y:(T2+11).toFixed(1),
+        class:'mps-legend-txt','text-anchor':'end'},
+        'ceiling is 2^'+st.kSafe.toFixed(1)+', far above this range — nothing ever overflows, so S just climbs'));
+      /* the scale the slider is currently set to */
+      if(st.k>lo&&st.k<hi){
+        var yu=Y(st.k);
+        svgD.appendChild(el('line',{x1:L2x,y1:yu.toFixed(1),x2:(L2x+pw2),y2:yu.toFixed(1),class:'mps-userline'}));
+        svgD.appendChild(el('text',{x:(L2x+3).toFixed(1),y:(yu-4).toFixed(1),
+          class:'mps-legend-txt','text-anchor':'start'},'your static S = 2^'+st.k));
+      } else {
+        svgD.appendChild(el('text',{x:(L2x+3).toFixed(1),y:(st.k>hi?(T2+10):(T2+ph2-4)).toFixed(1),
+          class:'mps-legend-txt','text-anchor':'start'},
+          'your static S = 2^'+st.k+' is off this scale '+(st.k>hi?'↑':'↓')));
+      }
+
+      var d='',j;
+      for(j=0;j<tr.length;j++){
+        var x0=X(j), x1=X(j+1), y0=Y(tr[j].s);
+        d+=(j===0?'M':'L')+x0.toFixed(1)+' '+y0.toFixed(1)+'L'+x1.toFixed(1)+' '+y0.toFixed(1);
+      }
+      svgD.appendChild(el('path',{d:d,class:'mps-trace'}));
+      for(j=0;j<tr.length;j++) if(tr[j].over)
+        svgD.appendChild(el('circle',{cx:X(j+0.5).toFixed(1),cy:Y(tr[j].s).toFixed(1),r:2.4,class:'mps-skip'}));
+
+      svgD.appendChild(el('line',{x1:L2x,y1:(T2+ph2),x2:(L2x+pw2),y2:(T2+ph2),class:'mps-axis'}));
+      svgD.appendChild(el('line',{x1:L2x,y1:T2,x2:L2x,y2:(T2+ph2),class:'mps-axis'}));
+      var t2;
+      for(t2=0;t2<=STEPS;t2+=40){
+        var xt=X(t2);
+        svgD.appendChild(el('line',{x1:xt.toFixed(1),y1:(T2+ph2),x2:xt.toFixed(1),y2:(T2+ph2+4),class:'mps-axis'}));
+        svgD.appendChild(el('text',{x:xt.toFixed(1),y:(T2+ph2+16).toFixed(1),class:'mps-tick','text-anchor':'middle'},String(t2)));
+      }
+      svgD.appendChild(el('text',{x:(L2x+pw2/2).toFixed(1),y:(T2+ph2+32).toFixed(1),
+        class:'mps-axis-title','text-anchor':'middle'},'training step  —  purple dots = overflow detected, step skipped, scale halved'));
+      svgD.appendChild(el('text',{x:(-(T2+ph2/2)).toFixed(1),y:14,class:'mps-axis-title',
+        'text-anchor':'middle',transform:'rotate(-90)'},'loss scale S'));
+    }
+
+    /* --------------------------------------------------------------------- update */
+    function upd(){
+      /* ---- read + guard every control ---- */
+      var f=FMT[fmtIn.value]; if(!f){ f=FMT.fp16; }
+      var k=parseInt(scaleIn.value,10); if(!isFinite(k)) k=0;
+      if(k<-8) k=-8; if(k>30) k=30;
+      var mu=parseFloat(muIn.value); if(!isFinite(mu)) mu=-22;
+      if(mu<-34) mu=-34; if(mu>-4) mu=-4;
+      var sig=parseFloat(sigIn.value); if(!isFinite(sig)) sig=3.5;
+      if(sig<0.5) sig=0.5; if(sig>8) sig=8;
+      var M=parseFloat(nelIn.value); if(!isFinite(M)||M<1) M=1.5e9;
+      var lr=parseFloat(lrIn.value); if(!isFinite(lr)||lr<=0) lr=1e-3;
+
+      var S=Math.pow(2,k), muS=mu+k;
+      scaleVal.innerHTML='S = '+powHTML(k)+' = '+(k<0?sci(S,3):(S<1e6?String(S):S.toExponential(2)));
+      muVal.innerHTML=powHTML(mu===Math.round(mu)?Math.round(mu):mu)+' ≈ '+Math.pow(2,mu).toExponential(1);
+      sigVal.textContent=sig.toFixed(2);
+
+      /* ---- exact fractions under log2|g| ~ Normal(mu + k, sigma) ---- */
+      function z(t){ return (t-muS)/sig; }
+      var pZero=Phi(z(f.zeroE));                     /* rounds to exactly 0            */
+      var pSub=Math.max(0,Phi(z(f.minNormE))-pZero); /* representable, but degraded    */
+      var pOvf=Q(z(f.ovfL));                         /* rounds to inf (or clips)       */
+      /* share of the squared gradient norm below the flush-to-zero floor:
+         E[g^2 1{Z<z0}] / E[g^2] = Phi(z0 - a) with a = 2*sigma*ln2  (log-normal identity) */
+      var aE=2*sig*LN2;
+      var pEnergy=Phi(z(f.zeroE)-aE);
+      /* chance that AT LEAST ONE of the M elements overflows this step */
+      var pStep=(pOvf<=0)?0:(pOvf>=1?1:-Math.expm1(M*Math.log1p(-pOvf)));
+
+      /* median of the per-step amax, and the scale that puts it exactly at the ceiling
+         (so at S = 2^kSafe half of all steps already overflow -- it is a hard ceiling,
+         not a "safe" operating point) */
+      var zMed=zUpper(-Math.expm1(Math.log(0.5)/M));
+      var amaxL=mu+sig*zMed;                          /* log2 amax of the UNSCALED grads */
+      var kSafe=f.ovfL-amaxL;
+      /* where the AIMD controller actually balances: it gains +1 octave per GROWTH clean
+         steps and loses 1 on each overflow, so the drift is zero when the per-step
+         overflow probability is 1/(GROWTH+1). Invert pStep(k) at that probability. */
+      var pEq=1/(GROWTH+1);
+      var kEq=f.ovfL-(mu+sig*zUpper(-Math.expm1(Math.log1p(-pEq)/M)));
+
+      /* master weights (the OTHER low-precision failure, and the one loss scaling cannot touch):
+         w - dw rounds straight back to w whenever |dw| is under half the gap below w. Reference
+         weight |w| = 2^-6 = 2^wE (a fan-in init scale for d = 4096). Sitting exactly on a power
+         of two, the gap below it is 2^(wE-1-M) and half of that is 2^(wE-2-M) -- for fp16 that
+         is 2^-18, checked against numpy.float16; a mid-binade weight swallows steps up to 2x
+         larger. Note this scales with the MANTISSA width, so bf16 weights swamp 8x sooner than
+         fp16 ones. The update modelled is the SGD-style lr*g; Adam is handled in the text. */
+      /* the binade just below 2^wE has spacing 2^(wE-1-M) -- unless 2^wE is itself the smallest
+         normal (true for E4M3, whose min normal IS 2^-6), in which case the values below it are
+         subnormals with the fixed spacing 2^minSubE. Both cases verified against a reference
+         round-to-nearest-even cast. */
+      var wE=-6, gapE=Math.max(wE-1-f.M,f.minSubE), halfGapE=gapE-1;
+      var thr=halfGapE-Math.log(lr)/LN2;              /* log2|g| below which lr*|g| is lost */
+      var pLost=Phi((thr-mu)/sig);                    /* uses the UNSCALED gradient        */
+      var lrAdam=Math.pow(2,halfGapE);                /* lr at which even Adam's ~lr-sized step vanishes */
+
+      /* ---- x-domain: framed on the data, and on the thresholds when they are near ---- */
+      var xlo=Math.min(mu,muS)-4.4*sig-2, xhi=Math.max(mu,muS)+4.4*sig+2;
+      if(f.zeroE-4>-96) xlo=Math.min(xlo,f.zeroE-4);
+      if(f.ovfL+4<72) xhi=Math.max(xhi,f.ovfL+4);
+      if(xlo<-96) xlo=-96;
+      if(xhi>72) xhi=72;
+      if(xhi-xlo<24) xhi=xlo+24;
+
+      var st={f:f,k:k,mu:mu,muS:muS,sig:sig,M:M,lr:lr,xlo:xlo,xhi:xhi,kSafe:kSafe,kEq:kEq};
+
+      renderHist(st);
+      var sim=simulate(st);
+      renderDyn(st,sim);
+
+      /* ---- captions ---- */
+      capH.innerHTML='<b>'+f.label+'</b>: subnormals down to '+powTxt(f.minSubE)+' = '+Math.pow(2,f.minSubE).toExponential(2)+
+        ', smallest normal '+powTxt(f.minNormE)+' = '+Math.pow(2,f.minNormE).toExponential(2)+
+        ', largest finite '+sci(f.maxFinite,4)+(f.sat?' (no inf — the cast saturates).':' (anything ≥ '+sci(f.ovf,6)+' rounds to inf).')+
+        ' The dashed outline is the distribution <i>before</i> scaling; the bars are after × S. Bar height is the expected number of the '+
+        nEls(M)+' gradient elements in that bin (log scale).';
+
+      var lastLo=Infinity,lastHi=-Infinity,ii;
+      for(ii=STEPS-80;ii<STEPS;ii++){ if(sim.tr[ii].s<lastLo) lastLo=sim.tr[ii].s; if(sim.tr[ii].s>lastHi) lastHi=sim.tr[ii].s; }
+      capD.innerHTML='Start at '+powTxt(K0)+', double after '+GROWTH+' clean steps, halve <i>and skip the step</i> on any inf '+
+        '(PyTorch’s <span class="mps-code">GradScaler</span> uses 2000 clean steps — shortened here so the sawtooth is visible). '+
+        'Over '+STEPS+' steps it skipped <b>'+sim.skipped+'</b> ('+(100*sim.skipped/STEPS).toFixed(1)+'% of updates thrown away) and '+
+        (lastLo===lastHi?('settled at '+powTxt(lastLo)):('ranged over '+powTxt(lastLo)+'…'+powTxt(lastHi)))+
+        ' in the last 80 steps. '+
+        (sim.skipped===0
+          ? 'Nothing ever overflowed, so S just ratchets upward with nothing to find — the ceiling is '+powTxt(kSafe.toFixed(1))+
+            ', some '+(kSafe-lastHi).toFixed(0)+' octaves above where it got to. That is the bf16 story: the controller is dead weight.'
+          : 'The controller balances where the per-step overflow probability equals 1/'+(GROWTH+1)+
+            ' — predicted '+powTxt(kEq.toFixed(1))+' — deliberately <i>below</i> the '+powTxt(kSafe.toFixed(1))+
+            ' at which half of all steps would overflow.')+
+        (f.sat?' <b>Caveat:</b> E4M3 has no inf — it saturates silently, so an inf check would never fire. Transformer Engine drives this same controller from the observed <i>amax</i> instead; that is delayed/current scaling.':'');
+
+      legEl.innerHTML=
+        '<span><i class="mps-sw is-zero" aria-hidden="true"></i> flushed to zero (gradient lost)</span>'+
+        '<span><i class="mps-sw is-sub" aria-hidden="true"></i> subnormal (fewer mantissa bits)</span>'+
+        '<span><i class="mps-sw is-norm" aria-hidden="true"></i> normal (full precision)</span>'+
+        '<span><i class="mps-sw is-ovf" aria-hidden="true"></i> '+(f.sat?'clipped to max (silent)':'overflow → inf')+'</span>'+
+        '<span><i class="mps-sw is-ghost" aria-hidden="true"></i> distribution before scaling</span>';
+
+      /* ---- stat cards ---- */
+      var window_=f.ovfL-f.zeroE, need=8*sig;
+      var subMid=Math.round((f.minSubE+f.minNormE)/2);   /* a representative subnormal binade */
+      var stats=[
+        ['', 'S = '+powTxt(k), 'Loss scale', 'A power of two, so the &divide;S unscale in fp32 is exact — no rounding cost.'],
+        [pZero>0.01?'is-bad':(pZero>1e-4?'is-warn':'is-good'), pct(pZero), 'Gradients flushed to zero',
+          cnt(M*pZero)+' of '+nEls(M)+' elements become exactly 0 — and &divide;S cannot bring them back.'],
+        [pSub>0.05?'is-warn':'', pct(pSub), 'Landing in subnormals',
+          'Representable, but gradual: a value near '+powTxt(subMid)+' has spacing '+powTxt(f.minSubE)+
+          ', i.e. '+Math.max(0,subMid-f.minSubE)+' significand bits instead of '+f.M+'.'],
+        [pStep>0.5?'is-ovf':(pStep>0.02?'is-warn':'is-good'), pct(pStep), 'Chance this step overflows',
+          f.sat?'E4M3 saturates instead of producing inf: the clip is silent.':'One inf anywhere ⇒ GradScaler skips the whole optimizer step.'],
+        [pEnergy>1e-3?'is-warn':'', pct(pEnergy), 'Share of &Sigma;g&sup2; below the floor',
+          'The zeroed coordinates carry almost no gradient <i>energy</i> — the damage is that they get no update at all.'],
+        [window_<need?'is-warn':'is-good', window_.toFixed(1)+' vs '+need.toFixed(0),
+          f.short+' window vs gradient span (octaves)',
+          'The format spans '+window_.toFixed(1)+' powers of two; &plusmn;4&sigma; of your gradients spans '+need.toFixed(0)+
+          '. If the window is smaller, <i>no</i> single scale can hold everything.'],
+        [pLost>0.5?'is-bad':(pLost>0.05?'is-warn':'is-good'), pct(pLost), 'SGD updates lost without fp32 masters',
+          'At |w| = 2<sup>&minus;6</sup> the '+f.short+' gap below w is '+powTxt(gapE)+', so any step under half of it — '+
+          lrAdam.toExponential(1)+' — rounds w &minus; lr&middot;g straight back to w. Adam instead takes a <i>normalized</i> '+
+          'step of size ≈ lr, which survives until lr decays past that same '+lrAdam.toExponential(1)+'. '+
+          '<b>No value of S changes either number</b> — S cancels in the update.']
+      ];
+      outEl.innerHTML=stats.map(function(o){
+        return '<div class="vt-stat '+o[0]+'"><div class="n">'+o[1]+'</div><div class="l">'+o[2]+'</div><div class="s">'+o[3]+'</div></div>';
+      }).join('');
+
+      /* ---- the AMP step, with the currently-hurting stage flagged ---- */
+      var gradCls=pZero>0.01?'is-bad':(pZero>1e-4?'is-warn':'is-good');
+      var infCls=pStep>0.5?'is-ovf':(pStep>0.02?'is-warn':'is-good');
+      var mstCls=pLost>0.05?'is-warn':'is-good';
+      var chips=[
+        ['','fp32 master weights','the authoritative copy'],
+        ['','cast → '+f.short,'forward runs low-precision'],
+        ['','loss × S','×'+powTxt(k)+' before backward'],
+        [gradCls,'backward: '+f.short+' grads',pct(pZero)+' zeroed'],
+        [infCls,f.sat?'no inf to check':'check inf → skip',f.sat?'clip is silent':pct(pStep)+' skip risk'],
+        ['','unscale ÷ S','exact in fp32'],
+        [mstCls,'fp32 optimizer step',pct(pLost)+' would vanish in '+f.short]
+      ];
+      flowEl.innerHTML=chips.map(function(c,i2){
+        return (i2?'<span class="mps-arrow">→</span>':'')+
+          '<div class="mps-chip '+c[0]+'"><span class="mps-chip-t">'+c[1]+'</span><span class="mps-chip-s">'+c[2]+'</span></div>';
+      }).join('');
+
+      /* ---- takeaway ---- */
+      var msg;
+      if(f.id==='bf16'){
+        msg='<b>bf16 borrows fp32’s 8-bit exponent</b>, so its floor sits at '+powTxt(f.zeroE)+
+          ' ≈ '+Math.pow(2,f.zeroE).toExponential(1)+' and its ceiling at '+sci(f.maxFinite,3)+
+          ' — both far off this chart. Every bar is green at <i>any</i> scale: '+pct(pZero)+' underflow, '+pct(pStep)+
+          ' chance of an inf. There is nothing for a GradScaler to rescue, which is why bf16 training simply drops it '+
+          '(and why wrapping a bf16 run in one is a no-op at best). The price is the 7-bit mantissa: bf16 has ~3 decimal digits, '+
+          'so you still keep the optimizer state and the master weights in fp32.';
+      } else if(pZero>0.02){
+        msg='<b>'+pct(pZero)+' of your gradient coordinates round to exactly zero</b> in '+f.short+' at S = '+powTxt(k)+
+          ' — '+cnt(M*pZero)+' dead elements per step. Unscaling divides by S, and 0/S is still 0, so those coordinates '+
+          'get no update this step at all. Note the second number: they hold only '+pct(pEnergy)+' of Σg², so the gradient '+
+          '<i>norm</i> barely moves — the failure is silent. It bites hardest when a whole tensor sits under the floor '+
+          '(one global loss scale cannot fix a per-tensor problem; that is what per-tensor FP8 scaling is for). '+
+          (window_>=need
+            ? 'Drag S right and watch the red bars translate into the green band.'
+            : 'Drag S right and the red bars turn purple without ever all fitting — this window is narrower than the '+
+              'distribution, so <i>no</i> scale works and the format itself is the wrong choice here.');
+      } else if(pStep>0.25){
+        msg='<b>S = '+powTxt(k)+' is too big.</b> The largest of '+nEls(M)+' gradients lands above '+sci(f.maxFinite,4)+
+          ' with probability '+pct(pStep)+', so most steps produce an inf, the GradScaler discards the optimizer step, '+
+          'and halves S. That is exactly the sawtooth below: the AIMD controller costs '+
+          (100*sim.skipped/STEPS).toFixed(1)+'% of steps here while it hunts. Back S off to about '+powTxt(Math.floor(kEq))+
+          ' — where the controller itself settles, roughly '+(kSafe-kEq).toFixed(1)+
+          ' octaves under the scale that would overflow every other step — and both failure modes are near zero.';
+      } else {
+        msg='<b>S = '+powTxt(k)+' lands the distribution inside '+f.short+'’s window:</b> '+pct(pZero)+' flushed to zero, '+
+          pct(pStep)+' chance of an inf. Loss scaling is a pure translation on this log axis — mathematically a no-op on the '+
+          'final update, because &part;(S&middot;L)/&part;w = S&middot;&part;L/&part;w and you divide by S again before the step. All it buys is '+
+          'representable range during backprop. The catch: the safe window is only '+window_.toFixed(1)+
+          ' octaves wide and it drifts as training proceeds, which is why the scale is chosen dynamically rather than fixed.';
+      }
+      /* format-specific addendum, so the FP8 lesson is never shadowed by the branch above */
+      if(f.sat){
+        msg+=' <b>E4M3 is the forward-pass format, not the gradient format.</b> Its whole window is only '+window_.toFixed(1)+
+          ' powers of two wide, against '+need.toFixed(0)+' for ±4σ of these gradients, and it has no inf — overflow saturates '+
+          'to '+sci(f.maxFinite,4)+' <i>silently</i>, so an inf check never fires. That is why the backward pass uses E5M2 '+
+          '(one more exponent bit, one fewer mantissa bit) and why FP8 replaces one global loss scale with a per-tensor — now '+
+          'per-block — scale recomputed from each tensor’s own amax.';
+      } else if(f.id==='e5m2'){
+        msg+=' <b>E5M2 is fp16’s exponent with 8 fewer mantissa bits:</b> the same '+powTxt(f.minNormE)+'…'+sci(f.maxFinite,4)+
+          ' range problem you just solved, but each surviving value now carries only 2 mantissa bits (~25% relative spacing). '+
+          'That is the FP8 trade — range is handled by scaling, precision is handled by picking E5M2 for gradients and E4M3 '+
+          'for the forward tensors.';
+      }
+      msg+=' <b>Master weights are a second, independent fix:</b> '+pct(pLost)+' of the SGD-style updates lr&middot;|g| here are '+
+        'smaller than half the '+f.short+' gap at the weight they modify, so w &minus; lr&middot;g would round straight back to w if the '+
+        'weights themselves lived in '+f.short+' — the swamping problem, and no choice of S changes it, because S cancels in the update. '+
+        'Adam is kinder (its normalized step is ≈ lr, and only vanishes once lr decays below ≈'+lrAdam.toExponential(1)+
+        ' at |w| = 2<sup>&minus;6</sup>) — but that is exactly where a decayed schedule ends up. Note this floor is set by the '+
+        '<i>mantissa</i>, not the exponent: '+f.short+'’s '+f.M+' mantissa bits make it '+
+        (f.M>=10?'the most forgiving of these formats':'coarser here than fp16, despite the wider range')+
+        '. Keep the master copy, the moments, and the update in fp32.';
+      noteEl.innerHTML=msg;
+    }
+
+    /* ---------------------------------------------------------------- wiring */
+    var ctrls=root.querySelectorAll('#mixed-precision-scaling-fmt,#mixed-precision-scaling-scale,'+
+      '#mixed-precision-scaling-mu,#mixed-precision-scaling-sigma,#mixed-precision-scaling-nel,#mixed-precision-scaling-lr');
+    Array.prototype.forEach.call(ctrls,function(c){
+      c.addEventListener('input',upd);
+      c.addEventListener('change',upd);
+    });
+    var presets=root.querySelectorAll('#mixed-precision-scaling-presets button[data-fmt]');
+    Array.prototype.forEach.call(presets,function(b){
+      b.addEventListener('click',function(){
+        var ff=b.getAttribute('data-fmt'), kk=b.getAttribute('data-k');
+        if(ff&&FMT[ff]) fmtIn.value=ff;
+        if(kk!==null&&kk!=='') scaleIn.value=kk;
+        upd();
+      });
+    });
+    var resetBtn=root.querySelector('#mixed-precision-scaling-reset');
+    if(resetBtn) resetBtn.addEventListener('click',function(){
+      fmtIn.value='fp16'; scaleIn.value='0'; muIn.value='-22'; sigIn.value='3.5';
+      nelIn.value='1.5e9'; lrIn.value='1e-3';
+      upd();
+    });
+
+    upd();
+  })();</script>
+</div>

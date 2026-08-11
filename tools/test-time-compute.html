@@ -1,0 +1,1033 @@
+<div class="viz-tool" id="tool-test-time-compute">
+  <div class="vt-title">Test-time compute: best-of-N, majority vote, search</div>
+
+  <div class="vt-grid">
+    <label for="test-time-compute-n-num">Samples per problem N (width)
+      <span class="ttc-in">
+        <input id="test-time-compute-n" type="range" min="1" max="64" step="1" value="16" aria-label="number of sampled candidate solutions per problem, slider">
+        <input id="test-time-compute-n-num" type="number" min="1" max="64" step="1" value="16" aria-label="number of sampled candidates, exact value">
+      </span>
+    </label>
+    <label for="test-time-compute-p">Single-sample accuracy p (pass@1)
+      <input id="test-time-compute-p" type="range" min="0.05" max="0.95" step="0.01" value="0.35" aria-label="probability that one sampled chain is correct, averaged over problems">
+    </label>
+    <label for="test-time-compute-sigma">Difficulty spread &sigma; (logit units)
+      <input id="test-time-compute-sigma" type="range" min="0" max="1.5" step="0.05" value="0.9" aria-label="spread of per-problem difficulty in logit units; 0 means every problem has the same p">
+    </label>
+    <label for="test-time-compute-auc">Verifier quality (ROC AUC)
+      <input id="test-time-compute-auc" type="range" min="0.5" max="0.99" step="0.01" value="0.8" aria-label="verifier or reward-model quality, as the area under its ROC curve for separating correct from wrong solutions">
+    </label>
+    <label for="test-time-compute-agree">Wrong-answer agreement
+      <input id="test-time-compute-agree" type="range" min="0" max="1" step="0.05" value="0.35" aria-label="how strongly wrong chains pile onto one attractor answer A1; at 0 the wrong answers are spread uniformly over the five distractors">
+    </label>
+    <label for="test-time-compute-method">Highlighted selection rule
+      <select id="test-time-compute-method" aria-label="which selection rule to highlight in the chart and the readouts">
+        <option value="best">Best-of-N (argmax verifier score)</option>
+        <option value="maj" selected>Majority vote (self-consistency)</option>
+        <option value="wt">Weighted vote (score-weighted)</option>
+      </select>
+    </label>
+    <label for="test-time-compute-mode">Compute allocation
+      <select id="test-time-compute-mode" aria-label="how the token budget is spent: N independent chains, or beam search over reasoning steps">
+        <option value="flat" selected>Flat: N independent chains (all width)</option>
+        <option value="beam">Beam over steps (width x depth)</option>
+      </select>
+    </label>
+    <label for="test-time-compute-depth">Reasoning steps D per chain
+      <span class="ttc-in">
+        <input id="test-time-compute-depth" type="range" min="2" max="8" step="1" value="4" aria-label="number of reasoning steps per solution chain">
+        <input id="test-time-compute-depth-num" type="number" min="2" max="8" step="1" value="4" aria-label="number of reasoning steps, exact value">
+      </span>
+    </label>
+    <label for="test-time-compute-width">Beam width w (kept per step)
+      <span class="ttc-in">
+        <input id="test-time-compute-width" type="range" min="1" max="8" step="1" value="4" aria-label="beam width: how many partial chains survive each pruning step">
+        <input id="test-time-compute-width-num" type="number" min="1" max="8" step="1" value="4" aria-label="beam width, exact value">
+      </span>
+    </label>
+  </div>
+
+  <div class="ttc-btn-row">
+    <button id="test-time-compute-resample" type="button" class="ttc-btn">&#8635; Resample (new seed)</button>
+    <span class="ttc-hint" id="test-time-compute-hint"></span>
+  </div>
+
+  <div class="ttc-formula" id="test-time-compute-formula"></div>
+
+  <div class="ttc-legend" id="test-time-compute-legend"></div>
+  <div class="ttc-scroll">
+    <svg id="test-time-compute-curve" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="accuracy versus number of samples, for each selection rule"></svg>
+  </div>
+
+  <div class="ttc-panel">
+    <div class="ttc-panel-head" id="test-time-compute-panel-head"></div>
+    <div class="ttc-scroll">
+      <svg id="test-time-compute-budget" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="budget grid: one column per generated chain, one row per reasoning step"></svg>
+    </div>
+    <div class="ttc-tally" id="test-time-compute-tally"></div>
+    <div class="ttc-decide" id="test-time-compute-decide"></div>
+  </div>
+
+  <div class="ttc-callout" id="test-time-compute-callout" aria-live="polite"></div>
+
+  <div class="vt-out" id="test-time-compute-out"></div>
+
+  <div class="vt-note">
+    Every rule starts at the same place: at <code>N = 1</code> best-of-N, majority vote and weighted vote all equal <b>pass@1</b>. Everything above that line is <b>selection</b>, and the dashed <b>pass@N</b> curve is the ceiling selection could ever reach &mdash; coverage keeps climbing roughly log-linearly in N (Brown et al., <i>Large Language Monkeys</i>, 2024) while every selection rule plateaus below it. The gap between them is exactly what a better verifier buys you, which is why <code>pass@k</code> and <code>maj@k</code> must be reported separately.
+    <b>The verifier is a real model here, not a fudge factor:</b> a candidate's score is <code>v = &plusmn;d/2 + N(0,1)</code> (plus for correct, minus for wrong), so the two score distributions are unit Gaussians separated by <code>d</code> and the verifier's ROC AUC is exactly <code>&Phi;(d/&radic;2)</code> &mdash; the slider inverts that, <code>d = &radic;2&middot;&Phi;<sup>-1</sup>(AUC)</code>. The calibrated posterior follows from the likelihood ratio: <code>log-odds = logit(p) + d&middot;v</code>, so <b>P(correct | v) = &sigma;(logit(p) + d&middot;v)</b>. Best-of-N takes <code>argmax v</code>; weighted vote sums those posteriors per distinct answer. Drag AUC to <b>0.50</b>: <code>d = 0</code>, the score is pure noise, best-of-N degenerates into picking a random one of the N samples and its curve goes <b>flat at pass@1</b> no matter how much you spend. That is the generator-vs-verifier split in one drag &mdash; the samples contained the answer, nothing could find it.
+    <b>Majority vote needs no verifier but assumes errors are diverse.</b> Push <i>wrong-answer agreement</i> up and the wrong chains pile onto one attractor answer; once <code>p &lt; 0.5</code> with high agreement, self-consistency <i>converges to the wrong answer</i> and accuracy <b>falls</b> as N grows. Exact check: set agreement <code>= 1.00</code>, &sigma; <code>= 0</code>, <code>p = 0.60</code> &mdash; voting is now binary and <code>maj@15</code> is exactly the binomial tail <code>P(Bin(15, 0.6) &ge; 8) = 0.787</code>; the widget reproduces that to within a Monte-Carlo standard error or two (2000 seeded problems, s.e. &radic;(.787&middot;.213/2000) &asymp; &plusmn;0.009 &mdash; hit <i>Resample</i> a few times to watch the sampling noise move it around). Note that <code>maj@16</code> gives the same 0.787: an 8&ndash;8 tie is broken by earliest occurrence, which under exchangeability is a fair coin, so an <b>even</b> N buys nothing over the odd N below it.
+    <b>Beam search spends the same budget differently.</b> Both allocations generate exactly <code>N &times; D</code> step-completions; flat sampling puts all of it in width (N independent chains, never pruned), beam search keeps only <code>w</code> prefixes and prunes with the step verifier at every one of the D depths, respawning N children per depth spread over the w survivors (<code>&lfloor;N/w&rfloor;</code> each, with the first <code>N mod w</code> getting one extra, so the cost matches flat even when w does not divide N). <b>A weak step verifier applied D times beats a strong one applied once</b> &mdash; this is the whole PRM-over-ORM argument, and you can read it straight off the widget. Set <code>N = 32</code>, <code>D = 6</code>, <code>w = 2</code>, <code>p = 0.35</code>, highlight best-of-N, and sweep AUC: at <code>0.50</code> beam and flat are both pinned at <code>pass@1 &asymp; 34%</code> (uniform pruning keeps live prefixes at exactly rate q per step, so nothing is gained); at <code>0.52</code> &mdash; a verifier barely distinguishable from a coin &mdash; beam already reaches <b>~43%</b> against best-of-32's ~37%; by <code>0.60</code> it is <b>~68%</b> against ~49%. Mild selection pressure compounds across depth. The bill arrives as <b>coverage</b>: only <code>w</code> prefixes survive, so beam coverage collapses far below flat coverage (99% at N = 32), and the diversity you destroyed is unrecoverable &mdash; a large part of why DeepSeek-R1 abandoned PRM-guided search in favour of outcome-only RL, and why narrow beams with dull verifiers (<code>w = 1</code>, AUC near 0.5) fall all the way back to a single random-walk chain. Set <code>w &ge; N</code> (e.g. <code>N = 4</code>, <code>w = 8</code>) and nothing is ever pruned: beam search reduces exactly to flat sampling and the two curves coincide up to seed noise.
+    The reported <b>&alpha;</b> is a least-squares fit of <code>log(1 - accuracy) = log &epsilon; - &alpha; log N</code> over the highlighted curve, i.e. the test-time scaling law <code>acc &asymp; 1 - &epsilon;N<sup>-&alpha;</sup></code>. Model caveats: samples are i.i.d. (no self-correction or sequential revision), verifier scores are Gaussian and calibrated against the <i>population</i> prior <code>p</code> rather than each problem's own <code>p<sub>i</sub></code> (a real reward model is neither Gaussian nor calibrated, and RL will hack it), and a chain is correct only if all D steps are &mdash; no lucky recoveries.
+  </div>
+
+  <style>
+    #tool-test-time-compute{
+      --ttc-acc: var(--accent,#c15b39);
+      --ttc-good: var(--good,#2f9e6e);
+      --ttc-warn: var(--warn,#c2740a);
+      --ttc-mut: var(--muted,#6d675d);
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); max-width:100%; box-sizing:border-box;
+    }
+    html[data-theme="dark"] #tool-test-time-compute{ --ttc-acc: var(--accent,#e1845f); --ttc-good: var(--good,#5fcb9c); --ttc-warn: var(--warn,#eab263); --ttc-mut: var(--muted,#978f83); }
+    @media (prefers-color-scheme: dark){
+      html:not([data-theme="light"]) #tool-test-time-compute{ --ttc-acc: var(--accent,#e1845f); --ttc-good: var(--good,#5fcb9c); --ttc-warn: var(--warn,#eab263); --ttc-mut: var(--muted,#978f83); }
+    }
+    #tool-test-time-compute *{ box-sizing:border-box; }
+    #tool-test-time-compute .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+
+    #tool-test-time-compute .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px 18px; }
+    #tool-test-time-compute label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); min-width:0; }
+    #tool-test-time-compute label.is-off{ opacity:.5; }
+    #tool-test-time-compute input, #tool-test-time-compute select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); min-width:0; max-width:100%; }
+    #tool-test-time-compute input[type="range"]{ padding:0; accent-color:var(--ttc-acc); }
+    #tool-test-time-compute input:focus-visible, #tool-test-time-compute select:focus-visible, #tool-test-time-compute button:focus-visible{ outline:2px solid var(--ttc-acc); outline-offset:2px; }
+    #tool-test-time-compute input:disabled, #tool-test-time-compute select:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-test-time-compute .ttc-in{ display:flex; gap:6px; align-items:center; min-width:0; }
+    #tool-test-time-compute .ttc-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-test-time-compute .ttc-in input[type="number"]{ flex:1 1 58px; min-width:0; }
+
+    #tool-test-time-compute .ttc-btn-row{ margin-top:14px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    #tool-test-time-compute .ttc-btn{ font:inherit; font-size:.82rem; font-weight:600; padding:8px 12px; border-radius:8px; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-test-time-compute .ttc-btn:hover{ filter:brightness(0.97); }
+    #tool-test-time-compute .ttc-hint{ font-size:.74rem; color:var(--muted,#6d675d); }
+
+    #tool-test-time-compute .ttc-formula{ margin-top:12px; padding:9px 11px; border-radius:8px; background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); font-family:var(--mono,monospace); font-size:.76rem; line-height:1.6; color:var(--ink-soft,#45413a); overflow-x:auto; white-space:nowrap; }
+    #tool-test-time-compute .ttc-formula b{ color:var(--ttc-acc); font-weight:700; }
+
+    #tool-test-time-compute .ttc-scroll{ overflow-x:auto; max-width:100%; border:1px solid var(--border,#e7e1d4); border-radius:8px; background:var(--surface-2,#f3efe6); padding:6px 4px; }
+    #tool-test-time-compute svg{ display:block; }
+    /* the curve scales down with the column (viewBox does the work); the budget grid
+       keeps its natural cell size and scrolls inside its own box instead. */
+    #tool-test-time-compute #test-time-compute-curve{ width:100%; height:auto; max-width:780px; margin:0 auto; }
+
+    #tool-test-time-compute .ttc-legend{ margin:14px 0 6px; display:flex; flex-wrap:wrap; gap:6px 16px; font-size:.73rem; color:var(--ink-soft,#45413a); }
+    #tool-test-time-compute .ttc-lg{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-test-time-compute .ttc-sw{ width:20px; height:0; border-top-width:2.5px; border-top-style:solid; display:inline-block; }
+    #tool-test-time-compute .ttc-sw.acc{ border-top-color:var(--ttc-acc); }
+    #tool-test-time-compute .ttc-sw.warn{ border-top-color:var(--ttc-warn); }
+    #tool-test-time-compute .ttc-sw.good{ border-top-color:var(--ttc-good); }
+    #tool-test-time-compute .ttc-sw.mut{ border-top-color:var(--ttc-mut); border-top-style:dashed; }
+    #tool-test-time-compute .ttc-sw.mut2{ border-top-color:var(--ttc-mut); border-top-style:dotted; }
+    #tool-test-time-compute .ttc-sw.fit{ border-top-color:var(--ink-soft,#45413a); border-top-style:dotted; }
+    #tool-test-time-compute .ttc-lg.is-hi{ font-weight:700; color:var(--ink,#211f1b); }
+
+    #tool-test-time-compute .ttc-panel{ margin-top:16px; border:1px solid var(--border,#e7e1d4); border-radius:10px; padding:10px 12px 12px; background:var(--surface,#fff); }
+    #tool-test-time-compute .ttc-panel-head{ font-size:.78rem; font-weight:700; color:var(--ink,#211f1b); margin-bottom:8px; }
+    #tool-test-time-compute .ttc-panel-head span{ font-weight:400; color:var(--muted,#6d675d); }
+
+    #tool-test-time-compute .ttc-cell-ok{ fill:var(--ttc-good); }
+    #tool-test-time-compute .ttc-cell-break{ fill:var(--ttc-warn); }
+    #tool-test-time-compute .ttc-cell-dead{ fill:var(--surface-3,#ece7da); stroke:var(--border-2,#d8d1c0); stroke-width:.6; }
+    #tool-test-time-compute .ttc-keep{ fill:none; stroke:var(--ttc-acc); stroke-width:1.8; }
+    #tool-test-time-compute .ttc-edge{ stroke:var(--ttc-acc); stroke-width:1; opacity:.5; fill:none; }
+    #tool-test-time-compute .ttc-post{ fill:var(--ttc-acc); opacity:.75; }
+    #tool-test-time-compute .ttc-lbl{ font-family:var(--mono,monospace); font-size:10px; fill:var(--ink-soft,#45413a); }
+    #tool-test-time-compute .ttc-lbl-dim{ font-family:var(--mono,monospace); font-size:10px; fill:var(--muted,#6d675d); }
+    #tool-test-time-compute .ttc-lbl-gold{ font-family:var(--mono,monospace); font-size:10px; fill:var(--ttc-good); font-weight:700; }
+    #tool-test-time-compute .ttc-cap{ font-family:var(--sans,sans-serif); font-size:11px; font-weight:700; fill:var(--muted,#6d675d); text-transform:uppercase; letter-spacing:.04em; }
+    #tool-test-time-compute .ttc-axis{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-test-time-compute .ttc-grid{ stroke:var(--border,#e7e1d4); stroke-width:1; }
+    #tool-test-time-compute .ttc-guide{ stroke:var(--ink-soft,#45413a); stroke-width:1; stroke-dasharray:3 3; opacity:.6; }
+    #tool-test-time-compute .ttc-line{ fill:none; stroke-width:2.2; stroke-linejoin:round; stroke-linecap:round; }
+    #tool-test-time-compute .ttc-line.hi{ stroke-width:3.4; }
+    #tool-test-time-compute .ttc-line.acc{ stroke:var(--ttc-acc); }
+    #tool-test-time-compute .ttc-line.warn{ stroke:var(--ttc-warn); }
+    #tool-test-time-compute .ttc-line.good{ stroke:var(--ttc-good); }
+    #tool-test-time-compute .ttc-line.mut{ stroke:var(--ttc-mut); stroke-width:1.8; stroke-dasharray:6 4; }
+    #tool-test-time-compute .ttc-line.mut2{ stroke:var(--ttc-mut); stroke-width:1.8; stroke-dasharray:2 3; }
+    #tool-test-time-compute .ttc-line.fit{ stroke:var(--ink-soft,#45413a); stroke-width:1.4; stroke-dasharray:1 4; opacity:.85; }
+    #tool-test-time-compute .ttc-dot{ stroke:var(--surface,#fff); stroke-width:1.2; }
+
+    #tool-test-time-compute .ttc-tally{ margin-top:12px; display:grid; grid-template-columns:auto 1fr auto 1fr auto; gap:4px 8px; align-items:center; font-size:.74rem; color:var(--ink-soft,#45413a); }
+    #tool-test-time-compute .ttc-tally .h{ font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted,#6d675d); font-weight:700; }
+    #tool-test-time-compute .ttc-ans{ font-family:var(--mono,monospace); white-space:nowrap; }
+    #tool-test-time-compute .ttc-ans b{ color:var(--ttc-good); }
+    #tool-test-time-compute .ttc-bar{ display:block; height:11px; border-radius:3px; background:var(--surface-3,#ece7da); overflow:hidden; min-width:40px; }
+    #tool-test-time-compute .ttc-bar i{ display:block; height:100%; background:var(--ttc-warn); }
+    #tool-test-time-compute .ttc-bar.w i{ background:var(--ttc-good); }
+    #tool-test-time-compute .ttc-num{ font-family:var(--mono,monospace); white-space:nowrap; font-variant-numeric:tabular-nums; }
+
+    #tool-test-time-compute .ttc-decide{ margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; font-size:.74rem; }
+    #tool-test-time-compute .ttc-badge{ border:1px solid var(--border-2,#d8d1c0); border-radius:999px; padding:4px 10px; background:var(--surface-2,#f3efe6); font-family:var(--mono,monospace); }
+    #tool-test-time-compute .ttc-badge.ok{ border-color:var(--ttc-good); color:var(--ink,#211f1b); }
+    #tool-test-time-compute .ttc-badge.bad{ border-color:var(--ttc-warn); color:var(--ink,#211f1b); }
+    #tool-test-time-compute .ttc-badge b{ font-weight:700; }
+
+    #tool-test-time-compute .ttc-callout{ margin-top:14px; padding:9px 12px; border-radius:8px; font-size:.8rem; line-height:1.55; border:1px solid var(--border,#e7e1d4); background:var(--surface-2,#f3efe6); color:var(--ink-soft,#45413a); }
+    #tool-test-time-compute .ttc-callout.is-warn{ border-color:var(--ttc-warn); color:var(--ink,#211f1b); }
+    #tool-test-time-compute .ttc-callout.is-good{ border-color:var(--ttc-good); color:var(--ink,#211f1b); }
+
+    #tool-test-time-compute .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:12px; }
+    #tool-test-time-compute .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:11px 13px; min-width:0; }
+    #tool-test-time-compute .vt-stat .n{ font-size:1.02rem; font-weight:700; color:var(--ttc-acc); font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
+    #tool-test-time-compute .vt-stat .l{ font-size:.72rem; line-height:1.35; color:var(--muted,#6d675d); margin-top:2px; }
+
+    #tool-test-time-compute .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-test-time-compute .vt-note b{ color:var(--ink-soft,#45413a); }
+    #tool-test-time-compute .vt-note code{ font-family:var(--mono,monospace); background:var(--surface-2,#f3efe6); padding:1px 4px; border-radius:4px; }
+  </style>
+
+  <script>(function(){
+    'use strict';
+    var root = document.getElementById('tool-test-time-compute');
+    if(!root) return;
+    var q = function(id){ return root.querySelector('#' + id); };
+
+    var els = {
+      nR: q('test-time-compute-n'), nN: q('test-time-compute-n-num'),
+      p: q('test-time-compute-p'),
+      sigma: q('test-time-compute-sigma'),
+      auc: q('test-time-compute-auc'),
+      agree: q('test-time-compute-agree'),
+      method: q('test-time-compute-method'),
+      mode: q('test-time-compute-mode'),
+      dR: q('test-time-compute-depth'), dN: q('test-time-compute-depth-num'),
+      wR: q('test-time-compute-width'), wN: q('test-time-compute-width-num'),
+      resample: q('test-time-compute-resample'),
+      hint: q('test-time-compute-hint'),
+      formula: q('test-time-compute-formula'),
+      legend: q('test-time-compute-legend'),
+      curve: q('test-time-compute-curve'),
+      panelHead: q('test-time-compute-panel-head'),
+      budget: q('test-time-compute-budget'),
+      tally: q('test-time-compute-tally'),
+      decide: q('test-time-compute-decide'),
+      callout: q('test-time-compute-callout'),
+      out: q('test-time-compute-out')
+    };
+    for(var key in els){ if(!els[key]) return; }
+
+    var SVG_NS = 'http://www.w3.org/2000/svg';
+    var NMAX = 64;            // longest sample pool; every smaller N is a prefix of it
+    var KD = 5;               // number of distinct wrong answers ("distractors") A1..A5
+    var K1 = KD + 1;          // answer ids: 0 = gold, 1..KD = distractors
+    var M_FLAT = 2000;        // problems in the Monte-Carlo population for the flat curves
+    var M_BEAM = 400;         // problems for the (more expensive) beam curves
+    var BEAM_BUDGETS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64];
+    var SQRT2 = Math.SQRT2;
+    var state = { seed: 20260811 };
+
+    // ---------------------------------------------------------------- math ----
+    // deterministic PRNG: same seed -> byte-identical experiment, every render
+    function mulberry32(seed){
+      var a = seed >>> 0;
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    // standard normal via Box-Muller (exact transform, one cached spare per pair)
+    function makeRng(seed){
+      var u = mulberry32(seed), spare = null, has = false;
+      return {
+        u: u,
+        normal: function(){
+          if(has){ has = false; return spare; }
+          var u1 = u(); if(u1 < 1e-12) u1 = 1e-12;
+          var u2 = u();
+          var r = Math.sqrt(-2 * Math.log(u1)), th = 2 * Math.PI * u2;
+          spare = r * Math.sin(th); has = true;
+          return r * Math.cos(th);
+        }
+      };
+    }
+    function sigmoid(x){ return x >= 0 ? 1 / (1 + Math.exp(-x)) : Math.exp(x) / (1 + Math.exp(x)); }
+    function logit(x){ return Math.log(x / (1 - x)); }
+    // inverse standard-normal CDF, Acklam's rational approximation (rel. err ~1e-9)
+    var AK_A = [-3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00];
+    var AK_B = [-5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01];
+    var AK_C = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e+00, -2.549732539343734e+00, 4.374664141464968e+00, 2.938163982698783e+00];
+    var AK_D = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e+00, 3.754408661907416e+00];
+    function probit(pr){
+      if(pr <= 0) return -Infinity;
+      if(pr >= 1) return Infinity;
+      var LOW = 0.02425, HIGH = 1 - LOW, qq, r;
+      if(pr < LOW){
+        qq = Math.sqrt(-2 * Math.log(pr));
+        return (((((AK_C[0] * qq + AK_C[1]) * qq + AK_C[2]) * qq + AK_C[3]) * qq + AK_C[4]) * qq + AK_C[5]) /
+               ((((AK_D[0] * qq + AK_D[1]) * qq + AK_D[2]) * qq + AK_D[3]) * qq + 1);
+      }
+      if(pr > HIGH){
+        qq = Math.sqrt(-2 * Math.log(1 - pr));
+        return -(((((AK_C[0] * qq + AK_C[1]) * qq + AK_C[2]) * qq + AK_C[3]) * qq + AK_C[4]) * qq + AK_C[5]) /
+                ((((AK_D[0] * qq + AK_D[1]) * qq + AK_D[2]) * qq + AK_D[3]) * qq + 1);
+      }
+      qq = pr - 0.5; r = qq * qq;
+      return (((((AK_A[0] * r + AK_A[1]) * r + AK_A[2]) * r + AK_A[3]) * r + AK_A[4]) * r + AK_A[5]) * qq /
+             (((((AK_B[0] * r + AK_B[1]) * r + AK_B[2]) * r + AK_B[3]) * r + AK_B[4]) * r + 1);
+    }
+    function pct(x){ return isFinite(x) ? (100 * x).toFixed(1) + '%' : 'n/a'; }
+    function f2(x){ return isFinite(x) ? x.toFixed(2) : 'n/a'; }
+    function f3(x){ return isFinite(x) ? x.toFixed(3) : 'n/a'; }
+
+    // ------------------------------------------------------------- controls ----
+    function readInt(el, def, lo, hi){
+      var v = parseInt(el.value, 10);
+      if(!isFinite(v)) v = def;
+      return Math.min(hi, Math.max(lo, v));
+    }
+    function readFloat(el, def, lo, hi){
+      var v = parseFloat(el.value);
+      if(!isFinite(v)) v = def;
+      return Math.min(hi, Math.max(lo, v));
+    }
+    // range + number box are two views of one value: read whichever the user is
+    // currently editing, then mirror it into the other (never into the focused one).
+    function readPair(rangeEl, numEl, def, lo, hi){
+      var src = (document.activeElement === numEl) ? numEl : rangeEl;
+      var v = readInt(src, def, lo, hi);
+      if(document.activeElement !== rangeEl) rangeEl.value = String(v);
+      if(document.activeElement !== numEl) numEl.value = String(v);
+      return v;
+    }
+    function readParams(){
+      var N = readPair(els.nR, els.nN, 16, 1, NMAX);
+      var D = readPair(els.dR, els.dN, 4, 2, 8);
+      var W = readPair(els.wR, els.wN, 4, 1, 8);
+      var mode = els.mode.value === 'beam' ? 'beam' : 'flat';
+      var method = els.method.value;
+      if(method !== 'best' && method !== 'wt') method = 'maj';
+      els.wR.disabled = els.wN.disabled = (mode !== 'beam');
+      els.wR.parentNode.parentNode.classList.toggle('is-off', mode !== 'beam');
+      return {
+        N: N, D: D, W: W, mode: mode, method: method,
+        p: readFloat(els.p, 0.35, 0.05, 0.95),
+        sigma: readFloat(els.sigma, 0.9, 0, 1.5),
+        auc: readFloat(els.auc, 0.8, 0.5, 0.99),
+        agree: readFloat(els.agree, 0.35, 0, 1)
+      };
+    }
+
+    // ----------------------------------------------------------- population ----
+    // One pool of NMAX candidates per problem. Every N is a PREFIX of that pool, so
+    // "spend more compute" literally means "reveal more of the same samples".
+    var popCache = { key: '', data: null };
+    function getPopulation(p){
+      var key = [state.seed, p.p, p.sigma, p.agree].join('|');
+      if(popCache.key === key) return popCache.data;
+      var M = M_FLAT, i, n;
+      var rng = makeRng((state.seed ^ 0x5bf03635) >>> 0);
+      var z = new Float64Array(M);
+      for(i = 0; i < M; i++) z[i] = rng.normal();
+      // per-problem difficulty: logit-normal around p. A shift c is solved by bisection
+      // so that mean_i p_i == p EXACTLY -- otherwise the spread would quietly drag the
+      // average pass@1 toward 0.5 and the p slider would stop meaning what it says.
+      var l0 = logit(p.p), c = 0, mean, mid, it;
+      if(p.sigma > 0){
+        var lo = -8, hi = 8;
+        for(it = 0; it < 60; it++){
+          mid = 0.5 * (lo + hi); mean = 0;
+          for(i = 0; i < M; i++) mean += sigmoid(l0 + mid + p.sigma * z[i]);
+          mean /= M;
+          if(mean > p.p) hi = mid; else lo = mid;
+        }
+        c = 0.5 * (lo + hi);
+      }
+      var pi = new Float64Array(M);
+      for(i = 0; i < M; i++) pi[i] = sigmoid(l0 + c + p.sigma * z[i]);
+
+      var correct = new Uint8Array(M * NMAX), ans = new Uint8Array(M * NMAX), noise = new Float64Array(M * NMAX);
+      for(i = 0; i < M; i++){
+        var base = i * NMAX;
+        for(n = 0; n < NMAX; n++){
+          var isC = rng.u() < pi[i];
+          // two uniforms are always consumed so that moving the agreement slider
+          // re-labels wrong answers without reshuffling which chains are correct
+          var a1 = rng.u(), a2 = rng.u();
+          correct[base + n] = isC ? 1 : 0;
+          ans[base + n] = isC ? 0 : (a1 < p.agree ? 1 : 1 + Math.floor(a2 * KD));
+          noise[base + n] = rng.normal();
+        }
+      }
+      popCache.key = key;
+      popCache.data = { M: M, pi: pi, correct: correct, ans: ans, noise: noise };
+      return popCache.data;
+    }
+
+    // ------------------------------------------------------ selection rules ----
+    // best-of-N : argmax_i v_i                      (needs a verifier)
+    // majority  : argmax_a count(a)                 (needs nothing)
+    // weighted  : argmax_a sum_{i: a_i = a} P(correct | v_i)
+    // Ties go to the answer that appeared first, which for exchangeable samples is a
+    // fair coin among the tied answers (and never favours the gold answer).
+    var scCount = new Int32Array(K1), scFirst = new Int32Array(K1), scW = new Float64Array(K1);
+    function selectFrom(items, lp, d){
+      var a, i;
+      for(a = 0; a < K1; a++){ scCount[a] = 0; scFirst[a] = -1; scW[a] = 0; }
+      var bestV = -Infinity, bestA = -1, any = 0;
+      for(i = 0; i < items.length; i++){
+        var it = items[i];
+        scCount[it.ans]++;
+        if(scFirst[it.ans] < 0) scFirst[it.ans] = i;
+        scW[it.ans] += sigmoid(lp + d * it.v);
+        if(it.v > bestV){ bestV = it.v; bestA = it.ans; }
+        if(it.ans === 0) any = 1;
+      }
+      var mA = -1, mC = -1, wA = -1, wV = -Infinity;
+      for(a = 0; a < K1; a++){
+        if(scCount[a] === 0) continue;
+        if(scCount[a] > mC || (scCount[a] === mC && scFirst[a] < scFirst[mA])){ mC = scCount[a]; mA = a; }
+        if(scW[a] > wV + 1e-12 || (wA >= 0 && Math.abs(scW[a] - wV) <= 1e-12 && scFirst[a] < scFirst[wA])){ wV = scW[a]; wA = a; }
+      }
+      return {
+        best: bestA, maj: mA, wt: wA, any: any,
+        counts: Array.prototype.slice.call(scCount),
+        wsums: Array.prototype.slice.call(scW)
+      };
+    }
+
+    // --------------------------------------------------------- flat curves ----
+    // Incremental sweep: walk the prefix n = 1..NMAX once per problem, updating the
+    // vote tallies and the running argmax. Same rules as selectFrom, done in place.
+    var flatCache = { key: '', data: null };
+    function evalFlat(pop, p, d){
+      var key = popCache.key + '|' + p.auc;
+      if(flatCache.key === key) return flatCache.data;
+      var M = pop.M, lp = logit(p.p);
+      var accB = new Float64Array(NMAX), accM = new Float64Array(NMAX),
+          accW = new Float64Array(NMAX), accP = new Float64Array(NMAX);
+      var counts = new Int32Array(K1), first = new Int32Array(K1), wsum = new Float64Array(K1);
+      for(var i = 0; i < M; i++){
+        var base = i * NMAX, a;
+        for(a = 0; a < K1; a++){ counts[a] = 0; first[a] = -1; wsum[a] = 0; }
+        var bestV = -Infinity, bestA = -1, any = 0;
+        for(var n = 0; n < NMAX; n++){
+          var idx = base + n, c = pop.correct[idx];
+          var ansId = c ? 0 : pop.ans[idx];
+          var v = (c ? 0.5 * d : -0.5 * d) + pop.noise[idx];
+          counts[ansId]++;
+          if(first[ansId] < 0) first[ansId] = n;
+          wsum[ansId] += sigmoid(lp + d * v);
+          if(v > bestV){ bestV = v; bestA = ansId; }
+          if(c) any = 1;
+          var mA = -1, mC = -1, wA = -1, wV = -Infinity;
+          for(a = 0; a < K1; a++){
+            if(counts[a] === 0) continue;
+            if(counts[a] > mC || (counts[a] === mC && first[a] < first[mA])){ mC = counts[a]; mA = a; }
+            if(wsum[a] > wV + 1e-12 || (wA >= 0 && Math.abs(wsum[a] - wV) <= 1e-12 && first[a] < first[wA])){ wV = wsum[a]; wA = a; }
+          }
+          if(bestA === 0) accB[n]++;
+          if(mA === 0) accM[n]++;
+          if(wA === 0) accW[n]++;
+          accP[n] += any;
+        }
+      }
+      for(var t = 0; t < NMAX; t++){ accB[t] /= M; accM[t] /= M; accW[t] /= M; accP[t] /= M; }
+      flatCache.key = key;
+      flatCache.data = { best: accB, maj: accM, wt: accW, pass: accP };
+      return flatCache.data;
+    }
+
+    // --------------------------------------------------------- beam search ----
+    // Budget bookkeeping: both allocations generate EXACTLY N x D step-completions.
+    //   flat : N chains, D steps each, no pruning.
+    //   beam : w survivors, expanded into N children per depth, at each of D depths.
+    // Children are split as evenly as possible over the w survivors -- the first
+    // (N mod w) survivors get one extra child -- so the beam never quietly spends a
+    // smaller budget than flat when w does not divide N (which would make the
+    // "equal cost" comparison a lie).
+    // A chain is correct iff every one of its D steps is, so the per-step success
+    // probability that reproduces a marginal chain accuracy of p is q = p^(1/D).
+    var bmOn = new Uint8Array(NMAX), bmV = new Float64Array(NMAX), bmUsed = new Uint8Array(NMAX);
+    var bmKeepOn = new Uint8Array(16), bmKeepLane = new Int32Array(16);
+    function beamAlloc(N, W){
+      var w = Math.min(W, N);
+      var kBase = Math.floor(N / w), rem = N - kBase * w;
+      var starts = [], acc = 0, i;
+      for(i = 0; i < w; i++){ starts.push(acc); acc += kBase + (i < rem ? 1 : 0); }
+      starts.push(acc);                                     // acc === N by construction
+      return {
+        w: w, kBase: kBase, rem: rem, lanes: N, starts: starts,
+        kids: function(i){ return kBase + (i < rem ? 1 : 0); },
+        groupOf: function(m){ var g; for(g = w - 1; g > 0; g--){ if(m >= starts[g]) return g; } return 0; }
+      };
+    }
+    function simBeam(rng, pStar, d, D, W, N, agree, trace){
+      var al = beamAlloc(N, W), w = al.w, lanes = al.lanes;
+      var qStep = Math.pow(pStar, 1 / D);
+      var steps = trace ? [] : null;
+      var keepCount = 0, t, i, j, m;
+      for(t = 0; t < D; t++){
+        m = 0;
+        var nPar = (t === 0) ? 1 : keepCount;
+        for(i = 0; i < nPar; i++){
+          var parOn = (t === 0) ? 1 : bmKeepOn[i];
+          var per = (t === 0) ? lanes : al.kids(i);
+          for(j = 0; j < per; j++){
+            var on = (parOn && rng.u() < qStep) ? 1 : 0;
+            bmOn[m] = on;
+            bmV[m] = (on ? 0.5 * d : -0.5 * d) + rng.normal();
+            m++;
+          }
+        }
+        // keep the w highest-scoring children (w <= 8, so a selection scan beats a sort)
+        for(i = 0; i < m; i++) bmUsed[i] = 0;
+        keepCount = Math.min(w, m);
+        var rec = trace ? { on: [], v: [], kept: [], m: m } : null;
+        for(i = 0; i < keepCount; i++){
+          var bi = -1, bv = -Infinity;
+          for(j = 0; j < m; j++){ if(!bmUsed[j] && bmV[j] > bv){ bv = bmV[j]; bi = j; } }
+          if(bi < 0) bi = 0;
+          bmUsed[bi] = 1; bmKeepOn[i] = bmOn[bi]; bmKeepLane[i] = bi;
+        }
+        // survivors are re-ordered by lane, not by score. Order is arbitrary for the
+        // algorithm, but keeping generation order stops the later vote tie-break
+        // ("earliest candidate wins") from secretly becoming "highest score wins",
+        // which is what would make w = N differ from plain flat sampling.
+        for(i = 1; i < keepCount; i++){
+          var kl = bmKeepLane[i], ko = bmKeepOn[i], jj = i - 1;
+          while(jj >= 0 && bmKeepLane[jj] > kl){ bmKeepLane[jj + 1] = bmKeepLane[jj]; bmKeepOn[jj + 1] = bmKeepOn[jj]; jj--; }
+          bmKeepLane[jj + 1] = kl; bmKeepOn[jj + 1] = ko;
+        }
+        if(trace){
+          for(j = 0; j < m; j++){ rec.on.push(bmOn[j]); rec.v.push(bmV[j]); rec.kept.push(bmUsed[j] ? 1 : 0); }
+          rec.keepLanes = Array.prototype.slice.call(bmKeepLane, 0, keepCount);
+          steps.push(rec);
+        }
+      }
+      // survivors get a final outcome score (ORM) with the same separation d, so the
+      // last selection step is exactly comparable to flat best-of-N / vote.
+      var items = [], anyOn = 0;
+      for(i = 0; i < keepCount; i++){
+        var son = bmKeepOn[i];
+        var a1 = rng.u(), a2 = rng.u();
+        var ansId = son ? 0 : (a1 < agree ? 1 : 1 + Math.floor(a2 * KD));
+        var v = (son ? 0.5 * d : -0.5 * d) + rng.normal();
+        items.push({ ans: ansId, v: v, on: son });
+        if(son) anyOn = 1;
+      }
+      return { items: items, any: anyOn, alloc: al, q: qStep, steps: steps };
+    }
+    // one Monte-Carlo estimate of the beam curve at a single budget N.
+    // Seeded by N, so the point is reproducible and independent of what else is drawn.
+    function evalBeamAt(pop, p, d, N){
+      var lp = logit(p.p);
+      var rng = makeRng(((state.seed ^ 0x2545f491) + 7919 * N) >>> 0);
+      var cb = 0, cm = 0, cw = 0, cp = 0;
+      for(var i = 0; i < M_BEAM; i++){
+        var r = simBeam(rng, pop.pi[i], d, p.D, p.W, N, p.agree, false);
+        var s = selectFrom(r.items, lp, d);
+        if(s.best === 0) cb++;
+        if(s.maj === 0) cm++;
+        if(s.wt === 0) cw++;
+        cp += r.any;
+      }
+      return { best: cb / M_BEAM, maj: cm / M_BEAM, wt: cw / M_BEAM, pass: cp / M_BEAM };
+    }
+    var beamCache = { key: '', data: null };   // the 12 fixed budgets (expensive)
+    var beamPt = { key: '', data: null };      // one extra point at the current N (cheap)
+    function evalBeamCurve(pop, p, d){
+      var base = popCache.key + '|' + p.auc + '|' + p.D + '|' + p.W;
+      if(beamCache.key !== base){
+        var out = { n: [], best: [], maj: [], wt: [], pass: [] };
+        for(var bi = 0; bi < BEAM_BUDGETS.length; bi++){
+          var r = evalBeamAt(pop, p, d, BEAM_BUDGETS[bi]);
+          out.n.push(BEAM_BUDGETS[bi]);
+          out.best.push(r.best); out.maj.push(r.maj); out.wt.push(r.wt); out.pass.push(r.pass);
+        }
+        beamCache.key = base; beamCache.data = out;
+      }
+      // splice in the current N so every readout is defined at exactly the shown budget
+      var c = beamCache.data, idx = c.n.indexOf(p.N);
+      var merged = { n: c.n.slice(), best: c.best.slice(), maj: c.maj.slice(), wt: c.wt.slice(), pass: c.pass.slice() };
+      if(idx < 0){
+        var pkey = base + '|@' + p.N;
+        if(beamPt.key !== pkey){ beamPt.key = pkey; beamPt.data = evalBeamAt(pop, p, d, p.N); }
+        var e = beamPt.data, at = 0;
+        while(at < merged.n.length && merged.n[at] < p.N) at++;
+        merged.n.splice(at, 0, p.N); merged.best.splice(at, 0, e.best);
+        merged.maj.splice(at, 0, e.maj); merged.wt.splice(at, 0, e.wt); merged.pass.splice(at, 0, e.pass);
+        idx = at;
+      }
+      merged.idx = idx;
+      return merged;
+    }
+
+    // ------------------------------------------------- one example problem ----
+    // Its own PRNG stream and p exactly equal to the slider, so it stays stable while
+    // sliders move and always shows a "typical" problem rather than a lucky one.
+    function buildFlatExample(p, d){
+      var rng = makeRng((state.seed ^ 0x9e3779b9) >>> 0);
+      var qStep = Math.pow(p.p, 1 / p.D);
+      var chains = [], lp = logit(p.p);
+      for(var i = 0; i < NMAX; i++){
+        var alive = true, breakAt = -1, cells = [];
+        for(var t = 0; t < p.D; t++){
+          var ok = rng.u() < qStep;
+          if(alive && ok){ cells.push('ok'); }
+          else if(alive && !ok){ cells.push('break'); alive = false; breakAt = t; }
+          else { cells.push('dead'); }
+        }
+        var a1 = rng.u(), a2 = rng.u();
+        var ansId = alive ? 0 : (a1 < p.agree ? 1 : 1 + Math.floor(a2 * KD));
+        var v = (alive ? 0.5 * d : -0.5 * d) + rng.normal();
+        chains.push({ cells: cells, ans: ansId, v: v, on: alive ? 1 : 0, breakAt: breakAt, post: sigmoid(lp + d * v) });
+      }
+      return { chains: chains, q: qStep };
+    }
+    function buildBeamExample(p, d){
+      var rng = makeRng((state.seed ^ 0x9e3779b9) >>> 0);
+      var r = simBeam(rng, p.p, d, p.D, p.W, p.N, p.agree, true);
+      var lp = logit(p.p);
+      for(var i = 0; i < r.items.length; i++) r.items[i].post = sigmoid(lp + d * r.items[i].v);
+      return r;
+    }
+
+    // ------------------------------------------------------------- drawing ----
+    function svgEl(tag, attrs){
+      var e = document.createElementNS(SVG_NS, tag);
+      for(var a in attrs) e.setAttribute(a, attrs[a]);
+      return e;
+    }
+    function svgText(x, y, str, cls, anchor){
+      var t = svgEl('text', { x: x, y: y, 'class': cls || 'ttc-lbl' });
+      t.setAttribute('text-anchor', anchor || 'middle');
+      t.textContent = str;
+      return t;
+    }
+    function clear(node){ while(node.firstChild) node.removeChild(node.firstChild); }
+    function withTitle(node, txt){ var t = svgEl('title', {}); t.textContent = txt; node.appendChild(t); return node; }
+
+    var CW = 780, CH = 320, CPL = 54, CPR = 18, CPT = 16, CPB = 44;
+    var PLOT_W = CW - CPL - CPR, PLOT_H = CH - CPT - CPB;
+    var LOG64 = Math.log(64);
+    function xOf(n){ return CPL + (Math.log(n) / LOG64) * PLOT_W; }
+    function yOf(acc){ return CPT + (1 - acc) * PLOT_H; }
+    function pathFor(xs, ys){
+      var dstr = '', i;
+      for(i = 0; i < xs.length; i++) dstr += (i ? 'L' : 'M') + xs[i].toFixed(2) + ' ' + ys[i].toFixed(2) + ' ';
+      return dstr;
+    }
+    function seriesPath(arr, cls, fromIdx){
+      var xs = [], ys = [];
+      for(var n = 1; n <= NMAX; n++){ xs.push(xOf(n)); ys.push(yOf(arr[n - 1])); }
+      return svgEl('path', { d: pathFor(xs, ys), 'class': 'ttc-line ' + cls });
+    }
+    function sparsePath(ns, vals, cls){
+      var xs = [], ys = [];
+      for(var i = 0; i < ns.length; i++){ xs.push(xOf(ns[i])); ys.push(yOf(vals[i])); }
+      return svgEl('path', { d: pathFor(xs, ys), 'class': 'ttc-line ' + cls });
+    }
+    // least-squares fit of log(1 - acc) = log(eps) - alpha * log(N)  (the test-time
+    // scaling law acc ~ 1 - eps * N^-alpha); returns null if fewer than 3 usable points
+    function fitPower(arr){
+      var sx = 0, sy = 0, sxx = 0, sxy = 0, m = 0;
+      for(var n = 1; n <= NMAX; n++){
+        var gap = 1 - arr[n - 1];
+        if(!(gap > 1e-6)) continue;
+        var x = Math.log(n), y = Math.log(gap);
+        sx += x; sy += y; sxx += x * x; sxy += x * y; m++;
+      }
+      if(m < 3) return null;
+      var den = m * sxx - sx * sx;
+      if(Math.abs(den) < 1e-12) return null;
+      var slope = (m * sxy - sx * sy) / den;
+      var inter = (sy - slope * sx) / m;
+      return { alpha: -slope, eps: Math.exp(inter) };
+    }
+
+    var METHOD_CLS = { best: 'acc', maj: 'warn', wt: 'good' };
+    var METHOD_NAME = { best: 'best-of-N', maj: 'majority vote', wt: 'weighted vote' };
+
+    function renderCurve(p, flat, beam, fit){
+      var svg = els.curve;
+      clear(svg);
+      svg.setAttribute('width', CW); svg.setAttribute('height', CH);
+      svg.setAttribute('viewBox', '0 0 ' + CW + ' ' + CH);
+      var i, gy;
+      for(i = 0; i <= 5; i++){
+        gy = yOf(i / 5);
+        svg.appendChild(svgEl('line', { x1: CPL, x2: CPL + PLOT_W, y1: gy, y2: gy, 'class': 'ttc-grid' }));
+        svg.appendChild(svgText(CPL - 8, gy + 3.5, (i * 20) + '%', 'ttc-lbl-dim', 'end'));
+      }
+      var ticks = [1, 2, 4, 8, 16, 32, 64];
+      for(i = 0; i < ticks.length; i++){
+        var gx = xOf(ticks[i]);
+        svg.appendChild(svgEl('line', { x1: gx, x2: gx, y1: CPT, y2: CPT + PLOT_H, 'class': 'ttc-grid' }));
+        svg.appendChild(svgText(gx, CPT + PLOT_H + 16, String(ticks[i]), 'ttc-lbl-dim'));
+      }
+      svg.appendChild(svgEl('line', { x1: CPL, x2: CPL + PLOT_W, y1: CPT + PLOT_H, y2: CPT + PLOT_H, 'class': 'ttc-axis' }));
+      svg.appendChild(svgEl('line', { x1: CPL, x2: CPL, y1: CPT, y2: CPT + PLOT_H, 'class': 'ttc-axis' }));
+      svg.appendChild(svgText(CPL + PLOT_W / 2, CH - 8,
+        'N samples per problem (log scale) -- total budget = N x D = ' + (p.N * p.D) + ' step generations', 'ttc-cap'));
+      svg.appendChild(svgText(12, CPT + PLOT_H / 2, 'accuracy', 'ttc-cap', 'middle')).setAttribute(
+        'transform', 'rotate(-90 12 ' + (CPT + PLOT_H / 2) + ')');
+
+      var dots = [];
+      if(p.mode === 'flat'){
+        svg.appendChild(seriesPath(flat.pass, 'mut'));
+        svg.appendChild(seriesPath(flat.best, 'acc' + (p.method === 'best' ? ' hi' : '')));
+        svg.appendChild(seriesPath(flat.maj, 'warn' + (p.method === 'maj' ? ' hi' : '')));
+        svg.appendChild(seriesPath(flat.wt, 'good' + (p.method === 'wt' ? ' hi' : '')));
+        if(fit){
+          var fxs = [], fys = [];
+          for(var n = 1; n <= NMAX; n++){
+            var yv = 1 - fit.eps * Math.pow(n, -fit.alpha);
+            fxs.push(xOf(n)); fys.push(yOf(Math.max(0, Math.min(1, yv))));
+          }
+          svg.appendChild(svgEl('path', { d: pathFor(fxs, fys), 'class': 'ttc-line fit' }));
+        }
+        dots = [
+          { y: flat.pass[p.N - 1], cls: 'var(--ttc-mut)' },
+          { y: flat.best[p.N - 1], cls: 'var(--ttc-acc)' },
+          { y: flat.maj[p.N - 1], cls: 'var(--ttc-warn)' },
+          { y: flat.wt[p.N - 1], cls: 'var(--ttc-good)' }
+        ];
+      } else {
+        svg.appendChild(seriesPath(flat.pass, 'mut'));
+        svg.appendChild(sparsePath(beam.n, beam.pass, 'mut2'));
+        svg.appendChild(seriesPath(flat[p.method], 'acc hi'));
+        svg.appendChild(sparsePath(beam.n, beam[p.method], 'warn hi'));
+        for(i = 0; i < beam.n.length; i++){
+          svg.appendChild(svgEl('circle', { cx: xOf(beam.n[i]), cy: yOf(beam[p.method][i]), r: 3, fill: 'var(--ttc-warn)', 'class': 'ttc-dot' }));
+        }
+        dots = [
+          { y: flat.pass[p.N - 1], cls: 'var(--ttc-mut)' },
+          { y: flat[p.method][p.N - 1], cls: 'var(--ttc-acc)' }
+        ];
+      }
+      var vx = xOf(p.N);
+      svg.appendChild(svgEl('line', { x1: vx, x2: vx, y1: CPT, y2: CPT + PLOT_H, 'class': 'ttc-guide' }));
+      for(i = 0; i < dots.length; i++){
+        svg.appendChild(svgEl('circle', { cx: vx, cy: yOf(dots[i].y), r: 4, fill: dots[i].cls, 'class': 'ttc-dot' }));
+      }
+      svg.appendChild(svgText(vx, CPT - 3, 'N = ' + p.N, 'ttc-lbl'));
+      svg.setAttribute('aria-label', 'Accuracy versus number of samples N on a log axis, from 1 to 64, for ' +
+        (p.mode === 'flat' ? 'best-of-N, majority vote, weighted vote and the pass@N coverage ceiling.'
+                           : 'flat sampling and beam search at equal budget, plus their coverage ceilings.'));
+    }
+
+    function renderLegend(p, fit){
+      var html = '';
+      function lg(cls, txt, hi){
+        return '<span class="ttc-lg' + (hi ? ' is-hi' : '') + '"><i class="ttc-sw ' + cls + '"></i>' + txt + '</span>';
+      }
+      if(p.mode === 'flat'){
+        html += lg('mut', 'pass@N (coverage ceiling)', false);
+        html += lg('acc', 'best-of-N (verifier argmax)', p.method === 'best');
+        html += lg('warn', 'majority vote', p.method === 'maj');
+        html += lg('good', 'weighted vote', p.method === 'wt');
+        if(fit) html += lg('fit', 'fit: 1 - ' + f3(fit.eps) + '&middot;N^-' + f2(fit.alpha), false);
+      } else {
+        html += lg('mut', 'pass@N, flat', false);
+        html += lg('mut2', 'pass@N, beam', false);
+        html += lg('acc', METHOD_NAME[p.method] + ', flat sampling', true);
+        html += lg('warn', METHOD_NAME[p.method] + ', beam search', true);
+      }
+      els.legend.innerHTML = html;
+    }
+
+    // budget grid: columns = generated chains / children, rows = reasoning steps.
+    // Its area IS the budget, which makes "width vs depth" literal.
+    function renderBudget(p, ex, sel){
+      var svg = els.budget;
+      clear(svg);
+      var beamMode = p.mode === 'beam';
+      var al = beamMode ? ex.alloc : null;
+      var cols = beamMode ? al.lanes : p.N;
+      var colW = cols <= 8 ? 30 : cols <= 16 ? 24 : cols <= 32 ? 18 : 13;
+      var cellH = 15, pad = 1.5;
+      var gGap = (beamMode && al.w > 1) ? 8 : 0;
+      var LEFT = 74, TOP = 30, ROWGAP = 14, ANSH = 15, POSTH = 30;
+      var groupOf = function(m){ return beamMode ? al.groupOf(m) : 0; };
+      var xAt = function(m){ return LEFT + m * colW + groupOf(m) * gGap; };
+      var W = xAt(cols - 1) + colW + 26;
+      var H = TOP + p.D * cellH + ROWGAP + ANSH + POSTH + 16;
+      svg.setAttribute('width', W); svg.setAttribute('height', H);
+      svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+
+      svg.appendChild(svgText(6, 16, beamMode
+        ? ('beam: ' + al.w + ' kept -> ' + al.lanes + ' children x ' + p.D + ' steps = ' + (al.lanes * p.D) + ' step generations')
+        : ('flat: ' + p.N + ' chains x ' + p.D + ' steps = ' + (p.N * p.D) + ' step generations'), 'ttc-cap', 'start'));
+
+      var t, m, i;
+      for(t = 0; t < p.D; t++){
+        svg.appendChild(svgText(LEFT - 8, TOP + t * cellH + 11, 'step ' + (t + 1), 'ttc-lbl-dim', 'end'));
+      }
+      if(beamMode){
+        for(t = 0; t < ex.steps.length; t++){
+          var st = ex.steps[t];
+          for(m = 0; m < st.m; m++){
+            var cls = st.on[m] ? 'ttc-cell-ok' : 'ttc-cell-dead';
+            var r = svgEl('rect', { x: xAt(m), y: TOP + t * cellH + pad, width: colW - 2 * pad, height: cellH - 2 * pad, rx: 2, 'class': cls });
+            withTitle(r, 'step ' + (t + 1) + ', child ' + (m + 1) + ': ' + (st.on[m] ? 'still on the correct path' : 'off the correct path') +
+              ', step score v = ' + f2(st.v[m]) + (st.kept[m] ? ' -- KEPT' : ' -- pruned'));
+            svg.appendChild(r);
+            if(st.kept[m]){
+              svg.appendChild(svgEl('rect', { x: xAt(m) + 0.4, y: TOP + t * cellH + pad + 0.4, width: colW - 2 * pad - 0.8, height: cellH - 2 * pad - 0.8, rx: 2, 'class': 'ttc-keep' }));
+            }
+          }
+          // connectors: each kept child becomes the parent of one group in the next row
+          if(t + 1 < ex.steps.length){
+            for(i = 0; i < st.keepLanes.length; i++){
+              var x0 = xAt(st.keepLanes[i]) + (colW - 2 * pad) / 2;
+              var gm0 = al.starts[i], gm1 = al.starts[i + 1] - 1;
+              var x1 = (xAt(gm0) + xAt(gm1) + colW - 2 * pad) / 2;
+              var y0 = TOP + t * cellH + cellH - pad, y1 = TOP + (t + 1) * cellH + pad;
+              svg.appendChild(svgEl('path', { d: 'M' + x0.toFixed(1) + ' ' + y0 + ' C' + x0.toFixed(1) + ' ' + (y0 + 5) + ',' + x1.toFixed(1) + ' ' + (y1 - 5) + ',' + x1.toFixed(1) + ' ' + y1, 'class': 'ttc-edge' }));
+            }
+          }
+        }
+      } else {
+        for(i = 0; i < cols; i++){
+          var ch = ex.chains[i];
+          for(t = 0; t < p.D; t++){
+            var c2 = ch.cells[t];
+            var rr = svgEl('rect', { x: xAt(i), y: TOP + t * cellH + pad, width: colW - 2 * pad, height: cellH - 2 * pad, rx: 2,
+              'class': c2 === 'ok' ? 'ttc-cell-ok' : (c2 === 'break' ? 'ttc-cell-break' : 'ttc-cell-dead') });
+            withTitle(rr, 'chain ' + (i + 1) + ', step ' + (t + 1) + ': ' +
+              (c2 === 'ok' ? 'correct' : c2 === 'break' ? 'first wrong step' : 'already off track'));
+            svg.appendChild(rr);
+          }
+        }
+      }
+
+      // answer row + verifier-posterior bars for the candidates that reach selection
+      var ansY = TOP + p.D * cellH + ROWGAP + 11;
+      var postTop = ansY + 6, postH = POSTH - 8;
+      svg.appendChild(svgText(LEFT - 8, ansY, 'answer', 'ttc-lbl-dim', 'end'));
+      svg.appendChild(svgText(LEFT - 8, postTop + postH - 1, 'P(ok|v)', 'ttc-lbl-dim', 'end'));
+      var finals = [];
+      if(beamMode){
+        var last = ex.steps[ex.steps.length - 1];
+        for(i = 0; i < ex.items.length; i++) finals.push({ lane: last.keepLanes[i], it: ex.items[i] });
+      } else {
+        for(i = 0; i < p.N; i++) finals.push({ lane: i, it: ex.chains[i] });
+      }
+      var bestIdx = -1, bestV = -Infinity;
+      for(i = 0; i < finals.length; i++){ if(finals[i].it.v > bestV){ bestV = finals[i].it.v; bestIdx = i; } }
+      for(i = 0; i < finals.length; i++){
+        var f = finals[i], cx = xAt(f.lane) + (colW - 2 * pad) / 2;
+        var lab = 'A' + f.it.ans;
+        var tEl = svgText(cx, ansY, lab, f.it.ans === 0 ? 'ttc-lbl-gold' : 'ttc-lbl');
+        if(colW < 13) tEl.setAttribute('font-size', '8');
+        svg.appendChild(tEl);
+        var bh = Math.max(1, f.it.post * postH);
+        var br = svgEl('rect', { x: cx - Math.min(5, (colW - 2 * pad) / 2), y: postTop + postH - bh, width: Math.min(10, colW - 2 * pad), height: bh, rx: 1.5, 'class': 'ttc-post' });
+        withTitle(br, 'candidate ' + (i + 1) + ': answer A' + f.it.ans + ' (' + (f.it.ans === 0 ? 'correct' : 'wrong') +
+          '), verifier score v = ' + f2(f.it.v) + ', P(correct|v) = ' + f3(f.it.post));
+        svg.appendChild(br);
+        if(i === bestIdx){
+          svg.appendChild(svgEl('path', { d: 'M' + (cx - 4) + ' ' + (postTop + postH + 9) + 'L' + (cx + 4) + ' ' + (postTop + postH + 9) + 'L' + cx + ' ' + (postTop + postH + 2) + 'Z', fill: 'var(--ttc-acc)' }));
+        }
+      }
+      svg.setAttribute('aria-label', 'Budget grid with ' + cols + ' columns of generated chains and ' + p.D +
+        ' rows of reasoning steps; green cells are correct steps, and the arrow marks the candidate best-of-N selects.');
+    }
+
+    function renderTally(p, sel, nItems){
+      var i, maxC = 1, maxW = 1e-9;
+      for(i = 0; i < K1; i++){ if(sel.counts[i] > maxC) maxC = sel.counts[i]; if(sel.wsums[i] > maxW) maxW = sel.wsums[i]; }
+      var html = '<span class="h">answer</span><span class="h">votes</span><span class="h"></span><span class="h">weighted (&Sigma; P(ok|v))</span><span class="h"></span>';
+      for(i = 0; i < K1; i++){
+        if(sel.counts[i] === 0 && i !== 0) continue;
+        html += '<span class="ttc-ans">A' + i + (i === 0 ? ' <b>gold</b>' : '') + '</span>';
+        html += '<span class="ttc-bar"><i style="width:' + (100 * sel.counts[i] / maxC).toFixed(1) + '%"></i></span>';
+        html += '<span class="ttc-num">' + sel.counts[i] + '</span>';
+        html += '<span class="ttc-bar w"><i style="width:' + (100 * sel.wsums[i] / maxW).toFixed(1) + '%"></i></span>';
+        html += '<span class="ttc-num">' + f2(sel.wsums[i]) + '</span>';
+      }
+      els.tally.innerHTML = html;
+    }
+
+    function renderDecide(p, sel, nItems){
+      var mk = function(name, a){
+        var ok = a === 0;
+        return '<span class="ttc-badge ' + (ok ? 'ok' : 'bad') + '"><b>' + name + '</b> &rarr; A' + a + ' ' +
+          (ok ? '&#10003; correct' : '&#10007; wrong') + '</span>';
+      };
+      var html = '<span class="ttc-badge">candidates ranked: <b>' + nItems + '</b></span>';
+      html += '<span class="ttc-badge ' + (sel.any ? 'ok' : 'bad') + '">coverage: gold answer is ' + (sel.any ? 'present &#10003;' : 'absent &#10007;') + '</span>';
+      html += mk('best-of-N', sel.best) + mk('majority', sel.maj) + mk('weighted', sel.wt);
+      els.decide.innerHTML = html;
+    }
+
+    function renderStats(p, flat, beam, fit, d){
+      var n = p.N - 1;
+      var cards = [];
+      function card(v, l){ cards.push('<div class="vt-stat"><div class="n">' + v + '</div><div class="l">' + l + '</div></div>'); }
+      var pass1 = flat.pass[0], passN = flat.pass[n];
+      if(p.mode === 'flat'){
+        var mAcc = flat[p.method][n];
+        var conv = (passN - pass1) > 1e-9 ? (mAcc - pass1) / (passN - pass1) : NaN;
+        card(pct(pass1), 'pass@1 (measured over ' + M_FLAT + ' problems)');
+        card(pct(passN), 'pass@' + p.N + ' coverage ceiling');
+        card(pct(flat.best[n]), 'best-of-N accuracy');
+        card(pct(flat.maj[n]), 'majority vote (maj@' + p.N + ')');
+        card(pct(flat.wt[n]), 'weighted vote');
+        card(isFinite(conv) ? pct(conv) : 'n/a', 'coverage converted by ' + METHOD_NAME[p.method]);
+        card(fit ? f2(fit.alpha) : 'n/a', 'fitted &alpha; in acc &asymp; 1 - &epsilon;N^-&alpha;' + (fit ? ' (&epsilon; = ' + f3(fit.eps) + ')' : ''));
+        card(p.N * p.D, 'step generations (N x D)');
+      } else {
+        var bi = beam.idx;
+        var bAcc = beam[p.method][bi], bPass = beam.pass[bi];
+        var fAcc = flat[p.method][n];
+        var al = beamAlloc(p.N, p.W);
+        var kTxt = al.rem === 0 ? String(al.kBase) : (al.kBase + '/' + (al.kBase + 1));
+        card(pct(pass1), 'pass@1 (single chain)');
+        card(pct(fAcc), METHOD_NAME[p.method] + ', flat N = ' + p.N);
+        card(pct(bAcc), METHOD_NAME[p.method] + ', beam w = ' + al.w + ', k = ' + kTxt);
+        card((bAcc - fAcc >= 0 ? '+' : '') + (100 * (bAcc - fAcc)).toFixed(1) + ' pp', 'beam &minus; flat at equal budget (&plusmn;3 pp Monte-Carlo)');
+        card(pct(passN), 'pass@N, flat (coverage)');
+        card(pct(bPass), 'coverage of the ' + al.w + ' beam survivors');
+        card(f2(Math.pow(p.p, 1 / p.D)), 'per-step success q = p^(1/D)');
+        card(al.lanes * p.D, 'step generations (N x D, same as flat)');
+      }
+      els.out.innerHTML = cards.join('');
+    }
+
+    function renderCallout(p, flat, beam, d){
+      var n = p.N - 1, cls = '', msg;
+      var pass1 = flat.pass[0], passN = flat.pass[n];
+      var bo = flat.best[n], mv = flat.maj[n], wv = flat.wt[n];
+      if(p.mode === 'beam'){
+        var bi = beam.idx;
+        var al = beamAlloc(p.N, p.W);
+        if(al.w >= p.N){
+          cls = 'is-good';
+          msg = '<b>w &ge; N, so every child survives: nothing is ever pruned</b> and beam search has degenerated into flat sampling &mdash; the two curves sit on top of each other (up to Monte-Carlo noise, since the two simulations use different seeds). Raise N above w to start trading width for depth.';
+        } else {
+          var bAcc = beam[p.method][bi], fAcc = flat[p.method][n], bPass = beam.pass[bi];
+          if(bAcc > fAcc + 0.04){
+            cls = 'is-good';
+            msg = '<b>Beam wins at equal budget</b> (' + pct(bAcc) + ' vs ' + pct(fAcc) + ' for flat). The step verifier (AUC ' + f2(p.auc) +
+              ') is applied at all ' + p.D + ' depths instead of once at the end, and even mild per-step selection pressure compounds: it keeps compute on prefixes that are still live. This is the PRM-over-ORM argument &mdash; note it works at AUC values far too low to make best-of-N useful.';
+          } else if(bAcc < fAcc - 0.04){
+            cls = 'is-warn';
+            msg = '<b>Beam loses at equal budget</b> (' + pct(bAcc) + ' vs ' + pct(fAcc) + ' for flat). Coverage tells you why: the ' + al.w +
+              ' survivors contain the gold answer only ' + pct(bPass) + ' of the time versus ' + pct(passN) +
+              ' for ' + p.N + ' independent chains. A dull verifier prunes correct prefixes, and the diversity it throws away can never be recovered downstream.';
+          } else {
+            msg = 'Beam and flat are within 4 points of each other here (' + pct(bAcc) + ' vs ' + pct(fAcc) +
+              '), which is about the Monte-Carlo resolution of the beam curve (' + M_BEAM +
+              ' problems per point). Sharpen the verifier, or narrow the beam toward w = 1, to push them apart.';
+          }
+        }
+      } else if(p.auc <= 0.52){
+        cls = 'is-warn';
+        msg = '<b>The verifier is noise</b> (AUC ' + f2(p.auc) + ' -> d = ' + f2(d) +
+          '): best-of-N is now literally a random pick among the N samples, so its curve is flat at pass@1 (' + pct(pass1) +
+          ') while pass@N climbs to ' + pct(passN) + '. All that coverage exists and nothing can reach it &mdash; the generator is fine, the verifier is the bottleneck.';
+      } else if(mv > bo + 0.02 && mv > wv - 0.02){
+        cls = 'is-warn';
+        msg = '<b>Self-consistency beats best-of-N here</b> (' + pct(mv) + ' vs ' + pct(bo) +
+          '). A verifier at AUC ' + f2(p.auc) + ' is confident often enough to crown a single wrong candidate; counting answers averages that noise away. Raise AUC and watch best-of-N overtake it.';
+      } else if(p.agree >= 0.6 && p.p < 0.5) {
+        cls = 'is-warn';
+        msg = '<b>The errors agree</b> (' + pct(p.agree + (1 - p.agree) / KD) + ' of wrong chains land on A1) and p &lt; 0.5, so majority vote converges on the modal <i>wrong</i> answer: maj@' + p.N +
+          ' = ' + pct(mv) + ' against pass@1 = ' + pct(pass1) + '. More compute is making self-consistency worse, not better. A verifier (best-of-N: ' + pct(bo) + ') is the only way out.';
+      } else if(p.auc >= 0.9){
+        cls = 'is-good';
+        msg = '<b>Near-oracle verifier</b> (AUC ' + f2(p.auc) + ', d = ' + f2(d) + '): best-of-N tracks the pass@N ceiling closely (' +
+          pct(bo) + ' vs ' + pct(passN) + '), converting almost all coverage into accuracy. This is why test-time scaling works so well where a <i>sound</i> verifier exists &mdash; unit tests, a proof checker, an exact-answer grader.';
+      } else {
+        msg = 'At N = ' + p.N + ': coverage ' + pct(passN) + ', best-of-N ' + pct(bo) + ', majority ' + pct(mv) + ', weighted ' + pct(wv) +
+          '. Weighted vote usually dominates because it uses both signals &mdash; how many chains agree <i>and</i> how confident the verifier is in each.';
+      }
+      els.callout.className = 'ttc-callout' + (cls ? ' ' + cls : '');
+      els.callout.innerHTML = msg;
+    }
+
+    // ---------------------------------------------------------------- main ----
+    var pending = 0;
+    function schedule(){
+      if(pending) return;
+      pending = requestAnimationFrame(function(){ pending = 0; render(); });
+    }
+    function render(){
+      var p = readParams();
+      var d = SQRT2 * probit(p.auc);          // AUC = Phi(d / sqrt(2))  <=>  d = sqrt(2) Phi^-1(AUC)
+      var lp = logit(p.p);
+      var pop = getPopulation(p);
+      var flat = evalFlat(pop, p, d);
+      var beam = p.mode === 'beam' ? evalBeamCurve(pop, p, d) : null;
+      var fit = p.mode === 'flat' ? fitPower(flat[p.method]) : null;
+
+      // wrong answers: A1 with prob agree + (1-agree)/KD, each other distractor with
+      // (1-agree)/KD. Collision prob is sum_a P(a)^2 over the KD wrong answers.
+      var pOther = (1 - p.agree) / KD, pA1 = p.agree + pOther;
+      var pColl = pA1 * pA1 + (KD - 1) * pOther * pOther;
+
+      els.formula.innerHTML =
+        'verifier: v = <b>&plusmn;d/2</b> + N(0,1), &nbsp; d = &radic;2&middot;&Phi;<sup>-1</sup>(AUC) = <b>' + f2(d) + '</b> &sigma; &nbsp;|&nbsp; ' +
+        'P(correct|v) = &sigma;(logit(p) + d&middot;v) = &sigma;(' + f2(lp) + ' + ' + f2(d) + '&middot;v) &nbsp;|&nbsp; ' +
+        'best-of-N = argmax<sub>i</sub> v<sub>i</sub> &nbsp;|&nbsp; vote = argmax<sub>a</sub> count(a) &nbsp;|&nbsp; weighted = argmax<sub>a</sub> &Sigma;P(ok|v) &nbsp;|&nbsp; ' +
+        'P(wrong chain &rarr; attractor A1) = ' + f2(pA1) + ', P(two wrong chains agree) = ' + f2(pColl) +
+        ' &nbsp;|&nbsp; q = p^(1/D) = <b>' + f2(Math.pow(p.p, 1 / p.D)) + '</b>';
+
+      var ex, sel, nItems;
+      if(p.mode === 'beam'){
+        ex = buildBeamExample(p, d);
+        sel = selectFrom(ex.items, lp, d);
+        nItems = ex.items.length;
+        els.panelHead.innerHTML = 'Example problem, beam search &nbsp;<span>' + ex.alloc.lanes + ' children per step, top w = ' +
+          ex.alloc.w + ' kept (' + (ex.alloc.rem === 0 ? ex.alloc.kBase : ex.alloc.kBase + '&ndash;' + (ex.alloc.kBase + 1)) +
+          ' children per survivor), D = ' + p.D + ' steps, p = ' + f2(p.p) + ', per-step q = ' + f2(Math.pow(p.p, 1 / p.D)) + '</span>';
+      } else {
+        ex = buildFlatExample(p, d);
+        var items = [];
+        for(var i = 0; i < p.N; i++) items.push(ex.chains[i]);
+        sel = selectFrom(items, lp, d);
+        nItems = items.length;
+        els.panelHead.innerHTML = 'Example problem, flat sampling &nbsp;<span>N = ' + p.N + ' independent chains of D = ' + p.D +
+          ' steps, p = ' + f2(p.p) + ', per-step q = ' + f2(Math.pow(p.p, 1 / p.D)) + '</span>';
+      }
+
+      renderLegend(p, fit);
+      renderCurve(p, flat, beam, fit);
+      renderBudget(p, ex, sel);
+      renderTally(p, sel, nItems);
+      renderDecide(p, sel, nItems);
+      renderCallout(p, flat, beam, d);
+      renderStats(p, flat, beam, fit, d);
+      els.hint.textContent = 'Monte-Carlo over ' + M_FLAT + ' seeded problems (' + M_BEAM + ' for beam curves); seed ' + state.seed + '.';
+    }
+
+    var inputs = [els.nR, els.nN, els.p, els.sigma, els.auc, els.agree, els.method, els.mode, els.dR, els.dN, els.wR, els.wN];
+    for(var ii = 0; ii < inputs.length; ii++){
+      inputs[ii].addEventListener('input', schedule);
+      inputs[ii].addEventListener('change', schedule);
+    }
+    // number boxes accept anything while focused; on blur write back the clamped value
+    // so the box can never disagree with what the widget actually computed.
+    var pairs = [[els.nR, els.nN, 16, 1, NMAX], [els.dR, els.dN, 4, 2, 8], [els.wR, els.wN, 4, 1, 8]];
+    for(var pi2 = 0; pi2 < pairs.length; pi2++){
+      (function(pr){
+        pr[1].addEventListener('blur', function(){
+          var v = readInt(pr[1], pr[2], pr[3], pr[4]);
+          pr[1].value = String(v); pr[0].value = String(v);
+          schedule();
+        });
+      })(pairs[pi2]);
+    }
+    els.resample.addEventListener('click', function(){
+      state.seed = (state.seed * 1664525 + 1013904223) >>> 0;
+      popCache.key = ''; flatCache.key = ''; beamCache.key = ''; beamPt.key = '';
+      render();
+    });
+    render();
+  })();</script>
+</div>

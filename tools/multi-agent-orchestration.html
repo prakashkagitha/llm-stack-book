@@ -1,0 +1,849 @@
+<div class="viz-tool" id="tool-multi-agent-orchestration">
+  <div class="vt-title">Multi-agent orchestration: supervisor, workers, and the price of coordination</div>
+
+  <div class="mao-sub">Scenario</div>
+  <div class="vt-grid">
+    <label for="multi-agent-orchestration-topo">Topology
+      <select id="multi-agent-orchestration-topo" aria-label="Orchestration topology">
+        <option value="single">Single agent (one context)</option>
+        <option value="supervisor" selected>Supervisor + workers (star)</option>
+        <option value="pipeline">Sequential pipeline (chain)</option>
+        <option value="debate">Debate + judge (peer-to-peer)</option>
+      </select>
+    </label>
+
+    <label for="multi-agent-orchestration-n">Agents / subtasks <i>N</i>
+      <span class="mao-in">
+        <input id="multi-agent-orchestration-n" type="range" min="2" max="5" step="1" value="3" aria-label="Number of agents and subtasks">
+        <span id="multi-agent-orchestration-n-val" class="mao-val">3</span>
+      </span>
+    </label>
+
+    <label for="multi-agent-orchestration-dispatch">Dispatch <span class="mao-hint">(supervisor / debate)</span>
+      <select id="multi-agent-orchestration-dispatch" aria-label="Parallel or sequential dispatch, affects supervisor and debate topologies">
+        <option value="par" selected>parallel (thread pool)</option>
+        <option value="seq">sequential (one at a time)</option>
+      </select>
+    </label>
+
+    <label class="mao-toggle" for="multi-agent-orchestration-critic">
+      <input id="multi-agent-orchestration-critic" type="checkbox" checked>
+      <span>Critic gate <span class="mao-hint">(supervisor only)</span></span>
+    </label>
+  </div>
+
+  <div class="mao-sub">Cost model (tokens per call)</div>
+  <div class="vt-grid">
+    <label for="multi-agent-orchestration-sys">System prompt / agent <i>S</i>
+      <span class="mao-in">
+        <input id="multi-agent-orchestration-sys" type="range" min="200" max="2000" step="50" value="1000" aria-label="System prompt tokens per agent">
+        <span id="multi-agent-orchestration-sys-val" class="mao-val">1000</span>
+      </span>
+    </label>
+
+    <label for="multi-agent-orchestration-raw">Source material / subtask <i>R</i>
+      <span class="mao-in">
+        <input id="multi-agent-orchestration-raw" type="range" min="0" max="6000" step="250" value="2000" aria-label="Raw source tokens per subtask">
+        <span id="multi-agent-orchestration-raw-val" class="mao-val">2000</span>
+      </span>
+    </label>
+
+    <label for="multi-agent-orchestration-out">Output / call <i>O</i>
+      <span class="mao-in">
+        <input id="multi-agent-orchestration-out" type="range" min="100" max="800" step="50" value="400" aria-label="Output tokens per call">
+        <span id="multi-agent-orchestration-out-val" class="mao-val">400</span>
+      </span>
+    </label>
+
+    <label for="multi-agent-orchestration-ctx">Context window <i>C</i>
+      <span class="mao-in">
+        <input id="multi-agent-orchestration-ctx" type="range" min="4000" max="32000" step="1000" value="16000" aria-label="Context window in tokens">
+        <span id="multi-agent-orchestration-ctx-val" class="mao-val">16000</span>
+      </span>
+    </label>
+
+    <label for="multi-agent-orchestration-p">Per-subtask success <i>p</i>
+      <span class="mao-in">
+        <input id="multi-agent-orchestration-p" type="range" min="0.30" max="0.98" step="0.01" value="0.80" aria-label="Marginal per-subtask success probability">
+        <span id="multi-agent-orchestration-p-val" class="mao-val">0.80</span>
+      </span>
+    </label>
+
+    <label for="multi-agent-orchestration-rho">Systematic failure &rho;
+      <span class="mao-in">
+        <input id="multi-agent-orchestration-rho" type="range" min="0" max="0.45" step="0.01" value="0.15" aria-label="Systematic failure probability rho">
+        <span id="multi-agent-orchestration-rho-val" class="mao-val">0.15</span>
+      </span>
+    </label>
+  </div>
+
+  <div class="mao-buttons">
+    <button type="button" id="multi-agent-orchestration-next">Next message -&gt;</button>
+    <button type="button" id="multi-agent-orchestration-replay">Replay step-by-step</button>
+    <button type="button" id="multi-agent-orchestration-all">Show whole run</button>
+  </div>
+
+  <div class="mao-main">
+    <div class="mao-graphwrap">
+      <div id="multi-agent-orchestration-graph"></div>
+      <div class="mao-phase" id="multi-agent-orchestration-phase">ready</div>
+    </div>
+    <div class="vt-out" id="multi-agent-orchestration-out-panel" aria-live="polite"></div>
+  </div>
+
+  <div class="mao-logwrap" id="multi-agent-orchestration-logwrap" tabindex="0" role="log" aria-label="Inter-agent message log">
+    <div class="mao-log" id="multi-agent-orchestration-log"></div>
+  </div>
+
+  <div class="mao-tablewrap">
+    <table class="mao-table" id="multi-agent-orchestration-table">
+      <caption>All four topologies at the current settings (same task, same model)</caption>
+      <thead>
+        <tr>
+          <th scope="col">Topology</th><th scope="col">Calls</th><th scope="col">Total tokens</th>
+          <th scope="col">Cost / run</th><th scope="col">Latency</th><th scope="col">P(correct)</th>
+          <th scope="col">Cost / success</th>
+        </tr>
+      </thead>
+      <tbody id="multi-agent-orchestration-tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="vt-note">
+    Every arrow in this diagram is an <b>API call</b>, and every API call re-sends its whole context. That is the entire
+    lesson. A call is charged
+    <code>input = S + goal + R&middot;(packets it reads) + (forwarded messages)</code> and <code>output = O</code> for an
+    intermediate call or <code>N&middot;O</code> for a call that writes the whole report, priced at
+    the chapter's illustrative gpt-4o-mini tier (USD 0.15 / 1M input, USD 0.60 / 1M output &mdash; the same tier as the
+    5-agent pipeline worked example); latency is
+    <code>0.5 s + out/200 tok/s</code> per call, summed over <b>waves</b> (calls in the same parallel wave overlap, so the
+    dispatch toggle changes wall-clock but never the token bill). Watch the meters as you switch topology: the
+    <b>supervisor</b> pays <i>N</i> extra system prompts plus a plan and a synthesis; the <b>pipeline</b> forwards every
+    earlier stage's output into every later stage, so context grows linearly and the bill grows quadratically; the
+    <b>debate</b> is all-to-all &mdash; each of <i>N</i> debaters re-reads all <i>N</i> opening statements, which is
+    <i>N</i><sup>2</sup> message-copies before the judge has read a word. The single agent is almost always the cheapest,
+    which is why the chapter tells you to benchmark it first. Press <b>Next message</b> (or <b>Replay</b>) to walk the run
+    one call at a time and watch the token meter climb; <b>Show whole run</b> puts the totals back.
+    <br><br>
+    The reliability panel is a toy model, stated exactly so you can check it. A task is <i>systematically</i> hard for this
+    model with probability &rho; (then <i>every</i> sample fails); otherwise each subtask-sized operation succeeds
+    independently with <code>q = p/(1-&rho;)</code>, so the marginal per-subtask rate is the <i>p</i> you set. Chains
+    multiply (<code>q^k</code>), redundancy uses the chapter's <code>1-(1-x)^N</code>, and everything is capped by
+    <code>1-&rho;</code>. Single: <code>q^N</code> (it must get all <i>N</i> subtasks right). Supervisor:
+    <code>q^N&middot;q^2</code> &mdash; the plan and the synthesis are model calls too, and they can drop or garble a
+    result. Pipeline: <code>q^(2N-1)</code>, because each of the <i>N</i>&minus;1 handoffs is one more place an error is
+    inherited as ground truth. Debate: <code>q&middot;[1-(1-q^N)^N]</code> &mdash; genuine redundancy, but the judge must
+    still pick the right answer, and no <i>N</i> ever beats the <code>1-&rho;</code> ceiling. Turn the critic gate on: a
+    failed worker is caught with probability 0.7 and retried, so <code>q -&gt; q + (1-q)&middot;0.7&middot;q</code>. That
+    is usually the biggest single win available, and it costs two calls &mdash; the MAST result that most multi-agent
+    failures are organisational, not capability, in one number.
+    <br><br>
+    The honest verdict is the last column, <b>cost per successful run</b> = cost / P. At the defaults the single agent
+    wins it. Now drag <b>R</b> up: at some point one context can no longer hold all <i>N</i> source packets, the single
+    agent's call turns amber with <b>OVERFLOW</b>, its success probability drops to zero, and decomposition stops being a
+    luxury. That crossing &mdash; not the vibe of "more agents, more intelligence" &mdash; is the real argument for
+    multi-agent systems.
+  </div>
+
+  <style>
+    #tool-multi-agent-orchestration{
+      --mao-accent: var(--accent,#c15b39);
+      --mao-good:   var(--good,#2f9e6e);
+      --mao-warn:   var(--warn,#e0a106);
+      --mao-on:     var(--surface,#ffffff);
+      --mao-ink-on-warn: #1a1a1a;
+      border:1px solid var(--border-2,#e5e7eb); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); color:var(--ink,#1a1a2e); max-width:100%;
+    }
+    #tool-multi-agent-orchestration .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#1a1a2e); }
+    #tool-multi-agent-orchestration .mao-sub{
+      font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted,#889);
+      margin:12px 0 6px; font-weight:700;
+    }
+    #tool-multi-agent-orchestration .mao-sub:first-of-type{ margin-top:2px; }
+    #tool-multi-agent-orchestration .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(198px,1fr)); gap:10px 16px; }
+    #tool-multi-agent-orchestration label{ display:flex; flex-direction:column; gap:4px; font-size:.79rem; color:var(--ink-soft,#556); }
+    #tool-multi-agent-orchestration label i{ font-style:italic; }
+    #tool-multi-agent-orchestration select{
+      font:inherit; font-size:.85rem; padding:5px 7px; border:1px solid var(--border,#e5e7eb); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#1a1a2e); max-width:100%;
+    }
+    #tool-multi-agent-orchestration select:disabled{ opacity:.5; }
+    #tool-multi-agent-orchestration select:focus-visible,
+    #tool-multi-agent-orchestration input:focus-visible,
+    #tool-multi-agent-orchestration button:focus-visible,
+    #tool-multi-agent-orchestration .mao-logwrap:focus-visible{ outline:2px solid var(--mao-accent); outline-offset:2px; }
+    #tool-multi-agent-orchestration .mao-in{ display:flex; gap:8px; align-items:center; }
+    #tool-multi-agent-orchestration .mao-in input[type="range"]{ flex:1 1 auto; min-width:0; accent-color:var(--mao-accent); }
+    #tool-multi-agent-orchestration .mao-val{
+      font-family:var(--mono,monospace); font-size:.8rem; min-width:3.4em; text-align:right;
+      color:var(--ink,#1a1a2e); font-variant-numeric:tabular-nums;
+    }
+    #tool-multi-agent-orchestration .mao-hint{ color:var(--muted,#889); font-size:.92em; }
+    #tool-multi-agent-orchestration .mao-toggle{ flex-direction:row; align-items:center; gap:8px; align-self:end; padding-bottom:4px; }
+    #tool-multi-agent-orchestration .mao-toggle input{ accent-color:var(--mao-accent); width:16px; height:16px; flex:0 0 auto; }
+
+    #tool-multi-agent-orchestration .mao-buttons{ margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; }
+    #tool-multi-agent-orchestration button{
+      font:inherit; font-size:.83rem; font-weight:600; padding:7px 13px; border-radius:8px; cursor:pointer;
+      border:1px solid var(--border-2,#e5e7eb); background:var(--surface-2,#f6f7f9); color:var(--ink,#1a1a2e);
+    }
+    #tool-multi-agent-orchestration #multi-agent-orchestration-next{ background:var(--mao-accent); border-color:var(--mao-accent); color:var(--mao-on); }
+    #tool-multi-agent-orchestration button:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-multi-agent-orchestration button:hover:not(:disabled){ filter:brightness(1.07); }
+
+    #tool-multi-agent-orchestration .mao-main{
+      margin-top:14px; display:grid; grid-template-columns:minmax(300px,1.65fr) minmax(190px,1fr); gap:14px; align-items:start;
+    }
+    @media (max-width:700px){ #tool-multi-agent-orchestration .mao-main{ grid-template-columns:1fr; } }
+
+    #tool-multi-agent-orchestration .mao-graphwrap{
+      background:var(--surface-2,#f6f7f9); border:1px solid var(--border,#e5e7eb); border-radius:10px;
+      padding:8px; overflow-x:auto; max-width:100%; min-width:0;
+    }
+    #tool-multi-agent-orchestration svg{ display:block; width:100%; height:auto; min-width:340px; }
+    #tool-multi-agent-orchestration .mao-phase{
+      font-family:var(--mono,monospace); font-size:.7rem; color:var(--ink-soft,#556); padding:4px 4px 0; min-width:340px;
+    }
+
+    #tool-multi-agent-orchestration .mao-edge{ stroke:var(--muted,#889); stroke-width:1.6; fill:none; opacity:.55; }
+    #tool-multi-agent-orchestration .mao-edge.mao-ring{ stroke-dasharray:3 4; opacity:.35; }
+    #tool-multi-agent-orchestration .mao-edge.mao-hot{ stroke:var(--mao-accent); stroke-width:2.6; opacity:1; }
+    #tool-multi-agent-orchestration .mao-edge.mao-bad{ stroke:var(--mao-warn); stroke-width:2.6; opacity:1; }
+    #tool-multi-agent-orchestration .mao-head{ fill:var(--muted,#889); }
+    #tool-multi-agent-orchestration .mao-head-hot{ fill:var(--mao-accent); }
+    #tool-multi-agent-orchestration .mao-head-bad{ fill:var(--mao-warn); }
+
+    #tool-multi-agent-orchestration .mao-node rect{
+      fill:var(--surface-3,#eceef3); stroke:var(--border-2,#e5e7eb); stroke-width:1.3;
+    }
+    #tool-multi-agent-orchestration .mao-node.mao-pill rect{ fill:var(--surface,#fff); }
+    #tool-multi-agent-orchestration .mao-nl{ font-size:11.5px; font-weight:700; fill:var(--ink,#1a1a2e); font-family:var(--sans,sans-serif); }
+    #tool-multi-agent-orchestration .mao-ns{ font-size:9px; fill:var(--muted,#889); font-family:var(--sans,sans-serif); }
+    #tool-multi-agent-orchestration .mao-nb{ font-size:8.5px; fill:var(--ink-soft,#556); font-family:var(--mono,monospace); }
+    #tool-multi-agent-orchestration .mao-node.mao-hot rect{ fill:var(--mao-accent); stroke:var(--mao-accent); }
+    #tool-multi-agent-orchestration .mao-node.mao-hot .mao-nl,
+    #tool-multi-agent-orchestration .mao-node.mao-hot .mao-ns{ fill:var(--mao-on); }
+    #tool-multi-agent-orchestration .mao-node.mao-bad rect{ fill:var(--mao-warn); stroke:var(--mao-warn); }
+    #tool-multi-agent-orchestration .mao-node.mao-bad .mao-nl,
+    #tool-multi-agent-orchestration .mao-node.mao-bad .mao-ns{ fill:var(--mao-ink-on-warn); }
+    #tool-multi-agent-orchestration .mao-node.mao-done rect{ stroke:var(--mao-good); stroke-width:1.8; }
+
+    #tool-multi-agent-orchestration .vt-out{ display:grid; grid-template-columns:1fr; gap:7px; min-width:0; }
+    #tool-multi-agent-orchestration .vt-stat{ background:var(--surface-3,#eceef3); border-radius:9px; padding:7px 10px; font-size:.77rem; }
+    #tool-multi-agent-orchestration .vt-stat b{ color:var(--mao-accent); font-variant-numeric:tabular-nums; }
+    #tool-multi-agent-orchestration .vt-stat .l{ font-size:.69rem; color:var(--muted,#889); margin-top:2px; line-height:1.35; }
+    #tool-multi-agent-orchestration .vt-stat.mao-ok b{ color:var(--mao-good); }
+    #tool-multi-agent-orchestration .vt-stat.mao-alert{ background:var(--mao-warn); }
+    #tool-multi-agent-orchestration .vt-stat.mao-alert b,
+    #tool-multi-agent-orchestration .vt-stat.mao-alert .l{ color:var(--mao-ink-on-warn); }
+    #tool-multi-agent-orchestration .mao-mono{ font-family:var(--mono,monospace); font-size:.7rem; }
+
+    #tool-multi-agent-orchestration .mao-logwrap{
+      margin-top:14px; border:1px solid var(--border,#e5e7eb); border-radius:10px; background:var(--surface-2,#f6f7f9);
+      max-height:300px; overflow-y:auto; overflow-x:auto; max-width:100%;
+    }
+    #tool-multi-agent-orchestration .mao-log{ padding:10px 12px; }
+    #tool-multi-agent-orchestration .mao-msg{ border-left:3px solid var(--border-2,#e5e7eb); padding:3px 0 6px 9px; margin-bottom:7px; }
+    #tool-multi-agent-orchestration .mao-msg.mao-msg-bad{ border-left-color:var(--mao-warn); }
+    #tool-multi-agent-orchestration .mao-msg.mao-msg-last{ border-left-color:var(--mao-accent); }
+    #tool-multi-agent-orchestration .mao-mh{ display:flex; flex-wrap:wrap; gap:7px; align-items:baseline; font-size:.72rem; }
+    #tool-multi-agent-orchestration .mao-tag{
+      font-family:var(--mono,monospace); font-size:.66rem; font-weight:700; padding:1px 6px; border-radius:5px;
+      background:var(--surface-3,#eceef3); color:var(--ink-soft,#556); white-space:nowrap;
+    }
+    #tool-multi-agent-orchestration .mao-tag.mao-t-acc{ background:var(--mao-accent); color:var(--mao-on); }
+    #tool-multi-agent-orchestration .mao-tag.mao-t-warn{ background:var(--mao-warn); color:var(--mao-ink-on-warn); }
+    #tool-multi-agent-orchestration .mao-route{ font-family:var(--mono,monospace); color:var(--ink,#1a1a2e); }
+    #tool-multi-agent-orchestration .mao-tok{ margin-left:auto; font-family:var(--mono,monospace); color:var(--ink-soft,#556); font-variant-numeric:tabular-nums; white-space:nowrap; }
+    #tool-multi-agent-orchestration .mao-mb{ font-size:.76rem; color:var(--ink,#1a1a2e); margin-top:3px; line-height:1.45; }
+    #tool-multi-agent-orchestration .mao-ml{ font-size:.68rem; color:var(--muted,#889); font-family:var(--mono,monospace); margin-top:3px; }
+    #tool-multi-agent-orchestration .mao-ml.mao-over{ color:var(--mao-warn); font-weight:700; }
+
+    #tool-multi-agent-orchestration .mao-tablewrap{ margin-top:14px; overflow-x:auto; max-width:100%; }
+    #tool-multi-agent-orchestration .mao-table{ border-collapse:collapse; width:100%; min-width:560px; font-size:.75rem; }
+    #tool-multi-agent-orchestration .mao-table caption{ text-align:left; font-size:.7rem; color:var(--muted,#889); padding-bottom:5px; }
+    #tool-multi-agent-orchestration .mao-table th{
+      text-align:left; font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted,#889);
+      border-bottom:1px solid var(--border-2,#e5e7eb); padding:5px 7px; font-weight:700;
+    }
+    #tool-multi-agent-orchestration .mao-table td{
+      padding:5px 7px; border-bottom:1px solid var(--border,#e5e7eb); color:var(--ink,#1a1a2e);
+      font-variant-numeric:tabular-nums; vertical-align:middle;
+    }
+    #tool-multi-agent-orchestration .mao-table tr.mao-cur td{ background:var(--surface-3,#eceef3); font-weight:700; }
+    #tool-multi-agent-orchestration .mao-table td.mao-bar-cell{ min-width:120px; }
+    #tool-multi-agent-orchestration .mao-bar{ height:8px; border-radius:4px; background:var(--surface-3,#eceef3); overflow:hidden; margin-top:3px; }
+    #tool-multi-agent-orchestration .mao-bar span{ display:block; height:100%; background:var(--mao-accent); }
+    #tool-multi-agent-orchestration .mao-win{ color:var(--mao-good); font-weight:700; }
+    #tool-multi-agent-orchestration .mao-dead{ color:var(--mao-warn); font-weight:700; }
+
+    #tool-multi-agent-orchestration .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#889); line-height:1.6; }
+    #tool-multi-agent-orchestration .vt-note b{ color:var(--ink-soft,#556); }
+    #tool-multi-agent-orchestration .vt-note code{ font-family:var(--mono,monospace); background:var(--surface-3,#eceef3); border-radius:4px; padding:0 4px; }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-multi-agent-orchestration');
+    if(!root) return;
+    function q(id){ return root.querySelector('#multi-agent-orchestration-' + id); }
+
+    var elTopo = q('topo'), elN = q('n'), elNv = q('n-val'), elDisp = q('dispatch'), elCritic = q('critic');
+    var elSys = q('sys'), elSysv = q('sys-val'), elRaw = q('raw'), elRawv = q('raw-val');
+    var elOut = q('out'), elOutv = q('out-val'), elCtx = q('ctx'), elCtxv = q('ctx-val');
+    var elP = q('p'), elPv = q('p-val'), elRho = q('rho'), elRhov = q('rho-val');
+    var elNext = q('next'), elReplay = q('replay'), elAll = q('all');
+    var elGraph = q('graph'), elPhase = q('phase'), elPanel = q('out-panel');
+    var elLog = q('log'), elLogWrap = q('logwrap'), elTbody = q('tbody');
+
+    if(!elTopo || !elN || !elDisp || !elCritic || !elSys || !elRaw || !elOut || !elCtx ||
+       !elP || !elRho || !elNext || !elReplay || !elAll || !elGraph || !elPanel || !elLog || !elTbody) return;
+
+    function setText(el, s){ if(el) el.textContent = s; }
+
+    // ---------------------------------------------------------------- constants
+    // Illustrative gpt-4o-mini tier used by the chapter's cost worked example.
+    var PRICE_IN = 0.15, PRICE_OUT = 0.60;   // USD per 1e6 tokens
+    var TTFT = 0.5, DECODE_TPS = 200;        // per-call latency = TTFT + out / DECODE_TPS
+    var CRITIC_DETECT = 0.7;                 // probability the critic notices a bad result
+    var RUNS_PER_DAY = 10000, DAYS = 30;     // for the monthly bill, same scale as the chapter
+
+    var GOAL = "Write a brief market analysis report for a new AI note-taking app: " +
+               "competitor landscape, target user segments, and key risks.";
+    var GOAL_TOK = Math.ceil(GOAL.length / 4);   // the chapter's crude chars/4 estimator
+
+    var TOPOS = ['single','supervisor','pipeline','debate'];
+    var TOPO_NAME = { single:'Single agent', supervisor:'Supervisor + workers',
+                      pipeline:'Sequential pipeline', debate:'Debate + judge' };
+
+    // Deterministic scripted content. Nothing here is random.
+    var SUB = [
+      { role:'competitor_scan', who:'researcher',
+        text:'Competitors: Notion AI, Mem, Granola, Otter. Granola owns live meeting capture; nobody owns async summarisation.' },
+      { role:'segment_study', who:'analyst',
+        text:'Segments: billable consultants, engineering ICs, students. Consultants show the clearest willingness to pay.' },
+      { role:'risk_review', who:'risk analyst',
+        text:'Risks: incumbents bundle this free, API cost per meeting-hour, two-party recording-consent law.' },
+      { role:'pricing_bench', who:'pricing analyst',
+        text:'Pricing: incumbents sit at USD 8-20 per seat per month; a per-meeting-hour tier is unclaimed.' },
+      { role:'channel_scan', who:'growth analyst',
+        text:'Channels: consultancy communities, the Chrome Web Store, and calendar-integration partnerships convert best.' }
+    ];
+    var PIPE = [
+      { who:'researcher', role:'gather',
+        text:'Raw notes on competitors, segments and risks, pulled from the source packet.' },
+      { who:'analyst', role:'rank',
+        text:'Ranks segments and prices against those notes; names the consultant segment as the wedge.' },
+      { who:'writer', role:'draft',
+        text:'Turns the ranked analysis into a three-section report.' },
+      { who:'editor', role:'tighten',
+        text:'Tightens the draft and cuts one unsupported claim about student adoption.' },
+      { who:'fact-checker', role:'verify',
+        text:'Checks every number against its source; one pricing figure was stale and is corrected.' }
+    ];
+    var DEB = [
+      { who:'debater A',
+        open:'Enter: the per-meeting-hour tier is unclaimed and consultants already bill that way.',
+        rebut:'Concedes the bundling point, but bundled note-takers are generic; the billable-hour workflow is not.' },
+      { who:'debater B',
+        open:'Do not enter: Microsoft and Google bundle this free inside seats the buyer already pays for.',
+        rebut:'A ignores that consultancies buy the suite, not the app; distribution beats the wedge.' },
+      { who:'debater C',
+        open:'Enter narrowly: sell to consultancies as a billing artefact, not as a note-taker.',
+        rebut:'Both under-weight consent law in two-party states; that gates the whole US market.' },
+      { who:'debater D',
+        open:'Enter later: wait for cost per meeting-hour to halve before scaling paid acquisition.',
+        rebut:'A and C assume today cost curves hold; they have fallen sharply two years running.' },
+      { who:'debater E',
+        open:'Do not enter: the segment that pays is small and the segment that is large does not pay.',
+        rebut:'C has the right wedge and the wrong size: this is a niche, not a platform.' }
+    ];
+
+    // ---------------------------------------------------------------- helpers
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function r1(x){ return Math.round(x * 10) / 10; }
+    function fmt(n){ return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+    function kfmt(n){ return n >= 10000 ? (Math.round(n / 100) / 10) + 'k' : fmt(n); }
+    function usd(x){
+      if(!isFinite(x)) return 'n/a';
+      if(x >= 1) return '$' + x.toFixed(2);
+      if(x >= 0.01) return '$' + x.toFixed(4);
+      return '$' + x.toFixed(5);
+    }
+    function clampInt(el, lo, hi, d){ var v = parseInt(el.value, 10); if(!isFinite(v)) return d; return Math.min(hi, Math.max(lo, v)); }
+    function clampNum(el, lo, hi, d){ var v = parseFloat(el.value); if(!isFinite(v)) return d; return Math.min(hi, Math.max(lo, v)); }
+
+    function params(){
+      return {
+        topo: (TOPOS.indexOf(elTopo.value) >= 0) ? elTopo.value : 'supervisor',
+        n:      clampInt(elN, 2, 5, 3),
+        S:      clampInt(elSys, 200, 2000, 1000),
+        R:      clampInt(elRaw, 0, 6000, 2000),
+        O:      clampInt(elOut, 100, 800, 400),
+        C:      clampInt(elCtx, 4000, 32000, 16000),
+        p:      clampNum(elP, 0.30, 0.98, 0.80),
+        rho:    clampNum(elRho, 0, 0.45, 0.15),
+        critic: !!elCritic.checked,
+        par:    elDisp.value !== 'seq'
+      };
+    }
+
+    // ---------------------------------------------------------------- run builder
+    // Every step is one model call. in = S + goal + R*packets + forwarded messages.
+    function buildRun(topo, P){
+      var S = P.S, R = P.R, O = P.O, n = P.n, G = GOAL_TOK;
+      var nodes = [], edges = [], steps = [], byId = {};
+      function N(id, x, y, w, h, label, sub, pill){
+        var o = { id:id, x:x, y:y, w:w, h:h, label:label, sub:sub || '', pill:!!pill };
+        nodes.push(o); byId[id] = o; return o;
+      }
+      function E(a, b, mode, cls){ var id = 'e:' + a + ':' + b; edges.push({ id:id, a:a, b:b, mode:mode || 'auto', cls:cls || '' }); return id; }
+      function ST(o){
+        o.raw = o.raw || 0; o.fwd = o.fwd || 0;
+        o.inTok = o.sys + o.goal + o.raw + o.fwd;
+        o.ctx = o.inTok + o.out;
+        o.over = o.ctx > P.C;
+        steps.push(o); return o;
+      }
+      function row(area, count, y, h, maxW, gap){
+        // evenly spaced, centred row of `count` boxes inside [area[0], area[1]]
+        var span = area[1] - area[0];
+        var w = Math.min(maxW, (span - (count - 1) * gap) / count);
+        var total = count * w + (count - 1) * gap;
+        var x0 = area[0] + (span - total) / 2;
+        var out = [];
+        for(var i = 0; i < count; i++) out.push({ x:x0 + i * (w + gap), y:y, w:w, h:h });
+        return out;
+      }
+      var i, k, wv = 0, e, pos;
+
+      if(topo === 'single'){
+        N('task', 30, 118, 108, 54, 'Task', 'user goal', true);
+        N('a1', 286, 96, 196, 98, 'Single agent', 'one context, all ' + n + ' subtasks');
+        N('ans', 622, 118, 108, 54, 'Answer', '', true);
+        e = E('task','a1','h');
+        var eOut1 = E('a1','ans','h');
+        ST({ tag:'one call', tone:'acc', route:'task -> agent',
+             text:'Reads all ' + n + ' source packets, works every subtask in one context, writes the report in a single pass.',
+             sys:S, goal:G, raw:n * R, fwd:0, fwdNote:'no handoffs', out:n * O,
+             wave:0, exec:'a1', edges:[e, eOut1] });
+
+      } else if(topo === 'supervisor'){
+        N('task', 14, 30, 86, 46, 'Task', 'user goal', true);
+        N('sup', 286, 16, 188, 72, 'Supervisor', 'plan / dispatch / synthesise');
+        if(P.critic) N('critic', 604, 16, 142, 72, 'Critic', 'accept or reject');
+        N('ans', 612, 116, 134, 50, 'Final answer', '', true);
+        pos = row([14, 746], n, 200, 72, 132, 14);
+        for(i = 0; i < n; i++) N('w' + i, pos[i].x, pos[i].y, pos[i].w, pos[i].h, SUB[i].who, SUB[i].role);
+        var eTask = E('task','sup','h');
+        var eW = [];
+        for(i = 0; i < n; i++) eW.push(E('sup','w' + i,'v'));
+        var eCr = P.critic ? E('sup','critic','h') : null;
+        var eAns = E('sup','ans','h');
+
+        ST({ tag:'plan', tone:'acc', route:'supervisor',
+             text:'Plan: ' + n + ' independent subtasks -> [' + SUB.slice(0, n).map(function(s){ return s.role; }).join(', ') + '], one specialist each.',
+             sys:S, goal:G, raw:0, fwd:0, fwdNote:'nothing forwarded yet', out:O,
+             wave:wv, exec:'sup', edges:[eTask] });
+        wv++;
+        for(i = 0; i < n; i++){
+          ST({ tag:'worker', tone:'', route:'supervisor -> ' + SUB[i].who, text:SUB[i].text,
+               sys:S, goal:G, raw:R, fwd:O, fwdNote:'the plan', out:O,
+               wave:P.par ? wv : wv + i, exec:'w' + i, edges:[eW[i]] });
+        }
+        wv = P.par ? wv + 1 : wv + n;
+        if(P.critic){
+          var bad = n - 1;
+          ST({ tag:'REJECT', tone:'warn', route:'supervisor -> critic',
+               text:'REJECT ' + SUB[bad].role + ': no severity ranking and the consent-law claim is unsourced. Re-dispatch with this critique.',
+               sys:S, goal:G, raw:0, fwd:n * O, fwdNote:'all ' + n + ' worker results', out:O,
+               wave:wv, exec:'critic', edges:[eCr], bad:true });
+          wv++;
+          ST({ tag:'retry', tone:'', route:'supervisor -> ' + SUB[bad].who,
+               text:'Revised ' + SUB[bad].role + ': risks ranked by severity, consent-law claim now cites the two-party state list.',
+               sys:S, goal:G, raw:R, fwd:3 * O, fwdNote:'plan + own result + critique', out:O,
+               wave:wv, exec:'w' + bad, edges:[eW[bad]] });
+          wv++;
+          ST({ tag:'APPROVED', tone:'acc', route:'supervisor -> critic',
+               text:'APPROVED: all ' + n + ' results now meet the rubric. Synthesis may proceed.',
+               sys:S, goal:G, raw:0, fwd:(n + 1) * O, fwdNote:'revised results + previous critique', out:O,
+               wave:wv, exec:'critic', edges:[eCr] });
+          wv++;
+        }
+        ST({ tag:'synthesis', tone:'acc', route:'supervisor -> answer',
+             text:'Final report: the async-summarisation gap, consultants as the beachhead, bundling and consent law as the top risks.',
+             sys:S, goal:G, raw:0, fwd:n * O + (P.critic ? 2 * O : 0),
+             fwdNote:P.critic ? 'all results + both critiques' : 'all ' + n + ' worker results',
+             out:n * O, wave:wv, exec:'sup', edges:[eAns] });
+
+      } else if(topo === 'pipeline'){
+        N('task', 12, 112, 78, 54, 'Task', '', true);
+        N('ans', 674, 112, 74, 54, 'Answer', '', true);
+        pos = row([100, 664], n, 104, 72, 152, 22);
+        for(i = 0; i < n; i++) N('s' + i, pos[i].x, pos[i].y, pos[i].w, pos[i].h, PIPE[i].who, PIPE[i].role);
+        var prev = 'task', eid;
+        for(i = 0; i < n; i++){
+          eid = E(prev, 's' + i, 'h'); prev = 's' + i;
+          ST({ tag:'stage ' + (i + 1), tone:i === n - 1 ? 'acc' : '', route:(i === 0 ? 'task' : PIPE[i - 1].who) + ' -> ' + PIPE[i].who,
+               text:PIPE[i].text, sys:S, goal:G, raw:R, fwd:i * O,
+               fwdNote:i === 0 ? 'nothing upstream yet' : 'all ' + i + ' upstream output(s)',
+               out:(i === n - 1) ? n * O : O, wave:i, exec:'s' + i, edges:[eid] });
+        }
+        steps[steps.length - 1].edges.push(E(prev, 'ans', 'h'));
+
+      } else { // debate
+        N('task', 12, 132, 78, 50, 'Task', '', true);
+        N('judge', 292, 194, 176, 68, 'Judge', 'reads every statement');
+        N('ans', 632, 200, 114, 52, 'Answer', '', true);
+        pos = row([108, 660], n, 74, 62, 118, 16);
+        for(i = 0; i < n; i++) N('d' + i, pos[i].x, pos[i].y, pos[i].w, pos[i].h, DEB[i].who, 'round 1 + 2');
+        var eOpen = [], eJudge = [], ring = [];
+        for(i = 0; i < n; i++) eOpen.push(E('task','d' + i,'auto'));
+        for(i = 0; i < n; i++) eJudge.push(E('d' + i,'judge','v'));
+        for(i = 0; i < n; i++) for(k = i + 1; k < n; k++) ring.push(E('d' + i,'d' + k,'arc','mao-ring'));
+        for(i = 0; i < n; i++){
+          ST({ tag:'round 1', tone:'', route:'task -> ' + DEB[i].who, text:DEB[i].open,
+               sys:S, goal:G, raw:n * R, fwd:0, fwdNote:'reads all ' + n + ' packets itself', out:n * O,
+               wave:P.par ? 0 : i, exec:'d' + i, edges:[eOpen[i]] });
+        }
+        wv = P.par ? 1 : n;
+        for(i = 0; i < n; i++){
+          // highlight only the arcs incident to this debater: those are the peer
+          // statements it actually reads this round.
+          var mine = [], tagI = 'd' + i;
+          for(k = 0; k < ring.length; k++){
+            var parts = ring[k].split(':');
+            if(parts[1] === tagI || parts[2] === tagI) mine.push(ring[k]);
+          }
+          ST({ tag:'round 2', tone:'', route:'peers -> ' + DEB[i].who, text:DEB[i].rebut,
+               sys:S, goal:G, raw:n * R, fwd:n * (n * O), fwdNote:'all ' + n + ' opening statements',
+               out:n * O, wave:P.par ? wv : wv + i, exec:'d' + i, edges:mine });
+        }
+        wv = P.par ? wv + 1 : wv + n;
+        ST({ tag:'verdict', tone:'acc', route:'all debaters -> judge',
+             text:'Verdict: enter narrowly on the consultancy wedge, gated on the consent-law review. Report follows.',
+             sys:S, goal:G, raw:0, fwd:2 * n * (n * O), fwdNote:'2 rounds x ' + n + ' statements',
+             out:n * O, wave:wv, exec:'judge', edges:eJudge.concat([E('judge','ans','h')]) });
+      }
+      return { topo:topo, nodes:nodes, edges:edges, steps:steps, byId:byId };
+    }
+
+    // ---------------------------------------------------------------- totals
+    function totals(run, upto){
+      var t = { calls:0, tin:0, tout:0, over:false, sec:0, byNode:{} };
+      var waves = {}, i, s;
+      var m = (upto === undefined) ? run.steps.length : upto;
+      for(i = 0; i < m; i++){
+        s = run.steps[i];
+        t.calls++; t.tin += s.inTok; t.tout += s.out;
+        if(s.over) t.over = true;
+        t.byNode[s.exec] = (t.byNode[s.exec] || 0) + s.inTok + s.out;
+        var lat = TTFT + s.out / DECODE_TPS;
+        if(!(s.wave in waves) || lat > waves[s.wave]) waves[s.wave] = lat;
+      }
+      for(var w in waves) if(Object.prototype.hasOwnProperty.call(waves, w)) t.sec += waves[w];
+      t.tokens = t.tin + t.tout;
+      t.cost = t.tin * PRICE_IN / 1e6 + t.tout * PRICE_OUT / 1e6;
+      return t;
+    }
+
+    // ---------------------------------------------------------------- reliability
+    // Stated model: with prob rho the task is systematically hard and every sample fails;
+    // otherwise each subtask-sized operation succeeds independently with q = p/(1-rho).
+    function reliability(topo, P, over){
+      var q = (P.rho < 1) ? P.p / (1 - P.rho) : 1;
+      var capped = q > 1; if(capped) q = 1;
+      var n = P.n, val, expr;
+      var qc = q + (1 - q) * CRITIC_DETECT * q;   // caught with prob 0.7, then retried
+      if(topo === 'single'){
+        val = Math.pow(q, n); expr = 'q^' + n;
+      } else if(topo === 'supervisor'){
+        var qw = P.critic ? qc : q;
+        val = Math.pow(qw, n) * q * q;
+        expr = (P.critic ? "q'^" : 'q^') + n + ' x q^2';
+      } else if(topo === 'pipeline'){
+        val = Math.pow(q, 2 * n - 1); expr = 'q^' + (2 * n - 1);
+      } else {
+        var one = Math.pow(q, n);
+        val = q * (1 - Math.pow(1 - one, n));
+        expr = 'q x [1-(1-q^' + n + ')^' + n + ']';
+      }
+      val = (1 - P.rho) * val;
+      if(over) val = 0;
+      return { q:q, qc:qc, capped:capped, P:val, expr:'(1-rho) x ' + expr };
+    }
+
+    // ---------------------------------------------------------------- graph
+    function edgePath(a, b, mode){
+      var acx = a.x + a.w / 2, acy = a.y + a.h / 2, bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+      var dx = bcx - acx, dy = bcy - acy, ax, ay, bx, by, c1x, c1y, c2x, c2y, o;
+      if(mode === 'arc'){
+        ax = acx; ay = a.y; bx = bcx; by = b.y;
+        var kk = Math.min(58, 22 + 0.10 * Math.abs(bx - ax));
+        return 'M' + r1(ax) + ',' + r1(ay) + ' C' + r1(ax) + ',' + r1(ay - kk) + ' ' +
+               r1(bx) + ',' + r1(by - kk) + ' ' + r1(bx) + ',' + r1(by);
+      }
+      var horiz = (mode === 'h') || (mode !== 'v' && Math.abs(dx) >= Math.abs(dy));
+      if(horiz){
+        if(dx >= 0){ ax = a.x + a.w; bx = b.x; } else { ax = a.x; bx = b.x + b.w; }
+        ay = acy; by = bcy;
+        o = Math.abs(bx - ax) * 0.42 + 10;
+        c1x = ax + (dx >= 0 ? o : -o); c1y = ay; c2x = bx - (dx >= 0 ? o : -o); c2y = by;
+      } else {
+        if(dy >= 0){ ay = a.y + a.h; by = b.y; } else { ay = a.y; by = b.y + b.h; }
+        ax = acx; bx = bcx;
+        o = Math.abs(by - ay) * 0.5 + 8;
+        c1x = ax; c1y = ay + (dy >= 0 ? o : -o); c2x = bx; c2y = by - (dy >= 0 ? o : -o);
+      }
+      return 'M' + r1(ax) + ',' + r1(ay) + ' C' + r1(c1x) + ',' + r1(c1y) + ' ' +
+             r1(c2x) + ',' + r1(c2y) + ' ' + r1(bx) + ',' + r1(by);
+    }
+
+    function wrapText(s, maxChars){
+      var words = String(s).split(/\s+/), lines = [], cur = '';
+      for(var i = 0; i < words.length; i++){
+        var t = cur ? cur + ' ' + words[i] : words[i];
+        if(t.length > maxChars && cur){ lines.push(cur); cur = words[i]; }
+        else cur = t;
+        if(lines.length === 2) break;
+      }
+      if(cur && lines.length < 2) lines.push(cur);
+      return lines;
+    }
+
+    function renderGraph(run, P, T, active){
+      var hotNodes = {}, hotEdges = {}, badNodes = {}, badEdges = {};
+      if(active){
+        hotNodes[active.exec] = 1;
+        for(var j = 0; j < active.edges.length; j++) hotEdges[active.edges[j]] = 1;
+        if(active.bad || active.over){
+          badNodes[active.exec] = 1;
+          for(j = 0; j < active.edges.length; j++) badEdges[active.edges[j]] = 1;
+        }
+      }
+      var s = '<svg viewBox="0 0 760 300" preserveAspectRatio="xMidYMid meet" role="img" aria-label="' +
+              esc(TOPO_NAME[run.topo] + ': ' + run.steps.length + ' model calls wired as a ' + run.topo + ' topology.') + '">';
+      s += '<defs>' +
+           '<marker id="multi-agent-orchestration-mk" markerWidth="8" markerHeight="8" refX="6.5" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path class="mao-head" d="M0,0 L8,4 L0,8 Z"></path></marker>' +
+           '<marker id="multi-agent-orchestration-mk-hot" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path class="mao-head-hot" d="M0,0 L9,4.5 L0,9 Z"></path></marker>' +
+           '<marker id="multi-agent-orchestration-mk-bad" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto" markerUnits="userSpaceOnUse"><path class="mao-head-bad" d="M0,0 L9,4.5 L0,9 Z"></path></marker>' +
+           '</defs>';
+      var i, ed, a, b, cls, mk;
+      for(i = 0; i < run.edges.length; i++){
+        ed = run.edges[i]; a = run.byId[ed.a]; b = run.byId[ed.b];
+        if(!a || !b) continue;
+        cls = 'mao-edge ' + ed.cls;
+        mk = 'multi-agent-orchestration-mk';
+        if(badEdges[ed.id]){ cls += ' mao-bad'; mk += '-bad'; }
+        else if(hotEdges[ed.id]){ cls += ' mao-hot'; mk += '-hot'; }
+        s += '<path class="' + cls + '" d="' + edgePath(a, b, ed.mode) + '" marker-end="url(#' + mk + ')"></path>';
+      }
+      for(i = 0; i < run.nodes.length; i++){
+        var nd = run.nodes[i];
+        cls = 'mao-node' + (nd.pill ? ' mao-pill' : '');
+        if(badNodes[nd.id]) cls += ' mao-bad';
+        else if(hotNodes[nd.id]) cls += ' mao-hot';
+        else if(T.byNode[nd.id]) cls += ' mao-done';
+        var cx = nd.x + nd.w / 2;
+        var subLines = nd.sub ? wrapText(nd.sub, Math.max(8, Math.floor(nd.w / 5.0))) : [];
+        var ly = nd.y + nd.h / 2 + (subLines.length ? -2 : 4);
+        s += '<g class="' + cls + '">';
+        s += '<rect x="' + nd.x + '" y="' + nd.y + '" width="' + r1(nd.w) + '" height="' + nd.h + '" rx="10"></rect>';
+        s += '<text class="mao-nl" x="' + r1(cx) + '" y="' + r1(ly) + '" text-anchor="middle">' + esc(nd.label) + '</text>';
+        for(var L = 0; L < subLines.length; L++){
+          s += '<text class="mao-ns" x="' + r1(cx) + '" y="' + r1(ly + 13 + L * 10) + '" text-anchor="middle">' + esc(subLines[L]) + '</text>';
+        }
+        s += '</g>';
+        if(T.byNode[nd.id]){
+          s += '<text class="mao-nb" x="' + r1(cx) + '" y="' + r1(nd.y + nd.h + 11) + '" text-anchor="middle">' +
+               kfmt(T.byNode[nd.id]) + ' tok</text>';
+        }
+      }
+      s += '</svg>';
+      elGraph.innerHTML = s;
+    }
+
+    // ---------------------------------------------------------------- log
+    function renderLog(run, idx){
+      var s = '', i;
+      for(i = 0; i < idx; i++){
+        var st = run.steps[i];
+        var tone = st.tone === 'acc' ? ' mao-t-acc' : (st.tone === 'warn' ? ' mao-t-warn' : '');
+        var cls = 'mao-msg' + (st.bad || st.over ? ' mao-msg-bad' : (i === idx - 1 ? ' mao-msg-last' : ''));
+        s += '<div class="' + cls + '">';
+        s += '<div class="mao-mh"><span class="mao-tag' + tone + '">' + esc(st.tag) + '</span>' +
+             '<span class="mao-route">' + esc(st.route) + '</span>' +
+             '<span class="mao-tok">in ' + fmt(st.inTok) + ' &middot; out ' + fmt(st.out) + '</span></div>';
+        s += '<div class="mao-mb">' + esc(st.text) + '</div>';
+        s += '<div class="mao-ml' + (st.over ? ' mao-over' : '') + '">in = sys ' + fmt(st.sys) + ' + goal ' + fmt(st.goal) +
+             ' + source ' + fmt(st.raw) + ' + fwd ' + fmt(st.fwd) + ' (' + esc(st.fwdNote) + ')' +
+             ' &nbsp;|&nbsp; ctx ' + fmt(st.ctx) + (st.over ? '  OVERFLOW: exceeds the context window' : '') + '</div>';
+        s += '</div>';
+      }
+      if(!idx) s = '<div class="mao-ml">No messages yet. Press &ldquo;Next message&rdquo;.</div>';
+      elLog.innerHTML = s;
+      if(elLogWrap && idx) elLogWrap.scrollTop = elLogWrap.scrollHeight;
+    }
+
+    // ---------------------------------------------------------------- panel
+    function renderPanel(run, P, T, full, rel, base, baseRel){
+      var h = '', partial = T.calls < run.steps.length;
+      h += '<div class="vt-stat"><b>' + T.calls + ' / ' + run.steps.length + '</b>' +
+           '<div class="l">model calls ' + (partial ? 'revealed' : 'in the run') + ' &mdash; ' +
+           esc(TOPO_NAME[run.topo]) + '</div></div>';
+      h += '<div class="vt-stat"><b>' + fmt(T.tin) + ' in &middot; ' + fmt(T.tout) + ' out</b>' +
+           '<div class="l">tokens ' + (partial ? 'so far' : 'for the whole run') + ' (' + fmt(T.tokens) + ' total' +
+           (partial ? '; whole run ' + fmt(full.tokens) : '') + ')</div></div>';
+      // The ratio and the monthly bill always describe the WHOLE run, so they do not
+      // wobble while you step through it.
+      var ratio = (run.topo !== 'single' && base.tokens > 0) ? full.tokens / base.tokens : 0;
+      h += '<div class="vt-stat"><b>' + usd(T.cost) + '</b><div class="l">cost ' + (partial ? 'so far' : 'per run') +
+           '; whole run ' + usd(full.cost) + ' = ' +
+           (ratio ? ratio.toFixed(2) + '&times; the single-agent baseline' : 'the single-agent baseline itself') + ', ' +
+           usd(full.cost * RUNS_PER_DAY * DAYS) + ' / month at 10k runs/day</div></div>';
+      h += '<div class="vt-stat"><b>' + r1(T.sec).toFixed(1) + ' s</b>' +
+           '<div class="l">critical path' + (partial ? ' so far' : '') + ': ' + (P.par ? 'parallel' : 'sequential') +
+           ' waves of 0.5 s + out/200 tok/s' + (partial ? '; whole run ' + r1(full.sec).toFixed(1) + ' s' : '') + '</div></div>';
+      if(full.over){
+        h += '<div class="vt-stat mao-alert"><b>CONTEXT OVERFLOW</b><div class="l">at least one call needs more than ' +
+             fmt(P.C) + ' tokens. It cannot run, so P(correct) = 0.</div></div>';
+      }
+      h += '<div class="vt-stat' + (rel.P > 0 && rel.P >= baseRel.P ? ' mao-ok' : '') + '"><b>P = ' + rel.P.toFixed(3) + '</b>' +
+           '<div class="l"><span class="mao-mono">' + esc(rel.expr) + '</span>, q = ' + rel.q.toFixed(3) +
+           (rel.capped ? ' (capped: p &gt; 1-rho)' : '') + (P.critic && run.topo === 'supervisor' ? ", q' = " + rel.qc.toFixed(3) : '') +
+           '; ceiling 1-rho = ' + (1 - P.rho).toFixed(2) + '</div></div>';
+      var perSucc = rel.P > 0 ? full.cost / rel.P : Infinity;
+      var basePer = baseRel.P > 0 ? base.cost / baseRel.P : Infinity;
+      h += '<div class="vt-stat"><b>' + usd(perSucc) + '</b><div class="l">expected cost per <i>successful</i> run (whole run) &mdash; ' +
+           'single-agent baseline ' + usd(basePer) + '</div></div>';
+      elPanel.innerHTML = h;
+    }
+
+    // ---------------------------------------------------------------- table
+    function renderTable(P, cur){
+      var rows = [], i, maxTok = 1, best = Infinity;
+      for(i = 0; i < TOPOS.length; i++){
+        var rn = buildRun(TOPOS[i], P);
+        var t = totals(rn);
+        var rl = reliability(TOPOS[i], P, t.over);
+        var per = rl.P > 0 ? t.cost / rl.P : Infinity;
+        if(t.tokens > maxTok) maxTok = t.tokens;
+        if(per < best) best = per;
+        rows.push({ key:TOPOS[i], t:t, rl:rl, per:per });
+      }
+      var h = '';
+      for(i = 0; i < rows.length; i++){
+        var r = rows[i];
+        h += '<tr class="' + (r.key === cur ? 'mao-cur' : '') + '">';
+        h += '<td>' + esc(TOPO_NAME[r.key]) + '</td>';
+        h += '<td>' + r.t.calls + '</td>';
+        h += '<td class="mao-bar-cell">' + fmt(r.t.tokens) +
+             '<div class="mao-bar"><span style="width:' + r1(100 * r.t.tokens / maxTok) + '%"></span></div></td>';
+        h += '<td>' + usd(r.t.cost) + '</td>';
+        h += '<td>' + r1(r.t.sec).toFixed(1) + ' s</td>';
+        h += '<td>' + (r.t.over ? '<span class="mao-dead">0 (overflow)</span>' : r.rl.P.toFixed(3)) + '</td>';
+        h += '<td>' + (isFinite(r.per) ? (r.per === best ? '<span class="mao-win">' + usd(r.per) + '</span>' : usd(r.per)) : '<span class="mao-dead">n/a</span>') + '</td>';
+        h += '</tr>';
+      }
+      elTbody.innerHTML = h;
+    }
+
+    // ---------------------------------------------------------------- state
+    var idx = -1;          // -1 means "whole run"
+    var timer = null;
+
+    function stopTimer(){ if(timer !== null){ clearTimeout(timer); timer = null; } }
+
+    function render(){
+      var P = params();
+      setText(elNv, String(P.n));
+      setText(elSysv, fmt(P.S));
+      setText(elRawv, fmt(P.R));
+      setText(elOutv, fmt(P.O));
+      setText(elCtxv, fmt(P.C));
+      setText(elPv, P.p.toFixed(2));
+      setText(elRhov, P.rho.toFixed(2));
+
+      var run = buildRun(P.topo, P);
+      var whole = (idx < 0);
+      var shown = (whole || idx > run.steps.length) ? run.steps.length : idx;
+      var full = totals(run);
+      var T = whole ? full : totals(run, shown);
+      // Overflow kills the run whether or not you have stepped that far yet.
+      var rel = reliability(P.topo, P, full.over);
+      var baseRun = buildRun('single', P);
+      var base = totals(baseRun);
+      var baseRel = reliability('single', P, base.over);
+      var active = shown > 0 ? run.steps[shown - 1] : null;
+
+      // In whole-run mode nothing is "currently executing"; point at the first call
+      // that blew the context window instead, if there is one.
+      var hi = active;
+      if(whole){
+        hi = null;
+        for(var si = 0; si < run.steps.length; si++){ if(run.steps[si].over){ hi = run.steps[si]; break; } }
+      }
+      renderGraph(run, P, T, hi);
+      renderLog(run, shown);
+      renderPanel(run, P, T, full, rel, base, baseRel);
+      renderTable(P, P.topo);
+
+      setText(elPhase, whole
+        ? ('whole run: ' + run.steps.length + (run.steps.length === 1 ? ' model call, ' : ' model calls, ') +
+           (maxWave(run) + 1) + (maxWave(run) === 0 ? ' wave' : ' waves') +
+           (hi ? ' | OVERFLOW at ' + hi.route : ''))
+        : (active
+            ? ('call ' + shown + '/' + run.steps.length + ' | wave ' + (active.wave + 1) + ' | ' + active.route +
+               (active.over ? ' | OVERFLOW' : ''))
+            : 'ready: ' + run.steps.length + ' model calls queued'));
+      elNext.disabled = (!whole && shown >= run.steps.length);
+      elAll.disabled = whole;
+      elNext.textContent = whole ? 'Step through ->'
+                                 : (shown >= run.steps.length ? 'Run complete' : 'Next message ->');
+      return run;
+    }
+
+    function maxWave(run){
+      var m = 0;
+      for(var i = 0; i < run.steps.length; i++) if(run.steps[i].wave > m) m = run.steps[i].wave;
+      return m;
+    }
+
+    function step(){
+      var P = params();
+      var run = buildRun(P.topo, P);
+      if(idx < 0) idx = 0;
+      if(idx < run.steps.length) idx++;
+      render();
+    }
+
+    function replay(){
+      stopTimer();
+      idx = 0;
+      render();
+      var tick = function(){
+        timer = null;
+        var run = buildRun(params().topo, params());
+        if(idx >= run.steps.length){ return; }
+        idx++;
+        render();
+        if(idx < run.steps.length) timer = setTimeout(tick, 780);
+      };
+      timer = setTimeout(tick, 260);
+    }
+
+    // ---------------------------------------------------------------- wiring
+    var live = [elN, elSys, elRaw, elOut, elCtx, elP, elRho];
+    for(var i = 0; i < live.length; i++){
+      live[i].addEventListener('input', function(){ stopTimer(); render(); });
+    }
+    elTopo.addEventListener('change', function(){ stopTimer(); idx = -1; render(); });
+    elDisp.addEventListener('change', function(){ stopTimer(); render(); });
+    elCritic.addEventListener('change', function(){ stopTimer(); idx = -1; render(); });
+    elNext.addEventListener('click', function(){ stopTimer(); step(); });
+    elReplay.addEventListener('click', replay);
+    elAll.addEventListener('click', function(){ stopTimer(); idx = -1; render(); });
+
+    render();
+  })();</script>
+</div>

@@ -153,6 +153,10 @@ if __name__ == "__main__":
     **Sequence length**: 196 image patches + 1 CLS = **197 tokens**.
     Attention is $O(N^2 D)$ per layer, not unbearably long for this patch size — but dynamic high-resolution inputs (e.g., 1024×1024 with 16-pixel patches) give $N=4096$, which is where [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html) becomes critical.
 
+The widget below runs this entire pipeline on a small paintable image: patchify, flatten, project through a shared $\mathbf{E}$, prepend `[CLS]`, add positional embeddings, and attend. Switch the positional embeddings off on the Checker preset to watch identical patches collapse into identical tokens — the concrete meaning of "self-attention is permutation-invariant".
+
+{{tool:vit-patches}}
+
 ---
 
 ## The Full ViT Architecture

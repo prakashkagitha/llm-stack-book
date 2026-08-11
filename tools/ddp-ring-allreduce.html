@@ -1,0 +1,688 @@
+<div class="viz-tool" id="tool-ddp-ring-allreduce">
+  <div class="vt-title">Data-parallel training: ring all-reduce</div>
+
+  <div class="vt-grid">
+    <label for="ddp-ring-allreduce-k">GPUs in the group K (<span id="ddp-ring-allreduce-kval">4</span>)
+      <input id="ddp-ring-allreduce-k" type="range" min="2" max="8" step="1" value="4" aria-label="Number of GPUs in the data-parallel group">
+    </label>
+    <label for="ddp-ring-allreduce-algo">Algorithm
+      <select id="ddp-ring-allreduce-algo" aria-label="Collective algorithm">
+        <option value="ring" selected>Ring all-reduce (reduce-scatter + all-gather)</option>
+        <option value="naive">Naive: gather to root + broadcast</option>
+      </select>
+    </label>
+    <label for="ddp-ring-allreduce-psi">Message size &Psi; (million params &mdash; try 0.05 for a small bucket)
+      <input id="ddp-ring-allreduce-psi" type="number" min="0.001" max="1000000" step="any" value="1300" aria-label="Size of the gradient being all-reduced, in millions of parameters">
+    </label>
+    <label for="ddp-ring-allreduce-dtype">Gradient dtype
+      <select id="ddp-ring-allreduce-dtype" aria-label="Gradient element size">
+        <option value="2" selected>bf16 / fp16 (2 B)</option>
+        <option value="4">fp32 (4 B)</option>
+      </select>
+    </label>
+    <label for="ddp-ring-allreduce-link">Interconnect (per link, one direction)
+      <select id="ddp-ring-allreduce-link" aria-label="Interconnect bandwidth and latency">
+        <option value="nvlink">NVLink 4 &mdash; 225 GB/s, &alpha;=3 &micro;s</option>
+        <option value="pcie" selected>PCIe 5.0 x16 &mdash; 50 GB/s, &alpha;=8 &micro;s</option>
+        <option value="ib">200G InfiniBand &mdash; 25 GB/s, &alpha;=6 &micro;s</option>
+        <option value="eth">100G Ethernet &mdash; 12 GB/s, &alpha;=15 &micro;s</option>
+      </select>
+    </label>
+    <label class="rar-check" for="ddp-ring-allreduce-mean">
+      <input id="ddp-ring-allreduce-mean" type="checkbox">
+      Show mean (divide by K) instead of sum
+    </label>
+  </div>
+
+  <div class="rar-btnrow">
+    <button id="ddp-ring-allreduce-step" type="button">Step &rarr;</button>
+    <button id="ddp-ring-allreduce-play" type="button" aria-pressed="false">Play</button>
+    <button id="ddp-ring-allreduce-end" type="button">Run to end</button>
+    <button id="ddp-ring-allreduce-reset" type="button">Reset</button>
+    <span class="rar-status" id="ddp-ring-allreduce-status" aria-live="polite"></span>
+  </div>
+
+  <div id="ddp-ring-allreduce-strip" class="rar-strip" aria-hidden="true"></div>
+
+  <div class="rar-main">
+    <div class="rar-col rar-col-ring">
+      <div class="rar-col-title">Topology &amp; the transfer just executed</div>
+      <div class="rar-ringbox"><svg id="ddp-ring-allreduce-ring" viewBox="0 0 400 400" role="img" aria-label="Topology diagram of the GPU group with an arrow for each transfer in the current step"></svg></div>
+      <div class="rar-legend">
+        <span><i class="rar-sw rar-sw-part"></i> partially reduced chunk</span>
+        <span><i class="rar-sw rar-sw-full"></i> fully summed over all K</span>
+        <span>arrow label = payload (<code>c<i>n</i></code> = one chunk, <code>S</code> = whole gradient)</span>
+      </div>
+    </div>
+    <div class="rar-col rar-col-stats">
+      <div class="rar-col-title">Live accounting</div>
+      <div id="ddp-ring-allreduce-stats"></div>
+      <div class="rar-col-title rar-col-title-2">Ring vs. naive, one full all-reduce</div>
+      <div class="rar-scroll"><table class="rar-table" id="ddp-ring-allreduce-cmp"></table></div>
+      <div id="ddp-ring-allreduce-verdict" class="rar-verdict" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <div class="rar-col-title rar-col-title-2">Chunk ledger &mdash; row = GPU, column = chunk, ticks = which ranks' gradients are already summed in</div>
+  <div class="rar-scroll"><div id="ddp-ring-allreduce-matrix" class="rar-matrix"></div></div>
+
+  <div class="rar-col-title rar-col-title-2">Bytes serialized on the busiest link for one all-reduce, in multiples of the gradient size S</div>
+  <div class="rar-scroll"><svg id="ddp-ring-allreduce-chart" viewBox="0 0 480 196" role="img" aria-label="Chart comparing the communication volume serialized on one link: ring all-reduce stays below two gradients for every group size, while naive gather-to-root grows linearly with the number of GPUs"></svg></div>
+
+  <div class="vt-note" id="ddp-ring-allreduce-note"></div>
+
+  <style>
+    #tool-ddp-ring-allreduce{ border:1px solid var(--border-2,#e5e7eb); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); font-family:var(--sans,sans-serif); }
+    #tool-ddp-ring-allreduce *{ box-sizing:border-box; }
+    #tool-ddp-ring-allreduce .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#1a1a2e); }
+    #tool-ddp-ring-allreduce .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(196px,1fr)); gap:12px 18px; }
+    #tool-ddp-ring-allreduce label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#556); }
+    #tool-ddp-ring-allreduce label.rar-check{ flex-direction:row; align-items:center; gap:8px; }
+    #tool-ddp-ring-allreduce label.rar-check input{ width:auto; margin:0; accent-color:var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce input, #tool-ddp-ring-allreduce select{ font:inherit; font-size:.88rem; padding:6px 8px; border:1px solid var(--border-2,#e5e7eb); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#1a1a2e); max-width:100%; }
+    #tool-ddp-ring-allreduce input[type=range]{ padding:0; accent-color:var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce input:focus-visible, #tool-ddp-ring-allreduce select:focus-visible, #tool-ddp-ring-allreduce button:focus-visible{ outline:2px solid var(--accent,#4f46e5); outline-offset:2px; }
+
+    #tool-ddp-ring-allreduce .rar-btnrow{ display:flex; align-items:center; flex-wrap:wrap; gap:9px; margin-top:14px; }
+    #tool-ddp-ring-allreduce .rar-btnrow button{ font:inherit; font-size:.85rem; font-weight:600; padding:7px 13px; border-radius:7px; border:1px solid var(--border-2,#e5e7eb); background:var(--surface-2,#f6f7f9); color:var(--ink,#1a1a2e); cursor:pointer; }
+    #tool-ddp-ring-allreduce .rar-btnrow button:hover:not(:disabled){ background:var(--surface-3,#eceef3); }
+    #tool-ddp-ring-allreduce .rar-btnrow button:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-ddp-ring-allreduce .rar-status{ font-size:.78rem; color:var(--ink-soft,#556); }
+    #tool-ddp-ring-allreduce .rar-status b{ color:var(--ink,#1a1a2e); }
+
+    #tool-ddp-ring-allreduce .rar-strip{ display:flex; gap:3px; margin-top:11px; }
+    #tool-ddp-ring-allreduce .rar-seg{ flex:1 1 0; height:7px; border-radius:3px; background:var(--surface-3,#eceef3); border:1px solid var(--border,#e5e7eb); }
+    #tool-ddp-ring-allreduce .rar-seg.rar-p1{ background:var(--accent,#4f46e5); border-color:var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce .rar-seg.rar-p2{ background:var(--rar-good,#2f9e6e); border-color:var(--rar-good,#2f9e6e); }
+    #tool-ddp-ring-allreduce .rar-seg.rar-now{ outline:2px solid var(--ink,#1a1a2e); outline-offset:1px; }
+
+    #tool-ddp-ring-allreduce .rar-main{ display:flex; flex-wrap:wrap; gap:18px; margin-top:14px; align-items:flex-start; }
+    #tool-ddp-ring-allreduce .rar-col{ min-width:0; }
+    #tool-ddp-ring-allreduce .rar-col-ring{ flex:1 1 300px; }
+    #tool-ddp-ring-allreduce .rar-col-stats{ flex:1 1 300px; }
+    #tool-ddp-ring-allreduce .rar-col-title{ font-size:.72rem; font-weight:700; color:var(--muted,#889); margin-bottom:7px; text-transform:uppercase; letter-spacing:.03em; }
+    #tool-ddp-ring-allreduce .rar-col-title-2{ margin-top:16px; }
+    #tool-ddp-ring-allreduce .rar-ringbox{ max-width:430px; margin:0 auto; }
+    #tool-ddp-ring-allreduce .rar-ringbox svg{ width:100%; height:auto; display:block; }
+    #tool-ddp-ring-allreduce .rar-legend{ display:flex; flex-wrap:wrap; gap:12px; margin-top:6px; font-size:.72rem; color:var(--muted,#889); justify-content:center; }
+    #tool-ddp-ring-allreduce .rar-legend code{ font-family:var(--mono,monospace); font-size:.95em; }
+    #tool-ddp-ring-allreduce .rar-sw{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+    #tool-ddp-ring-allreduce .rar-sw-part{ background:var(--accent,#4f46e5); opacity:.55; }
+    #tool-ddp-ring-allreduce .rar-sw-full{ background:var(--rar-good,#2f9e6e); }
+
+    #tool-ddp-ring-allreduce .rar-stat{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:5px 0; border-bottom:1px dashed var(--border,#e5e7eb); font-size:.79rem; color:var(--ink-soft,#556); }
+    #tool-ddp-ring-allreduce .rar-stat b{ font-family:var(--mono,monospace); font-size:.82rem; color:var(--ink,#1a1a2e); white-space:nowrap; }
+    #tool-ddp-ring-allreduce .rar-stat.rar-hot b{ color:var(--accent,#4f46e5); }
+
+    #tool-ddp-ring-allreduce .rar-scroll{ overflow-x:auto; max-width:100%; }
+    #tool-ddp-ring-allreduce .rar-table{ border-collapse:collapse; font-size:.76rem; min-width:420px; }
+    #tool-ddp-ring-allreduce .rar-table th, #tool-ddp-ring-allreduce .rar-table td{ text-align:left; padding:5px 9px 5px 0; border-bottom:1px solid var(--border,#e5e7eb); color:var(--ink-soft,#556); white-space:nowrap; }
+    #tool-ddp-ring-allreduce .rar-table th{ font-weight:700; color:var(--muted,#889); font-size:.7rem; text-transform:uppercase; letter-spacing:.02em; }
+    #tool-ddp-ring-allreduce .rar-table td.rar-num{ font-family:var(--mono,monospace); color:var(--ink,#1a1a2e); }
+    #tool-ddp-ring-allreduce .rar-table tr.rar-row-ring td:first-child{ color:var(--accent,#4f46e5); font-weight:700; }
+    #tool-ddp-ring-allreduce .rar-table tr.rar-row-naive td:first-child{ color:var(--rar-warn,#8a6100); font-weight:700; }
+    #tool-ddp-ring-allreduce .rar-verdict{ margin-top:9px; font-size:.78rem; line-height:1.5; color:var(--ink-soft,#556); background:var(--surface-2,#f6f7f9); border-left:3px solid var(--accent,#4f46e5); border-radius:0 7px 7px 0; padding:7px 10px; }
+    #tool-ddp-ring-allreduce .rar-verdict b{ color:var(--ink,#1a1a2e); }
+
+    #tool-ddp-ring-allreduce .rar-matrix{ display:inline-block; min-width:100%; }
+    #tool-ddp-ring-allreduce .rar-mrow{ display:flex; gap:5px; align-items:stretch; margin-bottom:5px; }
+    #tool-ddp-ring-allreduce .rar-mhead{ flex:0 0 78px; font-size:.72rem; font-weight:700; color:var(--ink-soft,#556); display:flex; flex-direction:column; justify-content:center; font-family:var(--mono,monospace); }
+    #tool-ddp-ring-allreduce .rar-mhead span{ font-weight:400; color:var(--muted,#889); font-size:.66rem; }
+    #tool-ddp-ring-allreduce .rar-mcolhead{ flex:1 1 0; min-width:62px; font-size:.68rem; color:var(--muted,#889); text-align:center; font-family:var(--mono,monospace); }
+    #tool-ddp-ring-allreduce .rar-cell{ flex:1 1 0; min-width:62px; border:1px solid var(--border-2,#e5e7eb); border-radius:6px; padding:4px 4px 3px; background:var(--surface,#fff); position:relative; }
+    #tool-ddp-ring-allreduce .rar-cell.rar-full{ border-color:var(--rar-good,#2f9e6e); background:var(--rar-good-bg,rgba(47,158,110,.10)); }
+    #tool-ddp-ring-allreduce .rar-cell.rar-owner{ box-shadow:inset 0 0 0 1.5px var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce .rar-cell.rar-chg{ animation:ddpRarPulse 1.1s ease-out 1; }
+    @keyframes ddpRarPulse{ from{ box-shadow:0 0 0 3px var(--rar-pulse,rgba(79,70,229,.40)); } to{ box-shadow:0 0 0 3px var(--rar-pulse-0,rgba(79,70,229,0)); } }
+    #tool-ddp-ring-allreduce .rar-ticks{ display:flex; gap:1px; height:7px; margin-bottom:3px; }
+    #tool-ddp-ring-allreduce .rar-tick{ flex:1 1 0; border-radius:1px; background:var(--surface-3,#eceef3); border:1px solid var(--border,#e5e7eb); }
+    #tool-ddp-ring-allreduce .rar-tick.rar-on{ background:var(--accent,#4f46e5); border-color:var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce .rar-cell.rar-full .rar-tick.rar-on{ background:var(--rar-good,#2f9e6e); border-color:var(--rar-good,#2f9e6e); }
+    #tool-ddp-ring-allreduce .rar-cval{ font-family:var(--mono,monospace); font-size:.7rem; color:var(--ink,#1a1a2e); text-align:center; }
+    #tool-ddp-ring-allreduce .rar-cnt{ font-family:var(--mono,monospace); font-size:.6rem; color:var(--muted,#889); text-align:center; }
+
+    #tool-ddp-ring-allreduce #ddp-ring-allreduce-chart{ width:100%; min-width:400px; height:auto; display:block; }
+
+    /* ---- SVG styling by class (no var() inside presentation attributes) ---- */
+    #tool-ddp-ring-allreduce #ddp-ring-allreduce-mk1 path{ fill:var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce #ddp-ring-allreduce-mk2 path{ fill:var(--rar-good,#2f9e6e); }
+    #tool-ddp-ring-allreduce #ddp-ring-allreduce-mk3 path{ fill:var(--muted,#889); }
+    #tool-ddp-ring-allreduce .rar-guide{ fill:none; stroke:var(--rar-grid,rgba(0,0,0,.12)); stroke-width:1; stroke-dasharray:2 5; }
+    #tool-ddp-ring-allreduce .rar-arr{ fill:none; stroke-width:2.4; stroke-dasharray:9 7; }
+    #tool-ddp-ring-allreduce .rar-p1c{ stroke:var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce .rar-p2c{ stroke:var(--rar-good,#2f9e6e); }
+    #tool-ddp-ring-allreduce .rar-prec{ stroke:var(--muted,#889); }
+    #tool-ddp-ring-allreduce .rar-alab{ font-family:var(--mono,monospace); font-size:11px; font-weight:700; }
+    #tool-ddp-ring-allreduce .rar-alab.rar-p1c{ fill:var(--accent,#4f46e5); stroke:none; }
+    #tool-ddp-ring-allreduce .rar-alab.rar-p2c{ fill:var(--rar-good,#2f9e6e); stroke:none; }
+    #tool-ddp-ring-allreduce .rar-alab.rar-prec{ fill:var(--muted,#889); stroke:none; }
+    #tool-ddp-ring-allreduce .rar-node{ fill:var(--surface-2,#f6f7f9); stroke:var(--border-2,#e5e7eb); stroke-width:1.2; }
+    #tool-ddp-ring-allreduce .rar-node.rar-root{ stroke:var(--rar-warn,#8a6100); stroke-width:2; }
+    #tool-ddp-ring-allreduce .rar-nlab{ font-family:var(--mono,monospace); font-size:11.5px; font-weight:700; fill:var(--ink,#1a1a2e); }
+    #tool-ddp-ring-allreduce .rar-lbg{ fill:var(--surface,#fff); stroke:none; }
+    #tool-ddp-ring-allreduce .rar-cbg{ fill:var(--surface-3,#eceef3); stroke:var(--border,#e5e7eb); stroke-width:.7; }
+    #tool-ddp-ring-allreduce .rar-cfill{ fill:var(--accent,#4f46e5); fill-opacity:.55; }
+    #tool-ddp-ring-allreduce .rar-cfill.rar-cfull{ fill:var(--rar-good,#2f9e6e); fill-opacity:1; }
+    #tool-ddp-ring-allreduce .rar-cap{ font-size:12px; font-weight:700; fill:var(--ink-soft,#556); }
+    #tool-ddp-ring-allreduce .rar-cap2{ font-family:var(--mono,monospace); font-size:11px; fill:var(--muted,#889); }
+    #tool-ddp-ring-allreduce .rar-cgrid{ stroke:var(--rar-grid,rgba(0,0,0,.12)); stroke-width:1; }
+    #tool-ddp-ring-allreduce .rar-cax{ font-family:var(--mono,monospace); font-size:10px; fill:var(--muted,#889); }
+    #tool-ddp-ring-allreduce .rar-caxt{ font-size:10px; fill:var(--muted,#889); }
+    #tool-ddp-ring-allreduce .rar-asym{ stroke:var(--rar-good,#2f9e6e); stroke-width:1; stroke-dasharray:3 4; }
+    #tool-ddp-ring-allreduce .rar-ln-naive{ fill:none; stroke:var(--rar-warn,#8a6100); stroke-width:2.2; }
+    #tool-ddp-ring-allreduce .rar-ln-ring{ fill:none; stroke:var(--accent,#4f46e5); stroke-width:2.6; }
+    #tool-ddp-ring-allreduce .rar-dot-naive{ fill:var(--rar-warn,#8a6100); }
+    #tool-ddp-ring-allreduce .rar-dot-ring{ fill:var(--accent,#4f46e5); }
+    #tool-ddp-ring-allreduce .rar-vline{ stroke:var(--ink-soft,#556); stroke-width:1; stroke-dasharray:2 4; }
+    #tool-ddp-ring-allreduce .rar-lbl-naive{ font-size:10.5px; font-weight:700; fill:var(--rar-warn,#8a6100); }
+    #tool-ddp-ring-allreduce .rar-lbl-ring{ font-size:10.5px; font-weight:700; fill:var(--accent,#4f46e5); }
+
+    #tool-ddp-ring-allreduce .rar-flow{ animation:ddpRarFlow .8s linear infinite; }
+    @keyframes ddpRarFlow{ to{ stroke-dashoffset:-16; } }
+    @media (prefers-reduced-motion:reduce){
+      #tool-ddp-ring-allreduce .rar-flow{ animation:none; }
+      #tool-ddp-ring-allreduce .rar-cell.rar-chg{ animation:none; box-shadow:0 0 0 2px var(--accent,#4f46e5); }
+    }
+
+    #tool-ddp-ring-allreduce .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#889); line-height:1.6; }
+    #tool-ddp-ring-allreduce .vt-note b{ color:var(--ink-soft,#556); }
+    #tool-ddp-ring-allreduce .vt-note code{ font-family:var(--mono,monospace); font-size:.95em; }
+
+    #tool-ddp-ring-allreduce{
+      --rar-good:#1f8a5f; --rar-warn:#8a6100;
+      --rar-good-bg:rgba(31,138,95,.10);
+      --rar-pulse:rgba(193,91,57,.45); --rar-pulse-0:rgba(193,91,57,0);
+      --rar-grid:rgba(0,0,0,.12);
+    }
+    html[data-theme="dark"] #tool-ddp-ring-allreduce{
+      --rar-good:#4cc48e; --rar-warn:#e3b348;
+      --rar-good-bg:rgba(76,196,142,.14);
+      --rar-pulse:rgba(225,132,95,.50); --rar-pulse-0:rgba(225,132,95,0);
+      --rar-grid:rgba(255,255,255,.16);
+    }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-ddp-ring-allreduce{
+        --rar-good:#4cc48e; --rar-warn:#e3b348;
+        --rar-good-bg:rgba(76,196,142,.14);
+        --rar-pulse:rgba(225,132,95,.50); --rar-pulse-0:rgba(225,132,95,0);
+        --rar-grid:rgba(255,255,255,.16);
+      }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-ddp-ring-allreduce');
+    if (!root) return;
+    function $(id){ return root.querySelector('#' + id); }
+
+    var elK      = $('ddp-ring-allreduce-k');
+    var elKval   = $('ddp-ring-allreduce-kval');
+    var elAlgo   = $('ddp-ring-allreduce-algo');
+    var elPsi    = $('ddp-ring-allreduce-psi');
+    var elDtype  = $('ddp-ring-allreduce-dtype');
+    var elLink   = $('ddp-ring-allreduce-link');
+    var elMean   = $('ddp-ring-allreduce-mean');
+    var btnStep  = $('ddp-ring-allreduce-step');
+    var btnPlay  = $('ddp-ring-allreduce-play');
+    var btnEnd   = $('ddp-ring-allreduce-end');
+    var btnReset = $('ddp-ring-allreduce-reset');
+    var elStatus = $('ddp-ring-allreduce-status');
+    var elStrip  = $('ddp-ring-allreduce-strip');
+    var elRing   = $('ddp-ring-allreduce-ring');
+    var elStats  = $('ddp-ring-allreduce-stats');
+    var elCmp    = $('ddp-ring-allreduce-cmp');
+    var elVerd   = $('ddp-ring-allreduce-verdict');
+    var elMatrix = $('ddp-ring-allreduce-matrix');
+    var elChart  = $('ddp-ring-allreduce-chart');
+    var elNote   = $('ddp-ring-allreduce-note');
+
+    if (!elK || !elAlgo || !elPsi || !elDtype || !elLink || !elMean || !elRing ||
+        !elStats || !elCmp || !elVerd || !elMatrix || !elChart || !elStrip ||
+        !elStatus || !elNote || !btnStep || !btnPlay || !btnEnd || !btnReset || !elKval) return;
+
+    var LINKS = {
+      nvlink: { name:'NVLink 4',        bw: 225e9, alpha: 3e-6  },
+      pcie:   { name:'PCIe 5.0 x16',    bw:  50e9, alpha: 8e-6  },
+      ib:     { name:'200G InfiniBand', bw:  25e9, alpha: 6e-6  },
+      eth:    { name:'100G Ethernet',   bw:  12e9, alpha: 15e-6 }
+    };
+
+    var K = 4, algo = 'ring', t = 0;
+    var base = [], cells = [], colSum = [], lastMoves = [], changed = {}, playTimer = null, pulse = false;
+
+    function mod(a, n){ return ((a % n) + n) % n; }
+    function f(x){ return Math.round(x * 100) / 100; }
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    // deterministic PRNG (mulberry32) so the gradient values never change between runs
+    function mulberry32(a){
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var x = Math.imul(a ^ (a >>> 15), 1 | a);
+        x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+        return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function readK(){ var v = parseInt(elK.value, 10); if (!isFinite(v)) v = 4; return Math.min(8, Math.max(2, v)); }
+    function readPsi(){
+      var v = parseFloat(elPsi.value);
+      if (!isFinite(v) || v <= 0) v = 1300;              // empty / bogus -> default
+      return Math.min(1e6, Math.max(1e-3, v)) * 1e6;     // params
+    }
+    function bytesPerElem(){ var b = parseInt(elDtype.value, 10); return (b === 4) ? 4 : 2; }
+    function link(){ return LINKS[elLink.value] || LINKS.pcie; }
+    function totalSteps(){ return 2 * (K - 1); }
+
+    function fmtBytes(b){
+      if (!isFinite(b) || b < 0) return '-';
+      var u = ['B','KiB','MiB','GiB','TiB'], i = 0;
+      while (b >= 1024 && i < u.length - 1){ b /= 1024; i++; }
+      return (b >= 100 ? b.toFixed(0) : b >= 10 ? b.toFixed(1) : b.toFixed(2)) + ' ' + u[i];
+    }
+    function fmtTime(s){
+      if (!isFinite(s)) return '-';
+      if (s < 1e-3) return (s * 1e6).toFixed(1) + ' &micro;s';
+      if (s < 1)    return (s * 1e3).toFixed(2) + ' ms';
+      return s.toFixed(3) + ' s';
+    }
+    function fmtVal(v){
+      var s = (Math.abs(v) < 5e-3 ? 0 : v).toFixed(2);
+      return (v >= 0 && s.charAt(0) !== '-') ? '+' + s : s;
+    }
+    function popcount(m){ var c = 0; while (m){ m &= m - 1; c++; } return c; }
+
+    function build(){
+      K = readK();
+      algo = elAlgo.value === 'naive' ? 'naive' : 'ring';
+      var rng = mulberry32(0x9E3779B9);
+      base = []; colSum = [];
+      var r, c;
+      for (r = 0; r < K; r++){
+        var row = [];
+        for (c = 0; c < K; c++) row.push(Math.round((rng() * 2 - 1) * 120) / 100);
+        base.push(row);
+      }
+      for (c = 0; c < K; c++){ var s = 0; for (r = 0; r < K; r++) s += base[r][c]; colSum.push(s); }
+      cells = [];
+      for (r = 0; r < K; r++){
+        var crow = [];
+        for (c = 0; c < K; c++) crow.push({ mask: (1 << r), val: base[r][c] });
+        cells.push(crow);
+      }
+      t = 0; lastMoves = []; changed = {}; pulse = false;
+    }
+
+    // Returns the list of {from,to,chunks,op} transfers for step index i (0-based), without applying them.
+    function movesFor(i){
+      var moves = [], r, all = [], c;
+      for (c = 0; c < K; c++) all.push(c);
+      if (algo === 'ring'){
+        if (i < K - 1){
+          // reduce-scatter: rank r sends chunk (r - s) mod K to rank r+1, which ADDS it
+          for (r = 0; r < K; r++) moves.push({ from:r, to:mod(r + 1, K), chunks:[mod(r - i, K)], op:'add' });
+        } else {
+          // all-gather: rank r sends chunk (r + 1 - s) mod K to rank r+1, which OVERWRITES
+          var s = i - (K - 1);
+          for (r = 0; r < K; r++) moves.push({ from:r, to:mod(r + 1, K), chunks:[mod(r + 1 - s, K)], op:'copy' });
+        }
+      } else {
+        if (i < K - 1) moves.push({ from:i + 1, to:0, chunks:all, op:'add' });     // gather to root 0
+        else           moves.push({ from:0, to:i - (K - 1) + 1, chunks:all, op:'copy' }); // broadcast
+      }
+      return moves;
+    }
+
+    function doStep(){
+      if (t >= totalSteps()) return false;
+      var moves = movesFor(t), r, c;
+      var snap = [];
+      for (r = 0; r < K; r++){
+        var row = [];
+        for (c = 0; c < K; c++) row.push({ mask: cells[r][c].mask, val: cells[r][c].val });
+        snap.push(row);
+      }
+      changed = {};
+      for (var m = 0; m < moves.length; m++){
+        var mv = moves[m];
+        for (var j = 0; j < mv.chunks.length; j++){
+          var ci = mv.chunks[j], src = snap[mv.from][ci], dst = cells[mv.to][ci];
+          if (mv.op === 'add'){ dst.mask |= src.mask; dst.val += src.val; }
+          else                { dst.mask = src.mask;  dst.val = src.val;  }
+          changed[mv.to + ',' + ci] = 1;
+        }
+      }
+      lastMoves = moves; t++; pulse = true;
+      return true;
+    }
+
+    function stopPlay(){
+      if (playTimer){ clearInterval(playTimer); playTimer = null; }
+      btnPlay.textContent = 'Play';
+      btnPlay.setAttribute('aria-pressed', 'false');
+    }
+
+    // ---------------- geometry / topology drawing ----------------
+    // Ring  -> K nodes evenly on a circle, traffic hops neighbour-to-neighbour.
+    // Naive -> STAR: the root sits in the centre and every leaf talks only to it,
+    //          which is exactly why the root's single link is the bottleneck.
+    var NW = 96, NH = 46, PAD = 76;
+
+    function layout(){
+      // radius large enough that adjacent node boxes never overlap, and (for the
+      // star) that a leaf sitting horizontally beside the hub still leaves room
+      // for a legible arrow between the two boxes
+      var naive = (algo === 'naive');
+      var n = naive ? Math.max(2, K - 1) : K;
+      var need = (NW + 16) / (2 * Math.sin(Math.PI / n));
+      var R = Math.max(naive ? (NW + 54) : 108, Math.min(224, need));
+      var W = 2 * (R + PAD);
+      return { R:R, W:W, cx:W / 2, cy:W / 2 };
+    }
+
+    function nodePos(i, g){
+      var a;
+      if (algo === 'naive'){
+        if (i === 0) return { x:g.cx, y:g.cy };            // root in the hub
+        var n = Math.max(1, K - 1);
+        a = (-90 + (i - 1) * 360 / n) * Math.PI / 180;
+      } else {
+        a = (-90 + i * 360 / K) * Math.PI / 180;
+      }
+      return { x:g.cx + g.R * Math.cos(a), y:g.cy + g.R * Math.sin(a) };
+    }
+
+    function drawRing(){
+      var g = layout(), cx = g.cx, cy = g.cy, R = g.R;
+      var Ra = R + 44, Rl = Ra + 16;
+      var parts = [];
+      elRing.setAttribute('viewBox', '0 0 ' + f(g.W) + ' ' + f(g.W));
+
+      parts.push('<defs>' +
+        '<marker id="ddp-ring-allreduce-mk1" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 Z"/></marker>' +
+        '<marker id="ddp-ring-allreduce-mk2" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 Z"/></marker>' +
+        '<marker id="ddp-ring-allreduce-mk3" viewBox="0 0 10 10" refX="9.4" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0 L10 5 L0 10 Z"/></marker>' +
+        '</defs>');
+
+      var ang = function(i){ return (-90 + i * 360 / K) * Math.PI / 180; };
+
+      var i, mv, lp;
+      // faint topology guides
+      if (algo === 'ring'){
+        parts.push('<circle class="rar-guide" cx="' + f(cx) + '" cy="' + f(cy) + '" r="' + f(Ra) + '"/>');
+      } else {
+        for (i = 1; i < K; i++){
+          lp = nodePos(i, g);
+          parts.push('<line class="rar-guide" x1="' + f(cx) + '" y1="' + f(cy) + '" x2="' + f(lp.x) + '" y2="' + f(lp.y) + '"/>');
+        }
+      }
+
+      // arrows for the step just executed (or a dimmed preview of the first step)
+      var preview = (t === 0);
+      var shown = preview ? movesFor(0) : lastMoves;
+      var phaseIdx = preview ? 0 : (t - 1);
+      var isP2 = phaseIdx >= (K - 1);
+      var col = preview ? 'rar-prec' : (isP2 ? 'rar-p2c' : 'rar-p1c');
+      var mk  = preview ? 'ddp-ring-allreduce-mk3' : (isP2 ? 'ddp-ring-allreduce-mk2' : 'ddp-ring-allreduce-mk1');
+      var cls = 'rar-arr ' + col + (preview ? '' : ' rar-flow');
+
+      for (i = 0; i < shown.length; i++){
+        mv = shown[i];
+        if (algo === 'ring'){
+          var step = 2 * Math.PI / K, da = Math.min(0.42, step * 0.30);
+          var a0 = ang(mv.from) + da, a1 = ang(mv.from) + step - da;
+          var x0 = cx + Ra * Math.cos(a0), y0 = cy + Ra * Math.sin(a0);
+          var x1 = cx + Ra * Math.cos(a1), y1 = cy + Ra * Math.sin(a1);
+          var large = (a1 - a0) > Math.PI ? 1 : 0;
+          parts.push('<path class="' + cls + '" d="M' + f(x0) + ' ' + f(y0) + ' A' + f(Ra) + ' ' + f(Ra) + ' 0 ' + large + ' 1 ' + f(x1) + ' ' + f(y1) +
+            '" marker-end="url(#' + mk + ')"/>');
+          var am = ang(mv.from) + step / 2;
+          parts.push('<text class="rar-alab ' + col + '" x="' + f(cx + Rl * Math.cos(am)) + '" y="' + f(cy + Rl * Math.sin(am) + 4) + '" text-anchor="middle">c' + mv.chunks[0] + '</text>');
+        } else {
+          var A = nodePos(mv.from, g), Bp = nodePos(mv.to, g);
+          var dx = Bp.x - A.x, dy = Bp.y - A.y, L = Math.sqrt(dx * dx + dy * dy);
+          if (!(L > 1)) continue;
+          // trim each end back to the node's bounding box (ray-box), never past
+          // 84% of the segment so the arrow can't invert when nodes sit close
+          var hw = NW / 2 + 6, hh = NH / 2 + 6;
+          var tx = Math.abs(dx) > 1e-6 ? hw / Math.abs(dx) : 1e9;
+          var ty = Math.abs(dy) > 1e-6 ? hh / Math.abs(dy) : 1e9;
+          var tA = Math.min(tx, ty), tB = tA;
+          if (tA + tB > 0.84){ var sc = 0.84 / (tA + tB); tA *= sc; tB *= sc; }
+          var sx = A.x + dx * tA, sy = A.y + dy * tA;
+          var ex = Bp.x - dx * tB, ey = Bp.y - dy * tB;
+          parts.push('<path class="' + cls + '" d="M' + f(sx) + ' ' + f(sy) + ' L' + f(ex) + ' ' + f(ey) +
+            '" marker-end="url(#' + mk + ')"/>');
+          var mxp = (sx + ex) / 2, myp = (sy + ey) / 2;
+          parts.push('<rect class="rar-lbg" x="' + f(mxp - 9) + '" y="' + f(myp - 8) + '" width="18" height="16" rx="4"/>');
+          parts.push('<text class="rar-alab ' + col + '" x="' + f(mxp) + '" y="' + f(myp + 4) + '" text-anchor="middle">S</text>');
+        }
+      }
+
+      // GPU nodes
+      for (i = 0; i < K; i++){
+        var np = nodePos(i, g), nx = np.x, ny = np.y;
+        var isRoot = (algo === 'naive' && i === 0);
+        parts.push('<rect class="rar-node' + (isRoot ? ' rar-root' : '') + '" x="' + f(nx - NW / 2) + '" y="' + f(ny - NH / 2) + '" width="' + NW + '" height="' + NH + '" rx="9"/>');
+        parts.push('<text class="rar-nlab" x="' + f(nx) + '" y="' + f(ny - 9) + '" text-anchor="middle">GPU ' + i + (isRoot ? ' (root)' : '') + '</text>');
+        // per-chunk mini bars: height proportional to how many ranks are summed in
+        var avail = NW - 14, gap = 2;
+        var sw = Math.max(3, (avail - gap * (K - 1)) / K), x0b = nx - avail / 2, ybot = ny + 15, hmax = 13;
+        for (var c2 = 0; c2 < K; c2++){
+          var cnt = popcount(cells[i][c2].mask);
+          var full = (cnt === K);
+          var h = Math.max(2, hmax * cnt / K);
+          var bx2 = x0b + c2 * (sw + gap);
+          parts.push('<rect class="rar-cbg" x="' + f(bx2) + '" y="' + f(ybot - hmax) + '" width="' + f(sw) + '" height="' + hmax + '" rx="1.5"/>');
+          parts.push('<rect class="rar-cfill' + (full ? ' rar-cfull' : '') + '" x="' + f(bx2) + '" y="' + f(ybot - h) + '" width="' + f(sw) + '" height="' + f(h) + '" rx="1.5"/>');
+        }
+      }
+
+      // caption: centre for the ring (hub is empty), below the star for naive
+      var capA = (algo === 'ring')
+        ? (t === 0 ? 'ring topology' : (isP2 ? 'phase 2: all-gather' : 'phase 1: reduce-scatter'))
+        : (t === 0 ? 'star topology' : (isP2 ? 'phase 2: broadcast' : 'phase 1: gather to root'));
+      var capY = (algo === 'ring') ? (cy - 3) : (cy + R + NH / 2 + 22);
+      parts.push('<text class="rar-cap" x="' + f(cx) + '" y="' + f(capY) + '" text-anchor="middle">' + capA + '</text>');
+      parts.push('<text class="rar-cap2" x="' + f(cx) + '" y="' + f(capY + 17) + '" text-anchor="middle">step ' + Math.min(t, totalSteps()) + ' / ' + totalSteps() + '</text>');
+
+      elRing.innerHTML = parts.join('');
+      elRing.setAttribute('aria-label', (algo === 'ring'
+        ? K + ' GPUs on a ring; each arrow is one chunk of S/K bytes hopping to the next neighbour. '
+        : K + ' GPUs in a star around root GPU 0; each arrow is a whole gradient S crossing the root link. ') +
+        capA + ', step ' + Math.min(t, totalSteps()) + ' of ' + totalSteps() + '.');
+    }
+
+    // ---------------- matrix ----------------
+    function drawMatrix(){
+      var html = [], r, c;
+      html.push('<div class="rar-mrow"><div class="rar-mhead"></div>');
+      for (c = 0; c < K; c++) html.push('<div class="rar-mcolhead">chunk ' + c + '</div>');
+      html.push('</div>');
+      var mean = elMean.checked;
+      for (r = 0; r < K; r++){
+        var owner = mod(r + 1, K);
+        var sub = (algo === 'ring') ? 'owns c' + owner : (r === 0 ? 'root' : 'leaf');
+        html.push('<div class="rar-mrow"><div class="rar-mhead">GPU ' + r + '<span>' + sub + '</span></div>');
+        for (c = 0; c < K; c++){
+          var cell = cells[r][c], cnt = popcount(cell.mask), full = (cnt === K);
+          var names = [];
+          for (var q = 0; q < K; q++) if (cell.mask & (1 << q)) names.push('g' + q);
+          var ticks = [];
+          for (var q2 = 0; q2 < K; q2++) ticks.push('<i class="rar-tick' + ((cell.mask & (1 << q2)) ? ' rar-on' : '') + '"></i>');
+          var shownVal = mean ? cell.val / K : cell.val;
+          var klass = 'rar-cell' + (full ? ' rar-full' : '') + ((algo === 'ring' && !full && c === owner) ? ' rar-owner' : '') + ((pulse && changed[r + ',' + c]) ? ' rar-chg' : '');
+          var title = 'GPU ' + r + ', chunk ' + c + ' = ' + names.join(' + ') + ' = ' + fmtVal(cell.val) + (mean ? '  (shown / K = ' + fmtVal(shownVal) + ')' : '');
+          html.push('<div class="' + klass + '" title="' + esc(title) + '">' +
+            '<div class="rar-ticks">' + ticks.join('') + '</div>' +
+            '<div class="rar-cval">' + fmtVal(shownVal) + '</div>' +
+            '<div class="rar-cnt">' + cnt + '/' + K + '</div></div>');
+        }
+        html.push('</div>');
+      }
+      elMatrix.innerHTML = html.join('');
+      pulse = false;   // flash only on the render that follows a step
+    }
+
+    // ---------------- accounting ----------------
+    function accounting(){
+      var P = readPsi(), b = bytesPerElem(), S = P * b, lk = link(), steps = totalSteps();
+      var chunkBytes = S / K;
+      // Bytes whose transmission is SERIALIZED on the bottleneck link, i.e. the
+      // volume that actually sits on the critical path: steps x per-step message.
+      //   ring : 2(K-1) steps x S/K  = 2(K-1)/K . S   (also the per-GPU send volume,
+      //          because send and receive overlap on a full-duplex link)
+      //   naive: 2(K-1) steps x S    = 2(K-1) . S     ((K-1)S in during the gather
+      //          plus (K-1)S out during the broadcast; the phases cannot overlap)
+      var ringPerGpu  = steps * chunkBytes;
+      var naivePerGpu = steps * S;
+      var ringT  = steps * (lk.alpha + chunkBytes / lk.bw);   // 2(K-1)a + ringPerGpu/b
+      var naiveT = steps * (lk.alpha + S / lk.bw);            // 2(K-1)a + naivePerGpu/b
+      return { P:P, b:b, S:S, lk:lk, steps:steps, chunkBytes:chunkBytes,
+               ringPerGpu:ringPerGpu, naivePerGpu:naivePerGpu, ringT:ringT, naiveT:naiveT };
+    }
+
+    function drawStats(){
+      var a = accounting();
+      var perStepLink = (algo === 'ring') ? a.chunkBytes : a.S;
+      var busySoFar = t * perStepLink;
+      var busyTotal = (algo === 'ring') ? a.ringPerGpu : a.naivePerGpu;
+      var linksBusy = (algo === 'ring') ? K : 1;
+      var rows = [
+        ['Gradient / bucket per GPU, S', fmtBytes(a.S) + '  (' + (a.P >= 1e6 ? (a.P / 1e6).toFixed(a.P >= 1e7 ? 0 : 2) + 'M' : (a.P / 1e3).toFixed(0) + 'K') + ' &times; ' + a.b + ' B)'],
+        ['Chunk size, S / K', fmtBytes(a.chunkBytes)],
+        ['Steps', Math.min(t, a.steps) + ' / ' + a.steps + ' &nbsp;= 2(K&minus;1)'],
+        ['Per step: bytes on one link', fmtBytes(perStepLink) + (algo === 'ring' ? '  = S/K' : '  = S')],
+        ['Per step: links in flight', linksBusy + ' of ' + K],
+        ['Bottleneck link, bytes so far', fmtBytes(busySoFar) + ' / ' + fmtBytes(busyTotal)]
+      ];
+      var html = '';
+      for (var i = 0; i < rows.length; i++){
+        html += '<div class="rar-stat' + (i >= 3 ? ' rar-hot' : '') + '"><span>' + rows[i][0] + '</span><b>' + rows[i][1] + '</b></div>';
+      }
+      elStats.innerHTML = html;
+
+      var speed = a.naiveT / a.ringT;
+      elCmp.innerHTML =
+        '<tr><th>Algorithm</th><th>Steps</th><th>Serialized on the busiest link</th><th>Formula</th><th>All-reduce time</th></tr>' +
+        '<tr class="rar-row-ring"><td>Ring</td><td class="rar-num">' + a.steps + '</td><td class="rar-num">' + fmtBytes(a.ringPerGpu) + '</td><td class="rar-num">2(K&minus;1)/K &middot; S</td><td class="rar-num">' + fmtTime(a.ringT) + '</td></tr>' +
+        '<tr class="rar-row-naive"><td>Naive root</td><td class="rar-num">' + a.steps + '</td><td class="rar-num">' + fmtBytes(a.naivePerGpu) + '</td><td class="rar-num">2(K&minus;1) &middot; S</td><td class="rar-num">' + fmtTime(a.naiveT) + '</td></tr>';
+
+      var verdict = 'Both take the same <b>2(K&minus;1) = ' + a.steps + '</b> steps &mdash; but a ring step carries one chunk <b>S/K</b> while a naive step pushes a whole gradient <b>S</b> through the root. ' +
+        'So the ring serializes only <b>2(K&minus;1)/K &middot; S &lt; 2S</b> on any single link however large K gets, against the root\'s <b>2(K&minus;1) &middot; S</b>. ' +
+        'On ' + a.lk.name + ' at K = ' + K + ' that is <b>' + speed.toFixed(2) + '&times;</b> (it tends to K once the message is big enough to hide &alpha;).';
+      if (t >= a.steps){
+        var maxErr = 0, r, c;
+        for (r = 0; r < K; r++) for (c = 0; c < K; c++) maxErr = Math.max(maxErr, Math.abs(cells[r][c].val - colSum[c]));
+        var drift = (maxErr > 0)
+          ? ' (max deviation from the left-to-right reference sum: ' + maxErr.toExponential(1) + ' &mdash; the collective adds the same floats in a different order, which is why DDP correctness checks need a tolerance)'
+          : '';
+        verdict = '<b>Done.</b> All ' + K + ' GPUs hold the identical summed gradient' + drift +
+          '. Divide by K and every replica takes the same optimizer step. ' + verdict;
+      }
+      elVerd.innerHTML = verdict;
+    }
+
+    // ---------------- chart ----------------
+    function drawChart(){
+      var W = 480, H = 196, L = 46, Rr = 12, T = 16, B = 34;
+      var kMin = 2, kMax = 16, yMax = 2 * (kMax - 1);
+      var xs = function(k){ return L + (k - kMin) / (kMax - kMin) * (W - L - Rr); };
+      var ys = function(v){ return H - B - (v / yMax) * (H - B - T); };
+      var p = [];
+      for (var g = 0; g <= 30; g += 10) p.push('<line class="rar-cgrid" x1="' + L + '" y1="' + f(ys(g)) + '" x2="' + (W - Rr) + '" y2="' + f(ys(g)) + '"/>');
+      for (var g2 = 0; g2 <= 30; g2 += 10)
+        p.push('<text class="rar-cax" x="' + (L - 7) + '" y="' + f(ys(g2) + 3.5) + '" text-anchor="end">' + g2 + 'S</text>');
+      for (var k = 2; k <= kMax; k += 2)
+        p.push('<text class="rar-cax" x="' + f(xs(k)) + '" y="' + (H - 16) + '" text-anchor="middle">' + k + '</text>');
+      p.push('<text class="rar-caxt" x="' + f((L + W - Rr) / 2) + '" y="' + (H - 3) + '" text-anchor="middle">number of GPUs K</text>');
+
+      var dn = [], dr = [], kk;
+      for (kk = kMin; kk <= kMax; kk++){
+        dn.push((kk === kMin ? 'M' : 'L') + f(xs(kk)) + ' ' + f(ys(2 * (kk - 1))));
+        dr.push((kk === kMin ? 'M' : 'L') + f(xs(kk)) + ' ' + f(ys(2 * (kk - 1) / kk)));
+      }
+      p.push('<line class="rar-asym" x1="' + L + '" y1="' + f(ys(2)) + '" x2="' + (W - Rr) + '" y2="' + f(ys(2)) + '"/>');
+      p.push('<path class="rar-ln-naive" d="' + dn.join('') + '"/>');
+      p.push('<path class="rar-ln-ring" d="' + dr.join('') + '"/>');
+      p.push('<line class="rar-vline" x1="' + f(xs(K)) + '" y1="' + T + '" x2="' + f(xs(K)) + '" y2="' + f(H - B) + '"/>');
+      p.push('<circle class="rar-dot-naive" cx="' + f(xs(K)) + '" cy="' + f(ys(2 * (K - 1))) + '" r="4"/>');
+      p.push('<circle class="rar-dot-ring" cx="' + f(xs(K)) + '" cy="' + f(ys(2 * (K - 1) / K)) + '" r="4"/>');
+      p.push('<text class="rar-lbl-naive" x="' + f(xs(10)) + '" y="' + f(ys(2 * 10) - 7) + '" text-anchor="middle">naive root: 2(K-1)S</text>');
+      p.push('<text class="rar-lbl-ring" x="' + f(xs(8)) + '" y="' + f(ys(2) - 7) + '" text-anchor="middle">ring: 2(K-1)/K &middot; S, always &lt; 2S</text>');
+      elChart.innerHTML = p.join('');
+    }
+
+    // ---------------- strip + status ----------------
+    function drawStrip(){
+      var n = totalSteps(), html = '', i;
+      for (i = 0; i < n; i++){
+        var done = i < t;
+        var p2 = i >= (K - 1);
+        html += '<div class="rar-seg' + (done ? (p2 ? ' rar-p2' : ' rar-p1') : '') + (i === t ? ' rar-now' : '') + '"></div>';
+      }
+      elStrip.innerHTML = html;
+    }
+
+    function statusText(){
+      var n = totalSteps();
+      if (t >= n) return '<b>Complete.</b> ' + (algo === 'ring' ? 'Every GPU has the full summed gradient after 2(K&minus;1) = ' + n + ' steps.' : 'All ranks updated from the root.');
+      var nxt = movesFor(t), lbl;
+      if (algo === 'ring'){
+        lbl = (t < K - 1)
+          ? '<b>Next &mdash; reduce-scatter ' + (t + 1) + '/' + (K - 1) + ':</b> every GPU r sends chunk (r&minus;' + t + ') mod K to r+1, which <em>adds</em> it.'
+          : '<b>Next &mdash; all-gather ' + (t - (K - 1) + 1) + '/' + (K - 1) + ':</b> every GPU r forwards chunk (r+1&minus;' + (t - (K - 1)) + ') mod K to r+1, which <em>overwrites</em>.';
+      } else {
+        lbl = (t < K - 1)
+          ? '<b>Next &mdash; gather ' + (t + 1) + '/' + (K - 1) + ':</b> GPU ' + nxt[0].from + ' sends its whole gradient to the root, which adds it.'
+          : '<b>Next &mdash; broadcast ' + (t - (K - 1) + 1) + '/' + (K - 1) + ':</b> root sends the whole summed gradient to GPU ' + nxt[0].to + '.';
+      }
+      return lbl;
+    }
+
+    function render(){
+      drawRing(); drawMatrix(); drawStats(); drawChart(); drawStrip();
+      elStatus.innerHTML = statusText();
+      btnStep.disabled = (t >= totalSteps());
+      btnEnd.disabled  = (t >= totalSteps());
+      elKval.textContent = K;
+    }
+
+    function rebuild(){ stopPlay(); build(); render(); }
+
+    elK.addEventListener('input', rebuild);
+    elAlgo.addEventListener('change', rebuild);
+    elPsi.addEventListener('input', render);
+    elDtype.addEventListener('change', render);
+    elLink.addEventListener('change', render);
+    elMean.addEventListener('change', function(){ drawMatrix(); });
+
+    btnStep.addEventListener('click', function(){ stopPlay(); doStep(); render(); });
+    btnEnd.addEventListener('click', function(){ stopPlay(); while (doStep()){} render(); });
+    btnReset.addEventListener('click', rebuild);
+    btnPlay.addEventListener('click', function(){
+      if (playTimer){ stopPlay(); return; }
+      if (t >= totalSteps()){ build(); }
+      btnPlay.textContent = 'Pause';
+      btnPlay.setAttribute('aria-pressed', 'true');
+      playTimer = setInterval(function(){
+        var moved = doStep();
+        render();
+        if (!moved) stopPlay();
+      }, 950);
+      doStep(); render();
+    });
+
+    elNote.innerHTML =
+      '<b>Takeaway: ring all-reduce is bandwidth-optimal &mdash; its per-GPU cost never exceeds 2S however many GPUs you add.</b> ' +
+      'Counting sends: in reduce-scatter every GPU must ship out the K&minus;1 chunks it does not end up owning, and in all-gather it must ship its own reduced chunk out K&minus;1 times &mdash; 2(K&minus;1) chunk-sends, i.e. <b>2(K&minus;1)/K &middot; S &lt; 2S</b> bytes. ' +
+      'The ring hits that lower bound exactly: 2(K&minus;1) steps, one S/K chunk per step, and <em>every</em> link busy in <em>every</em> step. Because each link sends and receives simultaneously, that send volume is also what sits on the critical path. ' +
+      'Push K to 1024 and it still creeps only toward 2S, which is why DDP\'s communication per optimizer step is independent of group size (the worked example above). ' +
+      '<b>The naive baseline</b> takes the same 2(K&minus;1) steps but moves a whole gradient S per step through one link &mdash; (K&minus;1)S into the root during the gather and (K&minus;1)S back out during the broadcast, two phases that cannot overlap &mdash; so its bandwidth term is K&times; larger while K&minus;1 links sit idle. ' +
+      '<b>The catch is latency:</b> the ring pays 2(K&minus;1)&alpha; in serialized hops, so for tiny messages (small buckets, or K spanning many nodes) NCCL switches to tree or hierarchical algorithms with O(log K) depth &mdash; the crossover is exactly the &alpha;&ndash;&beta; tradeoff. Shrink the gradient size here and watch the speedup collapse toward 1&times;. ' +
+      'Note also that all-reduce = reduce-scatter + all-gather: stopping after phase 1 is precisely the collective ZeRO-2/FSDP use for gradients, and running phase 2 alone is how sharded parameters are re-materialized.';
+
+    build();
+    render();
+  })();</script>
+</div>

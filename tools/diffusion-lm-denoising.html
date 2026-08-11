@@ -1,0 +1,836 @@
+<div class="viz-tool" id="tool-diffusion-lm-denoising">
+  <div class="vt-title">Diffusion language models: iterative denoising</div>
+  <div class="vt-hint">An autoregressive model emits <em>one</em> token per serial forward pass, strictly left to right. A masked-diffusion LM starts from an all-<code>[MASK]</code> block, predicts <em>every</em> masked position in parallel each pass, and commits only the most confident ones (low-confidence remasking) &mdash; so the sentence fills in out of order and finishes in T passes instead of L. Scrub the serial step to watch both machines run on the same clock, and move T to trade function evaluations against quality.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="diffusion-lm-denoising-steps">Denoising steps T <span class="vt-val" id="diffusion-lm-denoising-stepsVal">3</span>
+      <input id="diffusion-lm-denoising-steps" type="range" min="1" max="20" step="1" value="3" aria-label="Number of denoising steps T, which equals the number of function evaluations for the diffusion model">
+    </label>
+    <label for="diffusion-lm-denoising-mode">What is clamped
+      <select id="diffusion-lm-denoising-mode" aria-label="Which positions are given as fixed context">
+        <option value="full">Nothing: generate all 20 tokens</option>
+        <option value="prompt">Prompt prefix (6 tokens) given</option>
+        <option value="infill">Infilling: prefix AND suffix given</option>
+      </select>
+    </label>
+    <label for="diffusion-lm-denoising-strategy">Remasking order
+      <select id="diffusion-lm-denoising-strategy" aria-label="Rule that picks which masked positions to unmask each step">
+        <option value="confidence">Confidence (keep most confident)</option>
+        <option value="random">Random</option>
+        <option value="ltr">Left to right</option>
+      </select>
+    </label>
+    <label for="diffusion-lm-denoising-scrub">Serial step k <span class="vt-val" id="diffusion-lm-denoising-scrubVal">2 / 20</span>
+      <input id="diffusion-lm-denoising-scrub" type="range" min="0" max="20" step="1" value="2" aria-label="Scrub through serial forward passes; both panels advance on the same clock">
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-reset" id="diffusion-lm-denoising-play" type="button" aria-pressed="false">Play</button>
+    <button class="vt-reset" id="diffusion-lm-denoising-start" type="button">Back to step 0</button>
+    <button class="vt-reset" id="diffusion-lm-denoising-end" type="button">Jump to finish</button>
+  </div>
+
+  <div class="dld-panels">
+    <div class="dld-panel">
+      <div class="dld-panel-head">
+        <span class="dld-panel-name">Autoregressive (causal)</span>
+        <span class="dld-panel-sub" id="diffusion-lm-denoising-arhead">1 token per forward pass</span>
+      </div>
+      <div class="dld-cells" id="diffusion-lm-denoising-argrid"></div>
+      <div class="dld-panel-status" id="diffusion-lm-denoising-arstatus"></div>
+    </div>
+
+    <div class="dld-panel">
+      <div class="dld-panel-head">
+        <span class="dld-panel-name">Masked diffusion (bidirectional)</span>
+        <span class="dld-panel-sub" id="diffusion-lm-denoising-dfhead">many tokens per forward pass</span>
+      </div>
+      <div class="dld-cells" id="diffusion-lm-denoising-dfgrid"></div>
+      <div class="dld-panel-status" id="diffusion-lm-denoising-dfstatus"></div>
+    </div>
+  </div>
+
+  <div class="dld-legend">
+    <span><i class="dld-sw dld-sw-clamp"></i>given / clamped</span>
+    <span><i class="dld-sw dld-sw-mask"></i>[MASK]</span>
+    <span><i class="dld-sw dld-sw-ok"></i>committed, matches reference</span>
+    <span><i class="dld-sw dld-sw-bad"></i>committed, differs</span>
+    <span><i class="dld-sw dld-sw-fresh"></i>committed on this pass</span>
+    <span><i class="dld-sw dld-sw-next"></i>will be unmasked next pass</span>
+  </div>
+
+  <div class="dld-steplog" id="diffusion-lm-denoising-steplog" aria-live="polite"></div>
+
+  <div class="dld-readout" id="diffusion-lm-denoising-readout"></div>
+
+  <div class="dld-chart-wrap">
+    <div class="dld-row-label">Match rate vs serial forward passes (NFE) &mdash; the steps/quality knob</div>
+    <svg id="diffusion-lm-denoising-chart" viewBox="0 0 720 250" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Line chart of match rate against number of denoising steps for three remasking orders, with the autoregressive reference marked" aria-describedby="diffusion-lm-denoising-chartdesc"></svg>
+    <div class="dld-chart-legend">
+      <span><i class="dld-ln dld-ln-conf"></i>confidence</span>
+      <span><i class="dld-ln dld-ln-rand"></i>random</span>
+      <span><i class="dld-ln dld-ln-ltr"></i>left to right</span>
+      <span><i class="dld-ln dld-ln-ar"></i>autoregressive reference</span>
+    </div>
+    <div class="dld-axis-note" id="diffusion-lm-denoising-chartdesc"></div>
+  </div>
+
+  <div class="vt-note">
+    The loop is exactly the chapter's sampler: start all-<code>[MASK]</code>, run one full bidirectional pass, softmax the logits at every masked position (with max-subtraction), and unmask the top-<code>n_keep</code> by confidence, where <code>n_keep = (#masked) &minus; round(n_gen &times; (1 &minus; (k+1)/T))</code> follows the linear schedule. Unmasking is one-way: a committed token is never revised, which is why an early mistake is permanent. <strong>Serial depth is what diffusion buys:</strong> NFE = T regardless of length, versus L for AR. But each diffusion pass is more expensive &mdash; every position is recomputed, so there is no KV cache and attention costs O(L<sup>2</sup>) per step instead of O(L) per AR decode step; L/T is an upper bound on wall-clock speedup, not the speedup itself. <strong>Why the order matters:</strong> within one step the model factorizes p(x<sub>0</sub> | x<sub>t</sub>) as a product of independent per-position predictions, which is wrong for language &mdash; set T = 1 and watch half the block come out individually plausible but jointly wrong. Committing only the peaked positions and re-running defers the flat ones until their neighbours exist &mdash; that is the repair, and it is why the confidence curve dominates random and left-to-right. Push the order to left-to-right at T = n_gen (with nothing clamped on the right) and masked diffusion <em>is</em> an autoregressive model: same match rate, same NFE, no win. <strong>Infilling</strong> is free here because prefix and suffix are clamped from step 0, so masked positions have context on both sides immediately; AR has to regenerate everything to the right of the edit and nothing constrains it to land on the required suffix.
+    <br><br>
+    <strong>What is real and what is scripted.</strong> The softmax, the linear schedule, the top-<code>n_keep</code> selection, the one-way commit and the NFE accounting are the real algorithm. The denoiser is a seeded toy: each position has 4 candidates, the reference token scores <code>3.0&middot;a + 3.4&middot;(0.6&middot;left + 0.4&middot;right)</code> where <code>a</code> is its base predictability and left/right are the fractions of its exponentially-weighted neighbourhood already committed, while the three rivals sit on a fixed plateau scaled by <code>(1 &minus; a)</code>. That is calibrated on purpose: with no context every wrong prediction has p &le; 0.39 and every right one p &ge; 0.51, so <em>confidence really does identify the positions worth committing</em> &mdash; the assumption the whole remasking rule rests on. It also makes the AR path a perfect oracle by construction, so its reference line sits at 100%; the question this chart answers is how few serial passes diffusion needs to <em>match</em> AR, not whether AR can be beaten.
+  </div>
+
+  <style>
+    #tool-diffusion-lm-denoising{
+      --dld-surface: var(--surface,#ffffff);
+      --dld-surface-2: var(--surface-2,#f6f7f9);
+      --dld-surface-3: var(--surface-3,#eceef3);
+      --dld-ink: var(--ink,#1a1a2e);
+      --dld-ink-soft: var(--ink-soft,#556);
+      --dld-muted: var(--muted,#889);
+      --dld-border: var(--border,#e5e7eb);
+      --dld-border-2: var(--border-2,#e5e7eb);
+      --dld-accent: var(--accent,#4f46e5);
+      --dld-good: var(--good,#1f7a55);
+      --dld-warn: var(--warn,#a06a00);
+      --dld-bad: #b03a34;
+      --dld-oncolor: #ffffff;
+    }
+    @media (prefers-color-scheme: dark){
+      #tool-diffusion-lm-denoising{
+        --dld-surface: var(--surface,#1b1b22);
+        --dld-surface-2: var(--surface-2,#22222b);
+        --dld-surface-3: var(--surface-3,#2c2c37);
+        --dld-ink: var(--ink,#e9e9f0);
+        --dld-ink-soft: var(--ink-soft,#c3c3d0);
+        --dld-muted: var(--muted,#9494a5);
+        --dld-border: var(--border,#32323d);
+        --dld-border-2: var(--border-2,#3e3e4b);
+        --dld-accent: var(--accent,#8b85f5);
+        --dld-good: var(--good,#5fd3a0);
+        --dld-warn: var(--warn,#e3b23c);
+        --dld-bad: #f08b83;
+        --dld-oncolor: #14141a;
+      }
+    }
+    html[data-theme="light"] #tool-diffusion-lm-denoising,
+    :root[data-theme="light"] #tool-diffusion-lm-denoising{
+      --dld-surface: var(--surface,#ffffff);
+      --dld-surface-2: var(--surface-2,#f6f7f9);
+      --dld-surface-3: var(--surface-3,#eceef3);
+      --dld-ink: var(--ink,#1a1a2e);
+      --dld-ink-soft: var(--ink-soft,#556);
+      --dld-muted: var(--muted,#889);
+      --dld-border: var(--border,#e5e7eb);
+      --dld-border-2: var(--border-2,#e5e7eb);
+      --dld-accent: var(--accent,#4f46e5);
+      --dld-good: var(--good,#1f7a55);
+      --dld-warn: var(--warn,#a06a00);
+      --dld-bad: #b03a34;
+      --dld-oncolor: #ffffff;
+    }
+    html[data-theme="dark"] #tool-diffusion-lm-denoising,
+    :root[data-theme="dark"] #tool-diffusion-lm-denoising{
+      --dld-surface: var(--surface,#1b1b22);
+      --dld-surface-2: var(--surface-2,#22222b);
+      --dld-surface-3: var(--surface-3,#2c2c37);
+      --dld-ink: var(--ink,#e9e9f0);
+      --dld-ink-soft: var(--ink-soft,#c3c3d0);
+      --dld-muted: var(--muted,#9494a5);
+      --dld-border: var(--border,#32323d);
+      --dld-border-2: var(--border-2,#3e3e4b);
+      --dld-accent: var(--accent,#8b85f5);
+      --dld-good: var(--good,#5fd3a0);
+      --dld-warn: var(--warn,#e3b23c);
+      --dld-bad: #f08b83;
+      --dld-oncolor: #14141a;
+    }
+
+    #tool-diffusion-lm-denoising{ border:1px solid var(--dld-border-2); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--dld-surface); font-family:var(--sans,sans-serif); max-width:100%; overflow-x:hidden; }
+    #tool-diffusion-lm-denoising .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--dld-ink); }
+    #tool-diffusion-lm-denoising .vt-hint{ font-size:.8rem; color:var(--dld-muted); margin-bottom:14px; line-height:1.55; }
+    #tool-diffusion-lm-denoising .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(196px,1fr)); gap:12px 18px; }
+    #tool-diffusion-lm-denoising label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--dld-ink-soft); }
+    #tool-diffusion-lm-denoising .vt-val{ color:var(--dld-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-diffusion-lm-denoising input[type="range"]{ width:100%; accent-color:var(--dld-accent); }
+    #tool-diffusion-lm-denoising input[type="range"]:focus-visible,
+    #tool-diffusion-lm-denoising select:focus-visible{ outline:2px solid var(--dld-accent); outline-offset:3px; }
+    #tool-diffusion-lm-denoising select{ font:inherit; font-size:.8rem; padding:5px 7px; border:1px solid var(--dld-border-2); border-radius:7px; background:var(--dld-surface); color:var(--dld-ink); max-width:100%; }
+    #tool-diffusion-lm-denoising code{ font-family:var(--mono,monospace); font-size:.92em; background:var(--dld-surface-3); padding:0 3px; border-radius:3px; }
+    #tool-diffusion-lm-denoising .vt-actions{ margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; }
+    #tool-diffusion-lm-denoising .vt-reset{ font:inherit; font-size:.78rem; padding:6px 12px; border:1px solid var(--dld-border-2); border-radius:7px; background:var(--dld-surface); color:var(--dld-ink); cursor:pointer; }
+    #tool-diffusion-lm-denoising .vt-reset:hover{ background:var(--dld-surface-3); }
+    #tool-diffusion-lm-denoising .vt-reset:focus-visible{ outline:2px solid var(--dld-accent); outline-offset:2px; }
+    #tool-diffusion-lm-denoising .vt-note{ margin-top:16px; font-size:.78rem; color:var(--dld-muted); line-height:1.6; }
+
+    #tool-diffusion-lm-denoising .dld-panels{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
+    #tool-diffusion-lm-denoising .dld-panel{ border:1px solid var(--dld-border); border-radius:10px; background:var(--dld-surface-2); padding:10px 11px 11px; min-width:0; }
+    #tool-diffusion-lm-denoising .dld-panel-head{ display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; margin-bottom:9px; }
+    #tool-diffusion-lm-denoising .dld-panel-name{ font-size:.76rem; font-weight:700; color:var(--dld-ink); text-transform:uppercase; letter-spacing:.03em; }
+    #tool-diffusion-lm-denoising .dld-panel-sub{ font-size:.7rem; color:var(--dld-muted); }
+    #tool-diffusion-lm-denoising .dld-cells{ display:grid; grid-template-columns:repeat(auto-fill,minmax(66px,1fr)); gap:4px; }
+    #tool-diffusion-lm-denoising .dld-cell{ min-width:0; border:1px solid var(--dld-border-2); border-radius:7px; background:var(--dld-surface-3); padding:4px 4px 3px; display:flex; flex-direction:column; gap:2px; align-items:center; justify-content:flex-end; font-family:var(--mono,monospace); overflow:hidden; }
+    #tool-diffusion-lm-denoising .dld-tok{ font-size:.72rem; line-height:1.15; color:var(--dld-ink); max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    #tool-diffusion-lm-denoising .dld-meta{ font-size:.55rem; line-height:1.1; color:var(--dld-muted); white-space:nowrap; }
+    #tool-diffusion-lm-denoising .dld-bar{ width:100%; height:3px; border-radius:2px; background:var(--dld-border); overflow:hidden; }
+    #tool-diffusion-lm-denoising .dld-bar > i{ display:block; height:100%; background:var(--dld-muted); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-clamp{ background:var(--dld-surface-3); border-color:var(--dld-border-2); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-clamp .dld-tok{ color:var(--dld-ink-soft); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-mask{ background:transparent; border-style:dashed; border-color:var(--dld-muted); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-mask .dld-tok{ color:var(--dld-muted); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-ok{ background:var(--dld-good); border-color:var(--dld-good); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-ok .dld-tok{ color:var(--dld-oncolor); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-ok .dld-meta{ color:var(--dld-oncolor); opacity:.85; }
+    #tool-diffusion-lm-denoising .dld-cell.dld-ok .dld-bar > i{ background:var(--dld-oncolor); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-bad{ background:var(--dld-bad); border-color:var(--dld-bad); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-bad .dld-tok{ color:var(--dld-oncolor); text-decoration:line-through; }
+    #tool-diffusion-lm-denoising .dld-cell.dld-bad .dld-meta{ color:var(--dld-oncolor); opacity:.85; }
+    #tool-diffusion-lm-denoising .dld-cell.dld-bad .dld-bar > i{ background:var(--dld-oncolor); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-fresh{ box-shadow:0 0 0 2px var(--dld-accent); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-next{ border-color:var(--dld-accent); border-style:solid; box-shadow:inset 0 0 0 1px var(--dld-accent); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-next .dld-tok{ color:var(--dld-accent); }
+    #tool-diffusion-lm-denoising .dld-cell.dld-next .dld-bar > i{ background:var(--dld-accent); }
+    #tool-diffusion-lm-denoising .dld-panel-status{ margin-top:9px; font-size:.74rem; line-height:1.5; color:var(--dld-ink-soft); min-height:2.4em; }
+
+    #tool-diffusion-lm-denoising .dld-legend{ margin-top:11px; display:flex; flex-wrap:wrap; gap:6px 14px; font-size:.71rem; color:var(--dld-ink-soft); }
+    #tool-diffusion-lm-denoising .dld-legend span{ display:inline-flex; align-items:center; gap:5px; }
+    #tool-diffusion-lm-denoising .dld-sw{ width:11px; height:11px; border-radius:3px; display:inline-block; flex:none; }
+    #tool-diffusion-lm-denoising .dld-sw-clamp{ background:var(--dld-surface-3); border:1px solid var(--dld-border-2); }
+    #tool-diffusion-lm-denoising .dld-sw-mask{ background:transparent; border:1px dashed var(--dld-muted); }
+    #tool-diffusion-lm-denoising .dld-sw-ok{ background:var(--dld-good); }
+    #tool-diffusion-lm-denoising .dld-sw-bad{ background:var(--dld-bad); }
+    #tool-diffusion-lm-denoising .dld-sw-fresh{ background:var(--dld-good); box-shadow:0 0 0 2px var(--dld-accent); margin:0 3px; }
+    #tool-diffusion-lm-denoising .dld-sw-next{ background:transparent; border:2px solid var(--dld-accent); }
+
+    #tool-diffusion-lm-denoising .dld-steplog{ margin-top:12px; padding:10px 12px; border:1px solid var(--dld-border); border-radius:8px; background:var(--dld-surface-2); font-family:var(--mono,monospace); font-size:.74rem; line-height:1.75; color:var(--dld-ink); overflow-x:auto; }
+    #tool-diffusion-lm-denoising .dld-steplog .dld-hl{ color:var(--dld-accent); font-weight:700; }
+    #tool-diffusion-lm-denoising .dld-steplog .dld-okc{ color:var(--dld-good); font-weight:700; }
+    #tool-diffusion-lm-denoising .dld-steplog .dld-badc{ color:var(--dld-bad); font-weight:700; }
+    #tool-diffusion-lm-denoising .dld-readout{ margin-top:10px; font-size:.79rem; line-height:1.6; color:var(--dld-ink-soft); }
+    #tool-diffusion-lm-denoising .dld-readout strong{ color:var(--dld-ink); }
+
+    #tool-diffusion-lm-denoising .dld-chart-wrap{ margin-top:16px; }
+    #tool-diffusion-lm-denoising .dld-row-label{ font-size:.7rem; color:var(--dld-muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:6px; }
+    #tool-diffusion-lm-denoising svg#diffusion-lm-denoising-chart{ width:100%; max-width:720px; height:auto; display:block; }
+    #tool-diffusion-lm-denoising .dld-chart-legend{ margin-top:6px; display:flex; flex-wrap:wrap; gap:6px 14px; font-size:.71rem; color:var(--dld-ink-soft); }
+    #tool-diffusion-lm-denoising .dld-chart-legend span{ display:inline-flex; align-items:center; gap:5px; }
+    #tool-diffusion-lm-denoising .dld-ln{ width:16px; height:0; border-top-width:2px; border-top-style:solid; display:inline-block; flex:none; }
+    #tool-diffusion-lm-denoising .dld-ln-conf{ border-top-color:var(--dld-accent); }
+    #tool-diffusion-lm-denoising .dld-ln-rand{ border-top-color:var(--dld-muted); border-top-style:dashed; }
+    #tool-diffusion-lm-denoising .dld-ln-ltr{ border-top-color:var(--dld-warn); border-top-style:dotted; }
+    #tool-diffusion-lm-denoising .dld-ln-ar{ border-top-color:var(--dld-good); }
+    #tool-diffusion-lm-denoising .dld-axis-note{ margin-top:6px; font-size:.72rem; color:var(--dld-muted); line-height:1.55; }
+    #tool-diffusion-lm-denoising .dld-grid{ stroke:var(--dld-border); stroke-width:1; }
+    #tool-diffusion-lm-denoising .dld-axis{ fill:var(--dld-muted); font-size:9px; font-family:var(--sans,sans-serif); }
+    #tool-diffusion-lm-denoising .dld-curve-conf{ fill:none; stroke:var(--dld-accent); stroke-width:2.2; }
+    #tool-diffusion-lm-denoising .dld-curve-rand{ fill:none; stroke:var(--dld-muted); stroke-width:1.6; stroke-dasharray:5 3; }
+    #tool-diffusion-lm-denoising .dld-curve-ltr{ fill:none; stroke:var(--dld-warn); stroke-width:1.6; stroke-dasharray:1.5 2.5; stroke-linecap:round; }
+    #tool-diffusion-lm-denoising .dld-arline{ stroke:var(--dld-good); stroke-width:1.4; stroke-dasharray:6 4; }
+    #tool-diffusion-lm-denoising .dld-arpt{ fill:var(--dld-good); }
+    #tool-diffusion-lm-denoising .dld-arlbl{ fill:var(--dld-good); font-size:9px; font-weight:700; font-family:var(--sans,sans-serif); }
+    #tool-diffusion-lm-denoising .dld-tline{ stroke:var(--dld-accent); stroke-width:1.2; stroke-dasharray:3 3; }
+    #tool-diffusion-lm-denoising .dld-curpt{ fill:var(--dld-accent); stroke:var(--dld-surface); stroke-width:1.5; }
+    #tool-diffusion-lm-denoising .dld-curlbl{ fill:var(--dld-ink); font-size:9px; font-weight:700; font-family:var(--sans,sans-serif); }
+
+    @media (max-width:560px){
+      #tool-diffusion-lm-denoising{ padding:13px 12px; }
+      #tool-diffusion-lm-denoising .dld-cells{ grid-template-columns:repeat(auto-fill,minmax(54px,1fr)); }
+      #tool-diffusion-lm-denoising .dld-tok{ font-size:.66rem; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-diffusion-lm-denoising');
+    if (!root) return;
+
+    // ---------------------------------------------------------------------
+    // Toy corpus. Each position carries the reference token, a "base
+    // predictability" a in [0,1] (how far frequency/grammar alone gets you with
+    // no committed neighbours), and 3 competing candidates. The model's
+    // per-position vocabulary is these 4 entries; [MASK] is never a candidate.
+    // ---------------------------------------------------------------------
+    var TOK = [
+      { w:'the',     a:0.92, d:['a','this','one'] },
+      { w:'capital', a:0.28, d:['capitol','city','centre'] },
+      { w:'of',      a:0.95, d:['in','for','to'] },
+      { w:'france',  a:0.12, d:['japan','brazil','norway'] },
+      { w:'is',      a:0.90, d:['was','are','be'] },
+      { w:'paris',   a:0.10, d:['tokyo','lyon','rome'] },
+      { w:',',       a:0.82, d:['.',';','-'] },
+      { w:'home',    a:0.22, d:['next','close','due'] },
+      { w:'to',      a:0.85, d:['of','for','in'] },
+      { w:'the',     a:0.88, d:['a','its','one'] },
+      { w:'eiffel',  a:0.08, d:['louvre','notre','arc'] },
+      { w:'tower',   a:0.30, d:['tour','spire','arch'] },
+      { w:'and',     a:0.78, d:['but','plus','with'] },
+      { w:'a',       a:0.70, d:['the','one','its'] },
+      { w:'famous',  a:0.32, d:['popular','ancient','modern'] },
+      { w:'glass',   a:0.10, d:['stone','steel','marble'] },
+      { w:'pyramid', a:0.15, d:['dome','arch','statue'] },
+      { w:'at',      a:0.60, d:['in','by','near'] },
+      { w:'the',     a:0.90, d:['a','its','one'] },
+      { w:'louvre',  a:0.09, d:['orsay','seine','rodin'] }
+    ];
+    var L = TOK.length, ND = 3;
+
+    // Denoiser constants (scripted toy; see the note under the widget). They are
+    // tuned so that CONFIDENCE IS CALIBRATED: on the context-free pass every
+    // wrong argmax has p <= 0.39 and every right one p >= 0.52. That matters,
+    // because "keep the most confident" is only a sensible rule if confidence
+    // actually tracks correctness — the widget must not contradict its own claim.
+    var LAMBDA = 2.2;   // locality decay of the context kernel exp(-d/LAMBDA)
+    var B1 = 3.0;       // weight on base predictability
+    var B2 = 3.4;       // weight on committed-context coverage
+    var RHO = 0.6;      // share of the context bonus carried by the LEFT side
+    // Rival logits sit on a PLATEAU of height ~DBASE scaled by (1 - a), with a
+    // little jitter. A low-a position therefore has three near-tied rivals ->
+    // genuinely flat softmax (low confidence), rather than one runaway rival
+    // that would produce a confidently WRONG prediction.
+    var DBASE = 1.8, DJIT = 0.45;
+
+    // ---------------- seeded PRNG (mulberry32) ----------------
+    function mulberry32(a){
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    var LOGIT_SEED = 0xDA0AC47D, ORDER_SEED = 0x2BADF00D;
+
+    // Fixed distractor logits: harder positions (small a) get stronger rivals,
+    // so their distribution is flat until context arrives.
+    var DIST = (function(){
+      var r = mulberry32(LOGIT_SEED), out = [];
+      for (var i = 0; i < L; i++){
+        var row = [];
+        for (var m = 0; m < ND; m++) row.push((1 - TOK[i].a) * (DBASE + DJIT * (2 * r() - 1)));
+        out.push(row);
+      }
+      return out;
+    })();
+
+    function kern(d){ return Math.exp(-d / LAMBDA); }
+    var WLEFT = [], WRIGHT = [];
+    for (var i0 = 0; i0 < L; i0++){
+      var lw = 0, rw = 0;
+      for (var j0 = 0; j0 < L; j0++){
+        if (j0 < i0) lw += kern(i0 - j0);
+        else if (j0 > i0) rw += kern(j0 - i0);
+      }
+      WLEFT.push(lw); WRIGHT.push(rw);
+    }
+
+    // One position's forward pass: build logits, softmax with max-subtraction,
+    // return argmax and its probability (the "confidence" used for remasking).
+    function predict(revealed, i, causal){
+      var cl = 0, cr = 0;
+      for (var j = 0; j < L; j++){
+        if (j === i || !revealed[j]) continue;
+        if (j < i) cl += kern(i - j); else cr += kern(j - i);
+      }
+      var nl = WLEFT[i] > 0 ? cl / WLEFT[i] : 0;
+      var nr = (causal || WRIGHT[i] === 0) ? 0 : cr / WRIGHT[i];
+      var z = [B1 * TOK[i].a + B2 * (RHO * nl + (1 - RHO) * nr)];
+      for (var m = 0; m < ND; m++) z.push(DIST[i][m]);
+      var mx = z[0];
+      for (m = 1; m < z.length; m++) if (z[m] > mx) mx = z[m];
+      var e = [], s = 0;
+      for (m = 0; m < z.length; m++){ var ev = Math.exp(z[m] - mx); e.push(ev); s += ev; }
+      var best = 0, p = [];
+      for (m = 0; m < z.length; m++){ p.push(e[m] / s); if (p[m] > p[best]) best = m; }
+      return { pred: best, conf: p[best], p: p, nl: nl, nr: nr };
+    }
+
+    function tokenText(i, k){ return k === 0 ? TOK[i].w : TOK[i].d[k - 1]; }
+
+    // ---------------- clamping modes ----------------
+    var MODES = {
+      full:   { lo: 0, hi: 0,  label: 'nothing clamped' },
+      prompt: { lo: 6, hi: 0,  label: 'prompt prefix clamped' },
+      infill: { lo: 7, hi: 4,  label: 'prefix + suffix clamped' }
+    };
+    function clampFor(mode){
+      var m = MODES[mode] || MODES.full, c = [];
+      for (var i = 0; i < L; i++) c.push(i < m.lo || i >= L - m.hi);
+      return c;
+    }
+    function genPositions(clamp){
+      var g = [];
+      for (var i = 0; i < L; i++) if (!clamp[i]) g.push(i);
+      return g;
+    }
+
+    // Linear masking schedule, exactly as in the chapter's sampler:
+    // masked_target[k] = round(n_gen * (1 - (k+1)/T)).
+    function schedule(nGen, T){
+      var s = [];
+      for (var k = 0; k < T; k++) s.push(Math.round(nGen * (1 - (k + 1) / T)));
+      return s;
+    }
+
+    // ---------------- the diffusion sampler ----------------
+    // Returns a full trace so the scrubber can replay any intermediate state.
+    function runDiffusion(T, clamp, strategy){
+      var gen = genPositions(clamp), nGen = gen.length;
+      var revealed = [], tokIdx = [], committedAt = [], conf = [];
+      for (var i = 0; i < L; i++){
+        revealed[i] = !!clamp[i];
+        tokIdx[i] = clamp[i] ? 0 : -1;
+        committedAt[i] = clamp[i] ? 0 : -1;
+        conf[i] = 1;
+      }
+      var target = schedule(nGen, T);
+      var rng = mulberry32(ORDER_SEED);
+      var steps = [];
+      for (var k = 0; k < T; k++){
+        var masked = [];
+        for (var t = 0; t < gen.length; t++) if (!revealed[gen[t]]) masked.push(gen[t]);
+        if (masked.length === 0) break;
+        var pr = {};
+        for (t = 0; t < masked.length; t++) pr[masked[t]] = predict(revealed, masked[t], false);
+        var nKeep = masked.length - target[k];
+        if (nKeep < 0) nKeep = 0;
+        if (nKeep > masked.length) nKeep = masked.length;
+        var order;
+        if (strategy === 'confidence'){
+          order = masked.slice().sort(function(x, y){ return (pr[y].conf - pr[x].conf) || (x - y); });
+        } else if (strategy === 'random'){
+          var keyed = masked.map(function(x){ return { x: x, k: rng() }; });
+          keyed.sort(function(p, q){ return p.k - q.k; });
+          order = keyed.map(function(o){ return o.x; });
+        } else {
+          order = masked.slice();
+        }
+        var kept = order.slice(0, nKeep);
+        steps.push({ masked: masked, pred: pr, nKeep: nKeep, target: target[k], kept: kept.slice() });
+        for (t = 0; t < kept.length; t++){
+          var pos = kept[t];
+          revealed[pos] = true;
+          tokIdx[pos] = pr[pos].pred;
+          conf[pos] = pr[pos].conf;
+          committedAt[pos] = k + 1;
+        }
+      }
+      var correct = 0;
+      for (t = 0; t < gen.length; t++) if (tokIdx[gen[t]] === 0) correct++;
+      return {
+        steps: steps, tokIdx: tokIdx, committedAt: committedAt, conf: conf,
+        gen: gen, nGen: nGen, nfe: steps.length,
+        correct: correct, acc: nGen ? correct / nGen : 1
+      };
+    }
+
+    // ---------------- the autoregressive baseline ----------------
+    // Causal: never sees anything to its right, clamped or not. In infilling it
+    // therefore has to REGENERATE the suffix rather than being given it.
+    function runAR(clamp){
+      var gen = genPositions(clamp);
+      var first = gen.length ? gen[0] : L;
+      var revealed = [], tokIdx = [], committedAt = [], conf = [];
+      for (var i = 0; i < L; i++){
+        var pre = (!!clamp[i]) && i < first;
+        revealed[i] = pre;
+        tokIdx[i] = pre ? 0 : -1;
+        committedAt[i] = pre ? 0 : -1;
+        conf[i] = 1;
+      }
+      var emitted = [];
+      for (i = first; i < L; i++){
+        var pr = predict(revealed, i, true);
+        tokIdx[i] = pr.pred; conf[i] = pr.conf; revealed[i] = true;
+        emitted.push(i);
+        committedAt[i] = emitted.length;
+      }
+      var correct = 0;
+      for (var t = 0; t < gen.length; t++) if (tokIdx[gen[t]] === 0) correct++;
+      var suffixOK = true, suffixN = 0;
+      for (i = first; i < L; i++) if (clamp[i]){ suffixN++; if (tokIdx[i] !== 0) suffixOK = false; }
+      return {
+        tokIdx: tokIdx, committedAt: committedAt, conf: conf, emitted: emitted,
+        gen: gen, nGen: gen.length, nfe: emitted.length, first: first,
+        correct: correct, acc: gen.length ? correct / gen.length : 1,
+        suffixOK: suffixOK, suffixN: suffixN
+      };
+    }
+
+    // ---------------- DOM refs ----------------
+    var stepsIn  = root.querySelector('#diffusion-lm-denoising-steps');
+    var stepsVal = root.querySelector('#diffusion-lm-denoising-stepsVal');
+    var modeIn   = root.querySelector('#diffusion-lm-denoising-mode');
+    var stratIn  = root.querySelector('#diffusion-lm-denoising-strategy');
+    var scrubIn  = root.querySelector('#diffusion-lm-denoising-scrub');
+    var scrubVal = root.querySelector('#diffusion-lm-denoising-scrubVal');
+    var playBtn  = root.querySelector('#diffusion-lm-denoising-play');
+    var startBtn = root.querySelector('#diffusion-lm-denoising-start');
+    var endBtn   = root.querySelector('#diffusion-lm-denoising-end');
+    var arGrid   = root.querySelector('#diffusion-lm-denoising-argrid');
+    var dfGrid   = root.querySelector('#diffusion-lm-denoising-dfgrid');
+    var arHead   = root.querySelector('#diffusion-lm-denoising-arhead');
+    var dfHead   = root.querySelector('#diffusion-lm-denoising-dfhead');
+    var arStat   = root.querySelector('#diffusion-lm-denoising-arstatus');
+    var dfStat   = root.querySelector('#diffusion-lm-denoising-dfstatus');
+    var stepLog  = root.querySelector('#diffusion-lm-denoising-steplog');
+    var readout  = root.querySelector('#diffusion-lm-denoising-readout');
+    var chart    = root.querySelector('#diffusion-lm-denoising-chart');
+    var chartNote= root.querySelector('#diffusion-lm-denoising-chartdesc');
+
+    if (!stepsIn || !stepsVal || !modeIn || !stratIn || !scrubIn || !scrubVal ||
+        !playBtn || !startBtn || !endBtn || !arGrid || !dfGrid || !arHead || !dfHead ||
+        !arStat || !dfStat || !stepLog || !readout || !chart) return;
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    var timer = null;
+
+    function esc(s){
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function pct(x){ return (100 * x).toFixed(0) + '%'; }
+
+    // ---------------- cell rendering ----------------
+    function makeCell(opts){
+      var el = document.createElement('div');
+      el.className = 'dld-cell ' + opts.cls;
+      var tk = document.createElement('span');
+      tk.className = 'dld-tok';
+      tk.textContent = opts.text;
+      var mt = document.createElement('span');
+      mt.className = 'dld-meta';
+      mt.textContent = opts.meta;
+      var bar = document.createElement('span');
+      bar.className = 'dld-bar';
+      var fill = document.createElement('i');
+      var w = Math.max(0, Math.min(1, opts.bar === undefined ? 0 : opts.bar));
+      fill.style.width = (w * 100).toFixed(1) + '%';
+      bar.appendChild(fill);
+      el.appendChild(tk); el.appendChild(mt); el.appendChild(bar);
+      el.title = opts.title || '';
+      return el;
+    }
+
+    function renderDiffGrid(res, clamp, k){
+      dfGrid.innerHTML = '';
+      var stepIdx = k;                       // the step about to run (0-based)
+      var cur = stepIdx < res.steps.length ? res.steps[stepIdx] : null;
+      var nextSet = {};
+      if (cur) for (var q = 0; q < cur.kept.length; q++) nextSet[cur.kept[q]] = 1;
+      for (var i = 0; i < L; i++){
+        var cls, text, meta, bar, title;
+        if (clamp[i]){
+          cls = 'dld-clamp'; text = TOK[i].w; meta = 'given'; bar = 1;
+          title = 'position ' + (i + 1) + ': clamped context, never masked and never predicted';
+        } else if (res.committedAt[i] >= 1 && res.committedAt[i] <= k){
+          var ok = res.tokIdx[i] === 0;
+          cls = ok ? 'dld-ok' : 'dld-bad';
+          if (res.committedAt[i] === k) cls += ' dld-fresh';
+          text = tokenText(i, res.tokIdx[i]);
+          meta = 's' + res.committedAt[i] + ' p=' + res.conf[i].toFixed(2);
+          bar = res.conf[i];
+          title = 'position ' + (i + 1) + ': unmasked at step ' + res.committedAt[i] +
+                  ' with p=' + res.conf[i].toFixed(3) + (ok ? '' : ' (reference is "' + TOK[i].w + '")');
+        } else {
+          cls = 'dld-mask';
+          text = '[MASK]';
+          if (cur && cur.pred[i]){
+            var pp = cur.pred[i];
+            meta = 'p=' + pp.conf.toFixed(2);
+            bar = pp.conf;
+            title = 'position ' + (i + 1) + ': next pass predicts "' + tokenText(i, pp.pred) +
+                    '" with p=' + pp.conf.toFixed(3) + '; committed context coverage left=' +
+                    pp.nl.toFixed(2) + ' right=' + pp.nr.toFixed(2);
+            if (nextSet[i]){ cls += ' dld-next'; }
+          } else {
+            meta = 'masked'; bar = 0;
+            title = 'position ' + (i + 1) + ': still masked';
+          }
+        }
+        dfGrid.appendChild(makeCell({ cls: cls, text: text, meta: meta, bar: bar, title: title }));
+      }
+    }
+
+    function renderArGrid(res, clamp, k){
+      arGrid.innerHTML = '';
+      var nextPos = (k < res.emitted.length) ? res.emitted[k] : -1;
+      for (var i = 0; i < L; i++){
+        var cls, text, meta, bar, title;
+        var isPrefix = clamp[i] && i < res.first;
+        if (isPrefix){
+          cls = 'dld-clamp'; text = TOK[i].w; meta = 'prompt'; bar = 1;
+          title = 'position ' + (i + 1) + ': prompt token, part of the causal context';
+        } else if (res.committedAt[i] >= 1 && res.committedAt[i] <= k){
+          var ok = res.tokIdx[i] === 0;
+          cls = ok ? 'dld-ok' : 'dld-bad';
+          if (res.committedAt[i] === k) cls += ' dld-fresh';
+          text = tokenText(i, res.tokIdx[i]);
+          meta = 's' + res.committedAt[i] + ' p=' + res.conf[i].toFixed(2);
+          bar = res.conf[i];
+          title = 'position ' + (i + 1) + ': emitted at pass ' + res.committedAt[i] +
+                  ' with p=' + res.conf[i].toFixed(3) + (clamp[i] ? ' (diffusion gets this position for free)' : '');
+        } else {
+          cls = 'dld-mask';
+          text = '_';
+          meta = (i === nextPos) ? 'next' : '';
+          bar = 0;
+          if (i === nextPos){ cls += ' dld-next'; }
+          title = 'position ' + (i + 1) + ': not generated yet; an AR model reaches it only after every position to its left';
+        }
+        arGrid.appendChild(makeCell({ cls: cls, text: text, meta: meta, bar: bar, title: title }));
+      }
+    }
+
+    // ---------------- step log ----------------
+    function renderStepLog(res, k, T, strategy){
+      if (res.steps.length === 0){ stepLog.innerHTML = 'Nothing to generate at these settings.'; return; }
+      var done = k >= res.steps.length;
+      var idx = Math.min(k, res.steps.length - 1);
+      var st = res.steps[idx];
+      var stratName = strategy === 'confidence' ? 'top-n_keep by confidence'
+                    : strategy === 'random' ? 'a seeded random subset'
+                    : 'the leftmost n_keep';
+      var html = '';
+      html += 'step ' + (idx + 1) + ' of ' + T + (done ? ' (completed)' : '') + ' &middot; forward pass ' + (idx + 1) +
+              ' over all ' + L + ' positions (bidirectional)<br>';
+      html += 'masked now = <span class="dld-hl">' + st.masked.length + '</span> &middot; schedule allows round(' +
+              res.nGen + ' &times; (1 &minus; ' + (idx + 1) + '/' + T + ')) = <span class="dld-hl">' + st.target +
+              '</span> to stay masked &rArr; n_keep = ' + st.masked.length + ' &minus; ' + st.target +
+              ' = <span class="dld-hl">' + st.nKeep + '</span><br>';
+      html += 'unmask ' + stratName + ': ';
+      var parts = [];
+      var show = st.kept.slice(0, 7);
+      for (var t = 0; t < show.length; t++){
+        var pos = show[t], pr = st.pred[pos];
+        var ok = pr.pred === 0;
+        parts.push('<span class="' + (ok ? 'dld-okc' : 'dld-badc') + '">' + esc(tokenText(pos, pr.pred)) +
+                   '</span>@' + (pos + 1) + '(' + pr.conf.toFixed(2) + ')');
+      }
+      if (st.kept.length > show.length) parts.push('&hellip; +' + (st.kept.length - show.length) + ' more');
+      html += (parts.length ? parts.join(', ') : '(none this step)');
+      if (done) html += '<br><span class="dld-hl">finished</span> after ' + res.steps.length +
+                        ' pass' + (res.steps.length === 1 ? '' : 'es') + '; unmasking is one-way, so nothing here is revised again.';
+      stepLog.innerHTML = html;
+    }
+
+    // ---------------- readouts ----------------
+    function renderReadout(df, ar, T){
+      var tpp = df.nfe > 0 ? df.nGen / df.nfe : 0;
+      var speed = df.nfe > 0 ? ar.nfe / df.nfe : 0;
+      var html = '';
+      html += '<strong>Diffusion:</strong> ' + df.nGen + ' tokens in <strong>' + df.nfe +
+              '</strong> serial forward ' + (df.nfe === 1 ? 'pass' : 'passes') + ' (' + tpp.toFixed(2) +
+              ' tokens/pass), match rate <strong>' + df.correct + '/' + df.nGen + ' = ' + pct(df.acc) + '</strong>. ';
+      html += '<strong>Autoregressive:</strong> the same span needs <strong>' + ar.nfe +
+              '</strong> ' + (ar.nfe === 1 ? 'pass' : 'passes') + ' (1.00 token/pass), match rate <strong>' +
+              ar.correct + '/' + ar.nGen + ' = ' + pct(ar.acc) + '</strong>. ';
+      html += 'Serial-depth ratio <strong>' + speed.toFixed(2) + '&times;</strong>';
+      html += (df.acc >= ar.acc ? ' at no loss in match rate.' :
+               ' but ' + Math.round((ar.acc - df.acc) * df.nGen) + ' position(s) worse &mdash; raise T.');
+      if (ar.suffixN > 0){
+        html += ' In infilling the AR model cannot be <em>given</em> the suffix: it must re-emit those ' +
+                ar.suffixN + ' tokens itself (' + (ar.suffixOK ? 'it happened to reproduce them here, but nothing enforced it'
+                : 'it did not reproduce them') + '), while diffusion clamps them from step 0.';
+      }
+      readout.innerHTML = html;
+      dfHead.textContent = 'T = ' + df.nfe + ' passes, ' + tpp.toFixed(2) + ' tokens per pass';
+      arHead.textContent = ar.nfe + ' passes, 1 token per pass';
+    }
+
+    function renderPanelStatus(df, ar, clamp, k){
+      var dfDone = 0, i;
+      for (i = 0; i < L; i++) if (!clamp[i] && df.committedAt[i] >= 1 && df.committedAt[i] <= k) dfDone++;
+      var dfLeft = df.nGen - dfDone;
+      if (k >= df.nfe){
+        dfStat.innerHTML = 'Finished at pass ' + df.nfe + '. All ' + df.nGen +
+          ' positions committed; ' + df.correct + ' of ' + df.nGen + ' match the reference.';
+      } else {
+        dfStat.innerHTML = 'After pass ' + k + ': <strong>' + dfDone + '</strong> committed, <strong>' +
+          dfLeft + '</strong> still <code>[MASK]</code>. The outlined masks are the ones pass ' + (k + 1) + ' will commit.';
+      }
+      var arDone = Math.min(k, ar.nfe);
+      if (arDone >= ar.nfe){
+        arStat.innerHTML = 'Finished at pass ' + ar.nfe + '. One token per pass, no way to go faster: ' +
+          'position i cannot be sampled before i&minus;1 exists.';
+      } else {
+        var nx = ar.emitted[arDone];
+        arStat.innerHTML = 'After pass ' + k + ': <strong>' + arDone + '</strong> of ' + ar.nfe +
+          ' tokens emitted. Pass ' + (arDone + 1) + ' fills position ' + (nx + 1) + ' and nothing else.';
+      }
+    }
+
+    // ---------------- chart ----------------
+    // The three curves depend only on the clamping mode, so cache them: scrubbing
+    // the serial clock must not re-run 60 samplers per frame.
+    var curveCache = {};
+    function accCurve(clamp, strategy, maxT){
+      var out = [];
+      for (var T = 1; T <= maxT; T++) out.push(runDiffusion(T, clamp, strategy).acc);
+      return out;
+    }
+    function curvesFor(mode, clamp, nGen){
+      if (!curveCache[mode]){
+        curveCache[mode] = {
+          confidence: accCurve(clamp, 'confidence', nGen),
+          random: accCurve(clamp, 'random', nGen),
+          ltr: accCurve(clamp, 'ltr', nGen)
+        };
+      }
+      return curveCache[mode];
+    }
+
+    function renderChart(mode, clamp, curT, strategy, nGen, ar){
+      while (chart.firstChild) chart.removeChild(chart.firstChild);
+      var W = 720, Hh = 250, mL = 40, mR = 16, mT = 14, mB = 30;
+      var pw = W - mL - mR, ph = Hh - mT - mB;
+      var xMax = Math.max(nGen, ar.nfe, 2);
+
+      function add(tag, attrs, text){
+        var el = document.createElementNS(SVGNS, tag);
+        for (var kk in attrs) if (Object.prototype.hasOwnProperty.call(attrs, kk)) el.setAttribute(kk, attrs[kk]);
+        if (text !== undefined) el.textContent = text;
+        chart.appendChild(el);
+        return el;
+      }
+      function xs(t){ return mL + ((t - 1) / Math.max(1, xMax - 1)) * pw; }
+      function ys(v){ return mT + ph - Math.max(0, Math.min(1, v)) * ph; }
+
+      for (var g = 0; g <= 5; g++){
+        var v = g / 5, y = ys(v);
+        add('line', { x1: mL, x2: W - mR, y1: y, y2: y, 'class': 'dld-grid' });
+        add('text', { x: mL - 5, y: y + 3, 'text-anchor': 'end', 'class': 'dld-axis' }, (v * 100).toFixed(0) + '%');
+      }
+      add('text', { x: 11, y: mT + ph / 2, 'text-anchor': 'middle', 'class': 'dld-axis',
+                    transform: 'rotate(-90 11 ' + (mT + ph / 2) + ')' }, 'match rate');
+
+      var xStep = xMax <= 12 ? 1 : (xMax <= 24 ? 2 : 5);
+      for (var xt = 1; xt <= xMax; xt += xStep){
+        add('text', { x: xs(xt), y: Hh - mB + 12, 'text-anchor': 'middle', 'class': 'dld-axis' }, String(xt));
+      }
+      if ((xMax - 1) % xStep !== 0) add('text', { x: xs(xMax), y: Hh - mB + 12, 'text-anchor': 'middle', 'class': 'dld-axis' }, String(xMax));
+      add('text', { x: mL + pw / 2, y: Hh - 4, 'text-anchor': 'middle', 'class': 'dld-axis' },
+          'serial forward passes (NFE): T for diffusion, one per token for AR');
+
+      function path(vals, cls){
+        var d = '';
+        for (var t = 0; t < vals.length; t++) d += (t === 0 ? 'M' : 'L') + xs(t + 1).toFixed(2) + ',' + ys(vals[t]).toFixed(2) + ' ';
+        add('path', { d: d.trim(), 'class': cls });
+      }
+      var cv = curvesFor(mode, clamp, nGen);
+      var cConf = cv.confidence, cRand = cv.random, cLtr = cv.ltr;
+      path(cRand, 'dld-curve-rand');
+      path(cLtr, 'dld-curve-ltr');
+      path(cConf, 'dld-curve-conf');
+
+      // AR reference: full match rate reached only after ar.nfe passes.
+      add('line', { x1: mL, x2: W - mR, y1: ys(ar.acc), y2: ys(ar.acc), 'class': 'dld-arline' });
+      add('circle', { cx: xs(ar.nfe), cy: ys(ar.acc), r: 4, 'class': 'dld-arpt' });
+      add('text', { x: Math.min(xs(ar.nfe), W - mR - 4), y: ys(ar.acc) - 7, 'text-anchor': 'end', 'class': 'dld-arlbl' },
+          'AR: ' + (ar.acc * 100).toFixed(0) + '% at ' + ar.nfe + ' passes');
+
+      var cur = strategy === 'confidence' ? cConf : (strategy === 'random' ? cRand : cLtr);
+      var ci = Math.min(Math.max(curT, 1), nGen) - 1;
+      add('line', { x1: xs(ci + 1), x2: xs(ci + 1), y1: mT, y2: Hh - mB, 'class': 'dld-tline' });
+      add('circle', { cx: xs(ci + 1), cy: ys(cur[ci]), r: 4.5, 'class': 'dld-curpt' });
+      add('text', { x: Math.min(Math.max(xs(ci + 1), mL + 22), W - mR - 22), y: Math.max(ys(cur[ci]) - 9, mT + 10),
+                    'text-anchor': 'middle', 'class': 'dld-curlbl' }, (cur[ci] * 100).toFixed(0) + '%');
+
+      // smallest T at which the confidence order matches the AR reference
+      var hit = -1;
+      for (var t2 = 0; t2 < cConf.length; t2++) if (cConf[t2] >= ar.acc - 1e-9){ hit = t2 + 1; break; }
+      if (chartNote){
+        chartNote.innerHTML = hit > 0
+          ? ('Confidence remasking reaches the AR match rate (' + (ar.acc * 100).toFixed(0) + '%) at <strong>T = ' + hit +
+             '</strong> &mdash; ' + (ar.nfe / hit).toFixed(1) + '&times; fewer serial passes than the ' + ar.nfe +
+             ' an AR decoder needs. Random and left-to-right orders are non-monotone: a bad early commitment is never revisited, ' +
+             'because unmasking is one-way.')
+          : ('At this clamping, no T up to ' + nGen + ' reaches the AR match rate with the confidence order.');
+      }
+    }
+
+    // ---------------- glue ----------------
+    function readParams(){
+      var mode = modeIn.value in MODES ? modeIn.value : 'full';
+      var strategy = (stratIn.value === 'random' || stratIn.value === 'ltr') ? stratIn.value : 'confidence';
+      var clamp = clampFor(mode);
+      var nGen = genPositions(clamp).length;
+      var T = parseInt(stepsIn.value, 10);
+      if (!isFinite(T)) T = 1;
+      T = Math.min(Math.max(T, 1), Math.max(1, nGen));
+      return { mode: mode, strategy: strategy, clamp: clamp, nGen: nGen, T: T };
+    }
+
+    // resetScrub === true -> snap the shared clock to the end of the run.
+    function render(resetScrub){
+      var p = readParams();
+      var nGen = Math.max(1, p.nGen);
+
+      if (parseInt(stepsIn.max, 10) !== nGen) stepsIn.max = String(nGen);
+      if (parseInt(stepsIn.value, 10) !== p.T) stepsIn.value = String(p.T);
+      stepsVal.textContent = String(p.T);
+
+      var df = runDiffusion(p.T, p.clamp, p.strategy);
+      var ar = runAR(p.clamp);
+      var kmax = Math.max(df.nfe, ar.nfe, 1);
+
+      scrubIn.max = String(kmax);
+      var k = resetScrub ? kmax : parseInt(scrubIn.value, 10);
+      if (!isFinite(k)) k = 0;
+      k = Math.min(Math.max(k, 0), kmax);
+      scrubIn.value = String(k);
+      scrubVal.textContent = k + ' / ' + kmax;
+
+      renderDiffGrid(df, p.clamp, Math.min(k, df.nfe));
+      renderArGrid(ar, p.clamp, k);
+      renderStepLog(df, k, p.T, p.strategy);
+      renderReadout(df, ar, p.T);
+      renderPanelStatus(df, ar, p.clamp, k);
+      renderChart(p.mode, p.clamp, p.T, p.strategy, nGen, ar);
+      return kmax;
+    }
+
+    function stopPlay(){
+      if (timer){ clearInterval(timer); timer = null; }
+      playBtn.textContent = 'Play';
+      playBtn.setAttribute('aria-pressed', 'false');
+    }
+    function startPlay(){
+      stopPlay();
+      var kmax = parseInt(scrubIn.max, 10) || 1;
+      if ((parseInt(scrubIn.value, 10) || 0) >= kmax) scrubIn.value = '0';
+      playBtn.textContent = 'Pause';
+      playBtn.setAttribute('aria-pressed', 'true');
+      timer = setInterval(function(){
+        var mx = parseInt(scrubIn.max, 10) || 1;
+        var cv = (parseInt(scrubIn.value, 10) || 0) + 1;
+        if (cv > mx){ stopPlay(); return; }
+        scrubIn.value = String(cv);
+        render(false);
+        if (cv >= mx) stopPlay();
+      }, 650);
+      render(false);
+    }
+
+    stepsIn.addEventListener('input', function(){ stopPlay(); render(true); });
+    modeIn.addEventListener('change', function(){
+      stopPlay();
+      var nGen = genPositions(clampFor(modeIn.value in MODES ? modeIn.value : 'full')).length;
+      stepsIn.max = String(Math.max(1, nGen));
+      if (parseInt(stepsIn.value, 10) > nGen) stepsIn.value = String(Math.max(1, nGen));
+      render(true);
+    });
+    stratIn.addEventListener('change', function(){ stopPlay(); render(true); });
+    scrubIn.addEventListener('input', function(){ stopPlay(); render(false); });
+    startBtn.addEventListener('click', function(){ stopPlay(); scrubIn.value = '0'; render(false); });
+    endBtn.addEventListener('click', function(){ stopPlay(); render(true); });
+    playBtn.addEventListener('click', function(){ if (timer) stopPlay(); else startPlay(); });
+    if (document.addEventListener){
+      document.addEventListener('visibilitychange', function(){ if (document.hidden) stopPlay(); });
+    }
+
+    // First frame lands mid-run (step 2 of the markup default), where the two
+    // machines are most obviously out of step: diffusion half committed, AR two
+    // tokens in.
+    render(false);
+  })();</script>
+</div>

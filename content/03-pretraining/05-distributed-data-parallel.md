@@ -81,6 +81,8 @@ The win is large: in the ideal case, the only exposed (non-overlapped) communica
 
     and $\Psi$ **cancels**. Data-parallel scaling efficiency does not depend on model size at all — only on *tokens per GPU per optimizer step* relative to the machine's compute-to-bandwidth ratio $\eta C/\beta$. For an order-of-magnitude feel, take an H100 node with an achieved $\eta C \approx 4\times10^{14}$ FLOP/s and an effective all-reduce bandwidth of order $\beta \approx 2.5\times10^{11}$ B/s: then $\eta C/\beta \approx 1600$ FLOPs per byte, and holding communication under 10% of compute needs $T_{\text{local}} \gtrsim \frac{2}{3}\cdot\frac{1600}{0.1} \approx 10^4$ tokens per GPU per step. A local batch of 8 sequences × 1024 tokens is 8192 — right at the edge; two gradient-accumulation micro-steps under `no_sync()` double the compute per communication and put you comfortably clear. This is the systems reason large runs use large global batches (the statistical reasons are in [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html)), and the reason a slow inter-node link hurts small-batch jobs most.
 
+{{tool:ddp-ring-allreduce}}
+
 ### A From-Scratch DDP Wrapper
 
 Here is a minimal but faithful reimplementation of DDP's core mechanics — broadcast-on-init, per-parameter hooks, bucketing, and async all-reduce overlap. It is runnable and heavily commented so you can see every moving part.

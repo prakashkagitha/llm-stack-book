@@ -1,0 +1,587 @@
+<div class="viz-tool" id="tool-distillation-temperature">
+  <div class="vt-title">Knowledge distillation: soft targets, temperature, and the T&sup2; factor</div>
+
+  <div class="vt-grid">
+    <label for="distillation-temperature-scenario">Example (teacher's true class vs. a confusable class)
+      <select id="distillation-temperature-scenario" aria-label="Choose which digit-classification example to distill">
+        <option value="0">True digit 7 (looks a bit like a 1)</option>
+        <option value="1">True digit 3 (looks a bit like an 8)</option>
+        <option value="2">True digit 4 (looks a bit like a 9)</option>
+        <option value="3">True digit 5 (looks a bit like a 6)</option>
+        <option value="4">True digit 0 (looks a bit like an 8)</option>
+      </select>
+    </label>
+
+    <label for="distillation-temperature-t-num">Temperature T
+      <span class="dt-in">
+        <input id="distillation-temperature-t-range" type="range" min="0.5" max="8" step="0.1" value="2.5" aria-label="Temperature T, slider">
+        <input id="distillation-temperature-t-num" type="number" min="0.5" max="8" step="0.1" value="2.5" aria-label="Temperature T, exact value">
+      </span>
+    </label>
+
+    <label for="distillation-temperature-a-num">&alpha; &mdash; weight on hard-label CE loss (1&minus;&alpha; on KD loss)
+      <span class="dt-in">
+        <input id="distillation-temperature-a-range" type="range" min="0" max="1" step="0.05" value="0.3" aria-label="Alpha, weight on hard-label cross-entropy loss, slider">
+        <input id="distillation-temperature-a-num" type="number" min="0" max="1" step="0.05" value="0.3" aria-label="Alpha, weight on hard-label cross-entropy loss, exact value">
+      </span>
+    </label>
+  </div>
+
+  <div class="dt-btn-row">
+    <button id="distillation-temperature-step" type="button" class="dt-btn">Take one training step</button>
+    <button id="distillation-temperature-play" type="button" class="dt-btn dt-btn-primary">&#9654; Auto-train student</button>
+    <button id="distillation-temperature-reset" type="button" class="dt-btn">&#8635; Reset student</button>
+  </div>
+
+  <div class="dt-legend">
+    <span><i class="dt-sw dt-sw-good"></i> true label</span>
+    <span><i class="dt-sw dt-sw-warn"></i> confusable ("dark knowledge") label</span>
+    <span><i class="dt-tick-sw"></i> teacher's hard (T=1) probability, for reference</span>
+    <span><i class="dt-unif-sw"></i> uniform 1/K = 0.100 (the T&rarr;&infin; limit)</span>
+  </div>
+
+  <div class="dt-callout" id="distillation-temperature-callout" aria-live="polite"></div>
+
+  <div class="dt-chart-scroll">
+    <svg id="distillation-temperature-svg" xmlns="http://www.w3.org/2000/svg"
+         preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Bar charts of the teacher's and student's softmax probabilities at the current temperature, across ten classes"></svg>
+  </div>
+
+  <div class="dt-chart-scroll">
+    <svg id="distillation-temperature-loss-svg" xmlns="http://www.w3.org/2000/svg"
+         preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Line chart of the blended training loss over training steps"></svg>
+  </div>
+
+  <div class="vt-out" id="distillation-temperature-out"></div>
+
+  <div class="vt-note">
+    <b>Soft targets carry more information than hard labels.</b> A one-hot label says only "class 7, probability 1, everything else 0." The teacher's full distribution instead says "class 7, but also a bit like class 1" &mdash; that relative ranking of the <i>wrong</i> classes is Hinton et al.'s "dark knowledge," and it is exactly what a hard label throws away. Raising <b>T</b> divides every logit before the softmax, which shrinks the gaps between logits and pulls probability mass off the top class onto its runners-up: watch the confusable digit's bar grow, and watch the thin reference tick (its T=1 height) get left behind. Push T far enough and every bar collapses onto the dashed 1/K line &mdash; at that point the ordering information is gone too, which is why &tau; &isin; [2, 5] is the usual range. The student is trained on a blend: <code>&alpha;</code> weights ordinary cross-entropy against the true label (computed at T=1), <code>(1&minus;&alpha;)</code> weights the KD term. Because that term is <b>T&sup2; &middot; KL(q<sub>T</sub> &#8214; p<sub>T</sub>)</b> rather than raw KL, its gradient is <code>T&middot;(p<sub>T</sub> &minus; q<sub>T</sub>)</code>: the extra T cancels the 1/T that differentiating a T-scaled softmax introduces, and since <code>p<sub>T</sub> &minus; q<sub>T</sub></code> itself shrinks like 1/T, the gradient norm stays roughly flat instead of dying like 1/T&sup2;. The last stat tile shows both norms &mdash; slide T from 1 to 8 and compare. Click "Auto-train" and watch the student's bars migrate onto the teacher's, including onto the small dark-knowledge bars, while the loss curve shrinks. (With &alpha; &gt; 0 the loss plateaus <i>above</i> zero: the hard label pulls toward one-hot while the teacher pulls toward its soft target, and the student settles at the compromise. The curve also rescales whenever you move T or &alpha;, because that changes the loss function itself.)
+  </div>
+
+  <style>
+    #tool-distillation-temperature{
+      border:1px solid var(--border-2,#e5e7eb); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); max-width:100%; box-sizing:border-box;
+    }
+    #tool-distillation-temperature *{ box-sizing:border-box; }
+    #tool-distillation-temperature .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#1a1a2e); }
+
+    #tool-distillation-temperature .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px 18px; }
+    #tool-distillation-temperature label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#556); min-width:0; }
+    #tool-distillation-temperature input, #tool-distillation-temperature select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#e5e7eb); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#1a1a2e); min-width:0; max-width:100%; }
+    #tool-distillation-temperature input[type="range"]{ padding:0; accent-color:var(--accent,#4f46e5); }
+    #tool-distillation-temperature input:focus-visible, #tool-distillation-temperature select:focus-visible, #tool-distillation-temperature button:focus-visible{ outline:2px solid var(--accent,#4f46e5); outline-offset:2px; }
+    #tool-distillation-temperature button:disabled{ opacity:.45; cursor:not-allowed; }
+    #tool-distillation-temperature .dt-in{ display:flex; gap:6px; align-items:center; min-width:0; }
+    #tool-distillation-temperature .dt-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-distillation-temperature .dt-in input[type="number"]{ flex:1 1 62px; min-width:0; }
+
+    #tool-distillation-temperature .dt-btn-row{ margin-top:14px; display:flex; flex-wrap:wrap; gap:8px; }
+    #tool-distillation-temperature .dt-btn{ font:inherit; font-size:.82rem; font-weight:600; padding:8px 12px; border-radius:8px; border:1px solid var(--border-2,#e5e7eb); background:var(--surface-2,#f6f7f9); color:var(--ink,#1a1a2e); cursor:pointer; }
+    #tool-distillation-temperature .dt-btn:hover:not(:disabled){ filter:brightness(0.97); }
+    #tool-distillation-temperature .dt-btn-primary{ background:var(--accent,#4f46e5); border-color:var(--accent,#4f46e5); color:#fff; }
+    #tool-distillation-temperature .dt-btn-primary:hover:not(:disabled){ filter:brightness(1.06); }
+
+    #tool-distillation-temperature .dt-legend{ margin-top:12px; display:flex; flex-wrap:wrap; gap:14px; font-size:.76rem; color:var(--muted,#889); align-items:center; }
+    #tool-distillation-temperature .dt-legend span{ display:inline-flex; align-items:center; gap:5px; }
+    #tool-distillation-temperature .dt-sw{ display:inline-block; width:10px; height:10px; border-radius:2px; }
+    #tool-distillation-temperature .dt-sw-good{ background:var(--good,#2f9e6e); }
+    #tool-distillation-temperature .dt-sw-warn{ background:var(--warn,#e0a106); }
+    #tool-distillation-temperature .dt-tick-sw{ display:inline-block; width:14px; height:2px; background:var(--ink,#1a1a2e); opacity:.6; }
+    #tool-distillation-temperature .dt-unif-sw{ display:inline-block; width:14px; height:0; border-top:2px dashed var(--muted,#889); }
+
+    #tool-distillation-temperature .dt-callout{ margin-top:12px; padding:9px 12px; border-radius:8px; font-size:.8rem; line-height:1.5; border:1px solid var(--border,#e5e7eb); background:var(--surface-2,#f6f7f9); color:var(--ink-soft,#556); }
+    #tool-distillation-temperature .dt-callout b{ color:var(--ink,#1a1a2e); }
+
+    #tool-distillation-temperature .dt-chart-scroll{ margin-top:14px; overflow-x:auto; max-width:100%; border:1px solid var(--border,#e5e7eb); border-radius:8px; background:var(--surface-2,#f6f7f9); padding:6px 4px; }
+    #tool-distillation-temperature .dt-chart-scroll svg{ display:block; width:100%; height:auto; min-width:460px; max-width:660px; margin:0 auto; }
+    #tool-distillation-temperature .dt-axis{ stroke:var(--border-2,#e5e7eb); stroke-width:1; }
+    #tool-distillation-temperature .dt-grid{ stroke:var(--muted,#889); stroke-width:1; opacity:.35; stroke-dasharray:4 3; }
+    #tool-distillation-temperature .dt-tick{ stroke:var(--ink,#1a1a2e); stroke-width:2; opacity:.6; }
+    #tool-distillation-temperature .dt-bar-teacher{ fill:var(--accent,#4f46e5); opacity:.55; }
+    #tool-distillation-temperature .dt-bar-student{ fill:var(--accent,#4f46e5); opacity:.55; }
+    #tool-distillation-temperature .dt-bar-true{ fill:var(--good,#2f9e6e); opacity:.9; }
+    #tool-distillation-temperature .dt-bar-conf{ fill:var(--warn,#e0a106); opacity:.9; }
+    #tool-distillation-temperature .dt-lbl{ font-family:var(--mono,monospace); font-size:10px; fill:var(--ink-soft,#556); }
+    #tool-distillation-temperature .dt-lbl-strong{ font-family:var(--mono,monospace); font-size:10px; fill:var(--ink,#1a1a2e); font-weight:700; }
+    #tool-distillation-temperature .dt-lbl-true{ font-family:var(--mono,monospace); font-size:11px; fill:var(--good,#2f9e6e); font-weight:700; }
+    #tool-distillation-temperature .dt-lbl-conf{ font-family:var(--mono,monospace); font-size:11px; fill:var(--warn,#e0a106); font-weight:700; }
+    #tool-distillation-temperature .dt-panel-title{ font-family:var(--sans,sans-serif); font-size:11px; font-weight:700; fill:var(--muted,#889); text-transform:uppercase; letter-spacing:.04em; }
+    #tool-distillation-temperature .dt-empty{ font-family:var(--sans,sans-serif); font-size:12px; fill:var(--muted,#889); }
+    #tool-distillation-temperature .dt-loss-line{ fill:none; stroke:var(--accent,#4f46e5); stroke-width:2; }
+    #tool-distillation-temperature .dt-loss-area{ fill:var(--accent,#4f46e5); opacity:.08; stroke:none; }
+    #tool-distillation-temperature .dt-loss-dot{ fill:var(--accent,#4f46e5); }
+
+    #tool-distillation-temperature .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    #tool-distillation-temperature .vt-stat{ background:var(--surface-3,#eceef3); border-radius:9px; padding:11px 13px; min-width:0; }
+    #tool-distillation-temperature .vt-stat .n{ font-size:1.02rem; font-weight:700; color:var(--accent,#4f46e5); font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
+    #tool-distillation-temperature .vt-stat .l{ font-size:.74rem; line-height:1.35; color:var(--muted,#889); margin-top:2px; }
+
+    #tool-distillation-temperature .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#889); line-height:1.55; }
+    #tool-distillation-temperature .vt-note b{ color:var(--ink-soft,#556); }
+    #tool-distillation-temperature .vt-note code{ font-family:var(--mono,monospace); background:var(--surface-2,#f6f7f9); padding:1px 4px; border-radius:4px; }
+  </style>
+
+  <script>(function(){
+    'use strict';
+    var root = document.getElementById('tool-distillation-temperature');
+    if(!root) return;
+    var q = function(id){ return root.querySelector('#' + id); };
+
+    var els = {
+      scenario: q('distillation-temperature-scenario'),
+      tR: q('distillation-temperature-t-range'), tN: q('distillation-temperature-t-num'),
+      aR: q('distillation-temperature-a-range'), aN: q('distillation-temperature-a-num'),
+      stepBtn: q('distillation-temperature-step'),
+      playBtn: q('distillation-temperature-play'),
+      resetBtn: q('distillation-temperature-reset'),
+      callout: q('distillation-temperature-callout'),
+      svg: q('distillation-temperature-svg'),
+      lossSvg: q('distillation-temperature-loss-svg'),
+      out: q('distillation-temperature-out')
+    };
+    for(var key in els){ if(!els[key]) return; }  // bail safely if the markup was edited
+
+    var SVG_NS = 'http://www.w3.org/2000/svg';
+    var N = 10;                  // ten classes (digits 0-9)
+    var LR = 0.9;                // student SGD learning rate (verified monotone over the
+                                 // whole T x alpha grid, so the loss curve never diverges)
+    var MAX_HIST = 260;          // sliding window for the loss-curve chart
+    var MAX_STEPS = 300;         // auto-train safety cap
+    var PLATEAU_REL = 2e-4;      // auto-train stops once the loss stops moving
+    var PLATEAU_WIN = 11;        // ...measured over this many steps
+    var PLAY_MS = 45;
+    var PAUSE_TXT = '⏸ Pause';
+    var PLAY_TXT = '▶ Auto-train student';
+
+    // ---- deterministic PRNG (mulberry32): same seed -> same logits, every time ----
+    function mulberry32(seed){
+      var a = seed >>> 0;
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    // ---- scenarios: which digit is "true", which is visually confusable, and the
+    // seed that deterministically generates the full 10-logit teacher vector -------
+    var SCENARIOS = [
+      { trueClass: 7, confClass: 1, seed: 71001 },
+      { trueClass: 3, confClass: 8, seed: 38002 },
+      { trueClass: 4, confClass: 9, seed: 49003 },
+      { trueClass: 5, confClass: 6, seed: 56004 },
+      { trueClass: 0, confClass: 8, seed: 8005 }
+    ];
+
+    function genTeacherLogits(sc){
+      var rand = mulberry32(sc.seed);
+      var z = new Array(N);
+      var i;
+      for(i = 0; i < N; i++) z[i] = (rand() * 2 - 1) * 0.9;      // background noise, [-0.9, 0.9]
+      z[sc.trueClass] += 4.2 + rand() * 0.6;                     // true class: strong logit
+      z[sc.confClass] += 1.8 + rand() * 0.7;                     // confusable class: medium logit
+      return z;
+    }
+    function genStudentInit(sc){
+      var rand = mulberry32(sc.seed + 55555);
+      var z = new Array(N);
+      for(var i = 0; i < N; i++) z[i] = (rand() * 2 - 1) * 0.3;   // small, near-uniform random init
+      return z;
+    }
+
+    // ---- softmax at temperature T (numerically stable) --------------------------
+    // softmax(z/T)_i = exp((z_i - max z)/T) / sum_j exp((z_j - max z)/T)
+    function softmaxT(z, T){
+      var i, m = -Infinity;
+      var t = (isFinite(T) && T > 1e-3) ? T : 1e-3;
+      for(i = 0; i < z.length; i++) if(z[i] > m) m = z[i];
+      var exps = new Array(z.length), sum = 0;
+      for(i = 0; i < z.length; i++){ var e = Math.exp((z[i] - m) / t); exps[i] = e; sum += e; }
+      if(!(sum > 0) || !isFinite(sum)){ for(i = 0; i < z.length; i++) exps[i] = 1 / z.length; return exps; }
+      for(i = 0; i < z.length; i++) exps[i] = exps[i] / sum;
+      return exps;
+    }
+    function entropy(p){   // natural units (nats)
+      var h = 0;
+      for(var i = 0; i < p.length; i++){ if(p[i] > 1e-15) h -= p[i] * Math.log(p[i]); }
+      return h;
+    }
+
+    var state = {
+      scIdx: 0, sc: null, zT: null, zS: null,
+      T: 2.5, alpha: 0.3, step: 0,
+      history: [],      // history[i] is the blended loss after (histStart + i) steps
+      histStart: 0,
+      playing: false, timer: null
+    };
+
+    // ---- forward pass: current losses for the current zS, zT, T, alpha ----------
+    // CE  = -log p_1[y]                      (student softmax at T=1, hard label y)
+    // KD  = T^2 * KL(q_T || p_T)             (teacher soft target q_T is a constant)
+    // L   = alpha*CE + (1-alpha)*KD
+    function computeLosses(){
+      var p1 = softmaxT(state.zS, 1);             // student hard prediction (T=1), for CE
+      var pT = softmaxT(state.zS, state.T);       // student softened
+      var qT = softmaxT(state.zT, state.T);       // teacher softened (fixed target)
+      var ce = -Math.log(Math.max(p1[state.sc.trueClass], 1e-12));
+      var kl = 0, dsq = 0, i;
+      for(i = 0; i < N; i++){
+        var qi = Math.max(qT[i], 1e-12), pi = Math.max(pT[i], 1e-12);
+        kl += qi * Math.log(qi / pi);
+        var d = pT[i] - qT[i];
+        dsq += d * d;
+      }
+      if(kl < 0) kl = 0;                                       // KL >= 0 (guard rounding)
+      var kdScaled = state.T * state.T * kl;                   // the T^2 * KL term that is backpropped
+      var total = state.alpha * ce + (1 - state.alpha) * kdScaled;
+      var dNorm = Math.sqrt(dsq);                              // ||p_T - q_T||
+      return {
+        p1: p1, pT: pT, qT: qT, ce: ce, kl: kl, kdScaled: kdScaled, total: total,
+        gradWithT2: state.T * dNorm,                           // ||d(T^2 KL)/dz|| = T*||p_T - q_T||
+        gradPlain: dNorm / state.T                             // ||d(KL)/dz||     = ||p_T - q_T||/T
+      };
+    }
+
+    function pushHistory(v){
+      state.history.push(v);
+      if(state.history.length > MAX_HIST){ state.history.shift(); state.histStart++; }
+    }
+    function resetHistory(){
+      state.history = [computeLosses().total];   // history[0] = loss at step 0
+      state.histStart = 0;
+    }
+
+    function initScenario(idx){
+      stopPlay();
+      state.scIdx = idx;
+      state.sc = SCENARIOS[idx];
+      state.zT = genTeacherLogits(state.sc);
+      state.zS = genStudentInit(state.sc);
+      state.step = 0;
+      resetHistory();
+    }
+
+    // ---- one SGD step on the student's logits ------------------------------------
+    // dL/dz_S_i = alpha*(p1_i - onehot_i)            [ordinary CE gradient]
+    //           + (1-alpha)*T*(pT_i - qT_i)          [KD gradient; the leading T cancels
+    //                                                  the 1/T from d softmax(z/T)/dz,
+    //                                                  leaving gradient magnitude
+    //                                                  roughly independent of T]
+    function trainStep(){
+      var L = computeLosses();
+      var i;
+      for(i = 0; i < N; i++){
+        var ceGrad = L.p1[i] - (i === state.sc.trueClass ? 1 : 0);
+        var kdGrad = state.T * (L.pT[i] - L.qT[i]);
+        var grad = state.alpha * ceGrad + (1 - state.alpha) * kdGrad;
+        var upd = LR * grad;
+        if(!isFinite(upd)) upd = 0;
+        if(upd > 2) upd = 2; else if(upd < -2) upd = -2;   // defensive clamp on a single step
+        var z = state.zS[i] - upd;
+        if(z > 15) z = 15; else if(z < -15) z = -15;
+        state.zS[i] = z;
+      }
+      state.step++;
+      pushHistory(computeLosses().total);      // record the loss AFTER the update
+    }
+
+    function fmt3(x){ return isFinite(x) ? x.toFixed(3) : 'n/a'; }
+    function fmt4(x){ return isFinite(x) ? x.toFixed(4) : 'n/a'; }
+    // losses can legitimately fall to 1e-6 (pure KD converges exactly); keep them legible
+    function fmtL(x){
+      if(!isFinite(x)) return 'n/a';
+      var a = Math.abs(x);
+      if(a > 0 && a < 1e-3) return x.toExponential(1);
+      return x.toFixed(4);
+    }
+    function pct(x){ return isFinite(x) ? (x * 100).toFixed(1) + '%' : 'n/a'; }
+
+    // ---- SVG helpers --------------------------------------------------------------
+    function svgEl(tag, attrs){
+      var e = document.createElementNS(SVG_NS, tag);
+      for(var a in attrs) e.setAttribute(a, attrs[a]);
+      return e;
+    }
+    function svgText(x, y, str, cls, anchor){
+      var t = svgEl('text', { x: x, y: y, 'class': cls || 'dt-lbl' });
+      t.setAttribute('text-anchor', anchor || 'middle');
+      t.textContent = str;
+      return t;
+    }
+    function clear(svg){ while(svg.firstChild) svg.removeChild(svg.firstChild); }
+
+    // ---- main bar chart: teacher panel over student panel, 10 columns -----------
+    var COL_W = 50, BAR_W = 32, LEFT_PAD = 26, RIGHT_PAD = 18;
+    var TOP_PAD = 30, PANEL_H = 108, MID_GAP = 44, BOTTOM_PAD = 30;
+    var CHART_W = LEFT_PAD + N * COL_W + RIGHT_PAD;
+
+    function renderChart(L){
+      var W = CHART_W;
+      var H = TOP_PAD + PANEL_H + MID_GAP + PANEL_H + BOTTOM_PAD;
+      els.svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      clear(els.svg);
+
+      var qHard = softmaxT(state.zT, 1);          // teacher's T=1 reference, for the tick marks
+      var teacherBase = TOP_PAD + PANEL_H;
+      var studentTop = teacherBase + MID_GAP;
+      var studentBase = studentTop + PANEL_H;
+      var uniH = PANEL_H / N;                     // height of the 1/K uniform level
+
+      els.svg.appendChild(svgText(LEFT_PAD, TOP_PAD - 12, 'Teacher softmax @ T = ' + state.T.toFixed(1), 'dt-panel-title', 'start'));
+      els.svg.appendChild(svgText(LEFT_PAD, studentTop - 12, 'Student softmax @ T = ' + state.T.toFixed(1), 'dt-panel-title', 'start'));
+
+      els.svg.appendChild(svgEl('line', { x1: LEFT_PAD - 8, x2: W - RIGHT_PAD, y1: teacherBase, y2: teacherBase, 'class': 'dt-axis' }));
+      els.svg.appendChild(svgEl('line', { x1: LEFT_PAD - 8, x2: W - RIGHT_PAD, y1: studentBase, y2: studentBase, 'class': 'dt-axis' }));
+
+      // dashed uniform (1/K) reference on both panels
+      els.svg.appendChild(svgEl('line', { x1: LEFT_PAD - 8, x2: W - RIGHT_PAD, y1: teacherBase - uniH, y2: teacherBase - uniH, 'class': 'dt-grid' }));
+      els.svg.appendChild(svgEl('line', { x1: LEFT_PAD - 8, x2: W - RIGHT_PAD, y1: studentBase - uniH, y2: studentBase - uniH, 'class': 'dt-grid' }));
+
+      var i;
+      for(i = 0; i < N; i++){
+        var cx = LEFT_PAD + i * COL_W + COL_W / 2;
+        var bx = cx - BAR_W / 2;
+        var isTrue = i === state.sc.trueClass;
+        var isConf = i === state.sc.confClass;
+        var cls = isTrue ? 'dt-bar-true' : (isConf ? 'dt-bar-conf' : 'dt-bar-teacher');
+        var clsS = isTrue ? 'dt-bar-true' : (isConf ? 'dt-bar-conf' : 'dt-bar-student');
+
+        // teacher bar (softened at current T); full panel height == probability 1.0
+        var qh = L.qT[i] * PANEL_H;
+        var tBar = svgEl('rect', { x: bx, y: teacherBase - qh, width: BAR_W, height: Math.max(qh, 0.5), rx: 3, 'class': cls });
+        var tTitle = svgEl('title', {});
+        tTitle.textContent = 'digit ' + i + ': teacher P = ' + fmt3(L.qT[i]) + ' (at T=1, P = ' + fmt3(qHard[i]) + ')';
+        tBar.appendChild(tTitle);
+        els.svg.appendChild(tBar);
+        if(L.qT[i] >= 0.008) els.svg.appendChild(svgText(cx, teacherBase - qh - 4, fmt3(L.qT[i]), isTrue ? 'dt-lbl-strong' : 'dt-lbl'));
+
+        // reference tick: where this bar would sit at T=1 (the un-softened prediction)
+        var qhh = qHard[i] * PANEL_H;
+        if(qhh > 0.4){
+          els.svg.appendChild(svgEl('line', { x1: bx, x2: bx + BAR_W, y1: teacherBase - qhh, y2: teacherBase - qhh, 'class': 'dt-tick' }));
+        }
+
+        // student bar (softened at current T)
+        var sh = L.pT[i] * PANEL_H;
+        var sBar = svgEl('rect', { x: bx, y: studentBase - sh, width: BAR_W, height: Math.max(sh, 0.5), rx: 3, 'class': clsS });
+        var sTitle = svgEl('title', {});
+        sTitle.textContent = 'digit ' + i + ': student P = ' + fmt3(L.pT[i]);
+        sBar.appendChild(sTitle);
+        els.svg.appendChild(sBar);
+        if(L.pT[i] >= 0.008) els.svg.appendChild(svgText(cx, studentBase - sh - 4, fmt3(L.pT[i]), isTrue ? 'dt-lbl-strong' : 'dt-lbl'));
+
+        // x-axis digit label (shared column, under the student panel)
+        els.svg.appendChild(svgText(cx, studentBase + 20, String(i), isTrue ? 'dt-lbl-true' : (isConf ? 'dt-lbl-conf' : 'dt-lbl')));
+      }
+
+      els.svg.setAttribute('aria-label',
+        'Teacher and student softmax probabilities over ten digit classes at temperature ' + state.T.toFixed(1) +
+        '. True digit is ' + state.sc.trueClass + ' with teacher probability ' + fmt3(L.qT[state.sc.trueClass]) +
+        '; confusable digit is ' + state.sc.confClass + ' with teacher probability ' + fmt3(L.qT[state.sc.confClass]) +
+        '; the student currently gives it ' + fmt3(L.pT[state.sc.confClass]) + '.');
+    }
+
+    // ---- loss curve: blended total loss over training steps ---------------------
+    var LC_LEFT = 46, LC_RIGHT = 16, LC_TOP = 24, LC_BOTTOM = 28, LC_H = 96;
+
+    function renderLossChart(){
+      var W = CHART_W;
+      var H = LC_TOP + LC_H + LC_BOTTOM;
+      els.lossSvg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      clear(els.lossSvg);
+
+      els.lossSvg.appendChild(svgText(10, LC_TOP - 10, 'Blended loss L over training steps', 'dt-panel-title', 'start'));
+
+      var n = state.history.length;
+      var base = LC_TOP + LC_H;
+      els.lossSvg.appendChild(svgEl('line', { x1: LC_LEFT, x2: W - LC_RIGHT, y1: base, y2: base, 'class': 'dt-axis' }));
+
+      if(n < 2){
+        els.lossSvg.appendChild(svgText((LC_LEFT + W - LC_RIGHT) / 2, LC_TOP + LC_H / 2 + 4,
+          'No training steps yet - click "Take one training step" or "Auto-train student".', 'dt-empty'));
+        els.lossSvg.setAttribute('aria-label', 'Loss curve: no training steps taken yet.');
+        return;
+      }
+
+      var maxV = 0, i;
+      for(i = 0; i < n; i++) if(state.history[i] > maxV) maxV = state.history[i];
+      var axisMax = Math.max(maxV, 0.02) * 1.08;    // top of the plot area
+
+      // top gridline sits exactly at axisMax, and is labelled with it
+      els.lossSvg.appendChild(svgEl('line', { x1: LC_LEFT, x2: W - LC_RIGHT, y1: LC_TOP, y2: LC_TOP, 'class': 'dt-grid' }));
+
+      var plotW = W - LC_LEFT - LC_RIGHT;
+      var xStep = plotW / (n - 1);
+      var pts = [], lastX = LC_LEFT, lastY = base;
+      for(i = 0; i < n; i++){
+        var x = LC_LEFT + i * xStep;
+        var y = LC_TOP + (1 - state.history[i] / axisMax) * LC_H;
+        pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+        lastX = x; lastY = y;
+      }
+      var areaPts = pts.slice();
+      areaPts.push((LC_LEFT + plotW).toFixed(1) + ',' + base.toFixed(1));
+      areaPts.push(LC_LEFT.toFixed(1) + ',' + base.toFixed(1));
+      els.lossSvg.appendChild(svgEl('polygon', { points: areaPts.join(' '), 'class': 'dt-loss-area' }));
+      els.lossSvg.appendChild(svgEl('polyline', { points: pts.join(' '), 'class': 'dt-loss-line' }));
+      els.lossSvg.appendChild(svgEl('circle', { cx: lastX.toFixed(1), cy: lastY.toFixed(1), r: 2.6, 'class': 'dt-loss-dot' }));
+
+      els.lossSvg.appendChild(svgText(LC_LEFT - 6, LC_TOP + 4, fmtL(axisMax), 'dt-lbl', 'end'));
+      els.lossSvg.appendChild(svgText(LC_LEFT - 6, base + 4, '0', 'dt-lbl', 'end'));
+
+      els.lossSvg.appendChild(svgText(LC_LEFT, base + 20, 'step ' + state.histStart, 'dt-lbl', 'start'));
+      els.lossSvg.appendChild(svgText(W - LC_RIGHT, base + 20,
+        'step ' + state.step + '  (L = ' + fmtL(state.history[n - 1]) + ')', 'dt-lbl', 'end'));
+
+      els.lossSvg.setAttribute('aria-label',
+        'Loss curve: after ' + state.step + ' training steps the blended loss is ' + fmtL(state.history[n - 1]) +
+        ', down from ' + fmtL(state.history[0]) + ' at step ' + state.histStart + '.');
+    }
+
+    function renderStats(L){
+      var qT = L.qT;
+      var hNorm = entropy(qT) / Math.log(N);
+      var tiles = [
+        [fmtL(L.total), 'Blended loss L = a·CE + (1−a)·KD'],
+        [fmtL(L.kdScaled), 'KD term T²·KL(q_T ‖ p_T) — what is backpropped'],
+        [fmtL(L.kl), 'raw KL(q_T ‖ p_T), nats (no T² factor)'],
+        [fmtL(L.ce), 'Hard-label cross-entropy at T=1'],
+        [pct(hNorm), 'Teacher entropy H(q_T) as % of max (ln K); 100% = uniform'],
+        [fmt3(qT[state.sc.confClass]) + ' vs ' + fmt3(L.pT[state.sc.confClass]), 'Confusable-class P @ T: teacher vs student'],
+        [fmtL(L.gradWithT2) + ' vs ' + fmtL(L.gradPlain), '‖KD gradient‖: with T² vs plain KL (ratio = T²)'],
+        [String(state.step), 'Training steps taken']
+      ];
+      els.out.innerHTML = tiles.map(function(s){
+        return '<div class="vt-stat"><div class="n">' + s[0] + '</div><div class="l">' + s[1] + '</div></div>';
+      }).join('');
+    }
+
+    function renderCallout(L){
+      var qHard = softmaxT(state.zT, 1);
+      var conf = state.sc.confClass, tru = state.sc.trueClass;
+      var msg = 'At T=1 (no softening) the teacher gives digit ' + conf + ' only ' + pct(qHard[conf]) +
+        ' probability - almost invisible next to digit ' + tru + '\'s ' + pct(qHard[tru]) + '. ' +
+        'At T=' + state.T.toFixed(1) + ' that becomes ' + pct(L.qT[conf]) +
+        ' vs ' + pct(L.qT[tru]) + ': softening exposes the dark knowledge that ' + tru + ' and ' + conf + ' are confusable.';
+      var top = 0, i;
+      for(i = 1; i < N; i++) if(L.p1[i] > L.p1[top]) top = i;
+      if(state.step > 0){
+        var gap = Math.abs(L.qT[conf] - L.pT[conf]);
+        msg += ' After ' + state.step + ' training step' + (state.step === 1 ? '' : 's') +
+          ', the student puts ' + pct(L.pT[conf]) + ' on digit ' + conf +
+          ' (a gap of ' + pct(gap) + ' from the teacher) and its top-1 at T=1 is digit ' + top +
+          ' at ' + pct(L.p1[top]) + '.';
+      } else {
+        msg += ' The student is untrained: its top-1 at T=1 is digit ' + top + ' at ' + pct(L.p1[top]) + '.';
+      }
+      els.callout.textContent = msg;
+    }
+
+    function render(){
+      var L = computeLosses();
+      renderChart(L);
+      renderLossChart();
+      renderStats(L);
+      renderCallout(L);
+      els.playBtn.textContent = state.playing ? PAUSE_TXT : PLAY_TXT;
+      els.stepBtn.disabled = state.playing;
+    }
+
+    // ---- auto-train loop ----------------------------------------------------------
+    function plateaued(){
+      var n = state.history.length;
+      if(state.step < 12 || n < PLATEAU_WIN) return false;
+      var a = state.history[n - PLATEAU_WIN], b = state.history[n - 1];
+      return Math.abs(a - b) < PLATEAU_REL * Math.max(1e-3, Math.abs(a));
+    }
+    function stopPlay(){
+      state.playing = false;
+      if(state.timer){ clearInterval(state.timer); state.timer = null; }
+    }
+    function startPlay(){
+      if(state.playing) return;
+      state.playing = true;
+      state.timer = setInterval(function(){
+        trainStep();
+        if(plateaued() || state.step >= MAX_STEPS) stopPlay();
+        render();
+      }, PLAY_MS);
+    }
+
+    // ---- wiring ---------------------------------------------------------------
+    els.scenario.addEventListener('change', function(){
+      var idx = parseInt(els.scenario.value, 10);
+      if(!(idx >= 0 && idx < SCENARIOS.length)) idx = 0;
+      initScenario(idx);
+      render();
+    });
+
+    // changing T or alpha changes the loss function itself; if no step has been taken
+    // yet, re-seed the single history point so it reflects the new loss.
+    function afterParamChange(){
+      if(state.step === 0) resetHistory();
+      render();
+    }
+
+    function wirePair(rangeEl, numEl, apply){
+      var min = parseFloat(rangeEl.min), max = parseFloat(rangeEl.max);
+      rangeEl.addEventListener('input', function(){
+        var v = parseFloat(rangeEl.value);
+        if(!isFinite(v)) return;
+        numEl.value = rangeEl.value;
+        apply(v);
+        afterParamChange();
+      });
+      numEl.addEventListener('input', function(){
+        var raw = parseFloat(numEl.value);
+        if(isFinite(raw)){
+          var clamped = Math.min(max, Math.max(min, raw));
+          rangeEl.value = String(clamped);
+          apply(clamped);
+          afterParamChange();
+        }
+      });
+      // on blur/commit, snap the number box to the (step-quantised) slider value and
+      // re-apply it, so the displayed number and the state can never disagree.
+      numEl.addEventListener('change', function(){
+        var v = parseFloat(rangeEl.value);
+        if(!isFinite(v)) v = min;
+        numEl.value = String(v);
+        apply(v);
+        afterParamChange();
+      });
+    }
+    wirePair(els.tR, els.tN, function(v){ state.T = v; });
+    wirePair(els.aR, els.aN, function(v){ state.alpha = v; });
+
+    els.stepBtn.addEventListener('click', function(){
+      stopPlay();
+      trainStep();
+      render();
+    });
+    els.playBtn.addEventListener('click', function(){
+      if(state.playing) stopPlay(); else startPlay();
+      render();
+    });
+    els.resetBtn.addEventListener('click', function(){
+      stopPlay();
+      state.zS = genStudentInit(state.sc);
+      state.step = 0;
+      resetHistory();
+      render();
+    });
+
+    // ---- init -------------------------------------------------------------------
+    var t0 = parseFloat(els.tR.value), a0 = parseFloat(els.aR.value);
+    state.T = isFinite(t0) && t0 > 0 ? t0 : 2.5;
+    state.alpha = isFinite(a0) ? Math.min(1, Math.max(0, a0)) : 0.3;
+    els.tN.value = String(state.T);
+    els.aN.value = String(state.alpha);
+    initScenario(0);
+    render();
+  })();</script>
+</div>

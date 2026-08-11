@@ -1,0 +1,923 @@
+<div class="viz-tool" id="tool-dp-sgd-privacy">
+  <div class="vt-title">Differential privacy: DP-SGD clip and noise</div>
+
+  <div class="vt-grid">
+    <label for="dp-sgd-privacy-clip-num">Clip norm C
+      <span class="dps-in">
+        <input id="dp-sgd-privacy-clip-range" type="range" min="0.05" max="5" step="0.05" value="1" aria-label="Per-example gradient clipping norm C, slider">
+        <input id="dp-sgd-privacy-clip-num" type="number" min="0.05" max="5" step="0.05" value="1" aria-label="Per-example gradient clipping norm C, number">
+      </span>
+    </label>
+    <label for="dp-sgd-privacy-sigma-num">Noise multiplier &sigma;
+      <span class="dps-in">
+        <input id="dp-sgd-privacy-sigma-range" type="range" min="0" max="4" step="0.05" value="0.8" aria-label="Noise multiplier sigma, slider">
+        <input id="dp-sgd-privacy-sigma-num" type="number" min="0" max="4" step="0.05" value="0.8" aria-label="Noise multiplier sigma, number">
+      </span>
+    </label>
+    <label for="dp-sgd-privacy-batch-num">Batch size B
+      <span class="dps-in">
+        <input id="dp-sgd-privacy-batch-range" type="range" min="64" max="8192" step="64" value="4096" aria-label="Expected batch size B, slider">
+        <input id="dp-sgd-privacy-batch-num" type="number" min="64" max="8192" step="64" value="4096" aria-label="Expected batch size B, number">
+      </span>
+    </label>
+    <label for="dp-sgd-privacy-epochs-num">Epochs E
+      <span class="dps-in">
+        <input id="dp-sgd-privacy-epochs-range" type="range" min="1" max="20" step="1" value="3" aria-label="Number of epochs, slider">
+        <input id="dp-sgd-privacy-epochs-num" type="number" min="1" max="20" step="1" value="3" aria-label="Number of epochs, number">
+      </span>
+    </label>
+    <label for="dp-sgd-privacy-canary-num">Canary gradient (&times; typical)
+      <span class="dps-in">
+        <input id="dp-sgd-privacy-canary-range" type="range" min="1" max="20" step="0.5" value="8" aria-label="Canary gradient norm as a multiple of the typical example, slider">
+        <input id="dp-sgd-privacy-canary-num" type="number" min="1" max="20" step="0.5" value="8" aria-label="Canary gradient norm as a multiple of the typical example, number">
+      </span>
+    </label>
+    <label for="dp-sgd-privacy-reps-num">Canary copies in the data r
+      <span class="dps-in">
+        <input id="dp-sgd-privacy-reps-range" type="range" min="1" max="200" step="1" value="1" aria-label="Number of duplicate copies of the canary in the dataset, slider">
+        <input id="dp-sgd-privacy-reps-num" type="number" min="1" max="200" step="1" value="1" aria-label="Number of duplicate copies of the canary in the dataset, number">
+      </span>
+    </label>
+    <label for="dp-sgd-privacy-dataset">Dataset size N
+      <select id="dp-sgd-privacy-dataset" aria-label="Private dataset size N">
+        <option value="100000">100 K examples</option>
+        <option value="1000000">1 M examples</option>
+        <option value="2000000" selected>2 M examples</option>
+        <option value="10000000">10 M examples</option>
+      </select>
+    </label>
+    <label for="dp-sgd-privacy-delta">Target &delta;
+      <select id="dp-sgd-privacy-delta" aria-label="Target delta for the epsilon-delta guarantee">
+        <option value="1e-5">1e-5</option>
+        <option value="1e-6" selected>1e-6</option>
+        <option value="1e-7">1e-7</option>
+      </select>
+    </label>
+    <label for="dp-sgd-privacy-dim">Trained parameters d
+      <select id="dp-sgd-privacy-dim" aria-label="Number of trained parameters d">
+        <option value="2000000" selected>2 M (LoRA adapter)</option>
+        <option value="125000000">125 M (small model)</option>
+        <option value="7000000000">7 B (full fine-tune)</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="dps-legend">
+    <span><i class="dps-sw dps-sw-keep"></i>clipped gradient (kept)</span>
+    <span><i class="dps-sw dps-sw-cut"></i>part removed by clipping</span>
+    <span><i class="dps-sw dps-sw-can"></i>rare "canary" example</span>
+    <span><i class="dps-sw dps-sw-true"></i>mean of raw gradients</span>
+    <span><i class="dps-sw dps-sw-mean"></i>mean after clipping</span>
+    <span><i class="dps-sw dps-sw-noise"></i>Gaussian noise / noisy update</span>
+  </div>
+
+  <div class="dps-scroll">
+    <svg id="dp-sgd-privacy-batch-svg" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
+  </div>
+  <div class="dps-caption" id="dp-sgd-privacy-batch-caption"></div>
+
+  <div class="dps-readout" id="dp-sgd-privacy-readout"></div>
+
+  <div class="dps-heading">Privacy budget &epsilon; &mdash; composition over steps, and the &sigma; dial (RDP accountant, Poisson subsampling)</div>
+  <div class="dps-scroll">
+    <svg id="dp-sgd-privacy-eps-svg" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
+  </div>
+
+  <div class="dps-heading">Canary memorization: secret-sharer exposure (of 26.6 bits, one secret in 10<sup>8</sup>)</div>
+  <div class="dps-exp" id="dp-sgd-privacy-exposure"></div>
+
+  <div class="dps-stats" id="dp-sgd-privacy-stats"></div>
+
+  <div class="vt-note" id="dp-sgd-privacy-note">
+    <b>Two operations, one guarantee.</b> DP-SGD replaces the batch-mean gradient with
+    <span class="dps-mono">g&#770; = (1/B)(&Sigma;<sub>i</sub> g&#771;<sub>i</sub> + <i>N</i>(0, &sigma;<sup>2</sup>C<sup>2</sup>I))</span>,
+    where <span class="dps-mono">g&#771;<sub>i</sub> = g<sub>i</sub>&thinsp;&middot;&thinsp;min(1, C/&#8214;g<sub>i</sub>&#8214;<sub>2</sub>)</span>.
+    <b>Clipping</b> is what makes the guarantee possible: after it, adding or removing any single example changes the
+    summed gradient by at most C, so the mechanism's L2 <i>sensitivity</i> is exactly C &mdash; a number you control
+    instead of a number the data chooses. <b>Noise</b> is what buys the guarantee: Gaussian noise of standard deviation
+    &sigma;C on the sum hides that one-example change. Note what the picture shows when you drag the canary slider with
+    a large C: one weird example visibly drags the mean. Shrink C below its norm and the mean locks in place &mdash;
+    that is bounded sensitivity, drawn.
+    <b>The accountant.</b> &epsilon; here is not a fudge factor: it is the Renyi-DP bound for the Poisson-subsampled
+    Gaussian mechanism (Mironov, Talwar &amp; Zhang 2019) at integer orders &alpha;,
+    <span class="dps-mono">&epsilon;<sub>&alpha;</sub> = (1/(&alpha;&minus;1)) log &Sigma;<sub>k</sub>
+    C(&alpha;,k)(1&minus;q)<sup>&alpha;&minus;k</sup>q<sup>k</sup>e<sup>k(k&minus;1)/2&sigma;<sup>2</sup></sup></span>,
+    composed over t steps (RDP adds) and converted to (&epsilon;,&delta;) with the standard bound, minimized over
+    &alpha;. It is an upper bound; a PRV accountant is slightly tighter. Sampling rate q = B/N assumes <i>Poisson</i>
+    sampling &mdash; shuffle-and-chunk batching silently invalidates it.
+    <b>Three things to discover.</b> (1) Once C is smaller than the gradients, C <i>cancels</i>: signal and noise both
+    scale with C, so C sets the step size, and &sigma; alone sets the privacy. That is why tuning C is a learning-rate
+    problem, not a privacy problem. (2) The noise is isotropic in all d trained parameters, so its norm grows like
+    &sigma;C&radic;d/B while the signal is capped at C &mdash; switch d from a LoRA adapter to a 7B full fine-tune and
+    watch the signal-to-noise collapse. That single fact is why DP fine-tuning is done on <i>few</i> parameters.
+    (3) Bigger batches at fixed epochs shrink the noise per step but raise q and cut t, so &epsilon; goes <i>up</i>:
+    privacy is not free compute.
+    <b>The canary.</b> Exposure here uses an illustrative extraction model, not a simulated attack: over t steps a
+    canary present in r copies is sampled rqt times, so its imprint grows like
+    rqt&thinsp;&middot;&thinsp;min(C,&#8214;g<sub>canary</sub>&#8214;) while the injected noise in that direction is a
+    random walk of size &sigma;C&radic;t, giving a discrimination score
+    <span class="dps-mono">z = rq&radic;t&thinsp;&middot;&thinsp;min(C,&#8214;g<sub>canary</sub>&#8214;)/(&sigma;C)</span>;
+    the canary's rank among 10<sup>8</sup> candidate secrets is then 10<sup>8</sup>&Phi;(&minus;z), and exposure is
+    log<sub>2</sub>(10<sup>8</sup>) &minus; log<sub>2</sub>(rank), the Secret Sharer definition used earlier in this
+    chapter. Two things fall out. The "clipping only" bar sits at full exposure: bounding sensitivity without noise
+    hides nothing, so clipping alone is not a privacy mechanism. And a secret that appears <i>once</i> is buried at any
+    reasonable &sigma;, while dragging r up to 100 lights it back up &mdash; because DP-SGD's guarantee is
+    <i>per example</i>, and r duplicates degrade it to group privacy of about r&epsilon;. Deduplication is not an
+    alternative to DP; it is what makes the &epsilon; you report mean what you think it means.
+  </div>
+
+  <style>
+    #tool-dp-sgd-privacy{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif);
+      --dps-keep:var(--accent,#c15b39); --dps-cut:#b4344a; --dps-can:#8b5cf6; --dps-noise:#c08a06;
+      --dps-good:var(--good,#2f9e6e); --dps-true:var(--muted,#6d675d); --dps-faint:var(--faint,#908a7e); }
+    html[data-theme="dark"] #tool-dp-sgd-privacy{
+      --dps-cut:#e8697f; --dps-can:#b39bf5; --dps-noise:#e0a106; --dps-good:var(--good,#4fbf8d); }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-dp-sgd-privacy{
+        --dps-cut:#e8697f; --dps-can:#b39bf5; --dps-noise:#e0a106; --dps-good:var(--good,#4fbf8d); } }
+
+    #tool-dp-sgd-privacy .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-dp-sgd-privacy .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px 18px; }
+    #tool-dp-sgd-privacy label{ display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted,#6d675d); }
+    #tool-dp-sgd-privacy input, #tool-dp-sgd-privacy select{
+      font:inherit; font-size:.88rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-dp-sgd-privacy input[type="range"]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-dp-sgd-privacy :focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-dp-sgd-privacy .dps-in{ display:flex; gap:6px; align-items:center; }
+    #tool-dp-sgd-privacy .dps-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-dp-sgd-privacy .dps-in input[type="number"]{ flex:1 1 68px; min-width:0; }
+
+    #tool-dp-sgd-privacy .dps-legend{ display:flex; flex-wrap:wrap; gap:8px 16px; margin:14px 0 4px;
+      font-size:.72rem; color:var(--muted,#6d675d); }
+    #tool-dp-sgd-privacy .dps-legend span{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-dp-sgd-privacy .dps-sw{ display:inline-block; width:11px; height:11px; border-radius:3px; flex:0 0 auto; }
+    #tool-dp-sgd-privacy .dps-sw-keep{ background:var(--dps-keep); }
+    #tool-dp-sgd-privacy .dps-sw-cut{ background:var(--dps-cut); opacity:.5; }
+    #tool-dp-sgd-privacy .dps-sw-can{ background:var(--dps-can); }
+    #tool-dp-sgd-privacy .dps-sw-true{ background:var(--dps-true); }
+    #tool-dp-sgd-privacy .dps-sw-mean{ background:var(--ink,#211f1b); }
+    #tool-dp-sgd-privacy .dps-sw-noise{ background:var(--dps-noise); }
+
+    #tool-dp-sgd-privacy .dps-scroll{ margin-top:8px; overflow-x:auto; max-width:100%; border-radius:9px;
+      background:var(--surface-2,#f3efe6); padding:2px; }
+    #tool-dp-sgd-privacy .dps-scroll svg{ display:block; margin:0 auto; max-width:100%; height:auto; }
+    #tool-dp-sgd-privacy .dps-caption{ margin-top:6px; font-size:.72rem; color:var(--muted,#6d675d); text-align:center; }
+
+    #tool-dp-sgd-privacy .dps-panel-title{ font-size:10.5px; fill:var(--ink-soft,#45413a); font-family:var(--sans,sans-serif); font-weight:600; }
+    #tool-dp-sgd-privacy .dps-sub{ font-size:9px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-dp-sgd-privacy .dps-axis{ stroke:var(--border-2,#d8d1c0); stroke-width:1; }
+    #tool-dp-sgd-privacy .dps-grid{ stroke:var(--border,#e7e1d4); stroke-width:1; }
+    #tool-dp-sgd-privacy .dps-plotbg{ fill:var(--surface,#fff); stroke:var(--border,#e7e1d4); stroke-width:1; }
+    #tool-dp-sgd-privacy .dps-cross{ stroke:var(--dps-faint); stroke-width:1; stroke-dasharray:2 3; opacity:.8; }
+    #tool-dp-sgd-privacy .dps-clipcircle{ fill:var(--dps-keep); fill-opacity:.06; stroke:var(--dps-keep);
+      stroke-width:1.4; stroke-dasharray:5 3; }
+    #tool-dp-sgd-privacy .dps-arr-keep{ stroke:var(--dps-keep); stroke-width:1.6; fill:none; opacity:.85; }
+    #tool-dp-sgd-privacy .dps-arr-cut{ stroke:var(--dps-cut); stroke-width:1.2; fill:none; stroke-dasharray:3 2.5; opacity:.55; }
+    #tool-dp-sgd-privacy .dps-arr-can{ stroke:var(--dps-can); stroke-width:2.2; fill:none; }
+    #tool-dp-sgd-privacy .dps-arr-can-cut{ stroke:var(--dps-can); stroke-width:1.4; fill:none; stroke-dasharray:3 2.5; opacity:.5; }
+    #tool-dp-sgd-privacy .dps-head-keep{ fill:var(--dps-keep); opacity:.85; }
+    #tool-dp-sgd-privacy .dps-head-can{ fill:var(--dps-can); }
+    #tool-dp-sgd-privacy .dps-arr-true{ stroke:var(--dps-true); stroke-width:2.2; fill:none; stroke-dasharray:6 3; }
+    #tool-dp-sgd-privacy .dps-head-true{ fill:var(--dps-true); }
+    #tool-dp-sgd-privacy .dps-arr-mean{ stroke:var(--ink,#211f1b); stroke-width:2.6; fill:none; }
+    #tool-dp-sgd-privacy .dps-head-mean{ fill:var(--ink,#211f1b); }
+    #tool-dp-sgd-privacy .dps-noisering{ fill:var(--dps-noise); fill-opacity:.10; stroke:var(--dps-noise);
+      stroke-width:1.2; stroke-dasharray:3 2.5; }
+    #tool-dp-sgd-privacy .dps-noisedot{ fill:var(--dps-noise); opacity:.75; }
+    #tool-dp-sgd-privacy .dps-noisemain{ fill:none; stroke:var(--dps-noise); stroke-width:2; }
+    #tool-dp-sgd-privacy .dps-lab{ font-size:9.5px; fill:var(--ink-soft,#45413a); font-family:var(--mono,monospace); }
+    #tool-dp-sgd-privacy .dps-lab-mut{ font-size:9px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-dp-sgd-privacy .dps-bar-keep{ fill:var(--dps-keep); opacity:.85; }
+    #tool-dp-sgd-privacy .dps-bar-cut{ fill:var(--dps-cut); opacity:.35; }
+    #tool-dp-sgd-privacy .dps-bar-can{ fill:var(--dps-can); }
+    #tool-dp-sgd-privacy .dps-cline{ stroke:var(--dps-keep); stroke-width:1.4; stroke-dasharray:4 3; }
+    #tool-dp-sgd-privacy .dps-eps-line{ fill:none; stroke:var(--accent,#c15b39); stroke-width:2.2; stroke-linejoin:round; }
+    #tool-dp-sgd-privacy .dps-eps-dot{ fill:var(--accent,#c15b39); }
+    #tool-dp-sgd-privacy .dps-ref{ stroke:var(--dps-good); stroke-width:1.2; stroke-dasharray:5 3; }
+    #tool-dp-sgd-privacy .dps-ref-lab{ font-size:9.5px; fill:var(--dps-good); font-family:var(--mono,monospace); }
+    #tool-dp-sgd-privacy .dps-ref2{ stroke:var(--dps-noise); stroke-width:1.2; stroke-dasharray:5 3; }
+    #tool-dp-sgd-privacy .dps-ref2-lab{ font-size:9.5px; fill:var(--dps-noise); font-family:var(--mono,monospace); }
+    #tool-dp-sgd-privacy .dps-marker{ stroke:var(--dps-faint); stroke-width:1.2; stroke-dasharray:3 3; }
+
+    #tool-dp-sgd-privacy .dps-readout{ margin-top:12px; font-size:.78rem; color:var(--ink-soft,#45413a); line-height:1.6;
+      font-variant-numeric:tabular-nums; }
+    #tool-dp-sgd-privacy .dps-readout b{ color:var(--ink,#211f1b); }
+    #tool-dp-sgd-privacy .dps-mono{ font-family:var(--mono,monospace); font-size:.94em; }
+
+    #tool-dp-sgd-privacy .dps-heading{ margin-top:18px; font-size:.72rem; letter-spacing:.04em;
+      color:var(--muted,#6d675d); text-transform:uppercase; }
+
+    #tool-dp-sgd-privacy .dps-exp{ margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+    #tool-dp-sgd-privacy .dps-exp-row{ display:grid; grid-template-columns:minmax(96px,auto) 1fr minmax(150px,auto);
+      gap:10px; align-items:center; font-size:.74rem; color:var(--muted,#6d675d); }
+    #tool-dp-sgd-privacy .dps-exp-lab{ color:var(--ink-soft,#45413a); font-weight:600; }
+    #tool-dp-sgd-privacy .dps-exp-track{ position:relative; height:14px; border-radius:7px;
+      background:var(--surface-3,#ece7da); border:1px solid var(--border,#e7e1d4); overflow:hidden; }
+    #tool-dp-sgd-privacy .dps-exp-fill{ display:block; height:100%; border-radius:7px 0 0 7px; }
+    #tool-dp-sgd-privacy .dps-exp-bad{ background:var(--dps-cut); }
+    #tool-dp-sgd-privacy .dps-exp-mid{ background:var(--dps-noise); }
+    #tool-dp-sgd-privacy .dps-exp-ok{ background:var(--dps-good); }
+    #tool-dp-sgd-privacy .dps-exp-val{ font-variant-numeric:tabular-nums; text-align:right;
+      font-family:var(--mono,monospace); font-size:.72rem; color:var(--ink-soft,#45413a); }
+
+    #tool-dp-sgd-privacy .dps-stats{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(158px,1fr)); gap:8px; }
+    #tool-dp-sgd-privacy .dps-stat{ padding:8px 10px; border-radius:8px; background:var(--surface-2,#f3efe6);
+      border:1px solid var(--border,#e7e1d4); }
+    #tool-dp-sgd-privacy .dps-stat-label{ font-size:.66rem; letter-spacing:.03em; text-transform:uppercase; color:var(--muted,#6d675d); }
+    #tool-dp-sgd-privacy .dps-stat-val{ font-size:.98rem; font-weight:700; color:var(--ink,#211f1b);
+      font-variant-numeric:tabular-nums; margin-top:2px; }
+    #tool-dp-sgd-privacy .dps-stat-sub{ font-size:.66rem; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-dp-sgd-privacy .dps-stat-val.dps-good{ color:var(--dps-good); }
+    #tool-dp-sgd-privacy .dps-stat-val.dps-bad{ color:var(--dps-cut); }
+    #tool-dp-sgd-privacy .dps-stat-val.dps-warn{ color:var(--dps-noise); }
+
+    #tool-dp-sgd-privacy .vt-note{ margin-top:14px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-dp-sgd-privacy .vt-note b{ color:var(--ink-soft,#45413a); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-dp-sgd-privacy');
+    if (!root) return;
+    function $(id){ return root.querySelector('#dp-sgd-privacy-' + id); }
+
+    var elClipR = $('clip-range'),   elClipN = $('clip-num');
+    var elSigR  = $('sigma-range'),  elSigN  = $('sigma-num');
+    var elBatR  = $('batch-range'),  elBatN  = $('batch-num');
+    var elEpR   = $('epochs-range'), elEpN   = $('epochs-num');
+    var elCanR  = $('canary-range'), elCanN  = $('canary-num');
+    var elRepR  = $('reps-range'),   elRepN  = $('reps-num');
+    var elData  = $('dataset'), elDelta = $('delta'), elDim = $('dim');
+    var elBatchSvg = $('batch-svg'), elBatchCap = $('batch-caption');
+    var elEpsSvg = $('eps-svg'), elExp = $('exposure');
+    var elReadout = $('readout'), elStats = $('stats');
+    if (!elClipR || !elClipN || !elSigR || !elSigN || !elBatR || !elBatN) return;
+    if (!elEpR || !elEpN || !elCanR || !elCanN || !elRepR || !elRepN) return;
+    if (!elData || !elDelta || !elDim) return;
+    if (!elBatchSvg || !elBatchCap || !elEpsSvg || !elExp || !elReadout || !elStats) return;
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, attrs){
+      var e = document.createElementNS(SVGNS, tag);
+      for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    function txt(tag, attrs, content){ var e = mk(tag, attrs); e.textContent = content; return e; }
+    function paint(svg, kids, w, h, label){
+      svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+      svg.setAttribute('width', w);
+      svg.setAttribute('height', h);
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      svg.setAttribute('aria-label', label);
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      for (var i = 0; i < kids.length; i++) svg.appendChild(kids[i]);
+    }
+
+    // ------------------------------------------------------------------
+    // Deterministic PRNG (mulberry32). No Math.random and no Date anywhere:
+    // every control setting maps to exactly one picture, identical on every
+    // machine and every reload. The example gradients and the noise draws are
+    // generated from FIXED seeds, so moving a slider rescales the picture
+    // instead of re-rolling it.
+    // ------------------------------------------------------------------
+    function mulberry32(seed){
+      var s = seed >>> 0;
+      return function(){
+        s = (s + 0x6D2B79F5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function gaussian(rng){ // Box-Muller
+      var u1 = Math.max(rng(), 1e-12), u2 = rng();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+
+    // ---- log-factorial table -> exact log binomial coefficients ----------
+    var MAXA = 512;
+    var LOGFACT = (function(){
+      var a = new Array(MAXA + 2); a[0] = 0;
+      for (var i = 1; i <= MAXA + 1; i++) a[i] = a[i - 1] + Math.log(i);
+      return a;
+    })();
+    function logBinom(n, k){ return LOGFACT[n] - LOGFACT[k] - LOGFACT[n - k]; }
+
+    // ------------------------------------------------------------------
+    // RDP accountant for the POISSON-SUBSAMPLED GAUSSIAN mechanism.
+    // For integer alpha >= 2 the Renyi divergence of
+    //   p1 = (1-q) N(0, sigma^2) + q N(1, sigma^2)   from   p0 = N(0, sigma^2)
+    // has the closed form (Mironov, Talwar & Zhang 2019; the same expression
+    // TF-Privacy / Opacus evaluate in `_compute_log_a_int`):
+    //   A(alpha) = sum_k C(alpha,k) (1-q)^(alpha-k) q^k exp(k(k-1)/(2 sigma^2))
+    //   eps_rdp(alpha) = log A(alpha) / (alpha - 1)
+    // Derivation: p1/p0 = (1-q) + q exp((2x-1)/(2 sigma^2)); expanding the
+    // alpha-th power and using E[exp(kx/sigma^2)] = exp(k^2/(2 sigma^2)) under
+    // x ~ N(0, sigma^2) leaves exp((k^2-k)/(2 sigma^2)) per term.
+    // Computed with log-sum-exp so it never overflows.
+    // ------------------------------------------------------------------
+    var ALPHAS = (function(){
+      var a = [], x;
+      for (x = 2; x <= 64; x++) a.push(x);
+      for (x = 66; x <= 128; x += 2) a.push(x);
+      for (x = 136; x <= MAXA; x += 16) a.push(x);
+      return a;
+    })();
+    function rdpAtAlpha(q, sigma, alpha){
+      if (!(sigma > 0)) return Infinity;
+      var s2 = 2 * sigma * sigma;
+      if (q >= 1) return alpha / s2;                 // full batch: plain Gaussian
+      if (q <= 0) return 0;
+      var lq = Math.log(q), l1q = Math.log(1 - q);
+      var maxT = -Infinity, terms = new Array(alpha + 1), k, t;
+      for (k = 0; k <= alpha; k++){
+        t = logBinom(alpha, k) + k * lq + (alpha - k) * l1q + (k * k - k) / s2;
+        terms[k] = t;
+        if (t > maxT) maxT = t;
+      }
+      var sum = 0;
+      for (k = 0; k <= alpha; k++) sum += Math.exp(terms[k] - maxT);
+      return (maxT + Math.log(sum)) / (alpha - 1);
+    }
+    // Per-order RDP for one step; RDP composes by simple addition over steps.
+    var rdpCache = { q: null, sigma: null, vals: null };
+    function rdpVector(q, sigma){
+      if (rdpCache.q === q && rdpCache.sigma === sigma) return rdpCache.vals;
+      var v = new Array(ALPHAS.length);
+      for (var i = 0; i < ALPHAS.length; i++) v[i] = rdpAtAlpha(q, sigma, ALPHAS[i]);
+      rdpCache.q = q; rdpCache.sigma = sigma; rdpCache.vals = v;
+      return v;
+    }
+    // RDP -> (eps, delta): eps = t*rdp(a) + log((a-1)/a) - (log delta + log a)/(a-1)
+    // (Balle et al. / Canonne-Kamath-Steinke conversion, as in Opacus), minimized
+    // over the order a. Returns {eps, alpha}.
+    function epsilonAt(rdp, t, delta){
+      var best = Infinity, bestA = 0;
+      for (var i = 0; i < ALPHAS.length; i++){
+        var a = ALPHAS[i], r = rdp[i];
+        if (!isFinite(r)) return { eps: Infinity, alpha: 0 };
+        var e = t * r + Math.log((a - 1) / a) - (Math.log(delta) + Math.log(a)) / (a - 1);
+        if (e < best){ best = e; bestA = a; }
+      }
+      if (!(best > 0)) best = 0;
+      return { eps: best, alpha: bestA };
+    }
+
+    // ---- normal tail, in log space, for the exposure model ---------------
+    function erfc(x){ // Numerical Recipes erfcc, fractional error < 1.2e-7
+      var z = Math.abs(x), t = 1 / (1 + 0.5 * z);
+      var ans = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 +
+        t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 +
+        t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+      return x >= 0 ? ans : 2 - ans;
+    }
+    function logPhiNeg(z){ // log Phi(-z), accurate for large z
+      if (!isFinite(z)) return z > 0 ? -Infinity : 0;
+      if (z < 6){
+        var p = 0.5 * erfc(z / Math.SQRT2);
+        return Math.log(Math.max(p, 1e-300));
+      }
+      var z2 = z * z;
+      var corr = 1 - 1 / z2 + 3 / (z2 * z2) - 15 / (z2 * z2 * z2);
+      if (!(corr > 0)) corr = 1;
+      return -z2 / 2 - Math.log(z * Math.sqrt(2 * Math.PI)) + Math.log(corr);
+    }
+
+    // ---- helpers ---------------------------------------------------------
+    function clampNum(v, lo, hi, fb, step, dec){
+      v = parseFloat(v);
+      if (!isFinite(v)) v = fb;
+      v = Math.max(lo, Math.min(hi, v));
+      if (step > 0) v = Math.round(v / step) * step;
+      var p = Math.pow(10, dec || 0);
+      v = Math.round(v * p) / p;
+      return Math.max(lo, Math.min(hi, v));
+    }
+    function setVal(inp, v){
+      if (document.activeElement !== inp && inp.value !== String(v)) inp.value = v;
+    }
+    function fmt(n, d){ return isFinite(n) ? n.toFixed(d) : '--'; }
+    function sci(n, d){
+      if (!isFinite(n)) return 'inf';
+      if (n === 0) return '0';
+      var a = Math.abs(n);
+      if (a >= 1e-3 && a < 1e5) return n.toFixed(d === undefined ? 3 : d);
+      return n.toExponential(2).replace('e+', 'e');
+    }
+    function intFmt(n){
+      if (!isFinite(n)) return 'inf';
+      var s = Math.round(n).toString(), out = '', c = 0;
+      for (var i = s.length - 1; i >= 0; i--){
+        out = s.charAt(i) + out; c++;
+        if (c % 3 === 0 && i > 0) out = ',' + out;
+      }
+      return out;
+    }
+    function norm2(v){ return Math.sqrt(v[0] * v[0] + v[1] * v[1]); }
+
+    // ------------------------------------------------------------------
+    // The batch: 23 ordinary per-example gradients (fixed seed) plus one rare
+    // "canary" example whose gradient points in its own direction and whose
+    // norm is a slider-controlled multiple of the typical example. Two dims so
+    // it can be drawn; every clip/noise formula below is the real one.
+    // ------------------------------------------------------------------
+    var NBULK = 23;
+    var BULK = (function(){
+      var rng = mulberry32(0x5EED1CE), arr = [], i;
+      var mux = 0.62, muy = 0.30;
+      for (i = 0; i < NBULK; i++){
+        var m = Math.exp(0.55 * gaussian(rng));      // spread of gradient norms
+        arr.push([(mux + 0.42 * gaussian(rng)) * m, (muy + 0.42 * gaussian(rng)) * m]);
+      }
+      return arr;
+    })();
+    var BULK_NORMS = BULK.map(function(g){ return norm2(g); });
+    var SORTED_NORMS = BULK_NORMS.slice().sort(function(a, b){ return a - b; });
+    var TYPICAL = SORTED_NORMS[(SORTED_NORMS.length - 1) >> 1];              // median
+    var P90 = SORTED_NORMS[Math.round(0.9 * (SORTED_NORMS.length - 1))];     // 90th pct
+    var CAN_DIR = (function(){ var n = norm2([-0.34, 0.94]); return [-0.34 / n, 0.94 / n]; })();
+    // 12 fixed standard-normal 2-vectors: the noise draws (scaled by sigma*C/B).
+    var NOISE_Z = (function(){
+      var rng = mulberry32(0xC0FFEE1), a = [], i;
+      for (i = 0; i < 12; i++) a.push([gaussian(rng), gaussian(rng)]);
+      return a;
+    })();
+
+    function batchStats(C, canMult){
+      var canNorm = canMult * TYPICAL;
+      var grads = [[CAN_DIR[0] * canNorm, CAN_DIR[1] * canNorm]], i;
+      for (i = 0; i < NBULK; i++) grads.push(BULK[i]);
+      var n = grads.length;
+      var sumRaw = [0, 0], sumClip = [0, 0], nClipped = 0, scaleSum = 0;
+      var rows = new Array(n);
+      for (i = 0; i < n; i++){
+        var g = grads[i], gn = norm2(g);
+        var sc = gn > C ? C / gn : 1;
+        if (gn > C) nClipped++;
+        scaleSum += sc;
+        sumRaw[0] += g[0]; sumRaw[1] += g[1];
+        sumClip[0] += g[0] * sc; sumClip[1] += g[1] * sc;
+        rows[i] = { g: g, norm: gn, scale: sc, canary: i === 0 };
+      }
+      return {
+        rows: rows, n: n, canNorm: canNorm,
+        gTrue: [sumRaw[0] / n, sumRaw[1] / n],
+        gClip: [sumClip[0] / n, sumClip[1] / n],
+        nClipped: nClipped, meanScale: scaleSum / n
+      };
+    }
+
+    // ---------------------------- panel 1 ----------------------------
+    var W1 = 664, H1 = 316;
+    var PX0 = 8, PY0 = 36, PW = 304, PH = 250;        // vector-plot frame
+    var PCX = 160, PCY = 161, PR = 120;               // vector plot centre + radius
+    var BX = 396, BY = 44, BW = 246, ROWH = 10;       // norm-bar panel
+
+    function arrow(kids, x0, y0, x1, y1, cls, headCls, hw){
+      var dx = x1 - x0, dy = y1 - y0, L = Math.sqrt(dx * dx + dy * dy);
+      if (!(L > 0.5)) return;
+      var h = Math.min(hw || 7, L * 0.5), ux = dx / L, uy = dy / L;
+      var bx = x1 - ux * h, by = y1 - uy * h;
+      var px = -uy, py = ux, wdt = h * 0.42;
+      kids.push(mk('line', { x1: x0.toFixed(2), y1: y0.toFixed(2), x2: bx.toFixed(2), y2: by.toFixed(2), 'class': cls }));
+      kids.push(mk('polygon', { points: x1.toFixed(2) + ',' + y1.toFixed(2) + ' ' +
+        (bx + px * wdt).toFixed(2) + ',' + (by + py * wdt).toFixed(2) + ' ' +
+        (bx - px * wdt).toFixed(2) + ',' + (by - py * wdt).toFixed(2), 'class': headCls }));
+    }
+
+    function drawBatch(st, C, sigma, B){
+      var kids = [], i;
+      var maxBulk = SORTED_NORMS[SORTED_NORMS.length - 1];
+      // View extent: the clip circle is always drawn in full, and so is the bulk
+      // of the batch (90th percentile). The few longest gradients -- and a large
+      // canary -- run out of the frame on purpose, and are labelled.
+      var extent = Math.max(1.15 * P90, 1.12 * C);
+      var sc = PR / extent;
+      function px(v){ return PCX + v * sc; }
+      function py(v){ return PCY - v * sc; }
+
+      kids.push(txt('text', { x: 10, y: 16, 'class': 'dps-panel-title' },
+        'Step 1: per-example gradients, clipped to ||g||2 <= C'));
+      kids.push(txt('text', { x: 10, y: 29, 'class': 'dps-sub' },
+        '24 of B = ' + intFmt(B) + ' examples drawn; 2-D stand-in for the gradient vector'));
+
+      var clipEl = mk('clipPath', { id: 'dp-sgd-privacy-plotclip' });
+      clipEl.appendChild(mk('rect', { x: PX0, y: PY0, width: PW, height: PH }));
+      var defs = mk('defs', {}); defs.appendChild(clipEl); kids.push(defs);
+      kids.push(mk('rect', { x: PX0, y: PY0, width: PW, height: PH, rx: 8, 'class': 'dps-plotbg' }));
+
+      var body = mk('g', { 'clip-path': 'url(#dp-sgd-privacy-plotclip)' });
+      var bk = [];
+
+      bk.push(mk('line', { x1: px(-extent), y1: py(0), x2: px(extent), y2: py(0), 'class': 'dps-cross' }));
+      bk.push(mk('line', { x1: px(0), y1: py(-extent), x2: px(0), y2: py(extent), 'class': 'dps-cross' }));
+      bk.push(mk('circle', { cx: PCX, cy: PCY, r: (C * sc).toFixed(2), 'class': 'dps-clipcircle' }));
+
+      for (i = 0; i < st.rows.length; i++){
+        var r = st.rows[i], g = r.g;
+        var tipRawX = px(g[0]), tipRawY = py(g[1]);
+        var tipCutX = px(g[0] * r.scale), tipCutY = py(g[1] * r.scale);
+        if (r.scale < 1){
+          bk.push(mk('line', { x1: tipCutX.toFixed(2), y1: tipCutY.toFixed(2),
+            x2: tipRawX.toFixed(2), y2: tipRawY.toFixed(2),
+            'class': r.canary ? 'dps-arr-can-cut' : 'dps-arr-cut' }));
+        }
+        arrow(bk, PCX, PCY, tipCutX, tipCutY,
+          r.canary ? 'dps-arr-can' : 'dps-arr-keep',
+          r.canary ? 'dps-head-can' : 'dps-head-keep', r.canary ? 9 : 6.5);
+      }
+
+      // the three means
+      arrow(bk, PCX, PCY, px(st.gTrue[0]), py(st.gTrue[1]), 'dps-arr-true', 'dps-head-true', 10);
+      arrow(bk, PCX, PCY, px(st.gClip[0]), py(st.gClip[1]), 'dps-arr-mean', 'dps-head-mean', 10);
+
+      // Step 2: Gaussian noise of per-coordinate std sigma*C/B added to the MEAN.
+      var s = B > 0 ? sigma * C / B : 0;
+      var rPix = s * sc, mag = 1;
+      if (rPix > 0 && rPix < 4) mag = 4 / rPix;
+      var mx = px(st.gClip[0]), my = py(st.gClip[1]);
+      if (s > 0){
+        bk.push(mk('circle', { cx: mx.toFixed(2), cy: my.toFixed(2),
+          r: Math.max(rPix * mag, 0.5).toFixed(2), 'class': 'dps-noisering' }));
+        for (i = 0; i < NOISE_Z.length; i++){
+          bk.push(mk('circle', {
+            cx: (mx + NOISE_Z[i][0] * rPix * mag).toFixed(2),
+            cy: (my - NOISE_Z[i][1] * rPix * mag).toFixed(2),
+            r: 1.8, 'class': 'dps-noisedot' }));
+        }
+        arrow(bk, mx, my, mx + NOISE_Z[0][0] * rPix * mag, my - NOISE_Z[0][1] * rPix * mag,
+          'dps-noisemain', 'dps-noisedot', 5);
+      }
+      for (i = 0; i < bk.length; i++) body.appendChild(bk[i]);
+      kids.push(body);
+
+      // labels
+      var cLabX = PCX + C * sc * 0.7071, cLabY = PCY - C * sc * 0.7071;
+      kids.push(txt('text', { x: (cLabX + 4).toFixed(1), y: (cLabY - 4).toFixed(1), 'class': 'dps-lab' },
+        'C = ' + fmt(C, 2)));
+      kids.push(txt('text', { x: PX0 + 2, y: H1 - 16, 'class': 'dps-lab-mut' },
+        'noise std per coordinate = sigma*C/B = ' + sci(s, 4) + (mag > 1 ? '  (ball drawn at ' + sci(mag, 0) + 'x)' : '')));
+      kids.push(txt('text', { x: PX0 + 2, y: H1 - 5, 'class': 'dps-lab-mut' },
+        'canary ||g|| = ' + fmt(st.canNorm, 2) + (st.canNorm > extent ? '  (arrow leaves the frame)' : '') +
+        ', kept ' + fmt(Math.min(C, st.canNorm), 2)));
+
+      // ---- right panel: per-example gradient norms vs C ----
+      kids.push(txt('text', { x: BX, y: 16, 'class': 'dps-panel-title' }, 'Per-example gradient norms vs C'));
+      kids.push(txt('text', { x: BX, y: 29, 'class': 'dps-sub' }, 'solid = kept, faded = removed by clipping'));
+      var xmax = Math.max(1.12 * maxBulk, 1.25 * C);
+      var sb = BW / xmax;
+      kids.push(mk('line', { x1: BX, y1: BY - 8, x2: BX, y2: (BY + st.rows.length * ROWH + 2).toFixed(1), 'class': 'dps-axis' }));
+      var cx = BX + Math.min(C, xmax) * sb;
+      kids.push(mk('line', { x1: cx.toFixed(2), y1: BY - 10, x2: cx.toFixed(2),
+        y2: (BY + st.rows.length * ROWH + 2).toFixed(1), 'class': 'dps-cline' }));
+      var cFar = cx > BX + BW - 62;
+      kids.push(txt('text', { x: (cFar ? cx - 3 : cx + 3).toFixed(1), y: BY - 3, 'class': 'dps-lab',
+        'text-anchor': cFar ? 'end' : 'start' }, 'C = ' + fmt(C, 2)));
+      for (i = 0; i < st.rows.length; i++){
+        var rr = st.rows[i], y = BY + i * ROWH;
+        var wFull = Math.min(rr.norm, xmax) * sb;
+        var wKeep = Math.min(rr.norm * rr.scale, xmax) * sb;
+        kids.push(mk('rect', { x: BX, y: y.toFixed(1), width: Math.max(wFull, 0.6).toFixed(2),
+          height: ROWH - 3, rx: 2, 'class': 'dps-bar-cut' }));
+        kids.push(mk('rect', { x: BX, y: y.toFixed(1), width: Math.max(wKeep, 0.6).toFixed(2),
+          height: ROWH - 3, rx: 2, 'class': rr.canary ? 'dps-bar-can' : 'dps-bar-keep' }));
+        if (rr.canary){
+          kids.push(txt('text', { x: BX - 5, y: (y + ROWH - 3).toFixed(1), 'class': 'dps-lab', 'text-anchor': 'end' }, 'canary'));
+          if (rr.norm > xmax){
+            kids.push(txt('text', { x: (BX + BW - 2).toFixed(1), y: (y + ROWH - 3).toFixed(1),
+              'class': 'dps-lab', 'text-anchor': 'end' }, '-> ' + fmt(rr.norm, 1)));
+          }
+        }
+      }
+      kids.push(txt('text', { x: BX, y: (BY + st.rows.length * ROWH + 14).toFixed(1), 'class': 'dps-lab-mut' },
+        '0'));
+      kids.push(txt('text', { x: (BX + BW).toFixed(1), y: (BY + st.rows.length * ROWH + 14).toFixed(1),
+        'class': 'dps-lab-mut', 'text-anchor': 'end' }, '||g||2 = ' + fmt(xmax, 2)));
+
+      var cap = 'Clipping keeps ' + st.nClipped + ' of ' + st.rows.length +
+        ' example gradients from exceeding C = ' + fmt(C, 2) + '. Dashed grey arrow = mean of the raw gradients, ' +
+        'solid dark arrow = mean after clipping, amber = the Gaussian noise added to it.';
+      paint(elBatchSvg, kids, W1, H1, cap);
+      elBatchCap.textContent = cap;
+      return { s: s, mag: mag };
+    }
+
+    // ------------------- panel 2: epsilon(t) and epsilon(sigma) -------------------
+    var W2 = 664, H2 = 252;
+    var PA = { l: 46, t: 46, w: 250, h: 160 };          // left: budget vs steps
+    var PB = { l: 396, t: 46, w: 244, h: 160 };         // right: budget vs sigma
+    function niceTicks(lo, hi){
+      var span = hi - lo;
+      if (!(span > 0)) return [lo];
+      var raw = span / 5;
+      var mag = Math.pow(10, Math.floor(Math.log(raw) / Math.LN10));
+      var nrm = raw / mag;
+      var st = (nrm < 1.5 ? 1 : nrm < 3 ? 2 : nrm < 7 ? 5 : 10) * mag;
+      var out = [];
+      for (var x = Math.ceil(lo / st) * st; x <= hi + st * 1e-9 && out.length < 24; x += st) out.push(x);
+      return out;
+    }
+    // Axis-tick text whose precision follows the tick SPACING, so a tiny epsilon axis
+    // (large sigma) does not collapse to a column of identical "0.00" labels.
+    function tickFmt(v, step){
+      if (Math.abs(v) < step * 1e-6) return '0';
+      if (!(step > 0)) return sci(v, 2);
+      if (step < 1e-3 || Math.abs(v) >= 1e5) return v.toExponential(1).replace('e+', 'e');
+      var d = Math.max(0, Math.min(6, Math.ceil(-Math.log(step) / Math.LN10 - 1e-9)));
+      return v.toFixed(d);
+    }
+    // epsilon(sigma) at the END of training. Independent of the current sigma, so
+    // it is cached on (q, T, delta) and dragging sigma only moves the marker.
+    // SIG_LO/SIG_HI must span the whole sigma slider (its smallest non-zero stop is
+    // 0.05) so the "you are here" marker never sits at a sigma the curve does not cover.
+    var SIG_LO = 0.05, SIG_HI = 4, SIG_N = 40;
+    var sigCache = { key: null, pts: null };
+    function sigmaCurve(q, T, delta){
+      var key = q + '|' + T + '|' + delta;
+      if (sigCache.key === key) return sigCache.pts;
+      var pts = new Array(SIG_N), i;
+      for (i = 0; i < SIG_N; i++){
+        var sg = SIG_LO + (SIG_HI - SIG_LO) * i / (SIG_N - 1);
+        var v = new Array(ALPHAS.length), j;
+        for (j = 0; j < ALPHAS.length; j++) v[j] = rdpAtAlpha(q, sg, ALPHAS[j]);
+        pts[i] = [sg, epsilonAt(v, T, delta).eps];
+      }
+      sigCache.key = key; sigCache.pts = pts;
+      return pts;
+    }
+    function drawEps(rdp, T, delta, epsT, sigma, q){
+      var kids = [], i;
+      if (!isFinite(epsT)){
+        kids.push(txt('text', { x: W2 / 2, y: H2 / 2 - 6, 'class': 'dps-panel-title', 'text-anchor': 'middle' },
+          'sigma = 0: no noise, so no guarantee at all. epsilon = infinity.'));
+        kids.push(txt('text', { x: W2 / 2, y: H2 / 2 + 12, 'class': 'dps-sub', 'text-anchor': 'middle' },
+          'Clipping alone bounds sensitivity but hides nothing. Raise sigma above 0.'));
+        paint(elEpsSvg, kids, W2, H2, 'Privacy budget is infinite because the noise multiplier is zero.');
+        return;
+      }
+
+      // ---- left panel: how the budget accumulates over the run ----
+      var NPT = 120, ts = new Array(NPT), es = new Array(NPT);
+      for (i = 0; i < NPT; i++){
+        var t = Math.max(1, Math.round(1 + (T - 1) * (i / (NPT - 1))));
+        ts[i] = t; es[i] = epsilonAt(rdp, t, delta).eps;
+      }
+      var emax = Math.max(es[NPT - 1], 1e-9) * 1.15;
+      function xA(t){ return PA.l + (T > 1 ? (t - 1) / (T - 1) : 0) * PA.w; }
+      function yA(e){ return PA.t + PA.h - Math.min(1, Math.max(0, e / emax)) * PA.h; }
+
+      kids.push(txt('text', { x: 8, y: 14, 'class': 'dps-panel-title' }, 'Budget spent after t steps'));
+      kids.push(txt('text', { x: 8, y: 26, 'class': 'dps-sub' }, 'RDP composes by addition'));
+      var tickA = niceTicks(0, emax);
+      var stepA = tickA.length > 1 ? tickA[1] - tickA[0] : emax;
+      for (i = 0; i < tickA.length; i++){
+        var yy = yA(tickA[i]);
+        kids.push(mk('line', { x1: PA.l, y1: yy.toFixed(2), x2: PA.l + PA.w, y2: yy.toFixed(2), 'class': 'dps-grid' }));
+        kids.push(txt('text', { x: PA.l - 6, y: (yy + 3).toFixed(2), 'class': 'dps-lab-mut', 'text-anchor': 'end' },
+          tickFmt(tickA[i], stepA)));
+      }
+      kids.push(mk('line', { x1: PA.l, y1: PA.t, x2: PA.l, y2: PA.t + PA.h, 'class': 'dps-axis' }));
+      kids.push(mk('line', { x1: PA.l, y1: PA.t + PA.h, x2: PA.l + PA.w, y2: PA.t + PA.h, 'class': 'dps-axis' }));
+      kids.push(txt('text', { x: 8, y: PA.t - 3, 'class': 'dps-lab-mut' }, 'epsilon'));
+      kids.push(txt('text', { x: PA.l, y: H2 - 20, 'class': 'dps-lab-mut' }, 't = 1'));
+      kids.push(txt('text', { x: PA.l + PA.w, y: H2 - 20, 'class': 'dps-lab-mut', 'text-anchor': 'end' },
+        'T = ' + intFmt(T)));
+      kids.push(txt('text', { x: PA.l + PA.w / 2, y: H2 - 6, 'class': 'dps-lab-mut', 'text-anchor': 'middle' },
+        'training steps taken'));
+      function refA(val, cls, labCls, label){
+        if (val > emax || val <= 0) return;
+        var y = yA(val);
+        kids.push(mk('line', { x1: PA.l, y1: y.toFixed(2), x2: PA.l + PA.w, y2: y.toFixed(2), 'class': cls }));
+        kids.push(txt('text', { x: PA.l + 4, y: (y - 4).toFixed(2), 'class': labCls }, label));
+      }
+      refA(1, 'dps-ref', 'dps-ref-lab', 'epsilon = 1');
+      refA(8, 'dps-ref2', 'dps-ref2-lab', 'epsilon = 8');
+      var dA = '';
+      for (i = 0; i < NPT; i++) dA += (i === 0 ? 'M' : 'L') + xA(ts[i]).toFixed(2) + ',' + yA(es[i]).toFixed(2) + ' ';
+      kids.push(mk('path', { d: dA, 'class': 'dps-eps-line' }));
+      kids.push(mk('circle', { cx: xA(T).toFixed(2), cy: yA(epsT).toFixed(2), r: 4, 'class': 'dps-eps-dot' }));
+      kids.push(txt('text', { x: (xA(T) - 7).toFixed(2), y: (yA(epsT) - 8).toFixed(2), 'class': 'dps-lab',
+        'text-anchor': 'end' }, 'epsilon(T) = ' + sci(epsT, 2)));
+
+      // ---- right panel: the privacy dial, epsilon(T) against sigma (log y) ----
+      var pts = sigmaCurve(q, T, delta);
+      var lo = Infinity, hi = -Infinity;
+      for (i = 0; i < pts.length; i++){
+        var e = pts[i][1];
+        if (!isFinite(e) || !(e > 0)) continue;
+        if (e < lo) lo = e;
+        if (e > hi) hi = e;
+      }
+      if (!isFinite(lo) || !isFinite(hi)){ lo = 0.1; hi = 10; }
+      if (epsT > 0 && isFinite(epsT)){ lo = Math.min(lo, epsT); hi = Math.max(hi, epsT); }
+      lo = Math.max(lo, 1e-3); hi = Math.min(Math.max(hi, lo * 10), 1e9);
+      var lg0 = Math.floor(Math.log(lo) / Math.LN10), lg1 = Math.ceil(Math.log(hi) / Math.LN10);
+      if (lg1 - lg0 < 1) lg1 = lg0 + 1;
+      function xB(sg){ return PB.l + (Math.min(SIG_HI, Math.max(SIG_LO, sg)) - SIG_LO) / (SIG_HI - SIG_LO) * PB.w; }
+      function yB(e){
+        var l = Math.log(Math.max(e, 1e-12)) / Math.LN10;
+        return PB.t + PB.h - Math.min(1, Math.max(0, (l - lg0) / (lg1 - lg0))) * PB.h;
+      }
+      kids.push(txt('text', { x: PB.l - 38, y: 14, 'class': 'dps-panel-title' }, 'The privacy dial: epsilon(T) vs sigma'));
+      kids.push(txt('text', { x: PB.l - 38, y: 26, 'class': 'dps-sub' }, 'log scale; only the noise changes'));
+      var dec = lg1 - lg0, everyB = dec > 7 ? 2 : 1;
+      for (i = lg0; i <= lg1; i++){
+        var yy2 = yB(Math.pow(10, i));
+        kids.push(mk('line', { x1: PB.l, y1: yy2.toFixed(2), x2: PB.l + PB.w, y2: yy2.toFixed(2), 'class': 'dps-grid' }));
+        if ((i - lg0) % everyB === 0){
+          kids.push(txt('text', { x: PB.l - 6, y: (yy2 + 3).toFixed(2), 'class': 'dps-lab-mut', 'text-anchor': 'end' },
+            i >= -2 && i <= 3 ? String(Math.pow(10, i)) : '1e' + i));
+        }
+      }
+      kids.push(mk('line', { x1: PB.l, y1: PB.t, x2: PB.l, y2: PB.t + PB.h, 'class': 'dps-axis' }));
+      kids.push(mk('line', { x1: PB.l, y1: PB.t + PB.h, x2: PB.l + PB.w, y2: PB.t + PB.h, 'class': 'dps-axis' }));
+      kids.push(txt('text', { x: PB.l - 38, y: PB.t - 3, 'class': 'dps-lab-mut' }, 'epsilon'));
+      kids.push(txt('text', { x: PB.l, y: H2 - 20, 'class': 'dps-lab-mut' }, 'sigma = ' + fmt(SIG_LO, 2)));
+      kids.push(txt('text', { x: PB.l + PB.w, y: H2 - 20, 'class': 'dps-lab-mut', 'text-anchor': 'end' },
+        'sigma = ' + fmt(SIG_HI, 1)));
+      kids.push(txt('text', { x: PB.l + PB.w / 2, y: H2 - 6, 'class': 'dps-lab-mut', 'text-anchor': 'middle' },
+        'noise multiplier sigma'));
+      function refB(val, cls, labCls, label){
+        var l = Math.log(val) / Math.LN10;
+        if (l < lg0 || l > lg1) return;
+        var y = yB(val);
+        kids.push(mk('line', { x1: PB.l, y1: y.toFixed(2), x2: PB.l + PB.w, y2: y.toFixed(2), 'class': cls }));
+        kids.push(txt('text', { x: PB.l + PB.w - 3, y: (y - 4).toFixed(2), 'class': labCls, 'text-anchor': 'end' }, label));
+      }
+      refB(1, 'dps-ref', 'dps-ref-lab', 'epsilon = 1 (strong)');
+      refB(8, 'dps-ref2', 'dps-ref2-lab', 'epsilon = 8 (loose)');
+      var dB = '', started = false;
+      for (i = 0; i < pts.length; i++){
+        if (!isFinite(pts[i][1]) || !(pts[i][1] > 0)) continue;
+        dB += (started ? 'L' : 'M') + xB(pts[i][0]).toFixed(2) + ',' + yB(pts[i][1]).toFixed(2) + ' ';
+        started = true;
+      }
+      if (started) kids.push(mk('path', { d: dB, 'class': 'dps-eps-line' }));
+      var mxB = xB(sigma), myB = yB(epsT);
+      kids.push(mk('line', { x1: mxB.toFixed(2), y1: PB.t, x2: mxB.toFixed(2), y2: (PB.t + PB.h).toFixed(2),
+        'class': 'dps-marker' }));
+      kids.push(mk('circle', { cx: mxB.toFixed(2), cy: myB.toFixed(2), r: 4, 'class': 'dps-eps-dot' }));
+      kids.push(txt('text', {
+        x: (mxB > PB.l + PB.w - 70 ? mxB - 4 : mxB + 4).toFixed(2), y: (PB.t - 3).toFixed(2),
+        'class': 'dps-lab', 'text-anchor': mxB > PB.l + PB.w - 70 ? 'end' : 'start' },
+        'sigma = ' + fmt(sigma, 2)));
+
+      paint(elEpsSvg, kids, W2, H2,
+        'Left: privacy budget epsilon grows to ' + sci(epsT, 2) + ' over ' + T + ' DP-SGD steps. ' +
+        'Right: epsilon at the end of training against the noise multiplier sigma, on a log scale, ' +
+        'marked at the current sigma of ' + fmt(sigma, 2) + '.');
+    }
+
+    // ---------------------------- exposure ----------------------------
+    var R_SECRETS = 1e8, LOG2R = Math.log(R_SECRETS) / Math.LN2;
+    function exposureOf(z){
+      if (!isFinite(z)) return { bits: LOG2R, rank: 1 };
+      var lp = logPhiNeg(z);                       // log P(random guess scores higher)
+      var bits = Math.min(LOG2R, -lp / Math.LN2);
+      var rank = Math.max(1, R_SECRETS * Math.exp(lp));
+      return { bits: bits, rank: rank };
+    }
+    function expRow(label, bits, rank, note){
+      var pct = Math.max(0, Math.min(100, 100 * bits / LOG2R));
+      var cls = bits >= 20 ? 'dps-exp-bad' : (bits >= 5 ? 'dps-exp-mid' : 'dps-exp-ok');
+      return '<div class="dps-exp-row"><span class="dps-exp-lab">' + label + '</span>' +
+        '<span class="dps-exp-track" aria-hidden="true"><i class="dps-exp-fill ' + cls +
+        '" style="width:' + pct.toFixed(1) + '%"></i></span>' +
+        '<span class="dps-exp-val">' + fmt(bits, 1) + ' bits &middot; rank ' + sci(rank, 0) +
+        (note ? ' &middot; ' + note : '') + '</span></div>';
+    }
+
+    // ---------------------------- render ----------------------------
+    function render(){
+      var C = clampNum(elClipN.value, 0.05, 5, 1, 0.05, 2);
+      var sigma = clampNum(elSigN.value, 0, 4, 0.8, 0.05, 2);
+      var B = clampNum(elBatN.value, 64, 8192, 4096, 64, 0);
+      var E = clampNum(elEpN.value, 1, 20, 3, 1, 0);
+      var canMult = clampNum(elCanN.value, 1, 20, 8, 0.5, 1);
+      var reps = clampNum(elRepN.value, 1, 200, 1, 1, 0);
+      var N = parseFloat(elData.value); if (!isFinite(N) || N < 1) N = 2e6;
+      var delta = parseFloat(elDelta.value); if (!isFinite(delta) || delta <= 0 || delta >= 1) delta = 1e-6;
+      var dpar = parseFloat(elDim.value); if (!isFinite(dpar) || dpar < 1) dpar = 2e6;
+
+      setVal(elClipR, C);   setVal(elClipN, C);
+      setVal(elSigR, sigma); setVal(elSigN, sigma);
+      setVal(elBatR, B);    setVal(elBatN, B);
+      setVal(elEpR, E);     setVal(elEpN, E);
+      setVal(elCanR, canMult); setVal(elCanN, canMult);
+      setVal(elRepR, reps); setVal(elRepN, reps);
+
+      var Beff = Math.min(B, N);
+      var q = Beff / N;
+      var T = Math.max(1, Math.round(E * N / Beff));
+
+      var st = batchStats(C, canMult);
+      var drawn = drawBatch(st, C, sigma, Beff);
+      var s = drawn.s;
+
+      var rdp = rdpVector(q, sigma);
+      var res = epsilonAt(rdp, T, delta);
+      drawEps(rdp, T, delta, res.eps, sigma, q);
+
+      // utility: noise norm in d dimensions vs the clipped signal
+      var gClipNorm = norm2(st.gClip), gTrueNorm = norm2(st.gTrue);
+      var cosBias = (gClipNorm > 1e-12 && gTrueNorm > 1e-12)
+        ? (st.gClip[0] * st.gTrue[0] + st.gClip[1] * st.gTrue[1]) / (gClipNorm * gTrueNorm) : 1;
+      var noiseNormD = s * Math.sqrt(dpar);            // E||noise||2 ~ sigma*C*sqrt(d)/B
+      var snrStep = noiseNormD > 0 ? gClipNorm / noiseNormD : Infinity;
+      var snrRun = snrStep * Math.sqrt(T);             // signal grows ~T, noise ~sqrt(T)
+
+      // Canary. Its r copies each join a batch with probability q, so over T
+      // steps the canary contributes r*q*T times, each time moving the update
+      // along its own direction by min(C,||g_can||)/B, while the DP noise in
+      // that direction is a random walk of size sigma*C*sqrt(T)/B. The learning
+      // rate and the 1/B cancel in the ratio:
+      //     z = r * q * sqrt(T) * min(C, ||g_can||) / (sigma * C)
+      var cEff = Math.min(C, st.canNorm);
+      var zCan = sigma > 0 ? reps * q * Math.sqrt(T) * cEff / (sigma * C) : Infinity;
+      var expDP = exposureOf(zCan);
+      var expNo = { bits: LOG2R, rank: 1 };
+      var appearances = reps * q * T;
+
+      elReadout.innerHTML =
+        '<b>Clip:</b> ' + st.nClipped + ' of ' + st.rows.length + ' shown gradients exceed C = ' + fmt(C, 2) +
+        ' (mean scale factor ' + fmt(st.meanScale, 3) + ') &nbsp;|&nbsp; ' +
+        '&#8214;mean raw g&#8214; = <b>' + fmt(gTrueNorm, 3) + '</b> &rarr; &#8214;mean clipped g&#8214; = <b>' +
+        fmt(gClipNorm, 3) + '</b>, cos angle ' + fmt(cosBias, 3) +
+        ' &nbsp;|&nbsp; <b>Noise:</b> std per coordinate &sigma;C/B = <b>' + sci(s, 4) + '</b>' +
+        ' &nbsp;|&nbsp; over d = ' + sci(dpar, 0) + ' parameters the noise vector has norm &asymp; ' +
+        sci(noiseNormD, 3) + ' vs signal ' + fmt(gClipNorm, 3);
+
+      elExp.innerHTML =
+        expRow('No DP', expNo.bits, expNo.rank, 'full-size gradient, no noise') +
+        expRow('Clipping only', LOG2R, 1, 'sensitivity bounded, nothing hidden') +
+        expRow('DP-SGD (now)', expDP.bits, expDP.rank,
+          'z = ' + (isFinite(zCan) ? fmt(zCan, 2) : 'inf') + ', seen ' + fmt(appearances, 0) + 'x');
+
+      function stat(label, val, sub, cls){
+        return '<div class="dps-stat"><div class="dps-stat-label">' + label + '</div>' +
+          '<div class="dps-stat-val' + (cls ? ' ' + cls : '') + '">' + val + '</div>' +
+          (sub ? '<div class="dps-stat-sub">' + sub + '</div>' : '') + '</div>';
+      }
+      var epsCls = !isFinite(res.eps) ? 'dps-bad' : (res.eps <= 1 ? 'dps-good' : (res.eps <= 8 ? 'dps-warn' : 'dps-bad'));
+      var epsTxt = !isFinite(res.eps) ? '&infin;' : sci(res.eps, 2);
+      var snrCls = snrRun >= 3 ? 'dps-good' : (snrRun >= 1 ? 'dps-warn' : 'dps-bad');
+      var expCls = expDP.bits >= 20 ? 'dps-bad' : (expDP.bits >= 5 ? 'dps-warn' : 'dps-good');
+
+      var epsGroup = reps * res.eps;
+      elStats.innerHTML =
+        stat('Privacy budget &epsilon;', epsTxt,
+          'at &delta; = ' + delta.toExponential(0).replace('e+', 'e') +
+          (res.alpha ? ', best RDP order &alpha; = ' + res.alpha : '') +
+          ' &mdash; a function of (q, &sigma;, T, &delta;) only: drag C or switch d and it will not move',
+          epsCls) +
+        stat('Sampling rate q = B/N', sci(q, 5), 'B = ' + intFmt(Beff) + ' of N = ' + intFmt(N), '') +
+        stat('Steps T = E&middot;N/B', intFmt(T), E + ' epoch' + (E === 1 ? '' : 's'), '') +
+        stat('Sensitivity of the sum', fmt(C, 2), 'one example moves &Sigma;g&#771; by &le; C', '') +
+        stat('Noise std &sigma;C/B', sci(s, 4), 'per coordinate, on the mean', '') +
+        stat('Signal / noise, 1 step', sci(snrStep, 3),
+          '&#8214;g&#8214; vs &sigma;C&radic;d/B, d = ' + sci(dpar, 0), '') +
+        stat('Signal / noise, T steps', isFinite(snrRun) ? sci(snrRun, 2) : '&infin;',
+          'signal ~ T, noise ~ &radic;T', snrCls) +
+        stat('Canary exposure', fmt(expDP.bits, 1) + ' / ' + fmt(LOG2R, 1) + ' bits',
+          'guess rank ' + sci(expDP.rank, 0) + ' of 1e8', expCls) +
+        stat('Group &epsilon; for r copies', !isFinite(epsGroup) ? '&infin;' : sci(epsGroup, 2),
+          'r = ' + reps + ' duplicate' + (reps === 1 ? '' : 's') + ' &rarr; about r&middot;&epsilon;',
+          !isFinite(epsGroup) ? 'dps-bad' : (epsGroup <= 8 ? 'dps-good' : 'dps-bad')) +
+        stat('Clipped this batch', st.nClipped + ' / ' + st.rows.length,
+          'mean scale ' + fmt(st.meanScale, 3), '') +
+        stat('Clipping bias cos', fmt(cosBias, 3), 'clipped mean vs raw mean', '');
+    }
+
+    var pending = false;
+    function schedule(){
+      if (pending) return;
+      pending = true;
+      var raf = window.requestAnimationFrame || function(f){ return setTimeout(f, 16); };
+      raf(function(){ pending = false; try { render(); } catch (e) { /* keep the page alive */ } });
+    }
+
+    function bind(rangeEl, numEl, lo, hi, fb, stp, dec){
+      rangeEl.addEventListener('input', function(){ numEl.value = rangeEl.value; schedule(); });
+      numEl.addEventListener('input', function(){
+        rangeEl.value = clampNum(numEl.value, lo, hi, fb, stp, dec);
+        schedule();
+      });
+      numEl.addEventListener('change', function(){
+        numEl.value = clampNum(numEl.value, lo, hi, fb, stp, dec);
+        schedule();
+      });
+    }
+    bind(elClipR, elClipN, 0.05, 5, 1, 0.05, 2);
+    bind(elSigR, elSigN, 0, 4, 0.8, 0.05, 2);
+    bind(elBatR, elBatN, 64, 8192, 4096, 64, 0);
+    bind(elEpR, elEpN, 1, 20, 3, 1, 0);
+    bind(elCanR, elCanN, 1, 20, 8, 0.5, 1);
+    bind(elRepR, elRepN, 1, 200, 1, 1, 0);
+    elData.addEventListener('change', schedule);
+    elDelta.addEventListener('change', schedule);
+    elDim.addEventListener('change', schedule);
+
+    render();
+  })();</script>
+</div>

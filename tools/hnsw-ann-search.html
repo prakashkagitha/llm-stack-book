@@ -1,0 +1,835 @@
+<div class="viz-tool" id="tool-hnsw-ann-search">
+  <div class="vt-title">Approximate nearest neighbors: HNSW graph search</div>
+  <div class="vt-hint">A real HNSW index, built and searched in your browser. Points are 2-D vectors; the graph is built with the paper's layered <em>insert</em> and searched with <em>search-layer</em> (best-first beam search). Drag the query <b>&times;</b> anywhere, then step the animation: the walk enters at the single top-layer entry point, greedily hops downhill, descends a layer, and only widens its beam to <b>ef</b> in the dense bottom layer. The counter is the honest one &mdash; every squared-distance evaluation, compared against the <b>N</b> a brute-force scan must do.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="hnsw-ann-search-n">Points N <span class="vt-val" id="hnsw-ann-search-nVal">32</span>
+      <input id="hnsw-ann-search-n" type="range" min="8" max="60" step="1" value="32" aria-label="Number of vectors N stored in the index">
+    </label>
+    <label for="hnsw-ann-search-ef">Beam width ef (layer 0) <span class="vt-val" id="hnsw-ann-search-efVal">6</span>
+      <input id="hnsw-ann-search-ef" type="range" min="1" max="32" step="1" value="6" aria-label="Search beam width ef used in the bottom layer">
+    </label>
+    <label for="hnsw-ann-search-m">Links per node M <span class="vt-val" id="hnsw-ann-search-mVal">4</span>
+      <input id="hnsw-ann-search-m" type="range" min="3" max="8" step="1" value="4" aria-label="Maximum neighbors per node M; layer 0 gets 2M">
+    </label>
+    <label for="hnsw-ann-search-sel">Neighbor selection
+      <select id="hnsw-ann-search-sel" aria-label="Neighbor selection rule used when building the graph">
+        <option value="heuristic" selected>diverse (paper Alg. 4)</option>
+        <option value="closest">M closest (naive)</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn" id="hnsw-ann-search-play" type="button" aria-label="Play or pause the search animation">&#9658; Play search</button>
+    <button class="vt-btn" id="hnsw-ann-search-step" type="button" aria-label="Advance one search step">Step &rarr;</button>
+    <button class="vt-btn" id="hnsw-ann-search-restart" type="button" aria-label="Restart the animation from the entry point">&#8635; Restart</button>
+    <button class="vt-btn" id="hnsw-ann-search-newq" type="button" aria-label="Move the query to a new position">New query</button>
+    <label class="hn-check" for="hnsw-ann-search-brute">
+      <input id="hnsw-ann-search-brute" type="checkbox" aria-label="Overlay the brute-force scan: one distance line to every stored vector">
+      <span>Overlay brute-force scan</span>
+    </label>
+  </div>
+
+  <div class="hn-svg-wrap">
+    <svg id="hnsw-ann-search-svg" viewBox="0 0 760 300" role="group" aria-label="Layered HNSW graph: one square panel per layer, sparse top layer on the left, dense bottom layer on the right, with the greedy search path and the query point drawn in each panel" aria-describedby="hnsw-ann-search-readout"></svg>
+  </div>
+
+  <div class="hn-scrub">
+    <label for="hnsw-ann-search-frame">Search step <span class="vt-val" id="hnsw-ann-search-frameVal">0 / 0</span>
+      <input id="hnsw-ann-search-frame" type="range" min="0" max="0" step="1" value="0" aria-label="Scrub through the steps of the greedy search">
+    </label>
+  </div>
+
+  <div class="hn-legend">
+    <span><i class="hn-sw hn-sw-node"></i>stored vector</span>
+    <span><i class="hn-sw hn-sw-vis"></i>visited (distance computed)</span>
+    <span><i class="hn-sw hn-sw-cur"></i>current node</span>
+    <span><i class="hn-sw hn-sw-res"></i>in the ef-beam / returned (solid ring)</span>
+    <span><i class="hn-sw hn-sw-true"></i>true nearest neighbor (dashed ring)</span>
+    <span><i class="hn-sw hn-sw-brute"></i>brute-force distance</span>
+  </div>
+
+  <div class="hn-readout" id="hnsw-ann-search-readout" aria-live="polite"></div>
+  <div class="hn-stats" id="hnsw-ann-search-stats"></div>
+
+  <div class="hn-chart-wrap">
+    <div class="hn-row-label">Sweep of <b>ef</b> on this exact index, averaged over 48 fixed query positions &mdash; the recall/cost dial</div>
+    <svg id="hnsw-ann-search-chart" viewBox="0 0 520 220" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Chart of recall at k and distance computations as functions of the beam width ef" aria-describedby="hnsw-ann-search-chartdesc"></svg>
+    <div class="hn-axis-note" id="hnsw-ann-search-chartdesc"></div>
+  </div>
+
+  <div class="vt-note">
+    A brute-force scan is <b>O(N)</b> distance computations and always exact. HNSW replaces the scan with a <em>walk</em>: each node keeps up to M links to nearby vectors, and a node's top layer is drawn from an exponentially decaying distribution (level = floor(&minus;ln&thinsp;U &middot; m<sub>L</sub>), m<sub>L</sub> = 1/ln&thinsp;M), so layer sizes shrink geometrically and the top layer holds a handful of nodes with very long links. Search descends that hierarchy with a beam of width 1 &mdash; pure greedy hill-descent, a coarse-to-fine zoom &mdash; and only in layer 0 opens the beam to <b>ef</b>. Each hop evaluates just the current node's neighbors, so the total work grows like <b>O(M&thinsp;&middot;&thinsp;log&thinsp;N)</b>, not N. Three experiments, each reproducible in the panels above:
+    <br><br>
+    <b>1. The scaling gap is the whole point.</b> Set ef = 6 and sweep N from 8 to 60, watching the mean-cost dot on the chart. The scan cost is the N slider's own value; the HNSW cost goes from roughly 12 to roughly 26. Seven and a half times the data, barely double the work &mdash; and note the crossover: at N = 8 the walk costs <em>more</em> than the scan. A hierarchy only pays for itself once N is large, which is why nobody indexes a thousand vectors.
+    <br><br>
+    <b>2. &ldquo;Approximate&rdquo; means measurably wrong, sometimes.</b> Two different failures hide behind a low recall number. With ef &lt; k the beam cannot even hold k results, so recall is capped at ef/k for arithmetic reasons &mdash; always set ef &ge; k. The real failure is the one the <em>true nearest neighbor MISSED</em> card reports: drop ef to 1 or 2 and drag the query into the gap between two clusters, and the greedy walk settles into a local minimum and returns a neighbor that is not the nearest. That is the tax you pay for the speedup, and it is why recall must be measured against brute force, never assumed.
+    <br><br>
+    <b>3. Diverse links beat close links.</b> Push N to 60, then flip neighbor selection to <em>M closest</em> and watch layer 0 thicken: the link counter jumps from 142 to 284. Twice the links, all of them spent pointing back into the same cluster, because the nearest M candidates to a node inside a dense blob are all in that blob. Look at the sweep chart now: the recall curve <b>stops at about 0.79 and stays there</b> however far you push ef &mdash; some blobs have lost the bridge the walk needs to cross, and a wider beam cannot reach a component it can never enter. The paper's relative-neighborhood rule spends each link on a distinct <em>direction</em> out of the node instead, and reaches recall 1.0 on the same data with half the links. That is why Algorithm 4 exists.
+    <br><br>
+    Real indexes are this same code in 768 dimensions, where the picture is impossible to draw but the mechanics are identical.
+  </div>
+
+  <style>
+    #tool-hnsw-ann-search{
+      --hn-accent: var(--accent,#4f46e5);
+      --hn-good: var(--good,#2f9e6e);
+      --hn-warn: var(--warn,#e0a106);
+      --hn-ink: var(--ink,#1a1a2e);
+      --hn-ink-soft: var(--ink-soft,#556);
+      --hn-muted: var(--muted,#889);
+      --hn-surface: var(--surface,#fff);
+      --hn-surface-2: var(--surface-2,#f6f7f9);
+      --hn-surface-3: var(--surface-3,#eceef3);
+      --hn-border: var(--border,#e5e7eb);
+      --hn-border-2: var(--border-2,#e5e7eb);
+      border:1px solid var(--hn-border-2); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--hn-surface); font-family:var(--sans,sans-serif); color:var(--hn-ink);
+    }
+    #tool-hnsw-ann-search .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--hn-ink); }
+    #tool-hnsw-ann-search .vt-hint{ font-size:.78rem; color:var(--hn-muted); line-height:1.6; margin-bottom:12px; }
+    #tool-hnsw-ann-search .vt-hint b{ color:var(--hn-ink-soft); }
+    #tool-hnsw-ann-search .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-hnsw-ann-search label{ display:flex; flex-direction:column; gap:5px; font-size:.8rem; color:var(--hn-muted); }
+    #tool-hnsw-ann-search .vt-val{ font-family:var(--mono,monospace); font-weight:700; color:var(--hn-accent); }
+    #tool-hnsw-ann-search input[type="range"]{ width:100%; accent-color:var(--hn-accent); }
+    #tool-hnsw-ann-search input[type="checkbox"]{ accent-color:var(--hn-accent); width:15px; height:15px; }
+    #tool-hnsw-ann-search select,
+    #tool-hnsw-ann-search .vt-btn{ font:inherit; font-size:.82rem; padding:7px 10px; border:1px solid var(--hn-border-2);
+      border-radius:7px; background:var(--hn-surface); color:var(--hn-ink); }
+    #tool-hnsw-ann-search .vt-btn{ cursor:pointer; font-weight:600; }
+    #tool-hnsw-ann-search .vt-btn:hover{ background:var(--hn-surface-3); }
+    #tool-hnsw-ann-search select:focus-visible,
+    #tool-hnsw-ann-search .vt-btn:focus-visible,
+    #tool-hnsw-ann-search input:focus-visible{ outline:2px solid var(--hn-accent); outline-offset:2px; }
+    #tool-hnsw-ann-search .vt-actions{ display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; margin-top:12px; }
+    #tool-hnsw-ann-search .hn-check{ flex-direction:row; align-items:center; gap:7px; font-size:.8rem; color:var(--hn-ink); }
+
+    #tool-hnsw-ann-search .hn-svg-wrap{ margin-top:14px; overflow-x:auto; overflow-y:hidden; }
+    #tool-hnsw-ann-search .hn-svg-wrap svg{ display:block; width:100%; min-width:520px; height:auto;
+      background:var(--hn-surface-2); border:1px solid var(--hn-border); border-radius:10px; touch-action:none; }
+    #tool-hnsw-ann-search .hn-scrub{ margin-top:10px; max-width:420px; }
+    #tool-hnsw-ann-search .hn-legend{ display:flex; flex-wrap:wrap; gap:6px 16px; margin-top:10px; font-size:.72rem; color:var(--hn-muted); }
+    #tool-hnsw-ann-search .hn-legend span{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-hnsw-ann-search .hn-sw{ width:12px; height:12px; border-radius:50%; display:inline-block; }
+    #tool-hnsw-ann-search .hn-sw-node{ background:var(--hn-surface); border:1.5px solid var(--hn-ink-soft); }
+    #tool-hnsw-ann-search .hn-sw-vis{ background:var(--hn-ink-soft); opacity:.55; }
+    #tool-hnsw-ann-search .hn-sw-cur{ background:var(--hn-accent); }
+    #tool-hnsw-ann-search .hn-sw-res{ background:transparent; border:2.5px solid var(--hn-good); }
+    #tool-hnsw-ann-search .hn-sw-true{ background:transparent; border:1.5px dashed var(--hn-good); }
+    #tool-hnsw-ann-search .hn-sw-brute{ background:var(--hn-warn); border-radius:2px; height:3px; }
+
+    #tool-hnsw-ann-search .hn-readout{ margin-top:12px; background:var(--hn-surface-3); border-radius:9px; padding:10px 12px;
+      font-size:.78rem; line-height:1.6; color:var(--hn-ink); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; min-height:2.2em; }
+    #tool-hnsw-ann-search .hn-readout code{ font-family:var(--mono,monospace); }
+    #tool-hnsw-ann-search .hn-readout .hn-em{ color:var(--hn-accent); font-weight:700; }
+    #tool-hnsw-ann-search .hn-readout .hn-ok{ color:var(--hn-good); font-weight:700; }
+    #tool-hnsw-ann-search .hn-readout .hn-bad{ color:var(--hn-warn); font-weight:700; }
+
+    #tool-hnsw-ann-search .hn-stats{ display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:10px; margin-top:10px; }
+    #tool-hnsw-ann-search .vt-stat{ background:var(--hn-surface-2); border:1px solid var(--hn-border); border-radius:9px;
+      padding:9px 11px; font-size:.75rem; color:var(--hn-muted); line-height:1.5; font-variant-numeric:tabular-nums; }
+    #tool-hnsw-ann-search .vt-stat b{ display:block; font-size:1.05rem; font-family:var(--mono,monospace); color:var(--hn-ink); }
+    #tool-hnsw-ann-search .vt-stat.hn-hi b{ color:var(--hn-accent); }
+    #tool-hnsw-ann-search .vt-stat.hn-warn b{ color:var(--hn-warn); }
+    #tool-hnsw-ann-search .vt-stat.hn-good b{ color:var(--hn-good); }
+
+    #tool-hnsw-ann-search .hn-chart-wrap{ margin-top:16px; }
+    #tool-hnsw-ann-search .hn-row-label{ font-size:.74rem; color:var(--hn-muted); margin-bottom:6px; }
+    #tool-hnsw-ann-search .hn-row-label b{ color:var(--hn-ink-soft); }
+    #tool-hnsw-ann-search .hn-chart-wrap svg{ display:block; width:100%; max-width:560px; height:auto;
+      background:var(--hn-surface-2); border:1px solid var(--hn-border); border-radius:10px; }
+    #tool-hnsw-ann-search .hn-axis-note{ font-size:.72rem; color:var(--hn-muted); margin-top:6px; line-height:1.55; }
+
+    #tool-hnsw-ann-search .vt-note{ margin-top:14px; font-size:.78rem; color:var(--hn-muted); line-height:1.65; }
+    #tool-hnsw-ann-search .vt-note b{ color:var(--hn-ink-soft); }
+    #tool-hnsw-ann-search .vt-note em{ color:var(--hn-ink-soft); font-style:italic; }
+
+    /* --- svg element classes --- */
+    #tool-hnsw-ann-search .hn-panel{ fill:var(--hn-surface); stroke:var(--hn-border); stroke-width:1; }
+    #tool-hnsw-ann-search .hn-panel-active{ stroke:var(--hn-accent); stroke-width:1.8; }
+    #tool-hnsw-ann-search .hn-panel-label{ font-size:9.5px; font-family:var(--mono,monospace); fill:var(--hn-ink-soft); font-weight:700; }
+    #tool-hnsw-ann-search .hn-panel-sub{ font-size:8px; font-family:var(--sans,sans-serif); fill:var(--hn-muted); }
+    #tool-hnsw-ann-search .hn-edge{ stroke:var(--hn-ink-soft); stroke-width:.9; opacity:.28; fill:none; }
+    #tool-hnsw-ann-search .hn-ghost{ fill:var(--hn-muted); opacity:.22; }
+    #tool-hnsw-ann-search .hn-node{ fill:var(--hn-surface); stroke:var(--hn-ink-soft); stroke-width:1.2; }
+    #tool-hnsw-ann-search .hn-node-vis{ fill:var(--hn-ink-soft); fill-opacity:.5; stroke:var(--hn-ink-soft); }
+    #tool-hnsw-ann-search .hn-node-cur{ fill:var(--hn-accent); stroke:var(--hn-surface); stroke-width:1.6; }
+    #tool-hnsw-ann-search .hn-ring-res{ fill:none; stroke:var(--hn-good); stroke-width:2.2; }
+    #tool-hnsw-ann-search .hn-ring-true{ fill:none; stroke:var(--hn-good); stroke-width:1.6; stroke-dasharray:3 2.5; }
+    #tool-hnsw-ann-search .hn-ring-cur{ fill:none; stroke:var(--hn-accent); stroke-width:1.6; opacity:.55; }
+    #tool-hnsw-ann-search .hn-path{ fill:none; stroke:var(--hn-accent); stroke-width:1.7; stroke-linejoin:round; stroke-linecap:round; opacity:.7; }
+    #tool-hnsw-ann-search .hn-eval{ stroke:var(--hn-accent); stroke-width:1.1; stroke-dasharray:3 2.5; opacity:.85; }
+    #tool-hnsw-ann-search .hn-eval-skip{ stroke:var(--hn-muted); stroke-width:1; stroke-dasharray:1.5 2.5; opacity:.55; }
+    #tool-hnsw-ann-search .hn-brute{ stroke:var(--hn-warn); stroke-width:.75; opacity:.5; }
+    #tool-hnsw-ann-search .hn-query{ stroke:var(--hn-ink); stroke-width:2; stroke-linecap:round; }
+    #tool-hnsw-ann-search .hn-query-halo{ fill:var(--hn-surface); stroke:var(--hn-ink); stroke-width:1; opacity:.85; }
+    #tool-hnsw-ann-search .hn-descend{ stroke:var(--hn-accent); stroke-width:1.4; stroke-dasharray:4 3; fill:none; opacity:.8; }
+    #tool-hnsw-ann-search .hn-tag{ font-size:7.5px; font-family:var(--mono,monospace); fill:var(--hn-muted); }
+    #tool-hnsw-ann-search .hn-tag-ac{ fill:var(--hn-accent); font-weight:700; }
+    #tool-hnsw-ann-search .hn-tag-good{ fill:var(--hn-good); font-weight:700; }
+    #tool-hnsw-ann-search .hn-qgrab{ cursor:grab; outline:none; }
+    #tool-hnsw-ann-search .hn-qgrab:focus-visible circle{ stroke:var(--hn-accent); stroke-width:2.4; }
+
+    #tool-hnsw-ann-search .hn-ax{ stroke:var(--hn-border); stroke-width:1; }
+    #tool-hnsw-ann-search .hn-axtext{ font-size:8.5px; font-family:var(--mono,monospace); fill:var(--hn-muted); }
+    #tool-hnsw-ann-search .hn-axtitle{ font-size:9px; font-family:var(--sans,sans-serif); fill:var(--hn-ink-soft); }
+    #tool-hnsw-ann-search .hn-line-recall{ fill:none; stroke:var(--hn-good); stroke-width:2.2; }
+    #tool-hnsw-ann-search .hn-line-cost{ fill:none; stroke:var(--hn-accent); stroke-width:2.2; stroke-dasharray:5 3; }
+    #tool-hnsw-ann-search .hn-line-brute{ stroke:var(--hn-warn); stroke-width:1.4; stroke-dasharray:3 3; }
+    #tool-hnsw-ann-search .hn-marker{ stroke:var(--hn-ink-soft); stroke-width:1.1; opacity:.6; }
+    #tool-hnsw-ann-search .hn-dot-recall{ fill:var(--hn-good); }
+    #tool-hnsw-ann-search .hn-dot-cost{ fill:var(--hn-accent); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-hnsw-ann-search');
+    if (!root) return;
+    var $ = function(id){ return document.getElementById('hnsw-ann-search-' + id); };
+
+    var svg = $('svg'), chart = $('chart'), readout = $('readout'), statsEl = $('stats');
+    var elN = $('n'), elEf = $('ef'), elM = $('m'), elSel = $('sel'), elBrute = $('brute');
+    var elFrame = $('frame');
+    var btnPlay = $('play'), btnStep = $('step'), btnRestart = $('restart'), btnNewQ = $('newq');
+
+    // ---------------- deterministic PRNG (mulberry32) ----------------
+    function mulberry32(a){
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function gauss(rnd){                        // Box-Muller, one draw
+      var u = Math.max(1e-9, rnd()), v = rnd();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+
+    var MAXN = 60, MAXLVL = 3, EFMAX = 32, EFC = 24;
+
+    // Fixed point cloud: 5 Gaussian blobs, round-robin so that shrinking N
+    // keeps the picture stable (the first N points never move).
+    var CENTERS = [[0.22,0.75],[0.76,0.78],[0.50,0.46],[0.20,0.22],[0.80,0.20]];
+    var PTS = (function(){
+      var rnd = mulberry32(20260811), out = [];
+      for (var i = 0; i < MAXN; i++){
+        var c = CENTERS[i % CENTERS.length];
+        var x = c[0] + gauss(rnd) * 0.085, y = c[1] + gauss(rnd) * 0.085;
+        out.push([Math.min(0.96, Math.max(0.04, x)), Math.min(0.96, Math.max(0.04, y))]);
+      }
+      return out;
+    })();
+    // Fixed uniforms for the skip-list level draw (stable across N and M).
+    var LVL_U = (function(){
+      var rnd = mulberry32(777), out = [];
+      for (var i = 0; i < MAXN; i++) out.push(Math.max(1e-9, rnd()));
+      return out;
+    })();
+    // Fixed query bank for the ef sweep + the "New query" button.
+    var QBANK = (function(){
+      var rnd = mulberry32(31337), out = [];
+      for (var i = 0; i < 48; i++) out.push([0.03 + rnd() * 0.94, 0.03 + rnd() * 0.94]);
+      return out;
+    })();
+
+    // ---------------- exact math: squared L2 ----------------
+    function l2(a, b){ var dx = a[0] - b[0], dy = a[1] - b[1]; return dx * dx + dy * dy; }
+
+    // small priority helpers (N is tiny, linear scans are exact and clear)
+    function popMin(arr){                       // min by (d, id), like heapq tuples
+      var bi = 0;
+      for (var i = 1; i < arr.length; i++){
+        if (arr[i].d < arr[bi].d || (arr[i].d === arr[bi].d && arr[i].id < arr[bi].id)) bi = i;
+      }
+      return arr.splice(bi, 1)[0];
+    }
+    function worst(arr){                        // max d (ties -> smallest id): the res-heap top
+      var bi = 0;
+      for (var i = 1; i < arr.length; i++){
+        if (arr[i].d > arr[bi].d || (arr[i].d === arr[bi].d && arr[i].id < arr[bi].id)) bi = i;
+      }
+      return bi;
+    }
+    function bestOf(arr){
+      var b = arr[0];
+      for (var i = 1; i < arr.length; i++){
+        if (arr[i].d < b.d || (arr[i].d === b.d && arr[i].id < b.id)) b = arr[i];
+      }
+      return b;
+    }
+    function copyList(a){ return a.map(function(e){ return { d: e.d, id: e.id }; }); }
+
+    // ---------------- SEARCH-LAYER (paper Alg. 2) ----------------
+    // ctx: { graph, count, trace(optional), layerSeen(optional) }
+    function searchLayer(q, eps, ef, layer, ctx){
+      var visited = {}, cand = [], res = [], i, e, de;
+      for (i = 0; i < eps.length; i++){
+        e = eps[i];
+        if (visited[e]) continue;
+        visited[e] = 1;
+        de = l2(q, PTS[e]); ctx.count++;
+        cand.push({ d: de, id: e }); res.push({ d: de, id: e });
+        if (ctx.seen) ctx.seen(layer, e);
+      }
+      if (ctx.frame) ctx.frame({ phase: 'enter', layer: layer, current: null, evaluated: [], res: copyList(res), ef: ef });
+      while (cand.length){
+        var c = popMin(cand);
+        if (res[worst(res)].d < c.d){
+          if (ctx.frame) ctx.frame({ phase: 'stop', layer: layer, current: c.id, evaluated: [], res: copyList(res), ef: ef });
+          break;                                 // beam converged: frontier is worse than the worst kept
+        }
+        var nbs = ctx.graph[c.id][layer] || [], evaluated = [];
+        for (i = 0; i < nbs.length; i++){
+          var nb = nbs[i];
+          if (visited[nb]){ evaluated.push({ id: nb, skipped: true }); continue; }
+          visited[nb] = 1;
+          var dn = l2(q, PTS[nb]); ctx.count++;
+          if (ctx.seen) ctx.seen(layer, nb);
+          var accepted = (dn < res[worst(res)].d) || (res.length < ef);
+          if (accepted){
+            cand.push({ d: dn, id: nb }); res.push({ d: dn, id: nb });
+            if (res.length > ef) res.splice(worst(res), 1);
+          }
+          evaluated.push({ id: nb, d: dn, accepted: accepted });
+        }
+        if (ctx.walk) ctx.walk(layer, c.id);
+        if (ctx.frame) ctx.frame({ phase: 'expand', layer: layer, current: c.id, evaluated: evaluated, res: copyList(res), ef: ef });
+      }
+      return res;
+    }
+
+    // ---------------- neighbor selection ----------------
+    function selectClosest(node, cands, M){      // naive: keep the M closest
+      var seen = {}, scored = [];
+      for (var i = 0; i < cands.length; i++){
+        var c = cands[i];
+        if (c === node || seen[c]) continue;
+        seen[c] = 1;
+        scored.push({ d: l2(PTS[node], PTS[c]), id: c });
+      }
+      scored.sort(function(a, b){ return a.d - b.d || a.id - b.id; });
+      return scored.slice(0, M).map(function(e){ return e.id; });
+    }
+    function selectDiverse(node, cands, M){      // paper Alg. 4 (RNG pruning)
+      var seen = {}, scored = [];
+      for (var i = 0; i < cands.length; i++){
+        var c = cands[i];
+        if (c === node || seen[c]) continue;
+        seen[c] = 1;
+        scored.push({ d: l2(PTS[node], PTS[c]), id: c });
+      }
+      scored.sort(function(a, b){ return a.d - b.d || a.id - b.id; });
+      var kept = [];
+      for (i = 0; i < scored.length && kept.length < M; i++){
+        var ok = true;
+        for (var j = 0; j < kept.length; j++){
+          if (l2(PTS[scored[i].id], PTS[kept[j]]) <= scored[i].d){ ok = false; break; }
+        }
+        if (ok) kept.push(scored[i].id);
+      }
+      return kept;
+    }
+
+    // ---------------- INSERT / build (paper Alg. 1) ----------------
+    function build(N, M, mode){
+      var M0 = 2 * M, mL = 1 / Math.log(M);
+      var select = (mode === 'closest') ? selectClosest : selectDiverse;
+      var graph = [], levels = [], entry = -1, top = -1, i, lc;
+      for (i = 0; i < N; i++){
+        var lv = Math.min(MAXLVL, Math.floor(-Math.log(LVL_U[i]) * mL));
+        levels.push(lv);
+        var g = [];
+        for (lc = 0; lc <= lv; lc++) g.push([]);
+        graph.push(g);
+        if (entry < 0){ entry = i; top = lv; continue; }
+        var ctx = { graph: graph, count: 0 };
+        var ep = [entry];
+        for (lc = top; lc > lv; lc--){           // phase 1: greedy descent, beam 1
+          ep = [bestOf(searchLayer(PTS[i], ep, 1, lc, ctx)).id];
+        }
+        for (lc = Math.min(lv, top); lc >= 0; lc--){   // phase 2: link
+          var W = searchLayer(PTS[i], ep, EFC, lc, ctx);
+          var Mmax = (lc === 0) ? M0 : M;
+          var ids = W.map(function(e){ return e.id; });
+          var nbrs = select(i, ids, Mmax);
+          graph[i][lc] = nbrs;
+          for (var t = 0; t < nbrs.length; t++){ // reverse edges, with pruning
+            var n = nbrs[t];
+            graph[n][lc].push(i);
+            if (graph[n][lc].length > Mmax) graph[n][lc] = select(n, graph[n][lc], Mmax);
+          }
+          ep = ids;
+        }
+        if (lv > top){ entry = i; top = lv; }
+      }
+      return { graph: graph, levels: levels, entry: entry, top: top, N: N, M: M, M0: M0 };
+    }
+
+    // ---------------- query-time search (paper Alg. 5) ----------------
+    function search(idx, q, ef, k, wantTrace){
+      var frames = [], visitedBy = {}, walkBy = {}, descents = [];
+      var ctx = { graph: idx.graph, count: 0 };
+      if (wantTrace){
+        ctx.seen = function(layer, id){
+          if (!visitedBy[layer]) visitedBy[layer] = [];
+          if (visitedBy[layer].indexOf(id) < 0) visitedBy[layer].push(id);
+        };
+        ctx.walk = function(layer, id){
+          if (!walkBy[layer]) walkBy[layer] = [];
+          if (walkBy[layer][walkBy[layer].length - 1] !== id) walkBy[layer].push(id);
+        };
+        ctx.frame = function(f){
+          f.count = ctx.count;
+          f.visitedBy = JSON.parse(JSON.stringify(visitedBy));
+          f.walkBy = JSON.parse(JSON.stringify(walkBy));
+          f.descents = descents.slice();
+          frames.push(f);
+        };
+      }
+      var ep = [idx.entry], lc;
+      for (lc = idx.top; lc > 0; lc--){
+        var best = bestOf(searchLayer(q, ep, 1, lc, ctx)).id;
+        ep = [best];
+        descents.push({ from: lc, id: best });
+        if (wantTrace) ctx.frame({ phase: 'descend', layer: lc - 1, current: best, evaluated: [], res: [{ d: l2(q, PTS[best]), id: best }], ef: 1 });
+      }
+      var W = searchLayer(q, ep, ef, 0, ctx);
+      W.sort(function(a, b){ return a.d - b.d || a.id - b.id; });
+      var out = W.slice(0, k);
+      if (wantTrace) ctx.frame({ phase: 'done', layer: 0, current: out.length ? out[0].id : null, evaluated: [], res: copyList(out), ef: ef });
+      return { ids: out.map(function(e){ return e.id; }), dists: out, count: ctx.count, frames: frames };
+    }
+
+    function bruteTopK(q, N, k){
+      var all = [];
+      for (var i = 0; i < N; i++) all.push({ d: l2(q, PTS[i]), id: i });
+      all.sort(function(a, b){ return a.d - b.d || a.id - b.id; });
+      return all.slice(0, k);
+    }
+    function recallOf(got, truth){
+      var s = {}, hit = 0, i;
+      for (i = 0; i < truth.length; i++) s[truth[i].id] = 1;
+      for (i = 0; i < got.length; i++) if (s[got[i]]) hit++;
+      return truth.length ? hit / truth.length : 0;
+    }
+
+    // ---------------- state ----------------
+    var query = [0.58, 0.30];
+    var idx = null, cur = null, frames = [], frameIdx = 0, timer = null, lastLayout = null, qbankPtr = 0;
+
+    function params(){
+      var N = Math.max(8, Math.min(MAXN, parseInt(elN.value, 10) || 32));
+      var ef = Math.max(1, Math.min(EFMAX, parseInt(elEf.value, 10) || 4));
+      var M = Math.max(3, Math.min(8, parseInt(elM.value, 10) || 4));
+      return { N: N, ef: ef, M: M, mode: elSel.value === 'closest' ? 'closest' : 'heuristic', k: Math.min(5, N) };
+    }
+    function fmt(x, d){ return (Math.round(x * Math.pow(10, d)) / Math.pow(10, d)).toFixed(d); }
+    function dist(sq){ return fmt(Math.sqrt(sq), 3); }
+
+    // ---------------- geometry ----------------
+    var VBW = 760;
+    function layout(L){
+      var pad = 10, gap = 14, labelH = 22, footH = 20;
+      var size = Math.min(250, (VBW - 2 * pad - gap * (L - 1)) / L);
+      var totalW = size * L + gap * (L - 1);
+      var x0 = (VBW - totalW) / 2;
+      var panels = [];
+      for (var j = 0; j < L; j++) panels.push({ x: x0 + j * (size + gap), y: labelH, s: size });
+      return { panels: panels, h: labelH + size + footH, size: size, L: L };
+    }
+    function px(p, pt){ return p.x + pt[0] * p.s; }
+    function py(p, pt){ return p.y + (1 - pt[1]) * p.s; }
+
+    // ---------------- rendering ----------------
+    function renderSVG(){
+      if (!idx || !cur) return;
+      var p = params(), f = frames[Math.max(0, Math.min(frames.length - 1, frameIdx))];
+      if (!f) return;
+      var L = idx.top + 1, lay = layout(L);
+      lastLayout = lay;
+      var r = Math.max(3.2, Math.min(6, lay.size / 40));
+      var out = [], j, i;
+      var truth = bruteTopK(query, p.N, p.k);
+      var trueNN = truth.length ? truth[0].id : -1;
+      var resIds = {}; for (i = 0; i < f.res.length; i++) resIds[f.res[i].id] = 1;
+
+      for (j = 0; j < L; j++){
+        var lc = idx.top - j, pan = lay.panels[j];
+        var members = [];
+        for (i = 0; i < p.N; i++) if (idx.levels[i] >= lc) members.push(i);
+        var active = (f.layer === lc);
+        out.push('<rect class="hn-panel' + (active ? ' hn-panel-active' : '') + '" x="' + fmt(pan.x, 1) + '" y="' + fmt(pan.y, 1) +
+                 '" width="' + fmt(pan.s, 1) + '" height="' + fmt(pan.s, 1) + '" rx="8"></rect>');
+        out.push('<text class="hn-panel-label" x="' + fmt(pan.x, 1) + '" y="' + fmt(pan.y - 12, 1) + '">Layer ' + lc + '</text>');
+        out.push('<text class="hn-panel-sub" x="' + fmt(pan.x, 1) + '" y="' + fmt(pan.y - 3, 1) + '">' + members.length + ' node' +
+                 (members.length === 1 ? '' : 's') + (lc === 0 ? ' &#183; dense, every vector' : (lc === idx.top ? ' &#183; entry, long hops' : ' &#183; sparse')) + '</text>');
+
+        // Links of this layer. The graph is DIRECTED: reverse edges are added on
+        // insert but later pruned away, so graph[a] may hold b while graph[b] has
+        // dropped a. Scan every adjacency list and de-duplicate on the unordered
+        // pair -- keying on "b > a" alone would silently hide every link whose
+        // only surviving direction runs from a high id to a low one (~20% of them),
+        // and the walk would then appear to jump along invisible edges.
+        var drawnEdge = {};
+        for (i = 0; i < members.length; i++){
+          var a = members[i], nbs = idx.graph[a][lc] || [];
+          for (var t = 0; t < nbs.length; t++){
+            var b = nbs[t];
+            if (b === a || b >= p.N) continue;
+            var ekey = (a < b) ? (a + '_' + b) : (b + '_' + a);
+            if (drawnEdge[ekey]) continue;
+            drawnEdge[ekey] = 1;
+            out.push('<line class="hn-edge" x1="' + fmt(px(pan, PTS[a]), 1) + '" y1="' + fmt(py(pan, PTS[a]), 1) +
+                     '" x2="' + fmt(px(pan, PTS[b]), 1) + '" y2="' + fmt(py(pan, PTS[b]), 1) + '"></line>');
+          }
+        }
+        // brute-force overlay lives in layer 0 (the only layer holding every vector)
+        if (lc === 0 && elBrute.checked){
+          for (i = 0; i < p.N; i++){
+            out.push('<line class="hn-brute" x1="' + fmt(px(pan, query), 1) + '" y1="' + fmt(py(pan, query), 1) +
+                     '" x2="' + fmt(px(pan, PTS[i]), 1) + '" y2="' + fmt(py(pan, PTS[i]), 1) + '"></line>');
+          }
+        }
+        // ghosts: vectors that do not live in this layer
+        if (lc > 0){
+          for (i = 0; i < p.N; i++){
+            if (idx.levels[i] >= lc) continue;
+            out.push('<circle class="hn-ghost" cx="' + fmt(px(pan, PTS[i]), 1) + '" cy="' + fmt(py(pan, PTS[i]), 1) + '" r="1.4"></circle>');
+          }
+        }
+        // greedy walk path inside this layer
+        var walk = f.walkBy[lc] || [];
+        if (walk.length > 1){
+          var pts = walk.map(function(id){ return fmt(px(pan, PTS[id]), 1) + ',' + fmt(py(pan, PTS[id]), 1); });
+          out.push('<polyline class="hn-path" points="' + pts.join(' ') + '"></polyline>');
+        }
+        // the distance computations of THIS step: query -> each evaluated neighbor
+        if (active && f.evaluated.length){
+          for (i = 0; i < f.evaluated.length; i++){
+            var ev = f.evaluated[i];
+            out.push('<line class="' + (ev.skipped ? 'hn-eval-skip' : 'hn-eval') + '" x1="' + fmt(px(pan, query), 1) + '" y1="' + fmt(py(pan, query), 1) +
+                     '" x2="' + fmt(px(pan, PTS[ev.id]), 1) + '" y2="' + fmt(py(pan, PTS[ev.id]), 1) + '"></line>');
+          }
+        }
+        // nodes
+        var visited = f.visitedBy[lc] || [], visSet = {};
+        for (i = 0; i < visited.length; i++) visSet[visited[i]] = 1;
+        for (i = 0; i < members.length; i++){
+          var id = members[i], cx = px(pan, PTS[id]), cy = py(pan, PTS[id]);
+          var cls = visSet[id] ? 'hn-node hn-node-vis' : 'hn-node';
+          out.push('<circle class="' + cls + '" cx="' + fmt(cx, 1) + '" cy="' + fmt(cy, 1) + '" r="' + fmt(r, 1) + '"></circle>');
+          if (active && resIds[id]) out.push('<circle class="hn-ring-res" cx="' + fmt(cx, 1) + '" cy="' + fmt(cy, 1) + '" r="' + fmt(r + 2.6, 1) + '"></circle>');
+          if (lc === 0 && id === trueNN) out.push('<circle class="hn-ring-true" cx="' + fmt(cx, 1) + '" cy="' + fmt(cy, 1) + '" r="' + fmt(r + 5.2, 1) + '"></circle>');
+          if (lc === idx.top && id === idx.entry){
+            out.push('<text class="hn-tag" x="' + fmt(cx + r + 3, 1) + '" y="' + fmt(cy - r - 2, 1) + '">entry</text>');
+          }
+        }
+        // current node on top
+        if (active && f.current !== null && f.current !== undefined && idx.levels[f.current] >= lc){
+          var ccx = px(pan, PTS[f.current]), ccy = py(pan, PTS[f.current]);
+          out.push('<circle class="hn-ring-cur" cx="' + fmt(ccx, 1) + '" cy="' + fmt(ccy, 1) + '" r="' + fmt(r + 4.5, 1) + '"></circle>');
+          out.push('<circle class="hn-node-cur" cx="' + fmt(ccx, 1) + '" cy="' + fmt(ccy, 1) + '" r="' + fmt(r + 0.8, 1) + '"></circle>');
+        }
+        // query marker in every panel (draggable)
+        var qx = px(pan, query), qy = py(pan, query), qs = 5.5;
+        out.push('<g class="hn-qgrab" data-panel="' + j + '"' + (lc === 0 ? ' tabindex="0" aria-label="Query vector at x ' + fmt(query[0], 2) + ', y ' + fmt(query[1], 2) + '; use the arrow keys to move it"' : '') + '>' +
+                 '<circle class="hn-query-halo" cx="' + fmt(qx, 1) + '" cy="' + fmt(qy, 1) + '" r="' + fmt(qs + 2, 1) + '"></circle>' +
+                 '<line class="hn-query" x1="' + fmt(qx - qs, 1) + '" y1="' + fmt(qy - qs, 1) + '" x2="' + fmt(qx + qs, 1) + '" y2="' + fmt(qy + qs, 1) + '"></line>' +
+                 '<line class="hn-query" x1="' + fmt(qx + qs, 1) + '" y1="' + fmt(qy - qs, 1) + '" x2="' + fmt(qx - qs, 1) + '" y2="' + fmt(qy + qs, 1) + '"></line></g>');
+        if (lc === 0){
+          out.push('<text class="hn-tag" x="' + fmt(qx, 1) + '" y="' + fmt(qy + qs + 9, 1) + '" text-anchor="middle">query</text>');
+        }
+      }
+      // descent arrows between panels
+      for (i = 0; i < f.descents.length; i++){
+        var dsc = f.descents[i], jf = idx.top - dsc.from;
+        if (jf < 0 || jf + 1 >= L) continue;
+        var pa = lay.panels[jf], pb = lay.panels[jf + 1];
+        var x1 = px(pa, PTS[dsc.id]), y1 = py(pa, PTS[dsc.id]);
+        var x2 = px(pb, PTS[dsc.id]), y2 = py(pb, PTS[dsc.id]);
+        var my = Math.max(10, Math.min(y1, y2) - 14);
+        out.push('<path class="hn-descend" d="M' + fmt(x1, 1) + ',' + fmt(y1, 1) + ' C' + fmt(x1 + 18, 1) + ',' + fmt(my, 1) + ' ' +
+                 fmt(x2 - 18, 1) + ',' + fmt(my, 1) + ' ' + fmt(x2, 1) + ',' + fmt(y2, 1) + '"></path>');
+        out.push('<text class="hn-tag-ac hn-tag" x="' + fmt((x1 + x2) / 2, 1) + '" y="' + fmt(my - 2, 1) + '" text-anchor="middle">descend</text>');
+      }
+      out.push('<text class="hn-panel-sub" x="' + fmt(lay.panels[0].x, 1) + '" y="' + fmt(lay.h - 6, 1) +
+               '">Same 2-D coordinates in every panel; only the nodes and links change. Drag the &#215; to move the query.</text>');
+      svg.setAttribute('viewBox', '0 0 ' + VBW + ' ' + fmt(lay.h, 0));
+      svg.innerHTML = out.join('');
+    }
+
+    function stepText(){
+      var f = frames[frameIdx], p = params();
+      if (!f) return '';
+      var best = f.res.length ? bestOf(f.res) : null;
+      var head = '<b>Step ' + frameIdx + ' / ' + (frames.length - 1) + '</b> &mdash; ';
+      if (f.phase === 'enter'){
+        return head + 'enter <span class="hn-em">layer ' + f.layer + '</span> at node ' + f.res.map(function(e){ return '#' + e.id; }).join(', ') +
+               ' (beam ef = ' + f.ef + '). Distance computations so far: <span class="hn-em">' + f.count + '</span>.';
+      }
+      if (f.phase === 'descend'){
+        return head + 'layer ' + (f.layer + 1) + ' converged at node <span class="hn-em">#' + f.current + '</span> (d = ' + dist(f.res[0].d) +
+               '); <span class="hn-em">descend</span> to layer ' + f.layer + ' and keep walking from there. Distance computations: <span class="hn-em">' + f.count + '</span>.';
+      }
+      if (f.phase === 'stop'){
+        var dc = (f.current === null || f.current === undefined) ? 0 : l2(query, PTS[f.current]);
+        var dw = f.res.length ? f.res[worst(f.res)].d : 0;
+        return head + 'layer ' + f.layer + ': the next candidate #' + f.current + ' (d = ' + dist(dc) +
+               ') is already farther than the worst node held in the beam (d = ' + dist(dw) +
+               '), so no unexplored branch can improve it &mdash; the beam has <span class="hn-em">converged</span>. Distance computations: <span class="hn-em">' + f.count + '</span>.';
+      }
+      if (f.phase === 'done'){
+        return head + 'returned top-' + p.k + ': ' + f.res.map(function(e){ return '#' + e.id + ' (d=' + dist(e.d) + ')'; }).join(', ') +
+               '. Total distance computations: <span class="hn-em">' + f.count + '</span>.';
+      }
+      var evs = f.evaluated.map(function(e){
+        if (e.skipped) return '#' + e.id + ' already visited';
+        return '#' + e.id + ' d=' + dist(e.d) + (e.accepted ? ' <span class="hn-ok">keep</span>' : ' <span class="hn-bad">drop</span>');
+      });
+      return head + 'layer <span class="hn-em">' + f.layer + '</span>, expand node <span class="hn-em">#' + f.current + '</span>: evaluate ' +
+             f.evaluated.length + ' neighbor' + (f.evaluated.length === 1 ? '' : 's') + ' &mdash; ' + evs.join(', ') +
+             '. Best so far: #' + best.id + ' at d = ' + dist(best.d) + '. Distance computations: <span class="hn-em">' + f.count + '</span>.';
+    }
+
+    function renderStats(){
+      var p = params();
+      var truth = bruteTopK(query, p.N, p.k);
+      var rec = recallOf(cur.ids, truth);
+      var hops = frames.filter(function(f){ return f.phase === 'expand'; }).length;
+      var speed = cur.count > 0 ? (p.N / cur.count) : 0;
+      var foundNN = truth.length && cur.ids.indexOf(truth[0].id) >= 0;
+      var cards = [];
+      cards.push('<div class="vt-stat hn-hi">HNSW distance computations<b>' + cur.count + '</b>full search: ' + hops + ' greedy hop' + (hops === 1 ? '' : 's') +
+                 ' across ' + (idx.top + 1) + ' layer' + (idx.top === 0 ? '' : 's') + '</div>');
+      cards.push('<div class="vt-stat hn-warn">Brute-force scan<b>' + p.N + '</b>one distance per stored vector, always exact</div>');
+      cards.push('<div class="vt-stat ' + (speed >= 1 ? 'hn-good' : 'hn-warn') + '">Speedup vs brute force<b>' + fmt(speed, 2) + '&times;</b>' +
+                 (speed >= 1 ? 'N / HNSW distance computations' : 'below 1&times;: at this tiny N the walk costs more than the scan') +
+                 ' &#183; M&thinsp;&middot;&thinsp;log&#8322;N reference = ' + fmt(p.M * Math.log(p.N) / Math.log(2), 0) + '</div>');
+      cards.push('<div class="vt-stat ' + (rec >= 0.999 ? 'hn-good' : 'hn-warn') + '">recall@' + p.k + '<b>' + fmt(rec, 2) + '</b>' +
+                 (foundNN ? 'true nearest neighbor found' : '<span class="hn-bad">true nearest neighbor MISSED</span>') +
+                 (p.ef < p.k ? ' &#183; ef &lt; k, so recall cannot exceed ' + fmt(p.ef / p.k, 2) : '') + '</div>');
+      // layer-0 link budget: the diversity rule should spend far fewer links here
+      var l0 = 0, outDeg = 0, seenE = {}, a, t2;
+      for (a = 0; a < p.N; a++){
+        var nb0 = idx.graph[a][0] || [];
+        outDeg += nb0.length;
+        for (t2 = 0; t2 < nb0.length; t2++){
+          var b0 = nb0[t2], kk = (a < b0) ? (a + '_' + b0) : (b0 + '_' + a);
+          if (!seenE[kk]){ seenE[kk] = 1; l0++; }
+        }
+      }
+      cards.push('<div class="vt-stat">Layer-0 links<b>' + l0 + '</b>distinct undirected links &#183; mean out-degree ' +
+                 fmt(outDeg / p.N, 1) + ' (cap 2M = ' + idx.M0 + ') &#183; ' +
+                 (p.mode === 'closest' ? 'M closest' : 'diverse, Alg. 4') + '</div>');
+      statsEl.innerHTML = cards.join('');
+    }
+
+    // ---------------- ef sweep chart ----------------
+    // The sweep depends only on the INDEX (N, M, selection rule), never on ef,
+    // so cache it and let the ef slider just move the marker.
+    var sweepCache = null;
+    function efSweep(p){
+      var key = p.N + '|' + p.M + '|' + p.mode + '|' + p.k;
+      if (sweepCache && sweepCache.key === key) return sweepCache;
+      var recalls = [], costs = [], i, ef;
+      var truths = QBANK.map(function(q){ return bruteTopK(q, p.N, p.k); });
+      for (ef = 1; ef <= EFMAX; ef++){
+        var rs = 0, cs = 0;
+        for (i = 0; i < QBANK.length; i++){
+          var res = search(idx, QBANK[i], ef, p.k, false);
+          rs += recallOf(res.ids, truths[i]);
+          cs += res.count;
+        }
+        recalls.push(rs / QBANK.length);
+        costs.push(cs / QBANK.length);
+      }
+      sweepCache = { key: key, recalls: recalls, costs: costs };
+      return sweepCache;
+    }
+    function renderChart(){
+      var p = params(), i, ef;
+      var W = 520, H = 220, ml = 44, mr = 46, mt = 30, mb = 34;
+      var iw = W - ml - mr, ih = H - mt - mb;
+      var sw = efSweep(p), recalls = sw.recalls, costs = sw.costs;
+      var maxCost = p.N;
+      for (i = 0; i < costs.length; i++) if (costs[i] > maxCost) maxCost = costs[i];
+      maxCost = Math.ceil(Math.max(1, maxCost) * 1.15 / 8) * 8;   // headroom + round axis ticks
+      var X = function(e){ return ml + (e - 1) / (EFMAX - 1) * iw; };
+      var YR = function(v){ return mt + (1 - v) * ih; };
+      var YC = function(v){ return mt + (1 - v / maxCost) * ih; };
+      var o = [];
+      // axes + grid
+      for (i = 0; i <= 4; i++){
+        var v = i / 4, y = YR(v);
+        o.push('<line class="hn-ax" x1="' + ml + '" y1="' + fmt(y, 1) + '" x2="' + (ml + iw) + '" y2="' + fmt(y, 1) + '"></line>');
+        o.push('<text class="hn-axtext" x="' + (ml - 6) + '" y="' + fmt(y + 3, 1) + '" text-anchor="end">' + fmt(v, 2) + '</text>');
+        o.push('<text class="hn-axtext" x="' + (ml + iw + 6) + '" y="' + fmt(y + 3, 1) + '">' + fmt(maxCost * v, 0) + '</text>');
+      }
+      var ticks = [1, 4, 8, 12, 16, 20, 24, 28, 32];
+      for (i = 0; i < ticks.length; i++){
+        o.push('<text class="hn-axtext" x="' + fmt(X(ticks[i]), 1) + '" y="' + (mt + ih + 13) + '" text-anchor="middle">' + ticks[i] + '</text>');
+      }
+      o.push('<text class="hn-axtitle" x="' + fmt(ml + iw / 2, 1) + '" y="' + (H - 6) + '" text-anchor="middle">beam width ef</text>');
+      o.push('<text class="hn-axtitle" x="6" y="14">recall@' + p.k + ' (left)</text>');
+      o.push('<text class="hn-axtitle" x="' + (W - 6) + '" y="14" text-anchor="end">distance computations (right)</text>');
+      // brute-force reference
+      o.push('<line class="hn-line-brute" x1="' + ml + '" y1="' + fmt(YC(p.N), 1) + '" x2="' + (ml + iw) + '" y2="' + fmt(YC(p.N), 1) + '"></line>');
+      o.push('<text class="hn-axtext" x="' + (ml + iw - 4) + '" y="' + fmt(YC(p.N) - 4, 1) + '" text-anchor="end">brute force = N = ' + p.N + '</text>');
+      // lines
+      var pr = [], pc = [];
+      for (ef = 1; ef <= EFMAX; ef++){
+        pr.push(fmt(X(ef), 1) + ',' + fmt(YR(recalls[ef - 1]), 1));
+        pc.push(fmt(X(ef), 1) + ',' + fmt(YC(costs[ef - 1]), 1));
+      }
+      o.push('<polyline class="hn-line-cost" points="' + pc.join(' ') + '"></polyline>');
+      o.push('<polyline class="hn-line-recall" points="' + pr.join(' ') + '"></polyline>');
+      // current-ef marker
+      o.push('<line class="hn-marker" x1="' + fmt(X(p.ef), 1) + '" y1="' + mt + '" x2="' + fmt(X(p.ef), 1) + '" y2="' + (mt + ih) + '"></line>');
+      o.push('<circle class="hn-dot-recall" cx="' + fmt(X(p.ef), 1) + '" cy="' + fmt(YR(recalls[p.ef - 1]), 1) + '" r="3.4"></circle>');
+      o.push('<circle class="hn-dot-cost" cx="' + fmt(X(p.ef), 1) + '" cy="' + fmt(YC(costs[p.ef - 1]), 1) + '" r="3.4"></circle>');
+      o.push('<text class="hn-axtext" x="' + fmt(X(p.ef), 1) + '" y="' + (mt - 5) + '" text-anchor="middle">ef = ' + p.ef + '</text>');
+      chart.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+      chart.innerHTML = o.join('');
+      var caveat = (p.ef < p.k) ? ' Note that ef = ' + p.ef + ' &lt; k = ' + p.k + ': the beam physically cannot hold k results, so recall is hard-capped at ef/k = ' + fmt(p.ef / p.k, 2) + '. Always set ef &ge; k.' : '';
+      var maxRec = 0;
+      for (i = 0; i < recalls.length; i++) if (recalls[i] > maxRec) maxRec = recalls[i];
+      var plateau = (maxRec < 0.999)
+        ? ' <b>This curve plateaus at ' + fmt(maxRec, 2) + '</b>: even ef = ' + EFMAX + ' never reaches recall 1, because part of the graph is simply unreachable from the entry point. A wider beam cannot repair a badly linked index &mdash; only a better build can.'
+        : '';
+      var cross = (costs[p.ef - 1] >= p.N)
+        ? ' At this ef the walk already costs more than the scan (' + fmt(costs[p.ef - 1], 1) + ' &ge; ' + p.N + '): with only ' + p.N + ' vectors the hierarchy has nothing to save. Raise N and watch the gap open &mdash; the walk grows like log&thinsp;N, the scan like N.'
+        : '';
+      $('chartdesc').innerHTML = 'At ef = <b>' + p.ef + '</b>: mean recall@' + p.k + ' = <b>' + fmt(recalls[p.ef - 1], 3) +
+        '</b>, mean distance computations = <b>' + fmt(costs[p.ef - 1], 1) + '</b> vs ' + p.N +
+        ' for brute force. Recall rises steeply and then flattens while cost keeps climbing &mdash; the knee is where you tune a production index.' + caveat + plateau + cross;
+    }
+
+    // ---------------- run + render pipeline ----------------
+    function rebuild(){
+      var p = params();
+      idx = build(p.N, p.M, p.mode);
+      rerun(true);
+      renderChart();
+    }
+    function rerun(resetFrame){
+      var p = params();
+      cur = search(idx, query, p.ef, p.k, true);
+      frames = cur.frames;
+      if (!frames.length) frames = [{ phase: 'done', layer: 0, current: null, evaluated: [], res: [], count: cur.count, visitedBy: {}, walkBy: {}, descents: [], ef: p.ef }];
+      elFrame.max = String(frames.length - 1);
+      frameIdx = resetFrame ? 0 : frames.length - 1;
+      elFrame.value = String(frameIdx);
+      paint();
+    }
+    function paint(){
+      frameIdx = Math.max(0, Math.min(frames.length - 1, frameIdx));
+      elFrame.value = String(frameIdx);
+      $('frameVal').textContent = frameIdx + ' / ' + (frames.length - 1);
+      renderSVG();
+      readout.innerHTML = stepText();
+      renderStats();
+    }
+    function syncLabels(){
+      $('nVal').textContent = elN.value;
+      $('efVal').textContent = elEf.value;
+      $('mVal').textContent = elM.value;
+    }
+
+    // ---------------- animation ----------------
+    function stop(){
+      if (timer){ clearInterval(timer); timer = null; }
+      btnPlay.innerHTML = '&#9658; Play search';
+    }
+    function play(){
+      if (timer){ stop(); return; }
+      if (frameIdx >= frames.length - 1) frameIdx = 0;
+      btnPlay.innerHTML = '&#10074;&#10074; Pause';
+      timer = setInterval(function(){
+        if (frameIdx >= frames.length - 1){ stop(); return; }
+        frameIdx++; paint();
+      }, 750);
+      paint();
+    }
+
+    // ---------------- query dragging ----------------
+    function svgPoint(evt){
+      var rect = svg.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      var vb = svg.viewBox.baseVal;
+      var vw = vb && vb.width ? vb.width : VBW;
+      var vh = vb && vb.height ? vb.height : 300;
+      return { x: (evt.clientX - rect.left) * (vw / rect.width), y: (evt.clientY - rect.top) * (vh / rect.height) };
+    }
+    function panelAt(pt){
+      if (!lastLayout) return -1;
+      var bi = -1, bd = Infinity;
+      for (var j = 0; j < lastLayout.panels.length; j++){
+        var p = lastLayout.panels[j];
+        var cx = p.x + p.s / 2, cy = p.y + p.s / 2, slop = 12;
+        var d = Math.abs(pt.x - cx) + Math.abs(pt.y - cy);
+        if (pt.x >= p.x - slop && pt.x <= p.x + p.s + slop &&
+            pt.y >= p.y - slop && pt.y <= p.y + p.s + slop && d < bd){ bd = d; bi = j; }
+      }
+      return bi;
+    }
+    var dragging = false;
+    function moveQuery(evt){
+      var pt = svgPoint(evt);
+      if (!pt || !lastLayout) return;
+      var j = panelAt(pt);
+      if (j < 0) return;
+      var p = lastLayout.panels[j];
+      var qx = (pt.x - p.x) / p.s, qy = 1 - (pt.y - p.y) / p.s;
+      query = [Math.min(1, Math.max(0, qx)), Math.min(1, Math.max(0, qy))];
+      rerun(false);
+    }
+    svg.addEventListener('pointerdown', function(evt){
+      dragging = true;
+      stop();
+      if (svg.setPointerCapture) { try { svg.setPointerCapture(evt.pointerId); } catch (e) {} }
+      moveQuery(evt);
+      evt.preventDefault();
+    });
+    svg.addEventListener('pointermove', function(evt){ if (dragging) { moveQuery(evt); evt.preventDefault(); } });
+    svg.addEventListener('pointerup', function(){ dragging = false; });
+    svg.addEventListener('pointercancel', function(){ dragging = false; });
+    svg.addEventListener('keydown', function(evt){
+      var step = evt.shiftKey ? 0.05 : 0.015, dx = 0, dy = 0;
+      if (evt.key === 'ArrowLeft') dx = -step;
+      else if (evt.key === 'ArrowRight') dx = step;
+      else if (evt.key === 'ArrowUp') dy = step;
+      else if (evt.key === 'ArrowDown') dy = -step;
+      else return;
+      evt.preventDefault();
+      stop();
+      query = [Math.min(1, Math.max(0, query[0] + dx)), Math.min(1, Math.max(0, query[1] + dy))];
+      rerun(false);
+      var g = svg.querySelector('.hn-qgrab[tabindex]');
+      if (g) g.focus();
+    });
+
+    // ---------------- events ----------------
+    function onBuildChange(){ syncLabels(); stop(); rebuild(); }
+    function onSearchChange(){ syncLabels(); stop(); rerun(true); renderChart(); }
+    elN.addEventListener('input', onBuildChange);
+    elM.addEventListener('input', onBuildChange);
+    elSel.addEventListener('change', onBuildChange);
+    elEf.addEventListener('input', onSearchChange);
+    elBrute.addEventListener('change', function(){ renderSVG(); });
+    elFrame.addEventListener('input', function(){ stop(); frameIdx = parseInt(elFrame.value, 10) || 0; paint(); });
+    btnPlay.addEventListener('click', play);
+    btnStep.addEventListener('click', function(){ stop(); if (frameIdx < frames.length - 1) frameIdx++; paint(); });
+    btnRestart.addEventListener('click', function(){ stop(); frameIdx = 0; paint(); });
+    btnNewQ.addEventListener('click', function(){
+      stop();
+      qbankPtr = (qbankPtr + 7) % QBANK.length;
+      query = [QBANK[qbankPtr][0], QBANK[qbankPtr][1]];
+      rerun(true);
+    });
+
+    syncLabels();
+    rebuild();
+  })();</script>
+</div>

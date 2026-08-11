@@ -107,6 +107,10 @@ This is **rank one** — an outer product of two vectors — so it costs $d \tim
 
     The covariance $C = KK^\top$ is $16384 \times 16384 \approx 2.7\times 10^8$ entries; inverting it once costs $O(d_{\text{mlp}}^3) \approx 4.4\times10^{12}$ FLOPs — a few seconds on a GPU, amortized across *all* future edits to that layer because $C$ is fact-independent. The per-edit cost is then dominated by the ~25-step Adam optimization of $v_*$: ~25 forward/backward passes through the model on a handful of short prompts, i.e. **single-digit seconds**. Contrast with retraining GPT-J: thousands of GPU-hours. The asymmetry — milliseconds of linear algebra vs. weeks of training — is the whole reason the field exists.
 
+The whole pipeline — causal tracing to find the site, the Adam solve for $v_*$, the $C^{-1}$-steered rank-one update, and the reliability/generalization/locality scorecard — runs end to end in the widget below on a toy transformer small enough to compute in a browser but built so that the locate-then-edit hypothesis actually holds. The damping slider is the one to play with: it interpolates between the true covariance and the identity approximation, and shows you exactly what the statistics are buying.
+
+{{tool:knowledge-editing-rome}}
+
 ---
 
 ## 3. From One Fact to Thousands: MEMIT and AlphaEdit

@@ -86,6 +86,8 @@ The loop continues until an EOS token is sampled *and* the FSM is in an acceptin
 
 {{fig:structgen-mask-decode-loop}}
 
+{{tool:constrained-decoding-fsm}}
+
 ### FSM Compilation Complexity
 
 For a regex with $s$ states and vocabulary size $V$:

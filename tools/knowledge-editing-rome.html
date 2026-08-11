@@ -1,0 +1,924 @@
+<div class="viz-tool" id="tool-knowledge-editing-rome">
+  <div class="vt-title">Knowledge editing: locate the fact with causal tracing, then rewrite it with a rank-one update (ROME)</div>
+
+  <div class="ker-intro">
+    A hand-built 10-layer toy transformer that stores four (subject, is-in, city) facts in its middle-layer MLPs.
+    Everything below is computed live in your browser: real activation patching, a real Adam solve for v<sub>*</sub>,
+    a real 10&times;10 matrix inverse, and the real closed-form ROME update
+    &Delta; = (v<sub>*</sub> &minus; W<sub>0</sub>k<sub>*</sub>)(C<sup>&minus;1</sup>k<sub>*</sub>)<sup>T</sup> /
+    ((C<sup>&minus;1</sup>k<sub>*</sub>)<sup>T</sup>k<sub>*</sub>) spliced into one weight matrix.
+  </div>
+
+  <div class="ker-step">Step 1 &mdash; LOCATE: causal tracing on <span class="ker-mono">"The Space Needle is in downtown ___"</span></div>
+
+  <div class="vt-grid">
+    <label for="knowledge-editing-rome-sigma-num">Subject corruption noise &sigma;
+      <span class="ker-in">
+        <input id="knowledge-editing-rome-sigma-range" type="range" min="0.1" max="2" step="0.1" value="0.8" aria-label="Corruption noise sigma added to the subject token embeddings, slider">
+        <input id="knowledge-editing-rome-sigma-num" type="number" min="0.1" max="2" step="0.1" value="0.8" aria-label="Corruption noise sigma added to the subject token embeddings, number">
+      </span>
+    </label>
+    <label for="knowledge-editing-rome-kind">Restore which activation?
+      <select id="knowledge-editing-rome-kind">
+        <option value="mlp" selected>MLP output only</option>
+        <option value="attn">attention output only</option>
+        <option value="h">whole hidden state</option>
+      </select>
+    </label>
+    <label for="knowledge-editing-rome-win-num">Restore window (layers)
+      <span class="ker-in">
+        <input id="knowledge-editing-rome-win-range" type="range" min="1" max="5" step="1" value="3" aria-label="Number of consecutive layers restored together, slider">
+        <input id="knowledge-editing-rome-win-num" type="number" min="1" max="5" step="1" value="3" aria-label="Number of consecutive layers restored together, number">
+      </span>
+    </label>
+  </div>
+
+  <div class="ker-legend">
+    <span>restored P(Seattle):</span>
+    <span class="ker-ramp" id="knowledge-editing-rome-ramp" aria-hidden="true"></span>
+    <span>none &rarr; full</span>
+    <span><i class="ker-sw ker-sw-peak"></i>strongest site</span>
+    <span><i class="ker-sw ker-sw-site"></i>current edit site</span>
+  </div>
+
+  <div class="ker-scroll">
+    <svg id="knowledge-editing-rome-trace-svg" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
+  </div>
+  <div class="ker-caption" id="knowledge-editing-rome-trace-caption"></div>
+  <div class="ker-actions">
+    <button type="button" id="knowledge-editing-rome-usepeak">Put the edit site on the traced peak</button>
+  </div>
+
+  <div class="ker-step">Step 2 &mdash; EDIT: one rank-one update to that layer's W<sub>down</sub></div>
+
+  <div class="vt-grid">
+    <label for="knowledge-editing-rome-layer-num">Edit layer &#8467;
+      <span class="ker-in">
+        <input id="knowledge-editing-rome-layer-range" type="range" min="0" max="9" step="1" value="4" aria-label="Layer whose MLP down-projection is edited, slider">
+        <input id="knowledge-editing-rome-layer-num" type="number" min="0" max="9" step="1" value="4" aria-label="Layer whose MLP down-projection is edited, number">
+      </span>
+    </label>
+    <label for="knowledge-editing-rome-pos">Edit token position
+      <select id="knowledge-editing-rome-pos"></select>
+    </label>
+    <label for="knowledge-editing-rome-target">New object o<sub>*</sub>
+      <select id="knowledge-editing-rome-target"></select>
+    </label>
+    <label for="knowledge-editing-rome-lam-range">Covariance damping &lambda; <span class="ker-lamval" id="knowledge-editing-rome-lamval"></span>
+      <input id="knowledge-editing-rome-lam-range" type="range" min="-3" max="3" step="0.25" value="-1" aria-label="Log-10 of the covariance damping lambda; large lambda makes C proportional to the identity">
+    </label>
+  </div>
+
+  <div class="ker-readout" id="knowledge-editing-rome-edit-readout"></div>
+
+  <div class="ker-scroll">
+    <svg id="knowledge-editing-rome-delta-svg" xmlns="http://www.w3.org/2000/svg" role="img"></svg>
+  </div>
+  <div class="ker-caption" id="knowledge-editing-rome-delta-caption"></div>
+
+  <div class="ker-step">Step 3 &mdash; EVALUATE: reliability, generalization, locality</div>
+  <div class="ker-prompts" id="knowledge-editing-rome-prompts"></div>
+  <div class="ker-stats" id="knowledge-editing-rome-stats"></div>
+
+  <div class="vt-note" id="knowledge-editing-rome-note">
+    <b>Locate.</b> Corrupting the two subject-token embeddings destroys the fact. Restoring one cached clean
+    activation at a time and re-running tells you <i>where the fact is causally mediated</i>: the MLP trace lights up at
+    the <b>last subject token in the middle layers</b> (the memory band), and the attention trace lights up at the
+    <b>last token in the late layers</b> (the head that copies the retrieved attribute to where it is read out). That
+    two-site pattern is the empirical result ROME is built on, and here it is a genuine consequence of the circuit
+    rather than a drawing. Widening the restore window recovers more of the effect because no single layer holds the
+    whole association &mdash; which is exactly why MEMIT spreads its update over a band of layers.
+    <b>Edit.</b> The MLP down-projection is read as a linear associative memory W k = v. We capture the key
+    k<sub>*</sub> at the edit site, optimize the value v<sub>*</sub> by Adam so the model emits the new object, and then
+    add the closed-form rank-one &Delta; = r&thinsp;(C<sup>&minus;1</sup>k<sub>*</sub>)<sup>T</sup> /
+    ((C<sup>&minus;1</sup>k<sub>*</sub>)<sup>T</sup>k<sub>*</sub>) with r = v<sub>*</sub> &minus; W<sub>0</sub>k<sub>*</sub>.
+    The grid makes the structure visible: every column of &Delta; is the same vector r, rescaled &mdash; that is what
+    "rank one" means, and it is a <i>consequence</i> of the least-squares objective, not an assumption.
+    <b>The one knob that matters.</b> Because the constraint W k<sub>*</sub> = v<sub>*</sub> is enforced <i>exactly</i>,
+    <b>reliability is free</b> at any site with a live key and a causal path: P(o<sub>*</sub>) stays pinned near 1 for
+    <i>every</i> &lambda;. Generalization is free here too, for a reason worth naming &mdash; the paraphrase shares the
+    entire prefix <span class="ker-mono">"The Space Needle"</span>, so at the last subject token it produces the
+    <i>identical</i> key k<sub>*</sub> and inherits the edit automatically. (Real ROME is not so lucky: paraphrases that
+    change the subject's surface form produce a different key, which is why generalization is a scored metric and not a
+    theorem.) The only thing you can still lose is <i>locality</i>. Drag &lambda; up (C &rarr; a multiple of I &mdash; "ROME without statistics") and watch the two
+    numbers move in <b>opposite</b> directions: &#8214;&Delta;&#8214;<sub>F</sub> goes <i>down</i>, because that limit is
+    the minimum-norm solution, while the collateral mean &#8214;&Delta;k<sub>i</sub>&#8214;<sup>2</sup> on the layer's
+    ordinary keys goes <i>up</i>, and at the default site two of the three unrelated landmarks start answering with the
+    injected city. That is the whole argument for estimating C: <b>the smallest edit is not the least damaging one</b>.
+    The least damaging one is the edit that C<sup>&minus;1</sup> steers into the directions the layer's real keys barely use.
+    <b>Site matters as much as &lambda;.</b> Three failures worth reproducing. Keep layer 4 but move the edit to the
+    last token, <span class="ker-mono">"downtown"</span>: <i>all three</i> unrelated facts flip, because before the
+    mover heads have run that position looks identical in every prompt &mdash; you are overwriting a key the whole
+    corpus fires. Move to layer 0 instead: that MLP is not a memory, so its key is generic and whatever it writes has to
+    survive nine more layers &mdash; the solve pays for it with a &#8214;&Delta;&#8214;<sub>F</sub> over <i>ten times</i>
+    the norm of the entire matrix it is editing, and a bystander flips anyway. Try layer 8 or 9 with the edit token back on <span class="ker-mono">"Needle"</span>:
+    the mover heads have already read that position, so nothing downstream reads what this MLP writes, the
+    v<sub>*</sub> objective is perfectly flat, and &Delta; = 0 exactly (v<sub>*</sub> never moves off W<sub>0</sub>k<sub>*</sub>,
+    so the residual r is zero). The traced peak is the site where a <i>small, specific</i> update suffices. (The peak button follows whichever trace
+    is on screen, so sending it to the <i>attention</i> peak lands you on the last token in a late layer &mdash; the
+    failure above. Both peaks are real; only the MLP one is editable. That asymmetry is why ROME locates with attention
+    <i>and</i> MLP traces but writes only to MLPs.)
+    <b>Two honest caveats.</b> This W<sub>0</sub> is only 16&times;10 and holds four facts, so it is a tiny target:
+    &#8214;&Delta;&#8214;<sub>F</sub> lands around <i>two to three times</i> &#8214;W<sub>0</sub>&#8214;<sub>F</sub>
+    even at the good site &mdash; read the ratio as "this layer is mostly the new fact now", not as a bug. In GPT-J's
+    4096&times;16384 down-projection the identical construction is a sub-percent perturbation, because the denominator is
+    67M real parameters instead of 160. What carries over unchanged is the <b>rank</b>: one, stored as
+    d + d<sub>mlp</sub> numbers instead of d&thinsp;&middot;&thinsp;d<sub>mlp</sub>, and trivially undone by subtracting it.
+    And the edit installs an <i>association</i>, not a <i>belief</i>: nothing here propagates to "which country is it in?"
+    &mdash; the ripple-effect failure, which no setting of &lambda; or the edit site can fix.
+  </div>
+
+  <style>
+    #tool-knowledge-editing-rome{ border:1px solid var(--border-2,#e5e7eb); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif);
+      --ker-pos:#2f9e6e; --ker-neg:#b4344a; --ker-peak:#c08a06; --ker-site:#3b82f6; }
+    html[data-theme="dark"] #tool-knowledge-editing-rome{
+      --ker-pos:#4fbf8d; --ker-neg:#e8697f; --ker-peak:#e0a106; --ker-site:#7dabf8; }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-knowledge-editing-rome{
+        --ker-pos:#4fbf8d; --ker-neg:#e8697f; --ker-peak:#e0a106; --ker-site:#7dabf8; } }
+
+    #tool-knowledge-editing-rome .vt-title{ font-weight:700; font-size:1rem; margin-bottom:10px; color:var(--ink,#1a1a2e); }
+    #tool-knowledge-editing-rome .ker-intro{ font-size:.76rem; line-height:1.6; color:var(--muted,#889); margin-bottom:14px; }
+    #tool-knowledge-editing-rome .ker-mono{ font-family:var(--mono,monospace); font-size:.95em; }
+    #tool-knowledge-editing-rome .ker-step{ margin:20px 0 10px; font-size:.72rem; letter-spacing:.05em; text-transform:uppercase;
+      color:var(--ink-soft,#556); font-weight:700; border-top:1px solid var(--border,#e5e7eb); padding-top:12px; }
+    #tool-knowledge-editing-rome .ker-step:first-of-type{ border-top:none; }
+
+    #tool-knowledge-editing-rome .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-knowledge-editing-rome label{ display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted,#889); }
+    #tool-knowledge-editing-rome input, #tool-knowledge-editing-rome select, #tool-knowledge-editing-rome button{
+      font:inherit; font-size:.88rem; padding:6px 8px; border:1px solid var(--border-2,#e5e7eb); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#1a1a2e); }
+    #tool-knowledge-editing-rome input[type="range"]{ padding:0; accent-color:var(--accent,#4f46e5); }
+    #tool-knowledge-editing-rome :focus-visible{ outline:2px solid var(--accent,#4f46e5); outline-offset:2px; }
+    #tool-knowledge-editing-rome .ker-in{ display:flex; gap:6px; align-items:center; }
+    #tool-knowledge-editing-rome .ker-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-knowledge-editing-rome .ker-in input[type="number"]{ flex:1 1 64px; min-width:0; }
+    #tool-knowledge-editing-rome .ker-lamval{ font-family:var(--mono,monospace); color:var(--ink-soft,#556); }
+    #tool-knowledge-editing-rome .ker-actions{ margin-top:10px; }
+    #tool-knowledge-editing-rome button{ cursor:pointer; background:var(--surface-2,#f6f7f9); font-size:.78rem; }
+    #tool-knowledge-editing-rome button:hover{ border-color:var(--accent,#4f46e5); }
+
+    #tool-knowledge-editing-rome .ker-legend{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 16px; margin:14px 0 4px;
+      font-size:.72rem; color:var(--muted,#889); }
+    #tool-knowledge-editing-rome .ker-legend span{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-knowledge-editing-rome .ker-ramp{ display:inline-block; width:96px; height:11px; border-radius:3px;
+      border:1px solid var(--border,#e5e7eb); overflow:hidden; }
+    #tool-knowledge-editing-rome .ker-ramp i{ display:block; float:left; width:16.6%; height:100%; background:var(--accent,#4f46e5); }
+    #tool-knowledge-editing-rome .ker-sw{ display:inline-block; width:11px; height:11px; border-radius:3px; flex:0 0 auto; background:transparent; }
+    #tool-knowledge-editing-rome .ker-sw-peak{ border:2px solid var(--ker-peak); }
+    #tool-knowledge-editing-rome .ker-sw-site{ border:2px dashed var(--ker-site); }
+
+    #tool-knowledge-editing-rome .ker-scroll{ margin-top:10px; overflow-x:auto; max-width:100%; border-radius:9px;
+      background:var(--surface-2,#f6f7f9); padding:4px; }
+    #tool-knowledge-editing-rome .ker-scroll svg{ display:block; margin:0 auto; width:100%; height:auto; }
+    #tool-knowledge-editing-rome #knowledge-editing-rome-trace-svg{ min-width:600px; max-width:640px; }
+    #tool-knowledge-editing-rome #knowledge-editing-rome-delta-svg{ min-width:340px; max-width:400px; }
+    #tool-knowledge-editing-rome .ker-caption{ margin-top:6px; font-size:.72rem; color:var(--muted,#889); line-height:1.55; }
+
+    #tool-knowledge-editing-rome .ker-cell{ fill:var(--accent,#4f46e5); }
+    #tool-knowledge-editing-rome .ker-cellbg{ fill:var(--surface,#fff); stroke:var(--border,#e5e7eb); stroke-width:.8; }
+    #tool-knowledge-editing-rome .ker-cellnum{ font-size:9px; font-family:var(--mono,monospace); fill:var(--ink,#1a1a2e);
+      stroke:var(--surface,#fff); stroke-width:2.2px; paint-order:stroke fill; text-anchor:middle; }
+    #tool-knowledge-editing-rome .ker-ring-peak{ fill:none; stroke:var(--ker-peak); stroke-width:2.2; }
+    #tool-knowledge-editing-rome .ker-ring-site{ fill:none; stroke:var(--ker-site); stroke-width:2; stroke-dasharray:4 2.5; }
+    #tool-knowledge-editing-rome .ker-tick{ font-size:9.5px; font-family:var(--mono,monospace); fill:var(--muted,#889); }
+    #tool-knowledge-editing-rome .ker-tick-strong{ font-size:9.5px; font-family:var(--mono,monospace); fill:var(--ink,#1a1a2e); font-weight:700; }
+    #tool-knowledge-editing-rome .ker-axis{ font-size:10px; font-family:var(--sans,sans-serif); fill:var(--muted,#889); }
+    #tool-knowledge-editing-rome .ker-band{ fill:var(--accent,#4f46e5); fill-opacity:.07; }
+    #tool-knowledge-editing-rome .ker-zero{ stroke:var(--border-2,#e5e7eb); stroke-width:1; }
+    #tool-knowledge-editing-rome .ker-barpos{ fill:var(--ker-pos); }
+    #tool-knowledge-editing-rome .ker-barneg{ fill:var(--ker-neg); }
+    #tool-knowledge-editing-rome .ker-barkey{ fill:var(--accent,#4f46e5); }
+
+    #tool-knowledge-editing-rome .ker-readout{ margin-top:12px; font-size:.78rem; color:var(--ink-soft,#556); line-height:1.7;
+      font-variant-numeric:tabular-nums; }
+    #tool-knowledge-editing-rome .ker-readout b{ color:var(--ink,#1a1a2e); }
+    #tool-knowledge-editing-rome .ker-readout code{ font-family:var(--mono,monospace); font-size:.95em; }
+
+    #tool-knowledge-editing-rome .ker-prompts{ display:flex; flex-direction:column; gap:10px; }
+    #tool-knowledge-editing-rome .ker-prompt{ border:1px solid var(--border,#e5e7eb); border-radius:9px; padding:9px 11px;
+      background:var(--surface-2,#f6f7f9); display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; }
+    #tool-knowledge-editing-rome .ker-phead{ flex:1 1 260px; min-width:0; font-size:.78rem; color:var(--ink-soft,#556); line-height:1.6; }
+    #tool-knowledge-editing-rome .ker-ptext{ font-family:var(--mono,monospace); font-size:.76rem; color:var(--ink,#1a1a2e); }
+    #tool-knowledge-editing-rome .ker-tag{ display:inline-block; font-size:.62rem; letter-spacing:.05em; text-transform:uppercase;
+      padding:1px 6px; border-radius:5px; border:1px solid var(--border-2,#e5e7eb); color:var(--muted,#889); margin-right:6px; }
+    #tool-knowledge-editing-rome .ker-badge{ font-size:.66rem; font-weight:700; padding:2px 7px; border-radius:5px; white-space:nowrap; }
+    #tool-knowledge-editing-rome .ker-ok{ color:var(--ker-pos); border:1px solid var(--ker-pos); }
+    #tool-knowledge-editing-rome .ker-bad{ color:var(--ker-neg); border:1px solid var(--ker-neg); }
+    #tool-knowledge-editing-rome .ker-bars{ display:flex; flex-wrap:wrap; gap:7px; flex:0 1 auto; max-width:100%; }
+    #tool-knowledge-editing-rome .ker-obar{ display:flex; flex-direction:column; align-items:center; gap:3px; width:46px; }
+    #tool-knowledge-editing-rome .ker-btrack{ position:relative; width:100%; height:44px; display:flex; align-items:flex-end;
+      justify-content:center; gap:3px; border-bottom:1px solid var(--border-2,#e5e7eb); }
+    #tool-knowledge-editing-rome .ker-bb{ width:12px; background:transparent; border:1px solid var(--muted,#889); border-bottom:none;
+      box-sizing:border-box; }
+    #tool-knowledge-editing-rome .ker-ba{ width:12px; background:var(--accent,#4f46e5); box-sizing:border-box; }
+    #tool-knowledge-editing-rome .ker-ba.ker-ba-tgt{ background:var(--ker-neg); }
+    #tool-knowledge-editing-rome .ker-olab{ font-size:.6rem; color:var(--muted,#889); text-align:center; line-height:1.2; }
+
+    #tool-knowledge-editing-rome .ker-stats{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:8px; }
+    #tool-knowledge-editing-rome .ker-stat{ padding:8px 10px; border-radius:8px; background:var(--surface-2,#f6f7f9);
+      border:1px solid var(--border,#e5e7eb); }
+    #tool-knowledge-editing-rome .ker-stat-label{ font-size:.64rem; letter-spacing:.03em; text-transform:uppercase; color:var(--muted,#889); }
+    #tool-knowledge-editing-rome .ker-stat-val{ font-size:.96rem; font-weight:700; color:var(--ink,#1a1a2e);
+      font-variant-numeric:tabular-nums; margin-top:2px; }
+    #tool-knowledge-editing-rome .ker-good{ color:var(--ker-pos); }
+    #tool-knowledge-editing-rome .ker-warnv{ color:var(--ker-neg); }
+
+    #tool-knowledge-editing-rome .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#889); line-height:1.65; }
+    #tool-knowledge-editing-rome .vt-note b{ color:var(--ink-soft,#556); }
+
+    @media (max-width:520px){
+      #tool-knowledge-editing-rome{ padding:12px 11px; }
+      #tool-knowledge-editing-rome .ker-prompt{ padding:8px 9px; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-knowledge-editing-rome');
+    if (!root) return;
+    function $(id){ return root.querySelector('#knowledge-editing-rome-' + id); }
+
+    // =====================================================================
+    // A tiny hand-built transformer in which four (subject, is-in, city)
+    // facts are stored the way ROME assumes: as key-value pairs inside the
+    // MLP down-projections of a band of middle layers. Everything is
+    // deterministic (seeded mulberry32; no Math.random, no Date), so every
+    // control setting maps to exactly one picture on every machine.
+    //
+    //   residual dim D = 16   MLP hidden dim DK = 10   NL = 10 layers
+    //   dims  0..4  : the five object (city) readout directions
+    //   dims  5..12 : two token directions for each of the four subjects
+    //   dim   13    : the "is located in" relation feature
+    //   dim   14    : the "an attribute was written here" marker
+    //   dim   15    : filler carried by function words
+    // =====================================================================
+    var D = 16, DK = 10, NL = 10, T = 6, NOBJ = 5;
+    var MARK = 14;
+    var OBJ = ['Seattle', 'Paris', 'London', 'Tokyo', 'Rome'];
+    var SUBJ = [
+      { a: 'Space',   b: 'Needle',   obj: 0, d0: 5,  d1: 6  },
+      { a: 'Eiffel',  b: 'Tower',    obj: 1, d0: 7,  d1: 8  },
+      { a: 'Big',     b: 'Ben',      obj: 2, d0: 9,  d1: 10 },
+      { a: 'Shibuya', b: 'Crossing', obj: 3, d0: 11, d1: 12 }
+    ];
+    var TOKV = {
+      'The':         { 15: 0.60 },
+      'is':          { 13: 0.40, 15: 0.10 },
+      'in':          { 13: 0.40 },
+      'downtown':    { 13: 0.60, 15: 0.25 },
+      'stands':      { 13: 0.35, 15: 0.20 },
+      'the city of': { 13: 0.65, 15: 0.15 }
+    };
+    for (var si = 0; si < SUBJ.length; si++){
+      TOKV[SUBJ[si].a] = {}; TOKV[SUBJ[si].a][SUBJ[si].d0] = 1.0;
+      TOKV[SUBJ[si].b] = {}; TOKV[SUBJ[si].b][SUBJ[si].d1] = 1.0;
+    }
+    var PROMPTS = [
+      { tokens: ['The','Space','Needle','is','in','downtown'],        subj: 0, role: 'edit' },
+      { tokens: ['The','Space','Needle','stands','in','the city of'], subj: 0, role: 'gen'  },
+      { tokens: ['The','Eiffel','Tower','is','in','downtown'],        subj: 1, role: 'loc'  },
+      { tokens: ['The','Big','Ben','is','in','downtown'],             subj: 2, role: 'loc'  },
+      { tokens: ['The','Shibuya','Crossing','is','in','downtown'],    subj: 3, role: 'loc'  }
+    ];
+    var EDIT_P = 0, SUBJ_POS = [1, 2], LAST_SUBJ = 2;
+    // Corruption is injected in the token-embedding subspace of the subject
+    // tokens (the coordinates real token vectors occupy) -- exactly ROME's
+    // "add Gaussian noise to the subject embeddings" step.
+    var EMB_DIMS = [5,6,7,8,9,10,11,12,13,15];
+    var GA = 0.9;                       // layer-0 previous-token head
+    var BAND = [3,4,5];                 // the factual-memory band
+    var DET_B = -1.4, NU = 0.70, MU = 0.55;
+    var MOVER = [6,7,8], GM = 0.8, WATT = 6.0;   // attribute-mover heads
+    var GEN_A = 0.6, GEN_B = -0.25, GEN_W = 0.05, LOG_SCALE = 1.2;
+
+    function mulberry32(seed){
+      var s = seed >>> 0;
+      return function(){
+        s = (s + 0x6D2B79F5) | 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function gauss(rng){ // Box-Muller
+      var u1 = Math.max(rng(), 1e-12), u2 = rng();
+      return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    }
+    function zeros(n){ return new Float64Array(n); }
+    function softmax(x){   // max-subtracted, the numerically stable form
+      var m = -Infinity, i;
+      for (i = 0; i < x.length; i++) if (x[i] > m) m = x[i];
+      var e = new Array(x.length), s = 0;
+      for (i = 0; i < x.length; i++){ e[i] = Math.exp(x[i] - m); s += e[i]; }
+      for (i = 0; i < x.length; i++) e[i] /= s;
+      return e;
+    }
+    function inBand(l){ return BAND.indexOf(l) >= 0; }
+    function isMover(l){ return MOVER.indexOf(l) >= 0; }
+    function argmax(a){ var m = 0; for (var i = 1; i < a.length; i++) if (a[i] > a[m]) m = i; return m; }
+
+    function buildModel(){
+      var rng = mulberry32(1234567), layers = [], l, i, j;
+      for (l = 0; l < NL; l++){
+        var A = [], b = zeros(DK), W = [];
+        for (j = 0; j < DK; j++) A.push(zeros(D));
+        for (i = 0; i < D; i++) W.push(zeros(DK));
+        for (j = 0; j < DK; j++){
+          if (inBand(l) && j < SUBJ.length){
+            // A planted memory: key j fires only when BOTH subject-j token
+            // directions are present, which causal masking makes true only at
+            // the last subject token. Its value writes the city + the marker.
+            A[j][SUBJ[j].d0] = 1; A[j][SUBJ[j].d1] = 1; b[j] = DET_B;
+            W[SUBJ[j].obj][j] = NU; W[MARK][j] = MU;
+          } else {
+            for (i = 0; i < D; i++) A[j][i] = GEN_A * gauss(rng);
+            b[j] = GEN_B;
+            for (i = 0; i < D; i++) W[i][j] = GEN_W * gauss(rng);
+          }
+        }
+        layers.push({ A: A, b: b, W: W });
+      }
+      var objBias = zeros(NOBJ);
+      for (var o = 0; o < NOBJ; o++) objBias[o] = 0.12 * gauss(rng);
+      var noise = [], nr = mulberry32(99991);   // one fixed noise field
+      for (var t = 0; t < T; t++){ var v = zeros(D); for (var d = 0; d < D; d++) v[d] = gauss(nr); noise.push(v); }
+      return { layers: layers, objBias: objBias, noise: noise };
+    }
+
+    function embed(prompt){
+      var h = [];
+      for (var t = 0; t < T; t++){
+        var v = zeros(D), spec = TOKV[prompt.tokens[t]] || {};
+        for (var k in spec) if (Object.prototype.hasOwnProperty.call(spec, k)) v[+k] = spec[k];
+        h.push(v);
+      }
+      return h;
+    }
+
+    // opt = { sigma, patch:{kind,t,layers[]}, clean, override:{l,t,z}, record }
+    function forward(model, prompt, opt){
+      opt = opt || {};
+      var h = embed(prompt), t, l, u, i, j, q;
+      if (opt.sigma > 0){
+        for (q = 0; q < SUBJ_POS.length; q++){
+          t = SUBJ_POS[q];
+          for (var e = 0; e < EMB_DIMS.length; e++){ i = EMB_DIMS[e]; h[t][i] += opt.sigma * model.noise[t][i]; }
+        }
+      }
+      var rec = opt.record ? { attn: [], mlp: [], h: [], key: [] } : null;
+      var patch = opt.patch || null;
+      for (l = 0; l < NL; l++){
+        var ao = [];
+        for (t = 0; t < T; t++) ao.push(zeros(D));
+        if (l === 0){                                  // previous-token head
+          for (t = 1; t < T; t++) for (i = 0; i < D; i++) ao[t][i] = GA * h[t - 1][i];
+        }
+        if (isMover(l)){                               // attribute-mover head
+          var sc = new Array(T);
+          for (u = 0; u < T; u++) sc[u] = WATT * h[u][MARK];
+          var al = softmax(sc);
+          for (u = 0; u < T; u++) for (j = 0; j < NOBJ; j++) ao[T - 1][j] += GM * al[u] * h[u][j];
+        }
+        if (patch && patch.kind === 'attn' && patch.layers.indexOf(l) >= 0) ao[patch.t] = opt.clean.attn[l][patch.t];
+        for (t = 0; t < T; t++) for (i = 0; i < D; i++) h[t][i] += ao[t][i];
+
+        var lay = model.layers[l], mo = [], kk = [];
+        for (t = 0; t < T; t++){
+          var k = zeros(DK);
+          for (j = 0; j < DK; j++){
+            var acc = lay.b[j], Aj = lay.A[j];
+            for (i = 0; i < D; i++) acc += Aj[i] * h[t][i];
+            k[j] = acc > 0 ? acc : 0;                  // ReLU keys
+          }
+          kk.push(k);
+          var m = zeros(D);
+          for (i = 0; i < D; i++){ var a2 = 0, Wi = lay.W[i]; for (j = 0; j < DK; j++) a2 += Wi[j] * k[j]; m[i] = a2; }
+          mo.push(m);                                  // m = W k  (the memory read)
+        }
+        if (opt.override && opt.override.l === l) mo[opt.override.t] = opt.override.z;
+        if (patch && patch.kind === 'mlp' && patch.layers.indexOf(l) >= 0) mo[patch.t] = opt.clean.mlp[l][patch.t];
+        for (t = 0; t < T; t++) for (i = 0; i < D; i++) h[t][i] += mo[t][i];
+        if (patch && patch.kind === 'h' && patch.layers.indexOf(l) >= 0) h[patch.t] = Float64Array.from(opt.clean.h[l][patch.t]);
+        if (rec){
+          rec.attn.push(ao); rec.mlp.push(mo); rec.key.push(kk);
+          var snap = [];
+          for (t = 0; t < T; t++) snap.push(Float64Array.from(h[t]));
+          rec.h.push(snap);
+        }
+      }
+      var logits = new Array(NOBJ);
+      for (j = 0; j < NOBJ; j++) logits[j] = LOG_SCALE * h[T - 1][j] + model.objBias[j];
+      return { probs: softmax(logits), rec: rec };
+    }
+
+    // Gauss-Jordan inverse with partial pivoting; null if singular.
+    function matInv(M, n){
+      var A = [], i, j, k;
+      for (i = 0; i < n; i++){
+        var row = new Float64Array(2 * n);
+        for (j = 0; j < n; j++) row[j] = M[i][j];
+        row[n + i] = 1; A.push(row);
+      }
+      for (i = 0; i < n; i++){
+        var p = i, best = Math.abs(A[i][i]);
+        for (k = i + 1; k < n; k++) if (Math.abs(A[k][i]) > best){ best = Math.abs(A[k][i]); p = k; }
+        if (!(best > 1e-13)) return null;
+        if (p !== i){ var tmp = A[i]; A[i] = A[p]; A[p] = tmp; }
+        var piv = A[i][i];
+        for (j = 0; j < 2 * n; j++) A[i][j] /= piv;
+        for (k = 0; k < n; k++){
+          if (k === i) continue;
+          var f = A[k][i];
+          if (f === 0) continue;
+          for (j = 0; j < 2 * n; j++) A[k][j] -= f * A[i][j];
+        }
+      }
+      var out = [];
+      for (i = 0; i < n; i++){ var r = new Float64Array(n); for (j = 0; j < n; j++) r[j] = A[i][n + j]; out.push(r); }
+      return out;
+    }
+
+    var MODEL = buildModel();
+    var CLEAN = PROMPTS.map(function(p){ return forward(MODEL, p, { record: true }); });
+    var CORRECT = SUBJ[PROMPTS[EDIT_P].subj].obj;      // Seattle
+
+    // ---------------------------------------------------------------- trace
+    var traceCache = Object.create(null);
+    function causalTrace(sigma, kind, win){
+      var key = sigma + '|' + kind + '|' + win;
+      if (traceCache[key]) return traceCache[key];
+      var P = PROMPTS[EDIT_P];
+      var pClean = CLEAN[EDIT_P].probs[CORRECT];
+      var pCorr = forward(MODEL, P, { sigma: sigma }).probs[CORRECT];
+      var grid = [], peak = { t: LAST_SUBJ, l: BAND[1], v: -Infinity };
+      for (var t = 0; t < T; t++){
+        var row = new Array(NL);
+        for (var l = 0; l < NL; l++){
+          var lo = l - ((win - 1) >> 1), layers = [];
+          for (var w = 0; w < win; w++){ var lw = lo + w; if (lw >= 0 && lw < NL) layers.push(lw); }
+          var p = forward(MODEL, P, { sigma: sigma, patch: { kind: kind, t: t, layers: layers }, clean: CLEAN[EDIT_P].rec }).probs[CORRECT];
+          row[l] = p;
+          if (p > peak.v){ peak = { t: t, l: l, v: p }; }
+        }
+        grid.push(row);
+      }
+      traceCache[key] = { grid: grid, pClean: pClean, pCorr: pCorr, peak: peak };
+      return traceCache[key];
+    }
+
+    // ------------------------------------------------------- v* (Adam solve)
+    // ROME's step 1: freeze every weight, add a free vector at the edit site,
+    // and minimize the cross-entropy of the new object (plus a light L2 pull
+    // toward the layer's own output, standing in for the essence-preserving
+    // KL term). This browser has no autodiff, so the gradient is a central
+    // finite difference -- the Adam trajectory is otherwise the real thing.
+    var vCache = Object.create(null);
+    function optimizeV(l, t, targetObj){
+      var key = l + '|' + t + '|' + targetObj;
+      if (vCache[key]) return vCache[key];
+      var P = PROMPTS[EDIT_P], m0 = CLEAN[EDIT_P].rec.mlp[l][t];
+      var LAM_Z = 0.02, STEPS = 20, lr = 0.35, b1 = 0.9, b2 = 0.999, eps = 1e-8, fd = 1e-4;
+      function loss(z){
+        var pr = forward(MODEL, P, { override: { l: l, t: t, z: z } }).probs[targetObj];
+        var pen = 0;
+        for (var i = 0; i < D; i++){ var dd = z[i] - m0[i]; pen += dd * dd; }
+        return -Math.log(Math.max(pr, 1e-12)) + LAM_Z * pen;
+      }
+      var z = Float64Array.from(m0), mA = zeros(D), vA = zeros(D), hist = [loss(z)], i, s;
+      for (s = 1; s <= STEPS; s++){
+        var g = zeros(D), gmax = 0;
+        for (i = 0; i < D; i++){
+          var o = z[i];
+          z[i] = o + fd; var lp = loss(z);
+          z[i] = o - fd; var lm = loss(z);
+          z[i] = o;
+          g[i] = (lp - lm) / (2 * fd);
+          if (Math.abs(g[i]) > gmax) gmax = Math.abs(g[i]);
+        }
+        // A flat objective means this site has no causal path to the readout.
+        // Stop rather than let Adam's normalisation amplify rounding noise.
+        if (!(gmax > 1e-9)) break;
+        for (i = 0; i < D; i++){
+          mA[i] = b1 * mA[i] + (1 - b1) * g[i];
+          vA[i] = b2 * vA[i] + (1 - b2) * g[i] * g[i];
+          var mh = mA[i] / (1 - Math.pow(b1, s)), vh = vA[i] / (1 - Math.pow(b2, s));
+          z[i] -= lr * mh / (Math.sqrt(vh) + eps);
+        }
+        hist.push(loss(z));
+      }
+      vCache[key] = { v: z, m0: m0, hist: hist };
+      return vCache[key];
+    }
+
+    // ------------------------------------------------- the rank-one solve
+    var editCache = Object.create(null);
+    function computeEdit(l, t, targetObj, lam){
+      var key = l + '|' + t + '|' + targetObj + '|' + lam;
+      if (editCache[key]) return editCache[key];
+      var i, j, q, p;
+      var vs = optimizeV(l, t, targetObj);
+      var kstar = CLEAN[EDIT_P].rec.key[l][t];
+
+      // C = (1/n) sum_i k_i k_i^T over every key this layer sees on the
+      // corpus, then ROME's damping:  C <- C + lambda * mean(diag C) * I.
+      var keys = [], skip = -1;
+      for (p = 0; p < PROMPTS.length; p++) for (var tt = 0; tt < T; tt++){
+        if (p === EDIT_P && tt === t) skip = keys.length;
+        keys.push(CLEAN[p].rec.key[l][tt]);
+      }
+      var n = keys.length, C = [];
+      for (i = 0; i < DK; i++) C.push(zeros(DK));
+      for (q = 0; q < n; q++) for (i = 0; i < DK; i++) for (j = 0; j < DK; j++) C[i][j] += keys[q][i] * keys[q][j] / n;
+      var dbar = 0;
+      for (i = 0; i < DK; i++) dbar += C[i][i];
+      dbar = dbar / DK;
+      if (!(dbar > 0)) dbar = 1;
+      for (i = 0; i < DK; i++) C[i][i] += lam * dbar;
+
+      var Cinv = matInv(C, DK), c = zeros(DK);
+      if (Cinv){
+        for (i = 0; i < DK; i++){ var a = 0; for (j = 0; j < DK; j++) a += Cinv[i][j] * kstar[j]; c[i] = a; }
+      } else {
+        for (i = 0; i < DK; i++) c[i] = kstar[i];       // fall back to C = I
+      }
+      var den = 0;
+      for (i = 0; i < DK; i++) den += c[i] * kstar[i];  // k*^T C^-1 k* > 0 unless k* = 0
+      var degenerate = !(Math.abs(den) > 1e-9);
+
+      var W0 = MODEL.layers[l].W, Wk = zeros(D), r = zeros(D);
+      for (i = 0; i < D; i++){ var a2 = 0; for (j = 0; j < DK; j++) a2 += W0[i][j] * kstar[j]; Wk[i] = a2; }
+      for (i = 0; i < D; i++) r[i] = vs.v[i] - Wk[i];
+
+      var Delta = [];
+      for (i = 0; i < D; i++){
+        var row = zeros(DK);
+        if (!degenerate) for (j = 0; j < DK; j++) row[j] = r[i] * c[j] / den;
+        Delta.push(row);
+      }
+      var fro = 0, w0f = 0;
+      for (i = 0; i < D; i++) for (j = 0; j < DK; j++){ fro += Delta[i][j] * Delta[i][j]; w0f += W0[i][j] * W0[i][j]; }
+      fro = Math.sqrt(fro); w0f = Math.sqrt(w0f);
+
+      // collateral = mean_i ||Delta k_i||^2 over the layer's OTHER keys
+      var rr = 0;
+      for (i = 0; i < D; i++) rr += r[i] * r[i];
+      var coll = 0, cnt = 0;
+      for (q = 0; q < n; q++){
+        if (q === skip) continue;
+        var dot = 0;
+        for (j = 0; j < DK; j++) dot += c[j] * keys[q][j];
+        var s2 = degenerate ? 0 : dot / den;
+        coll += rr * s2 * s2; cnt++;
+      }
+      coll = cnt ? coll / cnt : 0;
+
+      // splice Delta into a copy of the model and re-run every prompt
+      var edited = { objBias: MODEL.objBias, noise: MODEL.noise, layers: MODEL.layers.map(function(L, li){
+        if (li !== l) return L;
+        return { A: L.A, b: L.b, W: L.W.map(function(rw, ii){
+          var qq = Float64Array.from(rw);
+          for (var jj = 0; jj < DK; jj++) qq[jj] += Delta[ii][jj];
+          return qq;
+        }) };
+      }) };
+      var after = PROMPTS.map(function(pp){ return forward(edited, pp); });
+
+      var knorm = 0;
+      for (j = 0; j < DK; j++) knorm += kstar[j] * kstar[j];
+      knorm = Math.sqrt(knorm);
+      var res = { kstar: kstar, c: c, r: r, Delta: Delta, den: den, fro: fro, w0f: w0f, knorm: knorm,
+        coll: coll, after: after, vstar: vs.v, hist: vs.hist, degenerate: degenerate,
+        noKey: !(knorm > 1e-9), noPath: (knorm > 1e-9) && !(fro > 1e-9),
+        ce: -Math.log(Math.max(after[EDIT_P].probs[targetObj], 1e-12)),
+        ce0: -Math.log(Math.max(CLEAN[EDIT_P].probs[targetObj], 1e-12)) };
+      editCache[key] = res;
+      return res;
+    }
+
+    // ------------------------------------------------------------ svg utils
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, attrs){
+      var e = document.createElementNS(SVGNS, tag);
+      for (var k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    function txt(tag, attrs, s){ var e = mk(tag, attrs); e.textContent = s; return e; }
+    function paint(svg, kids, w, h, label){
+      svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+      svg.setAttribute('width', w);
+      svg.setAttribute('height', h);
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      svg.setAttribute('aria-label', label);
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      for (var i = 0; i < kids.length; i++) svg.appendChild(kids[i]);
+    }
+    function fmt(x, d){ return isFinite(x) ? x.toFixed(d) : '--'; }
+
+    // ------------------------------------------------------------- elements
+    var elSigR = $('sigma-range'), elSigN = $('sigma-num');
+    var elKind = $('kind');
+    var elWinR = $('win-range'), elWinN = $('win-num');
+    var elLayR = $('layer-range'), elLayN = $('layer-num');
+    var elPos = $('pos'), elTgt = $('target');
+    var elLam = $('lam-range'), elLamVal = $('lamval');
+    var elTraceSvg = $('trace-svg'), elTraceCap = $('trace-caption');
+    var elDeltaSvg = $('delta-svg'), elDeltaCap = $('delta-caption');
+    var elReadout = $('edit-readout'), elPrompts = $('prompts'), elStats = $('stats');
+    var elPeakBtn = $('usepeak'), elRamp = $('ramp');
+    if (!elSigR || !elSigN || !elKind || !elWinR || !elWinN || !elLayR || !elLayN) return;
+    if (!elPos || !elTgt || !elLam || !elLamVal || !elTraceSvg || !elTraceCap) return;
+    if (!elDeltaSvg || !elDeltaCap || !elReadout || !elPrompts || !elStats || !elPeakBtn) return;
+
+    (function(){                                   // populate the two selects
+      var i, o;
+      for (i = 0; i < T; i++){
+        o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = i + ': "' + PROMPTS[EDIT_P].tokens[i] + '"' + (i === LAST_SUBJ ? ' (last subject token)' : '');
+        if (i === LAST_SUBJ) o.selected = true;
+        elPos.appendChild(o);
+      }
+      for (i = 0; i < NOBJ; i++){
+        if (i === CORRECT) continue;               // editing to the old answer is a no-op
+        o = document.createElement('option');
+        o.value = String(i);
+        o.textContent = OBJ[i];
+        if (OBJ[i] === 'Rome') o.selected = true;
+        elTgt.appendChild(o);
+      }
+      if (elRamp){
+        for (i = 0; i < 6; i++){
+          var b = document.createElement('i');
+          b.style.opacity = String(0.06 + 0.86 * (i / 5));
+          elRamp.appendChild(b);
+        }
+      }
+    })();
+
+    function clampNum(v, lo, hi, fb, step, dec){
+      v = parseFloat(v);
+      if (!isFinite(v)) v = fb;
+      v = Math.max(lo, Math.min(hi, v));
+      if (step > 0) v = Math.round(v / step) * step;
+      var p = Math.pow(10, dec || 0);
+      v = Math.round(v * p) / p;
+      return Math.max(lo, Math.min(hi, v));
+    }
+    function setVal(inp, v){ if (document.activeElement !== inp && inp.value !== String(v)) inp.value = String(v); }
+
+    // ------------------------------------------------------- trace heatmap
+    var LM = 104, TM = 40, CW = 46, CH = 26, GX = 3, GY = 3;
+    var TR_W = LM + NL * (CW + GX) - GX + 16, TR_H = TM + T * (CH + GY) - GY + 34;
+    function drawTrace(tr, sigma, kind, win, siteL, siteT){
+      var kids = [], l, t;
+      var lo = tr.pCorr, hi = Math.max(tr.pClean, lo + 1e-6);
+      for (l = 0; l < NL; l++){
+        var x = LM + l * (CW + GX);
+        if (inBand(l)) kids.push(mk('rect', { x: x - 1.5, y: TM - 16, width: CW + 3, height: T * (CH + GY) - GY + 20, rx: 4, 'class': 'ker-band' }));
+        kids.push(txt('text', { x: x + CW / 2, y: TM - 20, 'class': inBand(l) ? 'ker-tick-strong' : 'ker-tick', 'text-anchor': 'middle' }, 'L' + l));
+      }
+      for (t = 0; t < T; t++){
+        var y = TM + t * (CH + GY);
+        var isSubj = SUBJ_POS.indexOf(t) >= 0;
+        kids.push(txt('text', { x: LM - 8, y: y + CH / 2 + 3.5, 'class': isSubj ? 'ker-tick-strong' : 'ker-tick', 'text-anchor': 'end' },
+          t + '  ' + PROMPTS[EDIT_P].tokens[t]));
+        for (l = 0; l < NL; l++){
+          var xx = LM + l * (CW + GX), v = tr.grid[t][l];
+          var nrm = (v - lo) / (hi - lo);
+          if (!(nrm > 0)) nrm = 0;
+          if (nrm > 1) nrm = 1;
+          kids.push(mk('rect', { x: xx, y: y, width: CW, height: CH, rx: 4, 'class': 'ker-cellbg' }));
+          kids.push(mk('rect', { x: xx, y: y, width: CW, height: CH, rx: 4, 'class': 'ker-cell', 'fill-opacity': (0.05 + 0.85 * nrm).toFixed(3) }));
+          kids.push(txt('text', { x: xx + CW / 2, y: y + CH / 2 + 3.4, 'class': 'ker-cellnum' }, v.toFixed(2)));
+        }
+      }
+      var px = LM + tr.peak.l * (CW + GX), py = TM + tr.peak.t * (CH + GY);
+      kids.push(mk('rect', { x: px - 2, y: py - 2, width: CW + 4, height: CH + 4, rx: 5.5, 'class': 'ker-ring-peak' }));
+      var sx = LM + siteL * (CW + GX), sy = TM + siteT * (CH + GY);
+      kids.push(mk('rect', { x: sx - 4.5, y: sy - 4.5, width: CW + 9, height: CH + 9, rx: 7, 'class': 'ker-ring-site' }));
+      kids.push(txt('text', { x: LM, y: TR_H - 10, 'class': 'ker-axis' }, 'layer  (shaded = the factual-memory band of this model)'));
+      kids.push(txt('text', { x: LM - 8, y: TM - 20, 'class': 'ker-axis', 'text-anchor': 'end' }, 'token'));
+      paint(elTraceSvg, kids, TR_W, TR_H,
+        'Causal tracing heatmap: restored probability of the correct object for every token position and layer. ' +
+        'Clean probability ' + fmt(tr.pClean, 2) + ', corrupted ' + fmt(tr.pCorr, 2) + ', strongest restoration ' +
+        fmt(tr.peak.v, 2) + ' at token ' + tr.peak.t + ' layer ' + tr.peak.l + '.');
+
+      var kindName = kind === 'mlp' ? 'the MLP output' : (kind === 'attn' ? 'the attention output' : 'the whole hidden state');
+      elTraceCap.innerHTML =
+        'Clean run: <b>P(Seattle) = ' + fmt(tr.pClean, 3) + '</b>. After adding &sigma; = ' + fmt(sigma, 1) +
+        ' noise to the <i>Space Needle</i> embeddings: <b>' + fmt(tr.pCorr, 3) + '</b> &mdash; the fact is gone. ' +
+        'Each cell re-runs that corrupted forward pass with ' + kindName + ' at that (token, layer) &mdash; and at ' +
+        (win === 1 ? 'that layer alone' : 'the ' + win + ' layers centred on it') + ' &mdash; restored from the clean cache. ' +
+        'Strongest site: <b>token ' + tr.peak.t + ' ("' + PROMPTS[EDIT_P].tokens[tr.peak.t] + '"), layer ' + tr.peak.l +
+        '</b>, recovering P = ' + fmt(tr.peak.v, 3) + '.';
+    }
+
+    // --------------------------------------------------- the update anatomy
+    var DGX = 152, DGY = 104, DCW = 20, DCH = 15;
+    var DL_W = DGX + DK * DCW + 26, DL_H = DGY + D * DCH + 34;
+    function drawDelta(ed, l, t){
+      var kids = [], i, j;
+      var kmax = 1e-9, cmax = 1e-9, rmax = 1e-9, dmax = 1e-9;
+      for (j = 0; j < DK; j++){
+        if (ed.kstar[j] > kmax) kmax = ed.kstar[j];
+        if (Math.abs(ed.c[j]) > cmax) cmax = Math.abs(ed.c[j]);
+      }
+      for (i = 0; i < D; i++) if (Math.abs(ed.r[i]) > rmax) rmax = Math.abs(ed.r[i]);
+      for (i = 0; i < D; i++) for (j = 0; j < DK; j++) if (Math.abs(ed.Delta[i][j]) > dmax) dmax = Math.abs(ed.Delta[i][j]);
+
+      // row 1: k*  (ReLU output, always >= 0)
+      var kBase = 40;
+      kids.push(txt('text', { x: DGX - 10, y: kBase - 2, 'class': 'ker-tick-strong', 'text-anchor': 'end' }, 'k*'));
+      kids.push(txt('text', { x: DGX - 10, y: kBase - 14, 'class': 'ker-tick', 'text-anchor': 'end' }, 'key at site'));
+      for (j = 0; j < DK; j++){
+        var hh = Math.max(0.8, 26 * (ed.kstar[j] / kmax));
+        kids.push(mk('rect', { x: (DGX + j * DCW + 3).toFixed(1), y: (kBase - hh).toFixed(2), width: DCW - 6, height: hh.toFixed(2), 'class': 'ker-barkey' }));
+      }
+      // row 2: c = C^-1 k*  (can be negative)
+      var cZero = 72;
+      kids.push(mk('line', { x1: DGX, y1: cZero, x2: DGX + DK * DCW, y2: cZero, 'class': 'ker-zero' }));
+      kids.push(txt('text', { x: DGX - 10, y: cZero + 3, 'class': 'ker-tick-strong', 'text-anchor': 'end' }, 'C^-1 k*'));
+      kids.push(txt('text', { x: DGX - 10, y: cZero - 9, 'class': 'ker-tick', 'text-anchor': 'end' }, 'steering dir.'));
+      for (j = 0; j < DK; j++){
+        var ch = 15 * (Math.abs(ed.c[j]) / cmax), up = ed.c[j] >= 0;
+        kids.push(mk('rect', { x: (DGX + j * DCW + 3).toFixed(1), y: (up ? cZero - ch : cZero).toFixed(2),
+          width: DCW - 6, height: Math.max(0.8, ch).toFixed(2), 'class': up ? 'ker-barpos' : 'ker-barneg' }));
+      }
+      // left column: r = v* - W0 k*
+      var rZero = 96;
+      kids.push(mk('line', { x1: rZero, y1: DGY, x2: rZero, y2: DGY + D * DCH, 'class': 'ker-zero' }));
+      kids.push(txt('text', { x: rZero, y: DGY - 8, 'class': 'ker-tick-strong', 'text-anchor': 'middle' }, 'r'));
+      for (i = 0; i < D; i++){
+        var rw = 38 * (Math.abs(ed.r[i]) / rmax), pos = ed.r[i] >= 0;
+        kids.push(mk('rect', { x: (pos ? rZero : rZero - rw).toFixed(2), y: (DGY + i * DCH + 2.5).toFixed(1),
+          width: Math.max(0.8, rw).toFixed(2), height: DCH - 5, 'class': pos ? 'ker-barpos' : 'ker-barneg' }));
+        if (i % 4 === 0) kids.push(txt('text', { x: 12, y: (DGY + i * DCH + DCH - 3.5).toFixed(1), 'class': 'ker-tick' }, 'dim ' + i));
+      }
+      // the matrix itself
+      for (i = 0; i < D; i++) for (j = 0; j < DK; j++){
+        var v = ed.Delta[i][j], op = 0.04 + 0.86 * (Math.abs(v) / dmax);
+        kids.push(mk('rect', { x: DGX + j * DCW + 1, y: DGY + i * DCH + 1, width: DCW - 2, height: DCH - 2, rx: 2,
+          'class': v >= 0 ? 'ker-barpos' : 'ker-barneg', 'fill-opacity': op.toFixed(3) }));
+      }
+      for (j = 0; j < DK; j++){
+        kids.push(txt('text', { x: DGX + j * DCW + DCW / 2, y: DGY + D * DCH + 13, 'class': 'ker-tick', 'text-anchor': 'middle' }, String(j)));
+      }
+      kids.push(txt('text', { x: DGX, y: DGY + D * DCH + 27, 'class': 'ker-axis' }, 'MLP hidden unit j   (columns of Delta)'));
+      paint(elDeltaSvg, kids, DL_W, DL_H,
+        'Anatomy of the rank-one update: the key vector k star, the steering direction C inverse k star, ' +
+        'the residual r, and the resulting 16 by 10 update matrix, whose every column is r rescaled.');
+
+      elDeltaCap.innerHTML =
+        '&Delta;<sub>ij</sub> = r<sub>i</sub> &middot; (C<sup>&minus;1</sup>k<sub>*</sub>)<sub>j</sub> / ' +
+        '(C<sup>&minus;1</sup>k<sub>*</sub>)<sup>T</sup>k<sub>*</sub> &mdash; every column of the grid is the same ' +
+        'vector <b>r</b> scaled by one number, which is what rank one looks like. Green is positive, red negative. ' +
+        'The <b>row</b> profile (r) decides <i>what</i> gets written; the <b>column</b> profile ' +
+        '(C<sup>&minus;1</sup>k<sub>*</sub>) decides <i>which keys feel it</i> &mdash; that is the only place the ' +
+        'covariance statistics enter, and the only defence locality has.';
+    }
+
+    // ---------------------------------------------------- outcomes + stats
+    function drawOutcomes(ed, targetObj){
+      var html = '', p, j;
+      for (p = 0; p < PROMPTS.length; p++){
+        var before = CLEAN[p].probs, after = ed.after[p].probs;
+        var ab = argmax(before), aa = argmax(after);
+        var role = PROMPTS[p].role;
+        var tag = role === 'edit' ? 'reliability' : (role === 'gen' ? 'generalization' : 'locality');
+        var ok, badge;
+        if (role === 'edit'){ ok = (aa === targetObj); badge = ok ? 'edit took' : 'edit failed'; }
+        else if (role === 'gen'){ ok = (aa === targetObj); badge = ok ? 'transferred' : 'did not transfer'; }
+        else { ok = (aa === ab); badge = ok ? 'unchanged' : 'COLLATERAL DAMAGE'; }
+        html += '<div class="ker-prompt"><div class="ker-phead">' +
+          '<span class="ker-tag">' + tag + '</span>' +
+          '<span class="ker-ptext">' + PROMPTS[p].tokens.join(' ') + ' &rarr;</span><br>' +
+          '<b>' + OBJ[ab] + '</b> &rarr; <b>' + OBJ[aa] + '</b> &nbsp; ' +
+          '<span class="ker-badge ' + (ok ? 'ker-ok' : 'ker-bad') + '">' + badge + '</span></div><div class="ker-bars">';
+        for (j = 0; j < NOBJ; j++){
+          html += '<div class="ker-obar"><div class="ker-btrack">' +
+            '<i class="ker-bb" style="height:' + (before[j] * 100).toFixed(1) + '%"></i>' +
+            '<i class="ker-ba' + (j === targetObj ? ' ker-ba-tgt' : '') + '" style="height:' + (after[j] * 100).toFixed(1) + '%"></i>' +
+            '</div><span class="ker-olab">' + OBJ[j] + '</span></div>';
+        }
+        html += '</div></div>';
+      }
+      elPrompts.innerHTML = html;
+    }
+
+    function stat(label, val, cls){
+      return '<div class="ker-stat"><div class="ker-stat-label">' + label + '</div>' +
+        '<div class="ker-stat-val' + (cls ? ' ' + cls : '') + '">' + val + '</div></div>';
+    }
+    function drawStats(ed, targetObj){
+      var eff = ed.after[EDIT_P].probs[targetObj];
+      var gen = ed.after[1].probs[targetObj];
+      var kept = 0, tv = 0, nloc = 0;
+      for (var p = 2; p < PROMPTS.length; p++){
+        if (argmax(ed.after[p].probs) === argmax(CLEAN[p].probs)) kept++;
+        var s = 0;
+        for (var j = 0; j < NOBJ; j++) s += Math.abs(ed.after[p].probs[j] - CLEAN[p].probs[j]);
+        tv += 0.5 * s; nloc++;
+      }
+      tv = nloc ? tv / nloc : 0;
+      elStats.innerHTML =
+        stat('Reliability P(o*) on the edited prompt', fmt(eff, 3), eff > 0.5 ? 'ker-good' : 'ker-warnv') +
+        stat('Generalization P(o*) on a paraphrase', fmt(gen, 3), gen > 0.5 ? 'ker-good' : 'ker-warnv') +
+        stat('Locality: unrelated facts kept', kept + ' / ' + nloc, kept === nloc ? 'ker-good' : 'ker-warnv') +
+        stat('Mean drift on unrelated prompts', fmt(tv, 3) + ' TV', tv < 0.1 ? 'ker-good' : 'ker-warnv') +
+        stat('Update size &#8214;&Delta;&#8214;<sub>F</sub>', fmt(ed.fro, 2) + ' (' + fmt(ed.fro / Math.max(ed.w0f, 1e-9), 2) + ' &times; &#8214;W<sub>0</sub>&#8214;<sub>F</sub>)', '') +
+        stat('Collateral mean &#8214;&Delta;k<sub>i</sub>&#8214;<sup>2</sup>', fmt(ed.coll, 3), ed.coll < 1 ? 'ker-good' : 'ker-warnv') +
+        stat('Rank of &Delta;', (ed.noKey || ed.noPath) ? '0 (&Delta; = 0)' : '1 of ' + Math.min(D, DK), '') +
+        stat('Numbers stored for &Delta;', (ed.noKey || ed.noPath) ? '--' : (D + DK) + ' vs ' + (D * DK) + ' in W', '');
+    }
+
+    // ------------------------------------------------------------- render
+    function render(){
+      var sigma = clampNum(elSigN.value, 0.1, 2, 0.8, 0.1, 1);
+      var win = clampNum(elWinN.value, 1, 5, 3, 1, 0);
+      var layer = clampNum(elLayN.value, 0, NL - 1, 4, 1, 0);
+      var kind = (elKind.value === 'attn' || elKind.value === 'h') ? elKind.value : 'mlp';
+      var pos = parseInt(elPos.value, 10);
+      if (!isFinite(pos) || pos < 0 || pos >= T) pos = LAST_SUBJ;
+      var tgt = parseInt(elTgt.value, 10);
+      if (!isFinite(tgt) || tgt < 0 || tgt >= NOBJ || tgt === CORRECT) tgt = NOBJ - 1;
+      var lamExp = clampNum(elLam.value, -3, 3, -1, 0.25, 2);
+      var lam = Math.pow(10, lamExp);
+
+      setVal(elSigR, sigma); setVal(elSigN, sigma);
+      setVal(elWinR, win);   setVal(elWinN, win);
+      setVal(elLayR, layer); setVal(elLayN, layer);
+      setVal(elLam, lamExp);
+      elLamVal.textContent = '= ' + (lam >= 1 ? lam.toFixed(lam >= 10 ? 0 : 1) : lam.toPrecision(2)) +
+        ' x mean diag(C)' + (lam >= 100 ? '  (C is now ~ I)' : '');
+
+      var tr = causalTrace(sigma, kind, win);
+      drawTrace(tr, sigma, kind, win, layer, pos);
+
+      var ed = computeEdit(layer, pos, tgt, lam);
+      drawDelta(ed, layer, pos);
+      drawOutcomes(ed, tgt);
+      drawStats(ed, tgt);
+
+      var onPeak = (layer === tr.peak.l && pos === tr.peak.t);
+      var nActive = 0;
+      for (var jj = 0; jj < DK; jj++) if (ed.kstar[jj] > 1e-9) nActive++;
+      var hist = (ed.hist && ed.hist.length) ? ed.hist : [NaN];
+      var nSteps = hist.length - 1, h0 = hist[0], h1 = hist[hist.length - 1];
+      var tail;
+      if (ed.noKey){
+        tail = ' &mdash; <b>k<sub>*</sub> = 0 here: no MLP memory fires at this site, so there is no key to write to ' +
+          'and &Delta; = 0.</b> Locate-then-edit needs a live key.';
+      } else if (ed.noPath){
+        tail = ' &mdash; <b>the v<sub>*</sub> objective is flat here: nothing downstream of this site reaches the ' +
+          'readout, so the optimizer has nothing to change and &Delta; = 0.</b> Editing after the fact has been used is too late.';
+      } else {
+        tail = '.';
+      }
+      elReadout.innerHTML =
+        'Edit site: <b>layer ' + layer + '</b>, token <b>' + pos + ' ("' + PROMPTS[EDIT_P].tokens[pos] + '")</b>' +
+        (inBand(layer) ? ' &mdash; inside the memory band' : ' &mdash; outside the memory band') +
+        (onPeak ? ', and on the traced peak.' : '. ') +
+        ' &nbsp;|&nbsp; injecting <b>' + OBJ[CORRECT] + ' &rarr; ' + OBJ[tgt] + '</b>' +
+        ' &nbsp;|&nbsp; <code>k*</code> has ' + nActive + '/' + DK + ' active units, &#8214;k*&#8214; = ' + fmt(ed.knorm, 3) +
+        ' &nbsp;|&nbsp; <code>v*</code> solve: ' + nSteps + ' Adam step' + (nSteps === 1 ? '' : 's') +
+        ', objective ' + fmt(h0, 2) + ' &rarr; ' + fmt(h1, 2) +
+        ' &nbsp;|&nbsp; target cross-entropy on the edited prompt <b>' + fmt(ed.ce0, 2) +
+        '</b> &rarr; <b>' + fmt(ed.ce, 2) + '</b> nats' +
+        ' &nbsp;|&nbsp; k*<sup>T</sup>C<sup>&minus;1</sup>k* = ' + fmt(ed.den, 3) + tail;
+    }
+
+    var pending = false;
+    function schedule(){
+      if (pending) return;
+      pending = true;
+      var raf = window.requestAnimationFrame || function(f){ return setTimeout(f, 16); };
+      raf(function(){ pending = false; try { render(); } catch (err) { /* never break the page */ } });
+    }
+
+    function bind(rangeEl, numEl, lo, hi, fb, st, dec){
+      rangeEl.addEventListener('input', function(){ numEl.value = rangeEl.value; schedule(); });
+      numEl.addEventListener('input', function(){ rangeEl.value = clampNum(numEl.value, lo, hi, fb, st, dec); schedule(); });
+      numEl.addEventListener('change', function(){ numEl.value = clampNum(numEl.value, lo, hi, fb, st, dec); schedule(); });
+    }
+    bind(elSigR, elSigN, 0.1, 2, 0.8, 0.1, 1);
+    bind(elWinR, elWinN, 1, 5, 3, 1, 0);
+    bind(elLayR, elLayN, 0, NL - 1, 4, 1, 0);
+    elKind.addEventListener('change', schedule);
+    elPos.addEventListener('change', schedule);
+    elTgt.addEventListener('change', schedule);
+    elLam.addEventListener('input', schedule);
+    elPeakBtn.addEventListener('click', function(){
+      var sigma = clampNum(elSigN.value, 0.1, 2, 0.8, 0.1, 1);
+      var win = clampNum(elWinN.value, 1, 5, 3, 1, 0);
+      var kind = (elKind.value === 'attn' || elKind.value === 'h') ? elKind.value : 'mlp';
+      var tr = causalTrace(sigma, kind, win);
+      elLayR.value = String(tr.peak.l); elLayN.value = String(tr.peak.l);
+      elPos.value = String(tr.peak.t);
+      schedule();
+    });
+
+    render();
+  })();</script>
+</div>

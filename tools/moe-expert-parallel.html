@@ -1,0 +1,921 @@
+<div class="viz-tool" id="tool-moe-expert-parallel">
+  <div class="vt-title">Serving MoE: expert parallelism &amp; all-to-all</div>
+  <div class="vt-hint">
+    <b>E</b> experts are sharded over <b>G</b> GPUs (contiguous blocks). Every GPU holds its own decode tokens
+    (attention-DP) at the <i>top</i> and its resident experts at the <i>bottom</i>. A real top-<b>k</b> router fires,
+    then watch the two collectives: <b>dispatch</b> (all-to-all #1) throws each token to whichever GPU owns its chosen
+    expert, the grouped GEMM runs, and <b>combine</b> (all-to-all #2) throws the results home. The step ends only when
+    the <i>slowest</i> rank finishes &mdash; so drag <b>routing skew</b> and watch one hot GPU stall every other GPU at
+    the barrier, and drop <b>capacity factor</b> to see tokens thrown away instead. Drag <b>tokens per GPU</b> down and
+    the straggler <i>disappears</i>: below ~148 slots per expert the grouped GEMM is bound by streaming expert weights
+    out of HBM, and imbalance in tokens is free.
+  </div>
+
+  <div class="vt-grid vt-controls">
+    <label for="moe-expert-parallel-E">Experts E <span class="vt-val" id="moe-expert-parallel-Eval">16</span>
+      <input id="moe-expert-parallel-E" type="range" min="4" max="32" step="1" value="16" aria-label="Number of experts E">
+    </label>
+    <label for="moe-expert-parallel-G">GPUs G (EP degree) <span class="vt-val" id="moe-expert-parallel-Gval">4</span>
+      <input id="moe-expert-parallel-G" type="range" min="2" max="8" step="1" value="4" aria-label="Number of GPUs in the expert-parallel group">
+    </label>
+    <label for="moe-expert-parallel-k">Top-k <span class="vt-val" id="moe-expert-parallel-kval">2</span>
+      <input id="moe-expert-parallel-k" type="range" min="1" max="4" step="1" value="2" aria-label="Experts selected per token, top-k">
+    </label>
+    <label for="moe-expert-parallel-B">Tokens per GPU B <span class="vt-val" id="moe-expert-parallel-Bval">512</span>
+      <input id="moe-expert-parallel-B" type="range" min="0" max="9" step="1" value="9" aria-label="Decode tokens resident on each GPU, powers of two from 1 to 512">
+    </label>
+    <label for="moe-expert-parallel-cf">Capacity factor c<sub>f</sub> <span class="vt-val" id="moe-expert-parallel-cfval">1.50</span>
+      <input id="moe-expert-parallel-cf" type="range" min="0.5" max="2" step="0.05" value="1.5" aria-label="Capacity factor">
+    </label>
+    <label for="moe-expert-parallel-sk">Routing skew <span class="vt-val" id="moe-expert-parallel-skval">0.60</span>
+      <input id="moe-expert-parallel-sk" type="range" min="0" max="2.5" step="0.05" value="0.6" aria-label="Routing skew: how hot the popular experts are">
+    </label>
+    <label for="moe-expert-parallel-dt">Dispatch precision
+      <select id="moe-expert-parallel-dt" aria-label="Dispatch activation precision">
+        <option value="1" selected>FP8 E4M3 (1 B/elem)</option>
+        <option value="2">BF16 (2 B/elem)</option>
+      </select>
+    </label>
+    <label for="moe-expert-parallel-link">Interconnect
+      <select id="moe-expert-parallel-link" aria-label="Per-GPU interconnect bandwidth">
+        <option value="50e9" selected>RDMA cross-node, 50 GB/s/GPU</option>
+        <option value="450e9">NVLink intra-node, 450 GB/s/GPU</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn" id="moe-expert-parallel-play" type="button" aria-label="Play or pause the all-to-all animation">Pause</button>
+    <button class="vt-btn" id="moe-expert-parallel-seed" type="button" aria-label="Re-roll the traffic seed">New traffic (re-seed)</button>
+    <button class="vt-btn" id="moe-expert-parallel-reset" type="button" aria-label="Reset all controls">Reset</button>
+    <label class="ep-check" for="moe-expert-parallel-ov">
+      <input id="moe-expert-parallel-ov" type="checkbox" aria-label="Overlap the all-to-all with expert compute, DeepEP hook style">
+      overlap all-to-all with compute (DeepEP hooks)
+    </label>
+    <span class="ep-seedlab" id="moe-expert-parallel-seedlab">seed = 15</span>
+  </div>
+
+  <div class="ep-phasebar" id="moe-expert-parallel-phases">
+    <span class="ep-ph" data-ph="0">1. router (local)</span>
+    <span class="ep-ph" data-ph="1">2. dispatch &mdash; all-to-all #1</span>
+    <span class="ep-ph" data-ph="2">3. expert FFN (grouped GEMM)</span>
+    <span class="ep-ph" data-ph="3">4. combine &mdash; all-to-all #2</span>
+  </div>
+
+  <div class="ep-wrap">
+    <svg id="moe-expert-parallel-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 400"
+         preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Expert-parallel MoE layer: tokens on each GPU fly across an all-to-all network to the GPU owning their chosen expert, then results fly back"></svg>
+  </div>
+
+  <label class="ep-scrub" for="moe-expert-parallel-pos">Scrub the collective
+    <input id="moe-expert-parallel-pos" type="range" min="0" max="1000" step="1" value="0"
+           aria-label="Scrub the all-to-all animation position">
+  </label>
+
+  <div class="ep-panels">
+    <div class="ep-panel">
+      <div class="ep-panel-h">Per-GPU timeline for ONE MoE layer (the barrier)</div>
+      <div class="ep-wrap">
+        <svg id="moe-expert-parallel-gantt" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 220"
+             preserveAspectRatio="xMidYMid meet" role="img"
+             aria-label="Gantt chart of dispatch, expert compute, combine and idle time per GPU"></svg>
+      </div>
+      <div class="ep-legend">
+        <span><i class="ep-sw ep-sw-comm"></i>all-to-all</span>
+        <span><i class="ep-sw ep-sw-comp"></i>expert FFN</span>
+        <span><i class="ep-sw ep-sw-str"></i>straggler</span>
+        <span><i class="ep-sw ep-sw-idle"></i>idle at barrier</span>
+      </div>
+    </div>
+    <div class="ep-panel">
+      <div class="ep-panel-h">all-to-all-v send counts (rows = source GPU, cols = expert-owner GPU)</div>
+      <div class="ep-matwrap"><div class="ep-mat" id="moe-expert-parallel-mat"></div></div>
+      <div class="ep-panel-h ep-panel-h2">Per-GPU expert load L<sub>g</sub> (slots to compute)</div>
+      <div class="ep-bars" id="moe-expert-parallel-bars"></div>
+    </div>
+  </div>
+
+  <div class="ep-formula" id="moe-expert-parallel-formula"></div>
+  <div class="vt-out" id="moe-expert-parallel-out" aria-live="polite"></div>
+  <div class="vt-note" id="moe-expert-parallel-note"></div>
+
+  <style>
+    #tool-moe-expert-parallel{
+      --ep-accent: var(--accent,#4f46e5);
+      --ep-ink: var(--ink,#1a1a2e);
+      --ep-soft: var(--ink-soft,#556);
+      --ep-muted: var(--muted,#889);
+      --ep-line: var(--border-2,#e5e7eb);
+      --ep-warn: #b07a06;
+      --ep-good: #2f8f66;
+      --ep-c0:hsl(214 68% 44%); --ep-c1:hsl(24 76% 44%); --ep-c2:hsl(152 52% 32%);
+      --ep-c3:hsl(322 55% 45%);  --ep-c4:hsl(190 62% 31%); --ep-c5:hsl(266 50% 52%);
+      --ep-c6:hsl(45 70% 34%);   --ep-c7:hsl(0 58% 47%);
+      border:1px solid var(--border-2,#e5e7eb); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff);
+    }
+    html[data-theme="dark"] #tool-moe-expert-parallel{
+      --ep-warn:#f0b429; --ep-good:#5cc79a;
+      --ep-c0:hsl(214 78% 66%); --ep-c1:hsl(28 82% 62%); --ep-c2:hsl(152 48% 55%);
+      --ep-c3:hsl(322 62% 68%);  --ep-c4:hsl(188 60% 55%); --ep-c5:hsl(266 66% 72%);
+      --ep-c6:hsl(45 78% 58%);   --ep-c7:hsl(2 72% 66%);
+    }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-moe-expert-parallel{
+        --ep-warn:#f0b429; --ep-good:#5cc79a;
+        --ep-c0:hsl(214 78% 66%); --ep-c1:hsl(28 82% 62%); --ep-c2:hsl(152 48% 55%);
+        --ep-c3:hsl(322 62% 68%);  --ep-c4:hsl(188 60% 55%); --ep-c5:hsl(266 66% 72%);
+        --ep-c6:hsl(45 78% 58%);   --ep-c7:hsl(2 72% 66%);
+      }
+    }
+
+    #tool-moe-expert-parallel .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ep-ink); }
+    #tool-moe-expert-parallel .vt-hint{ font-size:.8rem; color:var(--ep-muted); margin-bottom:14px; line-height:1.55; }
+    #tool-moe-expert-parallel .vt-hint b{ color:var(--ep-soft); }
+    #tool-moe-expert-parallel .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:12px 18px; }
+    #tool-moe-expert-parallel label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--ep-muted); }
+    #tool-moe-expert-parallel .vt-val{ color:var(--ep-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-moe-expert-parallel input[type="range"]{ width:100%; accent-color:var(--ep-accent); }
+    #tool-moe-expert-parallel input[type="range"]:focus-visible{ outline:2px solid var(--ep-accent); outline-offset:3px; }
+    #tool-moe-expert-parallel select{ font:inherit; font-size:.78rem; padding:5px 6px; border-radius:6px;
+      border:1px solid var(--ep-line); background:var(--surface,#fff); color:var(--ep-ink); max-width:100%; }
+    #tool-moe-expert-parallel select:focus-visible{ outline:2px solid var(--ep-accent); outline-offset:2px; }
+
+    #tool-moe-expert-parallel .vt-actions{ margin-top:12px; display:flex; align-items:center; gap:10px 14px; flex-wrap:wrap; }
+    #tool-moe-expert-parallel .vt-btn{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--ep-line);
+      border-radius:7px; background:var(--surface,#fff); color:var(--ep-ink); cursor:pointer; }
+    #tool-moe-expert-parallel .vt-btn:hover{ background:var(--surface-3,#eceef3); }
+    #tool-moe-expert-parallel .vt-btn:focus-visible{ outline:2px solid var(--ep-accent); outline-offset:2px; }
+    #tool-moe-expert-parallel .ep-check{ flex-direction:row; align-items:center; gap:6px; font-size:.78rem; color:var(--ep-muted); }
+    #tool-moe-expert-parallel .ep-check input{ accent-color:var(--ep-accent); }
+    #tool-moe-expert-parallel .ep-check input:focus-visible{ outline:2px solid var(--ep-accent); outline-offset:2px; }
+    #tool-moe-expert-parallel .ep-seedlab{ font-family:var(--mono,monospace); font-size:.74rem; color:var(--ep-muted); }
+
+    #tool-moe-expert-parallel .ep-phasebar{ margin-top:14px; display:flex; flex-wrap:wrap; gap:6px; }
+    #tool-moe-expert-parallel .ep-ph{ font-size:.72rem; padding:4px 9px; border-radius:20px; border:1px solid var(--ep-line);
+      color:var(--ep-muted); background:var(--surface-2,#f6f7f9); white-space:nowrap; }
+    #tool-moe-expert-parallel .ep-ph.on{ color:var(--surface,#fff); background:var(--ep-accent); border-color:var(--ep-accent); font-weight:600; }
+
+    #tool-moe-expert-parallel .ep-wrap{ margin-top:10px; max-width:100%; overflow-x:auto; }
+    #tool-moe-expert-parallel svg{ display:block; width:100%; height:auto; }
+    #tool-moe-expert-parallel #moe-expert-parallel-svg{ min-width:560px; }
+    #tool-moe-expert-parallel #moe-expert-parallel-gantt{ min-width:420px; max-width:560px; }
+    #tool-moe-expert-parallel .ep-scrub{ margin-top:8px; font-size:.74rem; }
+
+    #tool-moe-expert-parallel .ep-gpu{ fill:var(--surface-2,#f6f7f9); stroke:var(--ep-line); stroke-width:1; }
+    #tool-moe-expert-parallel .ep-gpu.str{ stroke:var(--ep-warn); stroke-width:2; }
+    #tool-moe-expert-parallel .ep-band{ fill:var(--surface-3,#eceef3); stroke:var(--ep-line); stroke-width:1; stroke-dasharray:4 3; opacity:.75; }
+    #tool-moe-expert-parallel .ep-t{ font-family:var(--sans,sans-serif); fill:var(--ep-muted); font-size:9px; }
+    #tool-moe-expert-parallel .ep-t-b{ font-family:var(--sans,sans-serif); fill:var(--ep-ink); font-size:10px; font-weight:700; }
+    #tool-moe-expert-parallel .ep-t-w{ font-family:var(--sans,sans-serif); fill:var(--ep-warn); font-size:8.5px; font-weight:700; }
+    #tool-moe-expert-parallel .ep-t-s{ font-family:var(--sans,sans-serif); fill:var(--ep-soft); font-size:8.5px; }
+    #tool-moe-expert-parallel .ep-cell{ fill:var(--surface,#fff); stroke:var(--ep-line); stroke-width:.8; }
+    #tool-moe-expert-parallel .ep-cell.hot{ stroke:var(--ep-warn); stroke-width:1.4; }
+    #tool-moe-expert-parallel .ep-fill{ opacity:.55; }
+    #tool-moe-expert-parallel .ep-dot{ stroke-width:0; }
+    #tool-moe-expert-parallel .ep-dot.drop{ stroke:var(--ep-warn); stroke-width:1.4; fill-opacity:.15; }
+    #tool-moe-expert-parallel .ep-slot{ fill:var(--surface,#fff); stroke:var(--ep-line); stroke-width:.7; }
+    #tool-moe-expert-parallel .ep-grid{ stroke:var(--ep-line); stroke-width:1; }
+    #tool-moe-expert-parallel .ep-hatch{ stroke:var(--ep-muted); stroke-width:2; opacity:.3; }
+    #tool-moe-expert-parallel .ep-gantt-comm{ fill:var(--ep-accent); opacity:.38; }
+    #tool-moe-expert-parallel .ep-gantt-comp{ fill:var(--ep-accent); }
+    #tool-moe-expert-parallel .ep-gantt-str{ fill:var(--ep-warn); }
+
+    #tool-moe-expert-parallel .ep-g0{ fill:var(--ep-c0); } #tool-moe-expert-parallel .ep-g1{ fill:var(--ep-c1); }
+    #tool-moe-expert-parallel .ep-g2{ fill:var(--ep-c2); } #tool-moe-expert-parallel .ep-g3{ fill:var(--ep-c3); }
+    #tool-moe-expert-parallel .ep-g4{ fill:var(--ep-c4); } #tool-moe-expert-parallel .ep-g5{ fill:var(--ep-c5); }
+    #tool-moe-expert-parallel .ep-g6{ fill:var(--ep-c6); } #tool-moe-expert-parallel .ep-g7{ fill:var(--ep-c7); }
+
+    #tool-moe-expert-parallel .ep-panels{ margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:20px 26px; }
+    #tool-moe-expert-parallel .ep-panel{ min-width:0; }
+    #tool-moe-expert-parallel .ep-panel-h{ font-size:.72rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+      color:var(--ep-muted); margin-bottom:6px; }
+    #tool-moe-expert-parallel .ep-panel-h2{ margin-top:16px; }
+    #tool-moe-expert-parallel .ep-legend{ margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; font-size:.72rem; color:var(--ep-muted); }
+    #tool-moe-expert-parallel .ep-sw{ display:inline-block; width:14px; height:9px; margin-right:5px; vertical-align:middle; border-radius:2px; }
+    #tool-moe-expert-parallel .ep-sw-comm{ background:var(--ep-accent); opacity:.4; }
+    #tool-moe-expert-parallel .ep-sw-comp{ background:var(--ep-accent); }
+    #tool-moe-expert-parallel .ep-sw-str{ background:var(--ep-warn); }
+    #tool-moe-expert-parallel .ep-sw-idle{ background:repeating-linear-gradient(45deg,var(--ep-muted),var(--ep-muted) 2px,transparent 2px,transparent 5px); }
+
+    #tool-moe-expert-parallel .ep-matwrap{ overflow-x:auto; }
+    #tool-moe-expert-parallel .ep-mat{ display:grid; gap:2px; font-family:var(--mono,monospace); font-size:.7rem; min-width:0; }
+    #tool-moe-expert-parallel .ep-mc{ padding:4px 2px; text-align:center; border-radius:3px; color:var(--ep-ink);
+      background:var(--surface-2,#f6f7f9); font-variant-numeric:tabular-nums; }
+    #tool-moe-expert-parallel .ep-mc.hd{ background:none; color:var(--ep-muted); font-weight:700; }
+    #tool-moe-expert-parallel .ep-mc.diag{ outline:1px dashed var(--ep-line); outline-offset:-1px; }
+    #tool-moe-expert-parallel .ep-mc.zero{ color:var(--ep-muted); opacity:.5; }
+
+    #tool-moe-expert-parallel .ep-bars{ display:flex; flex-direction:column; gap:5px; }
+    #tool-moe-expert-parallel .ep-brow{ display:grid; grid-template-columns:46px minmax(60px,1fr) 100px; align-items:center; gap:8px; font-size:.74rem; }
+    #tool-moe-expert-parallel .ep-blab{ font-family:var(--mono,monospace); color:var(--ep-ink); }
+    #tool-moe-expert-parallel .ep-btrack{ position:relative; height:13px; border-radius:4px; background:var(--surface-3,#eceef3); }
+    #tool-moe-expert-parallel .ep-bfill{ position:absolute; left:0; top:0; height:100%; border-radius:4px; background:var(--ep-accent); opacity:.8; }
+    #tool-moe-expert-parallel .ep-brow.str .ep-bfill{ background:var(--ep-warn); opacity:.95; }
+    #tool-moe-expert-parallel .ep-bmean{ position:absolute; top:-2px; height:17px; width:2px; background:var(--ep-soft); opacity:.6; }
+    #tool-moe-expert-parallel .ep-bnum{ text-align:right; color:var(--ep-muted); font-variant-numeric:tabular-nums;
+      font-size:.71rem; white-space:nowrap; overflow:hidden; }
+
+    #tool-moe-expert-parallel .ep-formula{ margin-top:16px; font-family:var(--mono,monospace); font-size:.71rem; line-height:1.75;
+      color:var(--ep-muted); background:var(--surface-3,#eceef3); border-radius:8px; padding:9px 12px; overflow-x:auto; white-space:pre; }
+    #tool-moe-expert-parallel .vt-out{ margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:11px; }
+    #tool-moe-expert-parallel .vt-stat{ background:var(--surface-3,#eceef3); border-radius:9px; padding:10px 12px; }
+    #tool-moe-expert-parallel .vt-stat .n{ font-size:1.12rem; font-weight:700; color:var(--ep-accent); font-variant-numeric:tabular-nums; }
+    #tool-moe-expert-parallel .vt-stat .l{ font-size:.71rem; color:var(--ep-muted); margin-top:2px; line-height:1.35; }
+    #tool-moe-expert-parallel .vt-stat.warn .n{ color:var(--ep-warn); }
+    #tool-moe-expert-parallel .vt-stat.good .n{ color:var(--ep-good); }
+    #tool-moe-expert-parallel .vt-note{ margin-top:14px; font-size:.78rem; color:var(--ep-muted); line-height:1.55; }
+    #tool-moe-expert-parallel .vt-note b{ color:var(--ep-soft); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-moe-expert-parallel');
+    if(!root) return;
+    function q(id){ return root.querySelector('#moe-expert-parallel-' + id); }
+
+    var Ein=q('E'), Gin=q('G'), kin=q('k'), Bin=q('B'), cfin=q('cf'), skin=q('sk'),
+        dtin=q('dt'), linkin=q('link'), ovin=q('ov'),
+        Eval=q('Eval'), Gval=q('Gval'), kval=q('kval'), Bval=q('Bval'), cfval=q('cfval'), skval=q('skval'),
+        playBtn=q('play'), seedBtn=q('seed'), resetBtn=q('reset'), seedLab=q('seedlab'),
+        phaseBar=q('phases'), svg=q('svg'), gantt=q('gantt'), matEl=q('mat'), barsEl=q('bars'),
+        scrub=q('pos'), formulaEl=q('formula'), outEl=q('out'), noteEl=q('note');
+    if(!Ein||!Gin||!kin||!Bin||!cfin||!skin||!svg||!gantt||!outEl) return;
+
+    /* ---------------------------------------------------------------- constants
+       DeepSeek-V3-shaped MoE layer. One routed expert is a SwiGLU FFN with three
+       matrices of shape (d_model x d_ff), so P_e = 3*d*h parameters.            */
+    var DM = 7168;                 // d_model
+    var DFF = 2048;                // MoE expert intermediate size
+    var PE = 3 * DM * DFF;         // params per routed expert = 44,040,192
+    var WBYTES = 1;                // expert weights held in FP8 -> 1 byte/param
+    var HBM = 3.35e12;             // H100 SXM HBM bandwidth, bytes/s
+    var FPEAK = 990e12;            // H100 dense FP8 peak, FLOP/s
+    var LAT = 10e-6;               // fixed per-collective kernel + RDMA latency, s
+    var NLAYER = 58;               // MoE layers in DeepSeek-V3, used for per-step totals
+    var FSLOT = 6 * DM * DFF / FPEAK;      // seconds of math for one token in one expert
+    var WSTREAM = PE * WBYTES / HBM;       // seconds to stream one expert's weights
+    var CROSS = WSTREAM / FSLOT;           // roofline knee: slots/expert to become compute-bound
+    var BSTOPS = [1,2,4,8,16,32,64,128,256,512];
+    var BSHOW = 6;                 // token dots drawn per GPU (a sample when B is large)
+
+    var seed = 15;
+    var playing = true;
+    var pos = 0;                   // animation position in [0,1)
+    var DUR = 7600;                // ms for one full route->dispatch->compute->combine cycle
+    var P1 = 0.14, P2 = 0.44, P3 = 0.66;   // phase boundaries
+    var M = null, dots = [], dotEls = [], fillEls = [], chipEls = [], lastTs = 0, lastPaint = -1;
+    var rafId = 0, pending = 0;
+
+    /* ------------------------------------------------------------ seeded PRNG */
+    function mulberry32(a){
+      return function(){
+        a|=0; a=(a+0x6D2B79F5)|0;
+        var t=Math.imul(a^(a>>>15),1|a);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+    function randn(rng){
+      var u=0,v=0;
+      while(u===0) u=rng();
+      while(v===0) v=rng();
+      return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+    }
+    function clampInt(v,lo,hi,dflt){
+      v=parseInt(v,10);
+      if(!isFinite(v)) v=dflt;
+      return Math.max(lo,Math.min(hi,v));
+    }
+    function clampNum(v,lo,hi,dflt){
+      v=parseFloat(v);
+      if(!isFinite(v)) v=dflt;
+      return Math.max(lo,Math.min(hi,v));
+    }
+    function readB(){ return BSTOPS[clampInt(Bin.value,0,BSTOPS.length-1,9)]; }
+    function fmtBytes(b){
+      if(b>=1e9) return (b/1e9).toFixed(2)+' GB';
+      if(b>=1e6) return (b/1e6).toFixed(1)+' MB';
+      if(b>=1e3) return (b/1e3).toFixed(1)+' KB';
+      return b.toFixed(0)+' B';
+    }
+    function fmtUs(s){
+      var us=s*1e6;
+      if(us>=1000) return (us/1000).toFixed(2)+' ms';
+      if(us>=100) return us.toFixed(0)+' &micro;s';
+      return us.toFixed(1)+' &micro;s';
+    }
+    function fmtP(p){
+      if(p>=1e9) return (p/1e9).toFixed(2)+'B';
+      if(p>=1e6) return (p/1e6).toFixed(1)+'M';
+      return String(Math.round(p));
+    }
+
+    /* ============================================================== the model */
+    function compute(){
+      var E=clampInt(Ein.value,4,32,16);
+      var G=clampInt(Gin.value,2,8,4);
+      var k=clampInt(kin.value,1,4,2);
+      var B=readB();
+      var cf=clampNum(cfin.value,0.5,2,1.5);
+      var sk=clampNum(skin.value,0,2.5,0.6);
+      var dbytes=clampNum(dtin?dtin.value:1,1,2,1);
+      var BW=clampNum(linkin?linkin.value:50e9,1e9,1e12,50e9);
+      var overlap = !!(ovin && ovin.checked);
+      if(G>E) G=E;
+      if(k>E) k=E;
+      var T=B*G, g, e, i, j;
+
+      /* expert placement: contiguous blocks, as even as possible */
+      var base=Math.floor(E/G), rem=E%G;
+      var owner=new Array(E), start=new Array(G), nExp=new Array(G);
+      e=0;
+      for(g=0;g<G;g++){
+        var n=base+(g<rem?1:0);
+        start[g]=e; nExp[g]=n;
+        for(j=0;j<n;j++){ owner[e]=g; e++; }
+      }
+
+      /* router: fixed per-expert popularity bias (scaled by skew) + per-token noise.
+         p = softmax(z) with the max subtracted; the top-k are taken by logit (softmax
+         is monotone, so that is the same set); the gate is renormalised over the k.   */
+      var rng=mulberry32(seed);
+      var bias=new Array(E);
+      for(e=0;e<E;e++) bias[e]=randn(rng);
+      var row=new Array(E), ex=new Array(E);
+      var bestI=new Array(k), bestV=new Array(k);
+      var tokens=new Array(T);
+      var selCount=new Array(E);
+      for(e=0;e<E;e++) selCount[e]=0;
+      for(i=0;i<T;i++){
+        var mx=-Infinity;
+        for(e=0;e<E;e++){ var z=0.5*sk*bias[e]+randn(rng); row[e]=z; if(z>mx) mx=z; }
+        var Z=0;
+        for(e=0;e<E;e++){ ex[e]=Math.exp(row[e]-mx); Z+=ex[e]; }
+        /* top-k by logit, ties broken by the lower index (strict > never displaces) */
+        for(j=0;j<k;j++){ bestI[j]=-1; bestV[j]=-Infinity; }
+        for(e=0;e<E;e++){
+          if(row[e]>bestV[k-1]){
+            j=k-1;
+            while(j>0 && row[e]>bestV[j-1]){ bestV[j]=bestV[j-1]; bestI[j]=bestI[j-1]; j--; }
+            bestV[j]=row[e]; bestI[j]=e;
+          }
+        }
+        var sel=0;
+        for(j=0;j<k;j++) sel+=ex[bestI[j]];
+        var slots=new Array(k);
+        for(j=0;j<k;j++){
+          slots[j]={e:bestI[j], gate:(sel>0?ex[bestI[j]]/sel:1/k), dropped:false, rank:0};
+          selCount[bestI[j]]++;
+        }
+        tokens[i]={home:Math.floor(i/B), slots:slots};
+      }
+
+      /* capacity: C = ceil(c_f * T*k / E) slots per expert. Buffers fill in arrival
+         order with the ranks interleaved (position-major, then rank), so no GPU is
+         systematically starved by its index; overflow past C is dropped.          */
+      var cap=Math.max(1,Math.ceil(cf*T*k/E));
+      var used=new Array(E), kept=new Array(E);
+      for(e=0;e<E;e++){ used[e]=0; kept[e]=0; }
+      var dropped=0, gateAll=0, gateKept=0;
+      var S=new Array(G);
+      for(g=0;g<G;g++){ S[g]=new Array(G); for(j=0;j<G;j++) S[g][j]=0; }
+      for(var b=0;b<B;b++){
+        for(g=0;g<G;g++){
+          i=g*B+b;
+          for(j=0;j<k;j++){
+            var s=tokens[i].slots[j];
+            gateAll+=s.gate;
+            if(used[s.e]<cap){
+              s.rank=used[s.e];
+              used[s.e]++; kept[s.e]++;
+              gateKept+=s.gate;
+              S[g][owner[s.e]]++;
+            } else {
+              s.dropped=true; dropped++;
+            }
+          }
+        }
+      }
+
+      /* per-GPU load, touched experts, and the grouped-GEMM roofline.
+         Each expert's GEMM is separately either FLOP-bound or weight-stream-bound,
+         so the rank's expert time is the SUM over its experts of the per-expert max. */
+      var L=new Array(G), A=new Array(G), tE=new Array(G);
+      for(g=0;g<G;g++){ L[g]=0; A[g]=0; tE[g]=0; }
+      for(e=0;e<E;e++){
+        if(kept[e]<=0) continue;
+        g=owner[e];
+        L[g]+=kept[e]; A[g]++;
+        tE[g]+=Math.max(kept[e]*FSLOT, WSTREAM);
+      }
+      var tot=0;
+      for(g=0;g<G;g++) tot+=L[g];
+      var meanL=tot/G, maxL=0;
+      for(g=0;g<G;g++) if(L[g]>maxL) maxL=L[g];
+      var IF = meanL>0 ? maxL/meanL : 1;
+
+      /* traffic: remote bytes only (the diagonal never touches the wire) */
+      var outD=new Array(G), inD=new Array(G), outC=new Array(G), inC=new Array(G);
+      var remoteSlots=0;
+      for(g=0;g<G;g++){ outD[g]=0; inD[g]=0; outC[g]=0; inC[g]=0; }
+      for(i=0;i<G;i++){
+        for(j=0;j<G;j++){
+          if(i===j) continue;
+          remoteSlots+=S[i][j];
+          outD[i]+=S[i][j]*DM*dbytes;   // dispatch: activations, FP8 or BF16
+          inD[j]+=S[i][j]*DM*dbytes;
+          outC[j]+=S[i][j]*DM*2;        // combine: results always come back in BF16
+          inC[i]+=S[i][j]*DM*2;
+        }
+      }
+
+      /* per-rank times for one MoE layer */
+      var tD=new Array(G), tC=new Array(G);
+      var tDmax=0, tEmax=0, tCmax=0, straggler=0;
+      for(g=0;g<G;g++){
+        tD[g]=LAT+Math.max(outD[g],inD[g])/BW;
+        tC[g]=LAT+Math.max(outC[g],inC[g])/BW;
+        if(tD[g]>tDmax) tDmax=tD[g];
+        if(tC[g]>tCmax) tCmax=tC[g];
+        var tol=1e-12*Math.max(1e-9,tEmax);
+        if(tE[g]>tEmax+tol){ tEmax=tE[g]; straggler=g; }
+        else if(tE[g]>tEmax-tol && L[g]>L[straggler]){ straggler=g; }
+      }
+      var step = overlap ? Math.max(tEmax, tDmax+tCmax) : (tDmax+tEmax+tCmax);
+
+      /* how dense is a "sparse" batch? */
+      var distinct=0, distinctKept=0;
+      for(e=0;e<E;e++){ if(selCount[e]>0) distinct++; if(kept[e]>0) distinctKept++; }
+      var expDistinct = E*(1-Math.pow(1-k/E,T));
+      var intensity = distinctKept>0 ? tot/distinctKept : 0;   // slots per touched expert
+
+      /* reference: the SAME delivered work spread perfectly evenly over the group.
+         Every component is a mean where the real one is a max, so eta <= 1.       */
+      var tEid = distinctKept>0
+        ? (distinctKept/G)*Math.max((tot/distinctKept)*FSLOT, WSTREAM) : 0;
+      var remoteFrac=(G-1)/G, slotsPerRank=tot/G;
+      var tDid=LAT+slotsPerRank*remoteFrac*DM*dbytes/BW;
+      var tCid=LAT+slotsPerRank*remoteFrac*DM*2/BW;
+      var stepId = overlap ? Math.max(tEid, tDid+tCid) : (tDid+tEid+tCid);
+      var eta = step>0 ? Math.min(1,stepId/step) : 1;
+
+      /* idle time burnt at the barrier: every rank waits for the slowest one */
+      var busy=0;
+      for(g=0;g<G;g++) busy += overlap ? Math.max(tE[g],tD[g]+tC[g]) : (tD[g]+tE[g]+tC[g]);
+      var idleFrac = step>0 ? Math.max(0, 1 - busy/(step*G)) : 0;
+
+      return {E:E,G:G,k:k,B:B,cf:cf,sk:sk,T:T,dbytes:dbytes,BW:BW,overlap:overlap,
+              owner:owner,start:start,nExp:nExp,tokens:tokens,selCount:selCount,kept:kept,cap:cap,
+              dropped:dropped,gateDrop:(gateAll>0?(gateAll-gateKept)/gateAll:0),totalSlots:T*k,
+              S:S,L:L,A:A,meanL:meanL,maxL:maxL,IF:IF,straggler:straggler,remoteSlots:remoteSlots,
+              outD:outD,inD:inD,outC:outC,inC:inC,tD:tD,tE:tE,tC:tC,
+              tDmax:tDmax,tEmax:tEmax,tCmax:tCmax,step:step,stepId:stepId,eta:eta,
+              distinct:distinct,expDistinct:expDistinct,intensity:intensity,idleFrac:idleFrac};
+    }
+
+    /* ========================================================== stage drawing */
+    var W=760, PADX=10, BANDY0=150, BANDY1=186, CELLTOP=200, CELLBOT=372;
+
+    function buildStage(m){
+      var G=m.G, B=m.B, colW=(W-2*PADX)/G;
+      var s='', g, i, j, e;
+      dots=[];
+      var nShow=Math.min(BSHOW,B);
+      var tokCols=Math.min(4,nShow), tokRows=Math.ceil(nShow/tokCols);
+      var tokY0=54, tokStep=12;
+      var maxEpg=1;
+      for(g=0;g<G;g++) if(m.nExp[g]>maxEpg) maxEpg=m.nExp[g];
+      var cellH=Math.min(17,(CELLBOT-CELLTOP)/maxEpg);
+      var cellPad=cellH>10?1.6:0.9;
+
+      /* network band */
+      s+='<rect class="ep-band" x="'+PADX+'" y="'+BANDY0+'" width="'+(W-2*PADX)+'" height="'+(BANDY1-BANDY0)+'" rx="6"/>';
+      s+='<text class="ep-t" x="'+(PADX+8)+'" y="'+((BANDY0+BANDY1)/2+3)+'">all-to-all network ('+
+         (m.BW>=100e9?'NVLink':'RDMA')+', '+(m.BW/1e9).toFixed(0)+' GB/s per GPU)</text>';
+
+      /* GPU frames + token slots + expert cells */
+      var tokPos=[], cellPos=[];
+      for(g=0;g<G;g++){
+        var fx=PADX+colW*g+3, fw=colW-6, cx=PADX+colW*(g+0.5);
+        s+='<rect class="ep-gpu'+(g===m.straggler&&m.IF>1.0001?' str':'')+'" x="'+fx.toFixed(1)+'" y="20" width="'+
+           fw.toFixed(1)+'" height="356" rx="8"/>';
+        s+='<text class="ep-t-b ep-g'+(g%8)+'" x="'+cx.toFixed(1)+'" y="34" text-anchor="middle">GPU '+g+'</text>';
+        s+='<text class="ep-t" id="moe-expert-parallel-chip'+g+'" x="'+cx.toFixed(1)+'" y="45" text-anchor="middle">router</text>';
+        /* token dots (home positions) */
+        var trow=[];
+        for(i=0;i<nShow;i++){
+          var r=Math.floor(i/tokCols), c=i%tokCols;
+          var nInRow=Math.min(tokCols,nShow-r*tokCols);
+          var tx=cx+(c-(nInRow-1)/2)*13;
+          var ty=tokY0+r*tokStep;
+          trow.push([tx,ty]);
+          s+='<circle class="ep-slot" cx="'+tx.toFixed(1)+'" cy="'+ty.toFixed(1)+'" r="4.6"/>';
+        }
+        tokPos.push(trow);
+        s+='<text class="ep-t" x="'+cx.toFixed(1)+'" y="'+(tokY0+tokRows*tokStep+4)+'" text-anchor="middle">'+
+           (B>nShow ? (nShow+' of '+B+' tokens') : (B+' token'+(B===1?'':'s')))+'</text>';
+        /* expert cells */
+        var cw=colW-16, cxx=PADX+colW*g+8;
+        var cells=[];
+        for(i=0;i<m.nExp[g];i++){
+          e=m.start[g]+i;
+          var cy0=CELLTOP+i*cellH;
+          var hot = m.kept[e]>=m.cap;
+          s+='<rect class="ep-cell'+(hot?' hot':'')+'" x="'+cxx.toFixed(1)+'" y="'+(cy0+cellPad).toFixed(1)+
+             '" width="'+cw.toFixed(1)+'" height="'+(cellH-2*cellPad).toFixed(1)+'" rx="2.5"/>';
+          s+='<rect class="ep-fill ep-g'+(g%8)+'" id="moe-expert-parallel-fill'+e+'" x="'+(cxx+0.8).toFixed(1)+
+             '" y="'+(cy0+cellPad+0.8).toFixed(1)+'" width="0" height="'+
+             Math.max(1,(cellH-2*cellPad-1.6)).toFixed(1)+'" rx="2"/>';
+          if(cellH>=10.5){
+            s+='<text class="ep-t-s" x="'+(cxx+3).toFixed(1)+'" y="'+(cy0+cellH/2+3).toFixed(1)+'">e'+e+'</text>';
+            s+='<text class="ep-t-s" x="'+(cxx+cw-3).toFixed(1)+'" y="'+(cy0+cellH/2+3).toFixed(1)+
+               '" text-anchor="end">'+m.kept[e]+'/'+m.cap+'</text>';
+          }
+          cells.push({x:cxx,y:cy0+cellH/2,w:cw,h:cellH});
+        }
+        cellPos.push(cells);
+        s+='<text class="ep-t" x="'+cx.toFixed(1)+'" y="'+(CELLTOP-6)+'" text-anchor="middle">experts '+
+           m.start[g]+(m.nExp[g]>1?('-'+(m.start[g]+m.nExp[g]-1)):'')+'</text>';
+      }
+
+      /* one dot per routed (token, slot) pair, for an evenly spaced SAMPLE of the batch */
+      var streamMax=Math.max(1,nShow*m.k);
+      var dotR=Math.max(1.9,Math.min(3.1,(cellH-2*cellPad)/2.6));
+      for(g=0;g<G;g++){
+        var si=0;
+        for(i=0;i<nShow;i++){
+          var ti=g*B+Math.floor((i+0.5)*B/nShow);
+          var tk=m.tokens[ti];
+          for(j=0;j<m.k;j++){
+            var sl=tk.slots[j], dst=m.owner[sl.e];
+            var hp=tokPos[g][i];
+            var jitter=(j-(m.k-1)/2)*2.6;
+            var x0=hp[0]+jitter, y0=hp[1]+jitter*0.35;
+            var x1=x0, y1=y0;
+            if(!sl.dropped){
+              var cell=cellPos[dst][sl.e-m.start[dst]];
+              var slotW=cell.w/Math.max(1,m.cap);
+              x1=cell.x+(sl.rank+0.5)*slotW;
+              if(x1>cell.x+cell.w-1) x1=cell.x+cell.w-1;
+              y1=cell.y;
+            }
+            dots.push({x0:x0,y0:y0,x1:x1,y1:y1,
+                       cx:(x0+x1)/2+(dst-g)*4,
+                       dropped:sl.dropped, dst:dst, home:g,
+                       dl:0.5*(si/streamMax),
+                       dc:0.5*(m.tE[dst]/(m.tEmax||1))+0.22*(si/streamMax),
+                       r:dotR});
+            si++;
+          }
+        }
+      }
+      /* draw dots last so they ride above the cells */
+      for(i=0;i<dots.length;i++){
+        var d2=dots[i];
+        s+='<circle class="ep-dot ep-g'+(d2.dst%8)+(d2.dropped?' drop':'')+'" cx="'+d2.x0.toFixed(1)+
+           '" cy="'+d2.y0.toFixed(1)+'" r="'+d2.r.toFixed(1)+'"/>';
+      }
+      s+='<text class="ep-t" x="'+(W-PADX-6)+'" y="14" text-anchor="end">dot colour = GPU that owns the chosen expert'+
+         (B>nShow?'; dots are a sample, the cells count the whole batch':'')+'</text>';
+      if(m.dropped>0)
+        s+='<text class="ep-t-w" x="'+(PADX+6)+'" y="14">'+m.dropped+' slot'+(m.dropped===1?'':'s')+
+           ' dropped at capacity (ringed, never sent)</text>';
+
+      svg.innerHTML=s;
+      dotEls=svg.querySelectorAll('.ep-dot');
+      fillEls=[]; chipEls=[];
+      for(e=0;e<m.E;e++) fillEls.push(svg.querySelector('#moe-expert-parallel-fill'+e));
+      for(g=0;g<G;g++) chipEls.push(svg.querySelector('#moe-expert-parallel-chip'+g));
+      /* final fill widths: kept/cap of the cell interior */
+      m._fillW=new Array(m.E);
+      for(g=0;g<G;g++){
+        for(i=0;i<m.nExp[g];i++){
+          e=m.start[g]+i;
+          m._fillW[e]=Math.max(0,(cellPos[g][i].w-1.6)*Math.min(1,m.kept[e]/m.cap));
+        }
+      }
+    }
+
+    function bez(t,a,c,b){ var u=1-t; return u*u*a+2*u*t*c+t*t*b; }
+    function ease(t){ return t<0.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2; }
+    function clamp01(t){ return t<0?0:(t>1?1:t); }
+
+    function paint(p){
+      if(!M || !dotEls || !dotEls.length) return;
+      var ph,u;
+      if(p<P1){ ph=0; u=p/P1; }
+      else if(p<P2){ ph=1; u=(p-P1)/(P2-P1); }
+      else if(p<P3){ ph=2; u=(p-P2)/(P3-P2); }
+      else { ph=3; u=(p-P3)/(1-P3); }
+
+      var i,g,d,el,x,y,t;
+      for(i=0;i<dotEls.length;i++){
+        d=dots[i]; el=dotEls[i];
+        if(!d||!el) continue;
+        if(d.dropped){
+          el.setAttribute('cx',d.x0.toFixed(1)); el.setAttribute('cy',d.y0.toFixed(1));
+          el.setAttribute('opacity',ph===0?'0.9':'0.5');
+          continue;
+        }
+        if(ph===0){ x=d.x0; y=d.y0; el.setAttribute('opacity',(0.35+0.65*u).toFixed(2)); }
+        else if(ph===1){
+          t=ease(clamp01((u-d.dl)/Math.max(0.25,1-d.dl)));
+          x=bez(t,d.x0,d.cx,d.x1); y=bez(t,d.y0,168,d.y1);
+          el.setAttribute('opacity','1');
+        } else if(ph===2){ x=d.x1; y=d.y1; el.setAttribute('opacity','1'); }
+        else {
+          t=ease(clamp01((u-d.dc)/Math.max(0.25,1-d.dc)));
+          x=bez(t,d.x1,d.cx,d.x0); y=bez(t,d.y1,168,d.y0);
+          el.setAttribute('opacity','1');
+        }
+        el.setAttribute('cx',x.toFixed(1)); el.setAttribute('cy',y.toFixed(1));
+      }
+
+      var fw=ph===0?0:(ph===1?ease(u):1);
+      for(i=0;i<fillEls.length;i++) if(fillEls[i]) fillEls[i].setAttribute('width',(M._fillW[i]*fw).toFixed(1));
+
+      for(g=0;g<M.G;g++){
+        if(!chipEls[g]) continue;
+        var txt, cls='ep-t';
+        if(ph===0) txt='router top-'+M.k;
+        else if(ph===1) txt='recv '+M.L[g]+' slots';
+        else if(ph===2){
+          var fin=M.tE[g]/(M.tEmax||1);
+          if(u<=fin){ txt=M.A[g]+' expert GEMMs'; }
+          else { txt='WAITING'; cls='ep-t-w'; }
+        } else txt='combine';
+        if(chipEls[g].textContent!==txt) chipEls[g].textContent=txt;
+        if(chipEls[g].getAttribute('class')!==cls) chipEls[g].setAttribute('class',cls);
+      }
+
+      var chips=phaseBar?phaseBar.querySelectorAll('.ep-ph'):[];
+      for(i=0;i<chips.length;i++) chips[i].className = (i===ph?'ep-ph on':'ep-ph');
+    }
+
+    /* ============================================================ gantt chart */
+    function drawGantt(m){
+      var G=m.G, rowH=Math.max(15,Math.min(22,150/G)), top=30, left=44, right=508;
+      var h=top+G*rowH+40;
+      var s='<defs><pattern id="moe-expert-parallel-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'+
+            '<rect width="6" height="6" fill="none"/><line class="ep-hatch" x1="0" y1="0" x2="0" y2="6"/></pattern></defs>';
+      var span=m.step>0?m.step:1;
+      function X(t){ return left+(right-left)*(t/span); }
+      var i,g;
+      for(i=0;i<=4;i++){
+        var tv=span*i/4, xx=X(tv);
+        s+='<line class="ep-grid" x1="'+xx.toFixed(1)+'" y1="'+(top-8)+'" x2="'+xx.toFixed(1)+'" y2="'+(top+G*rowH+2)+'"/>';
+        s+='<text class="ep-t" x="'+xx.toFixed(1)+'" y="'+(top-12)+'" text-anchor="middle">'+(tv*1e6).toFixed(0)+'</text>';
+      }
+      s+='<text class="ep-t" x="'+left+'" y="12" text-anchor="start">microseconds for one MoE layer</text>';
+      function bar(x0,x1,y,hh,cls){
+        if(x1-x0<0.4) x1=x0+0.4;
+        return '<rect class="'+cls+'" x="'+x0.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+(x1-x0).toFixed(1)+
+               '" height="'+hh.toFixed(1)+'" rx="2"/>';
+      }
+      for(g=0;g<G;g++){
+        var y=top+g*rowH+2, bh=rowH-6;
+        s+='<text class="ep-t" x="'+(left-6)+'" y="'+(y+bh/2+3).toFixed(1)+'" text-anchor="end">GPU '+g+'</text>';
+        s+='<rect x="'+left+'" y="'+y.toFixed(1)+'" width="'+(right-left)+'" height="'+bh.toFixed(1)+
+           '" rx="2" fill="url(#moe-expert-parallel-hatch)"/>';
+        var compCls = (g===m.straggler) ? 'ep-gantt-str' : 'ep-gantt-comp';
+        if(m.overlap){
+          s+=bar(X(0),X(m.tE[g]),y,bh,compCls);
+          s+=bar(X(0),X(m.tD[g]),y,3.2,'ep-gantt-comm');
+          s+=bar(X(Math.max(0,span-m.tC[g])),X(span),y,3.2,'ep-gantt-comm');
+        } else {
+          s+=bar(X(0),X(m.tD[g]),y,bh,'ep-gantt-comm');
+          s+=bar(X(m.tDmax),X(m.tDmax+m.tE[g]),y,bh,compCls);
+          var cb=m.tDmax+m.tEmax;
+          s+=bar(X(cb),X(cb+m.tC[g]),y,bh,'ep-gantt-comm');
+        }
+      }
+      var yb=top+G*rowH+16;
+      s+='<text class="ep-t" x="'+left+'" y="'+yb+'">step = '+
+         (m.overlap?'max(compute, dispatch+combine)':'dispatch + expert + combine')+' = '+
+         (m.step*1e6).toFixed(1)+' us   |   x'+NLAYER+' MoE layers = '+(m.step*NLAYER*1e3).toFixed(2)+' ms/token</text>';
+      s+='<text class="ep-t" x="'+left+'" y="'+(yb+13)+'">idle at the barrier: '+(m.idleFrac*100).toFixed(0)+
+         '% of all GPU-time in this layer</text>';
+      gantt.setAttribute('viewBox','0 0 520 '+h.toFixed(0));
+      gantt.innerHTML=s;
+    }
+
+    /* ========================================================= matrix + bars */
+    function drawMatrix(m){
+      if(!matEl) return;
+      var G=m.G, i, j, s='';
+      var mx=1;
+      for(i=0;i<G;i++) for(j=0;j<G;j++) if(i!==j&&m.S[i][j]>mx) mx=m.S[i][j];
+      matEl.style.gridTemplateColumns='repeat('+(G+1)+',minmax(36px,1fr))';
+      s+='<div class="ep-mc hd">src\\dst</div>';
+      for(j=0;j<G;j++) s+='<div class="ep-mc hd"><span style="color:var(--ep-c'+(j%8)+')">G'+j+'</span></div>';
+      for(i=0;i<G;i++){
+        s+='<div class="ep-mc hd">G'+i+'</div>';
+        for(j=0;j<G;j++){
+          var v=m.S[i][j];
+          var a=(i===j)?0:Math.round(100*(v/mx)*0.5);
+          /* the first background is the fallback if color-mix() is unsupported */
+          var bg='background:var(--surface-2,#f6f7f9);';
+          if(i!==j) bg+='background:color-mix(in srgb, var(--ep-accent) '+a+'%, var(--surface-2,#f6f7f9));';
+          s+='<div class="ep-mc'+(i===j?' diag':'')+(v===0?' zero':'')+'" style="'+bg+
+             '" title="'+v+' slots GPU '+i+' -> GPU '+j+'">'+v+'</div>';
+        }
+      }
+      matEl.innerHTML=s;
+    }
+
+    function drawBars(m){
+      if(!barsEl) return;
+      var G=m.G, g, s='', mx=Math.max(1,m.maxL);
+      for(g=0;g<G;g++){
+        var w=100*m.L[g]/mx, mp=100*m.meanL/mx;
+        s+='<div class="ep-brow'+(g===m.straggler&&m.IF>1.0001?' str':'')+'">'+
+           '<span class="ep-blab">GPU '+g+'</span>'+
+           '<span class="ep-btrack"><span class="ep-bfill" style="width:'+w.toFixed(1)+'%"></span>'+
+           '<span class="ep-bmean" style="left:'+mp.toFixed(1)+'%"></span></span>'+
+           '<span class="ep-bnum">'+m.L[g]+' &middot; '+m.A[g]+'/'+m.nExp[g]+' exp</span></div>';
+      }
+      barsEl.innerHTML=s;
+    }
+
+    /* =============================================================== readout */
+    function drawOut(m){
+      var actP=m.k*PE, totP=m.E*PE;
+      var residBytes=0, g;
+      for(g=0;g<m.G;g++) residBytes=Math.max(residBytes,m.nExp[g]*PE*WBYTES);
+      var dispBytes=0, combBytes=0;
+      for(g=0;g<m.G;g++){ dispBytes+=m.outD[g]; combBytes+=m.outC[g]; }
+      var etaCls=m.eta>0.85?'good':(m.eta<0.6?'warn':'');
+      var ifCls=m.IF>1.3?'warn':(m.IF<1.1?'good':'');
+      var bound=m.intensity>=CROSS;
+      var s='';
+      s+='<div class="vt-stat '+ifCls+'"><div class="n">'+m.IF.toFixed(2)+'</div><div class="l">imbalance factor IF = max L<sub>g</sub> / mean L<sub>g</sub>'+
+         ' &mdash; straggler is GPU '+m.straggler+'</div></div>';
+      s+='<div class="vt-stat"><div class="n">'+m.intensity.toFixed(0)+'</div><div class="l">slots per touched expert vs the '+
+         CROSS.toFixed(0)+'-slot roofline knee &mdash; expert GEMM is '+(bound?'<b>compute-bound</b>, so imbalance costs real time':
+         '<b>weight-streaming-bound</b>, so imbalance is nearly free')+'</div></div>';
+      s+='<div class="vt-stat"><div class="n">'+m.distinct+'/'+m.E+'</div><div class="l">distinct experts touched by '+m.T+
+         ' tokens (uniform-routing theory E(1-(1-k/E)<sup>T</sup>) = '+m.expDistinct.toFixed(1)+
+         ') &mdash; a sparse token makes a dense batch</div></div>';
+      s+='<div class="vt-stat '+(m.dropped>0?'warn':'good')+'"><div class="n">'+m.dropped+'</div><div class="l">slots dropped of '+
+         m.totalSlots+' at C = '+m.cap+'/expert ('+(100*m.gateDrop).toFixed(1)+'% of gate mass lost)</div></div>';
+      s+='<div class="vt-stat"><div class="n">'+(100*m.remoteSlots/Math.max(1,m.totalSlots-m.dropped)).toFixed(0)+
+         '%</div><div class="l">of the '+(m.totalSlots-m.dropped)+' routed slots cross the wire ('+m.remoteSlots+
+         '); the rest stay on-GPU. Uniform placement predicts (G-1)/G = '+(100*(m.G-1)/m.G).toFixed(0)+'%</div></div>';
+      s+='<div class="vt-stat"><div class="n">'+fmtBytes(dispBytes)+'</div><div class="l">dispatch bytes on the wire per layer ('+
+         (m.dbytes===1?'FP8':'BF16')+'); combine returns '+fmtBytes(combBytes)+' in BF16</div></div>';
+      s+='<div class="vt-stat"><div class="n">'+fmtUs(m.step)+'</div><div class="l">layer step = '+fmtUs(m.tDmax)+' dispatch + '+
+         fmtUs(m.tEmax)+' expert + '+fmtUs(m.tCmax)+' combine'+(m.overlap?' (overlapped: max of the two)':'')+'</div></div>';
+      s+='<div class="vt-stat '+etaCls+'"><div class="n">'+(100*m.eta).toFixed(0)+'%</div><div class="l">of the throughput a perfectly balanced group doing the same work would get ('+
+         fmtUs(m.stepId)+' per layer)</div></div>';
+      s+='<div class="vt-stat"><div class="n">'+(100*m.k/m.E).toFixed(1)+'%</div><div class="l">active/total expert params: '+
+         fmtP(actP)+' of '+fmtP(totP)+' per layer &mdash; but all of it must stay resident</div></div>';
+      s+='<div class="vt-stat"><div class="n">'+fmtBytes(residBytes)+'</div><div class="l">FP8 expert weights resident on the busiest GPU (this layer); &times;'+
+         NLAYER+' layers = '+fmtBytes(residBytes*NLAYER)+'</div></div>';
+      outEl.innerHTML=s;
+    }
+
+    function drawFormula(m){
+      if(!formulaEl) return;
+      var lines=[
+        'router      p = softmax(z)  [max-subtracted];  top-k by logit;  gate g_e = p_e / sum_{j in top-k} p_j',
+        'capacity    C = ceil(c_f * T*k / E) = ceil(' + m.cf.toFixed(2) + ' * ' + m.T + '*' + m.k + ' / ' + m.E +
+          ') = ' + m.cap + ' slots/expert;  T = B*G = ' + m.T + ';  ranks interleaved as buffers fill, overflow dropped',
+        'placement   contiguous blocks of ceil(E/G) then floor(E/G) experts per GPU; only off-diagonal traffic touches the wire',
+        'balance     IF = max_g L_g / mean_g L_g;  the collective ends when the SLOWEST rank ends',
+        'expert(g)   sum_{e on g} max( n_e * 6*d*h / F_peak , P_e * 1B / BW_hbm )   [per-expert GEMM: FLOPs vs weight streaming]',
+        'roofline    an expert turns compute-bound at n_e = (P_e/BW_hbm)/(6*d*h/F_peak) = ' + CROSS.toFixed(0) +
+          ' slots; below that, extra tokens are FREE',
+        'a2a(g)      lat + max(bytes_out_g, bytes_in_g) / BW_link;  dispatch d*' + m.dbytes + 'B/slot, combine d*2B/slot',
+        'constants   d=' + DM + ', h=' + DFF + ', P_e=3*d*h=' + (PE/1e6).toFixed(1) + 'M, F_peak=990 TFLOP/s (FP8), ' +
+          'BW_hbm=3.35 TB/s, lat=10us, BW_link=' + (m.BW/1e9).toFixed(0) + ' GB/s'
+      ];
+      formulaEl.textContent=lines.join('\n');
+    }
+
+    function drawNote(m){
+      if(!noteEl) return;
+      var s='';
+      s+='<b>The all-to-all is a barrier, and the barrier is the product.</b> Each token is sparse (it lights up '+
+         m.k+' of '+m.E+' experts, '+(100*m.k/m.E).toFixed(1)+'% of the expert params), yet the batch of '+m.T+
+         ' tokens touches '+m.distinct+' of '+m.E+' experts &mdash; so every expert must stay resident in HBM even though '+
+         'almost none of them are needed by any one token. That is why MoE decodes at the speed of its <i>active</i> '+
+         'parameters but costs the memory of its <i>total</i> parameters.';
+      if(m.intensity<CROSS)
+        s+=' At '+m.intensity.toFixed(0)+' slots per touched expert you are <b>below the '+CROSS.toFixed(0)+
+           '-slot roofline knee</b>: each expert GEMM is bound by streaming its '+fmtBytes(PE*WBYTES)+
+           ' of weights, so a lopsided router costs almost nothing and the step barely moves when you drag skew. '+
+           'Raise <b>tokens per GPU</b> (that is what large-EP serving is for) until the GEMMs go compute-bound &mdash; '+
+           'only then does load imbalance turn into wall-clock.';
+      else if(m.IF>1.25)
+        s+=' You are compute-bound ('+m.intensity.toFixed(0)+' &gt; '+CROSS.toFixed(0)+' slots/expert) and skew has pushed IF to <b>'+
+           m.IF.toFixed(2)+'</b>: GPU '+m.straggler+' owns the hot experts, so every other GPU sits idle at the barrier ('+
+           (100*m.idleFrac).toFixed(0)+'% of GPU-time wasted, '+(100*m.eta).toFixed(0)+
+           '% of balanced throughput). Production fixes are redundant replicas of hot experts and periodic rebalancing (EPLB), not dropping.';
+      else
+        s+=' Routing is currently near-balanced (IF = '+m.IF.toFixed(2)+') and the GEMMs are compute-bound; push <b>routing skew</b> up '+
+           'to see one hot GPU stall the whole group.';
+      if(m.dropped>0) s+=' Lowering the capacity factor bounds the worst case by throwing '+m.dropped+
+         ' token-expert pairs away ('+(100*m.gateDrop).toFixed(1)+'% of gate mass) &mdash; cheap for the collective, silently worse answers, which is why serving stacks prefer replication over dropping.';
+      s+=' Toggle <b>overlap</b> to hide the two collectives behind expert compute (what DeepEP hook kernels buy you), and switch '+
+         'the interconnect to NVLink to see why a single-node EP group and a cross-node one are different machines.';
+      noteEl.innerHTML=s;
+    }
+
+    /* ================================================================ render */
+    function syncLabels(){
+      var E=clampInt(Ein.value,4,32,16), G=clampInt(Gin.value,2,8,4),
+          k=clampInt(kin.value,1,4,2);
+      var Graw=G;
+      if(G>E) G=E;
+      if(k>E) k=E;
+      if(Eval) Eval.textContent=String(E);
+      if(Gval) Gval.textContent=String(G)+(G<Graw?' (E limit)':'');
+      if(kval) kval.textContent=String(k);
+      if(Bval) Bval.textContent=String(readB());
+      if(cfval) cfval.textContent=clampNum(cfin.value,0.5,2,1.5).toFixed(2);
+      if(skval) skval.textContent=clampNum(skin.value,0,2.5,0.6).toFixed(2);
+      if(seedLab) seedLab.textContent='seed = '+seed;
+    }
+
+    function render(){
+      syncLabels();
+      M=compute();
+      buildStage(M);
+      drawGantt(M);
+      drawMatrix(M);
+      drawBars(M);
+      drawOut(M);
+      drawFormula(M);
+      drawNote(M);
+      lastPaint=-1;
+      paint(pos);
+    }
+
+    /* coalesce slider storms into at most one recompute per frame */
+    function scheduleRender(){
+      if(pending) return;
+      pending=requestAnimationFrame(function(){ pending=0; render(); });
+    }
+
+    /* the tools hub renders every widget on one page: idle while off-screen */
+    var visible=true;
+    if(typeof window!=='undefined' && window.IntersectionObserver){
+      new window.IntersectionObserver(function(es){
+        visible=es[0].isIntersecting;
+        if(visible) lastTs=0;
+      },{rootMargin:'100px'}).observe(root);
+    }
+
+    function loop(ts){
+      rafId=requestAnimationFrame(loop);
+      if(!visible){ lastTs=0; return; }
+      if(playing){
+        if(lastTs) pos+=(ts-lastTs)/DUR;
+        lastTs=ts;
+        while(pos>=1) pos-=1;
+        if(pos<0) pos=0;
+        if(scrub) scrub.value=String(Math.round(pos*1000));
+      } else { lastTs=ts; }
+      if(Math.abs(pos-lastPaint)<1e-4) return;
+      lastPaint=pos;
+      paint(pos);
+    }
+
+    /* ============================================================== wiring */
+    var ctrls=[Ein,Gin,kin,Bin,cfin,skin,dtin,linkin,ovin];
+    for(var ci=0;ci<ctrls.length;ci++){
+      if(!ctrls[ci]) continue;
+      ctrls[ci].addEventListener('input',scheduleRender);
+      ctrls[ci].addEventListener('change',scheduleRender);
+    }
+    if(scrub) scrub.addEventListener('input',function(){
+      playing=false;
+      if(playBtn) playBtn.textContent='Play';
+      pos=clamp01(clampNum(scrub.value,0,1000,0)/1000);
+    });
+    if(playBtn) playBtn.addEventListener('click',function(){
+      playing=!playing; lastTs=0;
+      playBtn.textContent=playing?'Pause':'Play';
+    });
+    if(seedBtn) seedBtn.addEventListener('click',function(){
+      seed=(seed*1103515245+12345)%100000;
+      if(seed<0) seed=-seed;
+      render();
+    });
+    if(resetBtn) resetBtn.addEventListener('click',function(){
+      Ein.value='16'; Gin.value='4'; kin.value='2'; Bin.value='9';
+      cfin.value='1.5'; skin.value='0.6';
+      if(dtin) dtin.value='1';
+      if(linkin) linkin.value='50e9';
+      if(ovin) ovin.checked=false;
+      seed=15; pos=0; playing=true;
+      if(scrub) scrub.value='0';
+      if(playBtn) playBtn.textContent='Pause';
+      render();
+    });
+
+    render();
+    rafId=requestAnimationFrame(loop);
+  })();</script>
+</div>

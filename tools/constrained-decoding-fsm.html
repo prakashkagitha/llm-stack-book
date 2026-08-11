@@ -1,0 +1,1110 @@
+<div class="viz-tool" id="tool-constrained-decoding-fsm">
+  <div class="vt-title">Constrained decoding: FSM-guided JSON generation</div>
+  <div class="vt-hint">A schema is compiled into a character-level DFA, then <em>lifted to the token level</em>: for the current state, every vocabulary token is simulated character by character, and any token that would kill the machine is masked to &minus;&infin; before the softmax. It opens on a run where the mask vetoes the toy model's top choice at steps 4, 11 and 13 &mdash; press <b>Next step</b> to walk into them and watch how little probability mass survives. Then flip to <b>unconstrained</b> to see what the same model, at the same seed, emits with the mask switched off.</div>
+
+  <div class="vt-grid">
+    <label for="constrained-decoding-fsm-schema">Target schema
+      <select id="constrained-decoding-fsm-schema" aria-label="Which JSON schema the FSM enforces">
+        <option value="user" selected>{name: string, age: int, admin: bool}</option>
+        <option value="weather">{city: string, temp_c: int}</option>
+        <option value="record">{id: int, ok: bool, tag: string}</option>
+      </select>
+    </label>
+    <label for="constrained-decoding-fsm-mode">Decoding mode
+      <select id="constrained-decoding-fsm-mode" aria-label="Constrained decoding with the FSM mask, or unconstrained free decoding">
+        <option value="con" selected>FSM-constrained (mask applied)</option>
+        <option value="unc">Unconstrained (mask ignored)</option>
+      </select>
+    </label>
+    <label for="constrained-decoding-fsm-sampler">Sampler
+      <select id="constrained-decoding-fsm-sampler" aria-label="Sampling rule used to pick the next token">
+        <option value="sample" selected>Sample from the distribution</option>
+        <option value="greedy">Greedy (argmax)</option>
+      </select>
+    </label>
+    <label for="constrained-decoding-fsm-temp-num">Temperature T
+      <span class="cdf-in">
+        <input id="constrained-decoding-fsm-temp-range" type="range" min="0.1" max="2" step="0.05" value="0.5" aria-label="Softmax temperature, slider">
+        <input id="constrained-decoding-fsm-temp-num" type="number" min="0.1" max="2" step="0.05" value="0.5" aria-label="Softmax temperature, number">
+      </span>
+    </label>
+    <label for="constrained-decoding-fsm-sigma-num">Toy-model noise &sigma; (how unreliable it is)
+      <span class="cdf-in">
+        <input id="constrained-decoding-fsm-sigma-range" type="range" min="0" max="4" step="0.1" value="2" aria-label="Standard deviation of the toy model logit noise, slider">
+        <input id="constrained-decoding-fsm-sigma-num" type="number" min="0" max="4" step="0.1" value="2" aria-label="Standard deviation of the toy model logit noise, number">
+      </span>
+    </label>
+    <label for="constrained-decoding-fsm-seed-num">Seed
+      <span class="cdf-in">
+        <input id="constrained-decoding-fsm-seed-range" type="range" min="1" max="200" step="1" value="15" aria-label="Random seed, slider">
+        <input id="constrained-decoding-fsm-seed-num" type="number" min="1" max="200" step="1" value="15" aria-label="Random seed, number">
+      </span>
+    </label>
+  </div>
+
+  <div class="cdf-schema" id="constrained-decoding-fsm-schemaline"></div>
+
+  <div class="cdf-scroll">
+    <svg id="constrained-decoding-fsm-fsm" viewBox="0 0 920 268" preserveAspectRatio="xMidYMid meet" role="img" aria-label="State diagram of the JSON schema automaton with the current state highlighted" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+  <div class="cdf-statebar">
+    <div class="cdf-statebox" id="constrained-decoding-fsm-statebox"></div>
+    <div class="cdf-tracebox" id="constrained-decoding-fsm-tracebox"></div>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-reset" id="constrained-decoding-fsm-prev" type="button">&larr; Prev step</button>
+    <button class="vt-reset" id="constrained-decoding-fsm-next" type="button">Next step &rarr;</button>
+    <button class="vt-reset" id="constrained-decoding-fsm-play" type="button">Play</button>
+    <button class="vt-reset" id="constrained-decoding-fsm-reset" type="button">Back to step 0</button>
+  </div>
+  <label class="cdf-steplabel" for="constrained-decoding-fsm-step">Decode step t
+    <input id="constrained-decoding-fsm-step" type="range" min="0" max="1" step="1" value="0" aria-label="Which decode step to inspect">
+  </label>
+
+  <div class="cdf-out">
+    <div class="cdf-out-h">Emitted tokens (the token at step t is boxed; later tokens are faded)</div>
+    <div class="cdf-chips" id="constrained-decoding-fsm-chips"></div>
+    <div class="cdf-text" id="constrained-decoding-fsm-text"></div>
+    <div class="cdf-verdict" id="constrained-decoding-fsm-verdict"></div>
+  </div>
+
+  <div class="cdf-dist-h">
+    <span>Next-token distribution at step t <span id="constrained-decoding-fsm-disthint"></span></span>
+    <span class="cdf-legend">
+      <span><i class="cdf-sw cdf-sw-raw"></i>p<sub>raw</sub> = softmax(l/T)</span>
+      <span><i class="cdf-sw cdf-sw-ok"></i>p<sub>masked</sub> (allowed)</span>
+      <span><i class="cdf-sw cdf-sw-bad"></i>vetoed by the FSM</span>
+    </span>
+  </div>
+  <div class="cdf-dist" id="constrained-decoding-fsm-dist"></div>
+
+  <div class="cdf-readout" id="constrained-decoding-fsm-readout"></div>
+
+  <div class="cdf-guar-h">Guarantee check: re-decode 40 seeds at these settings, then parse and validate each output</div>
+  <div class="cdf-guar" id="constrained-decoding-fsm-guar"></div>
+
+  <div class="vt-note">
+    <b>What is exact here.</b> The schema is compiled into a real character-level DFA (states = <i>start, expect-key,
+    in-key, expect-colon, expect-value, in-value, after-value, done</i>, product-ed with the field index, the position
+    inside the key literal, and the string/number length counters). The token-level mask is the genuine Outlines-style
+    index: for every token the DFA is stepped one character at a time from the current state, and the token is
+    <b>allowed if and only if it never reaches the dead state</b>. Masking is
+    <span class="cdf-mono">l~<sub>v</sub> = l<sub>v</sub></span> if allowed else <span class="cdf-mono">&minus;&infin;</span>,
+    followed by a max-subtracted softmax, so the surviving probabilities are exactly
+    <span class="cdf-mono">p<sub>v</sub> = p<sub>raw,v</sub> / &Sigma;<sub>u allowed</sub> p<sub>raw,u</sub></span> &mdash;
+    look at "mass kept" in the readout: that denominator is the whole story. The logits themselves come from a small
+    hand-written scorer plus seeded Gaussian noise (a stand-in for a real network); it is deterministic, and its only
+    job is to be JSON-ish but fallible. The guarantee check enforces exactly the language the DFA accepts, bounds
+    included &mdash; key order, value types, string lengths and digit counts &mdash; so "40 / 40" is the grammar's
+    guarantee and not a weaker one.
+    <br><br>
+    <b>Three things worth pausing on.</b> (1) <b>Tokens, not characters.</b> With <span class="cdf-mono">name</span>,
+    <span class="cdf-mono">na</span> and <span class="cdf-mono">me</span> all in the vocabulary, the legal set changes
+    with every partial match: at the start of the key both <span class="cdf-mono">name</span> and
+    <span class="cdf-mono">na</span> are legal and <span class="cdf-mono">me</span> is not; one token later it is the
+    other way round. That is why the index must simulate multi-character tokens instead of checking single characters.
+    (2) <b>Alive, not accepting.</b> A token is legal if it leaves the machine in <i>any</i> live state; only EOS
+    requires an accepting state, which is exactly why constrained output can never be truncated mid-object. (3)
+    <b>Masking is local, not conditioning.</b> The mask renormalises over legal <i>next</i> tokens, which is not the
+    same as sampling from the model conditioned on the whole string being valid: mass the model wanted to spend on an
+    illegal continuation gets redistributed over its legal siblings, so constrained sampling is a genuine distribution
+    shift, not a filter. Watch the guarantee bar: constrained decoding is valid 40/40 by construction, while the same
+    model at the same seeds, unconstrained, loses runs to an unquoted value
+    (<span class="cdf-mono">{"name":Oslo,</span>), a hallucinated key
+    (<span class="cdf-mono">"adok"</span>), a colon swallowed into a key (<span class="cdf-mono">": null"</span>), a
+    boolean slot filled with a number, or an integer with more digits than the schema allows &mdash; and the failure rate climbs with &sigma; and T.
+    <br><br>
+    <b>And the catch.</b> Validity is not correctness. Because the mask only ever asks "can the machine survive this
+    token?", the sampler is free to spend the redistributed mass on rubbish that happens to be well-formed: set the
+    seed to 20 and the constrained run happily emits <span class="cdf-mono">{"name":", ","age": 12, ...}</span>
+    &mdash; perfectly schema-valid, perfectly useless. A grammar buys you syntax; it never buys you semantics, and a model
+    that had to be dragged into the format is telling you something about the prompt. In production the index is
+    precomputed once per grammar (|Q| &times; |V| bits, well under a megabyte), so the per-step cost is a bitmask
+    lookup that XGrammar overlaps with the model forward pass.
+  </div>
+
+  <style>
+    #tool-constrained-decoding-fsm{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); color:var(--ink,#211f1b);
+      --cdf-bad:#b4344a; --cdf-ok:#1d7a52; --cdf-warn:#9a6b00; --cdf-raw:var(--muted,#6d675d); }
+    html[data-theme="dark"] #tool-constrained-decoding-fsm{ --cdf-bad:#e8697f; --cdf-ok:#4fbf8d; --cdf-warn:#e0a106; }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-constrained-decoding-fsm{ --cdf-bad:#e8697f; --cdf-ok:#4fbf8d; --cdf-warn:#e0a106; } }
+
+    #tool-constrained-decoding-fsm .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--ink,#211f1b); }
+    #tool-constrained-decoding-fsm .vt-hint{ font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; margin-bottom:12px; }
+    #tool-constrained-decoding-fsm .vt-hint b, #tool-constrained-decoding-fsm .vt-hint em{ color:var(--ink-soft,#45413a); }
+    #tool-constrained-decoding-fsm .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-constrained-decoding-fsm label{ display:flex; flex-direction:column; gap:5px; font-size:.76rem; color:var(--muted,#6d675d); }
+    #tool-constrained-decoding-fsm input, #tool-constrained-decoding-fsm select{
+      font:inherit; font-size:.85rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); max-width:100%; }
+    #tool-constrained-decoding-fsm input[type="range"]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-constrained-decoding-fsm :focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-constrained-decoding-fsm .cdf-in{ display:flex; gap:6px; align-items:center; }
+    #tool-constrained-decoding-fsm .cdf-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-constrained-decoding-fsm .cdf-in input[type="number"]{ flex:1 1 62px; min-width:0; }
+
+    #tool-constrained-decoding-fsm .cdf-schema{ margin:14px 0 6px; padding:8px 10px; border:1px solid var(--border,#e7e1d4);
+      border-radius:8px; background:var(--surface-2,#f3efe6); font-family:var(--mono,monospace); font-size:.74rem;
+      color:var(--ink-soft,#45413a); line-height:1.6; overflow-x:auto; }
+    #tool-constrained-decoding-fsm .cdf-schema b{ color:var(--ink,#211f1b); }
+
+    #tool-constrained-decoding-fsm .cdf-scroll{ overflow-x:auto; margin-top:8px; }
+    #tool-constrained-decoding-fsm .cdf-scroll svg{ display:block; width:100%; min-width:640px; height:auto; }
+    #tool-constrained-decoding-fsm .cdf-node{ fill:var(--surface-2,#f3efe6); stroke:var(--border-2,#d8d1c0); stroke-width:1.4; }
+    #tool-constrained-decoding-fsm .cdf-node-cur{ fill:var(--accent,#c15b39); stroke:var(--accent,#c15b39); }
+    #tool-constrained-decoding-fsm .cdf-node-dead{ fill:var(--cdf-bad); stroke:var(--cdf-bad); }
+    #tool-constrained-decoding-fsm .cdf-nid{ font-family:var(--mono,monospace); font-size:13px; fill:var(--ink-soft,#45413a); text-anchor:middle; }
+    #tool-constrained-decoding-fsm .cdf-nid-cur{ fill:var(--surface,#fff); font-weight:700; }
+    #tool-constrained-decoding-fsm .cdf-nlab{ font-family:var(--sans,sans-serif); font-size:11px; fill:var(--muted,#6d675d); text-anchor:middle; }
+    #tool-constrained-decoding-fsm .cdf-nlab-cur{ fill:var(--accent,#c15b39); font-weight:700; }
+    #tool-constrained-decoding-fsm .cdf-nlab-dead{ fill:var(--cdf-bad); font-weight:700; }
+    #tool-constrained-decoding-fsm .cdf-deadlab{ font-family:var(--sans,sans-serif); font-size:12px; font-weight:700; fill:var(--cdf-bad); }
+    #tool-constrained-decoding-fsm .cdf-edge{ fill:none; stroke:var(--border-2,#d8d1c0); stroke-width:1.6; }
+    #tool-constrained-decoding-fsm .cdf-edge-hi{ stroke:var(--accent,#c15b39); stroke-width:2.6; }
+    #tool-constrained-decoding-fsm .cdf-elab{ font-family:var(--mono,monospace); font-size:10.5px; fill:var(--muted,#6d675d); text-anchor:middle; }
+    #tool-constrained-decoding-fsm .cdf-elab-hi{ fill:var(--accent,#c15b39); font-weight:700; }
+    #tool-constrained-decoding-fsm .cdf-cap{ font-family:var(--sans,sans-serif); font-size:10.5px; fill:var(--muted,#6d675d); }
+
+    #tool-constrained-decoding-fsm .cdf-statebar{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin-top:6px; }
+    #tool-constrained-decoding-fsm .cdf-statebox, #tool-constrained-decoding-fsm .cdf-tracebox{
+      padding:8px 10px; border:1px solid var(--border,#e7e1d4); border-radius:8px; background:var(--surface-2,#f3efe6);
+      font-size:.74rem; color:var(--ink-soft,#45413a); line-height:1.65; overflow-x:auto; }
+    #tool-constrained-decoding-fsm .cdf-statebox b, #tool-constrained-decoding-fsm .cdf-tracebox b{ color:var(--ink,#211f1b); }
+    #tool-constrained-decoding-fsm .cdf-mono{ font-family:var(--mono,monospace); }
+
+    #tool-constrained-decoding-fsm .vt-actions{ display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+    #tool-constrained-decoding-fsm .vt-reset{ font:inherit; font-size:.76rem; padding:6px 12px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-constrained-decoding-fsm .vt-reset:hover{ background:var(--surface-3,#ece7da); }
+    #tool-constrained-decoding-fsm .cdf-steplabel{ margin-top:10px; }
+    #tool-constrained-decoding-fsm .cdf-steplabel input[type="range"]{ width:100%; }
+
+    #tool-constrained-decoding-fsm .cdf-out{ margin-top:12px; padding:10px 12px; border:1px solid var(--border,#e7e1d4);
+      border-radius:10px; background:var(--surface-2,#f3efe6); }
+    #tool-constrained-decoding-fsm .cdf-out-h, #tool-constrained-decoding-fsm .cdf-dist-h, #tool-constrained-decoding-fsm .cdf-guar-h{
+      font-size:.68rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted,#6d675d); }
+    #tool-constrained-decoding-fsm .cdf-chips{ display:flex; flex-wrap:wrap; gap:5px; margin:8px 0; }
+    #tool-constrained-decoding-fsm .cdf-chip{ font-family:var(--mono,monospace); font-size:.74rem; padding:2px 6px;
+      border-radius:5px; border:1px solid var(--border-2,#d8d1c0); background:var(--surface,#fff); color:var(--ink-soft,#45413a); }
+    #tool-constrained-decoding-fsm .cdf-chip-cur{ border-color:var(--accent,#c15b39); color:var(--accent,#c15b39); font-weight:700; box-shadow:0 0 0 1px var(--accent,#c15b39) inset; }
+    #tool-constrained-decoding-fsm .cdf-chip-future{ opacity:.38; }
+    #tool-constrained-decoding-fsm .cdf-chip-dead{ border-color:var(--cdf-bad); color:var(--cdf-bad); }
+    #tool-constrained-decoding-fsm .cdf-text{ font-family:var(--mono,monospace); font-size:.82rem; white-space:pre-wrap;
+      word-break:break-all; color:var(--ink,#211f1b); background:var(--surface,#fff); border:1px solid var(--border,#e7e1d4);
+      border-radius:7px; padding:8px 10px; min-height:1.2em; }
+    #tool-constrained-decoding-fsm .cdf-verdict{ margin-top:8px; font-size:.75rem; line-height:1.55;
+      overflow-wrap:anywhere; word-break:break-word; }
+    #tool-constrained-decoding-fsm .cdf-good{ color:var(--cdf-ok); font-weight:700; }
+    #tool-constrained-decoding-fsm .cdf-bad{ color:var(--cdf-bad); font-weight:700; }
+    #tool-constrained-decoding-fsm .cdf-warn{ color:var(--cdf-warn); font-weight:700; }
+
+    #tool-constrained-decoding-fsm .cdf-dist-h{ display:flex; flex-wrap:wrap; gap:6px 16px; justify-content:space-between;
+      align-items:baseline; margin-top:14px; }
+    #tool-constrained-decoding-fsm .cdf-legend{ display:flex; flex-wrap:wrap; gap:6px 14px; text-transform:none; letter-spacing:0; }
+    #tool-constrained-decoding-fsm .cdf-legend span{ display:inline-flex; align-items:center; gap:5px; }
+    #tool-constrained-decoding-fsm .cdf-sw{ display:inline-block; width:10px; height:10px; border-radius:3px; flex:0 0 auto; }
+    #tool-constrained-decoding-fsm .cdf-sw-raw{ background:var(--cdf-raw); }
+    #tool-constrained-decoding-fsm .cdf-sw-ok{ background:var(--accent,#c15b39); }
+    #tool-constrained-decoding-fsm .cdf-sw-bad{ background:var(--cdf-bad); }
+
+    #tool-constrained-decoding-fsm .cdf-dist{ margin-top:6px; max-height:330px; overflow-y:auto; overflow-x:hidden;
+      border:1px solid var(--border,#e7e1d4); border-radius:10px; background:var(--surface,#fff); padding:6px 8px; }
+    #tool-constrained-decoding-fsm .cdf-row{ display:grid; grid-template-columns:106px 54px 1fr 1fr; gap:8px; align-items:center;
+      padding:2px 0; font-size:.72rem; }
+    #tool-constrained-decoding-fsm .cdf-row-sel{ background:var(--surface-3,#ece7da); border-radius:6px; }
+    #tool-constrained-decoding-fsm .cdf-tok{ font-family:var(--mono,monospace); white-space:nowrap; overflow:hidden;
+      text-overflow:ellipsis; color:var(--ink,#211f1b); }
+    #tool-constrained-decoding-fsm .cdf-tok-bad{ color:var(--cdf-bad); text-decoration:line-through; }
+    #tool-constrained-decoding-fsm .cdf-flag{ font-family:var(--mono,monospace); font-size:.66rem; color:var(--muted,#6d675d); }
+    #tool-constrained-decoding-fsm .cdf-flag-bad{ color:var(--cdf-bad); }
+    #tool-constrained-decoding-fsm .cdf-flag-ok{ color:var(--cdf-ok); }
+    #tool-constrained-decoding-fsm .cdf-bar{ position:relative; height:11px; background:var(--surface-3,#ece7da); border-radius:3px; overflow:hidden; }
+    #tool-constrained-decoding-fsm .cdf-bar i{ position:absolute; left:0; top:0; bottom:0; display:block; border-radius:3px; }
+    #tool-constrained-decoding-fsm .cdf-fill-raw{ background:var(--cdf-raw); }
+    #tool-constrained-decoding-fsm .cdf-fill-ok{ background:var(--accent,#c15b39); }
+    #tool-constrained-decoding-fsm .cdf-fill-bad{ background:var(--cdf-bad); opacity:.55; }
+    #tool-constrained-decoding-fsm .cdf-cell{ display:flex; align-items:center; gap:6px; min-width:0; }
+    #tool-constrained-decoding-fsm .cdf-cell .cdf-bar{ flex:1 1 auto; min-width:0; }
+    #tool-constrained-decoding-fsm .cdf-num{ font-family:var(--mono,monospace); font-size:.66rem; color:var(--muted,#6d675d);
+      flex:0 0 44px; text-align:right; }
+
+    #tool-constrained-decoding-fsm .cdf-readout{ margin-top:10px; padding:10px 12px; border:1px solid var(--border,#e7e1d4);
+      border-radius:10px; background:var(--surface-2,#f3efe6); font-size:.74rem; color:var(--ink-soft,#45413a); line-height:1.7;
+      overflow-wrap:anywhere; }
+    #tool-constrained-decoding-fsm .cdf-readout b{ color:var(--ink,#211f1b); }
+    #tool-constrained-decoding-fsm .cdf-readout code{ font-family:var(--mono,monospace); }
+
+    #tool-constrained-decoding-fsm .cdf-guar-h{ margin-top:14px; }
+    #tool-constrained-decoding-fsm .cdf-guar{ margin-top:6px; display:grid; gap:6px; }
+    #tool-constrained-decoding-fsm .cdf-grow{ display:grid; grid-template-columns:170px 1fr 96px; gap:8px; align-items:center; font-size:.72rem; }
+    #tool-constrained-decoding-fsm .cdf-gbar{ position:relative; height:14px; background:var(--surface-3,#ece7da); border-radius:4px; overflow:hidden; }
+    #tool-constrained-decoding-fsm .cdf-gbar i{ position:absolute; left:0; top:0; bottom:0; display:block; border-radius:4px; }
+    #tool-constrained-decoding-fsm .cdf-fails{ color:var(--muted,#6d675d); }
+    #tool-constrained-decoding-fsm .cdf-measuring{ color:var(--muted,#6d675d); font-style:italic; }
+
+    #tool-constrained-decoding-fsm .vt-note{ margin-top:14px; font-size:.76rem; color:var(--muted,#6d675d); line-height:1.65; }
+    #tool-constrained-decoding-fsm .vt-note b{ color:var(--ink,#211f1b); }
+    #tool-constrained-decoding-fsm .vt-note i{ color:var(--ink-soft,#45413a); font-style:italic; }
+
+    @media (max-width:560px){
+      #tool-constrained-decoding-fsm .cdf-row{ grid-template-columns:88px 44px 1fr 1fr; gap:6px; }
+      #tool-constrained-decoding-fsm .cdf-grow{ grid-template-columns:110px 1fr 76px; }
+      #tool-constrained-decoding-fsm .cdf-num{ flex-basis:36px; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-constrained-decoding-fsm');
+    if (!root) return;
+    var $ = function(id){ return document.getElementById('constrained-decoding-fsm-' + id); };
+
+    // ================================================================
+    // 1. Vocabulary of a toy tokenizer (multi-character tokens on purpose)
+    // ================================================================
+    var TOKDEF = [
+      ['{','st'], ['}','st'], ['"','st'], [',','st'], [':','st'], [' ','st'],
+      ['":','sc'], ['": ','sc'], ['",','sc'], ['", "','sc'], [',"','sc'], ['{"','sc'], ['"}','sc'],
+      ['name','kw'], ['na','kw'], ['me','kw'], ['age','kw'], ['admin','kw'], ['ad','kw'], ['min','kw'],
+      ['city','kw'], ['temp','kw'], ['_c','kw'], ['id','kw'], ['ok','kw'], ['tag','kw'],
+      ['Ada','vw'], ['Lovelace','vw'], ['Bob','vw'], ['Oslo','vw'], ['red','vw'],
+      ['36','num'], ['7','num'], ['0','num'], ['12','num'], ['1815','num'], ['-','num'],
+      ['true','lit'], ['false','lit'], ['null','lit'],
+      ['Sure','jk'], ['here','jk'], ['is','jk'], ['the','jk'], ['JSON','jk'],
+      ['!','jk'], ["'",'jk'], ['Hello','jk'], ['undefined','jk'], ['NaN','jk'],
+      ['','eos']
+    ];
+    var TOK = [], CAT = [];
+    for (var i = 0; i < TOKDEF.length; i++){ TOK.push(TOKDEF[i][0]); CAT.push(TOKDEF[i][1]); }
+    var V = TOK.length;
+    var EOS = V - 1;
+
+    var PRIOR_BY_CAT = { st:1.0, sc:0.3, kw:0.45, vw:0.4, num:0.5, lit:0.6, jk:0.35, eos:0.0 };
+    var PRIOR = [], FC = [], ISWORD = [];
+    function firstClass(s){
+      if (s === '') return 'eos';
+      var c = s.charAt(0);
+      if (c === '{') return 'open';
+      if (c === '}') return 'close';
+      if (c === '"') return 'quote';
+      if (c === ':') return 'colon';
+      if (c === ',') return 'comma';
+      if (c === ' ') return 'space';
+      if (c >= '0' && c <= '9') return 'digit';
+      if (c === '-') return 'minus';
+      if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_') return 'letter';
+      return 'other';
+    }
+    for (i = 0; i < V; i++){
+      PRIOR.push(PRIOR_BY_CAT[CAT[i]]);
+      FC.push(firstClass(TOK[i]));
+      ISWORD.push(CAT[i] === 'kw' || CAT[i] === 'vw' || CAT[i] === 'jk');
+    }
+
+    // ================================================================
+    // 2. Schemas -> character-level DFA (exact)
+    // ================================================================
+    var SCHEMAS = {
+      user: { title: '{"name": string(1..12), "age": integer(1..3 digits), "admin": boolean}',
+        fields: [ {key:'name', type:'string', min:1, max:12},
+                  {key:'age', type:'integer', maxDigits:3, signed:false},
+                  {key:'admin', type:'boolean'} ] },
+      weather: { title: '{"city": string(1..10), "temp_c": integer(signed, 1..2 digits)}',
+        fields: [ {key:'city', type:'string', min:1, max:10},
+                  {key:'temp_c', type:'integer', maxDigits:2, signed:true} ] },
+      record: { title: '{"id": integer(1..4 digits), "ok": boolean, "tag": string(1..8)}',
+        fields: [ {key:'id', type:'integer', maxDigits:4, signed:false},
+                  {key:'ok', type:'boolean'},
+                  {key:'tag', type:'string', min:1, max:8} ] }
+    };
+
+    var GROUP = { start:'q0', expectkey:'q1', inkey:'q2', expectcolon:'q3',
+                  expectvalue:'q4', numsign:'q4', invalue:'q5', aftervalue:'q6', done:'q7' };
+    var ROLELAB = { start:'start', expectkey:'expect-key', inkey:'in-key', expectcolon:'expect-colon',
+                    expectvalue:'expect-value', numsign:'expect-value', invalue:'in-value',
+                    aftervalue:'after-value', done:'done (accept)' };
+
+    function buildMachine(schema){
+      var states = [], index = {}, fields = schema.fields, last = fields.length - 1;
+      function get(o){
+        var s = { role:o.role,
+                  f:(o.f === undefined ? -1 : o.f),
+                  p:(o.p === undefined ? -1 : o.p),
+                  n:(o.n === undefined ? -1 : o.n),
+                  ws:(o.ws ? 1 : 0),
+                  lit:(o.lit || ''),
+                  sub:(o.sub || '') };
+        var k = s.role + '|' + s.f + '|' + s.p + '|' + s.n + '|' + s.ws + '|' + s.lit + '|' + s.sub;
+        if (Object.prototype.hasOwnProperty.call(index, k)) return index[k];
+        s.id = states.length; states.push(s); index[k] = s.id; return s.id;
+      }
+      function afterValueStep(f, ws, ch){
+        if (ch === ' ' && !ws) return get({ role:'aftervalue', f:f, ws:1 });
+        if (f < last) return ch === ',' ? get({ role:'expectkey', f:f + 1, ws:0 }) : -1;
+        return ch === '}' ? get({ role:'done' }) : -1;
+      }
+      function litStep(f, lit, p){
+        if (p === lit.length) return get({ role:'aftervalue', f:f, ws:0 });
+        return get({ role:'invalue', sub:'lit', f:f, lit:lit, p:p });
+      }
+      function step(sid, ch){
+        if (sid < 0) return -1;
+        var s = states[sid], fl;
+        switch (s.role){
+          case 'start':
+            if (ch === '{') return get({ role:'expectkey', f:0, ws:0 });
+            if (ch === ' ' && !s.ws) return get({ role:'start', ws:1 });
+            return -1;
+          case 'expectkey':
+            if (ch === '"') return get({ role:'inkey', f:s.f, p:0 });
+            if (ch === ' ' && !s.ws) return get({ role:'expectkey', f:s.f, ws:1 });
+            return -1;
+          case 'inkey':
+            var kk = fields[s.f].key;
+            if (s.p < kk.length) return ch === kk.charAt(s.p) ? get({ role:'inkey', f:s.f, p:s.p + 1 }) : -1;
+            return ch === '"' ? get({ role:'expectcolon', f:s.f, ws:0 }) : -1;
+          case 'expectcolon':
+            if (ch === ':') return get({ role:'expectvalue', f:s.f, ws:0 });
+            if (ch === ' ' && !s.ws) return get({ role:'expectcolon', f:s.f, ws:1 });
+            return -1;
+          case 'expectvalue':
+            if (ch === ' ' && !s.ws) return get({ role:'expectvalue', f:s.f, ws:1 });
+            fl = fields[s.f];
+            if (fl.type === 'string') return ch === '"' ? get({ role:'invalue', sub:'str', f:s.f, n:0 }) : -1;
+            if (fl.type === 'integer'){
+              if (ch === '-' && fl.signed) return get({ role:'numsign', f:s.f });
+              if (ch === '0') return get({ role:'aftervalue', f:s.f, ws:0 });
+              if (ch >= '1' && ch <= '9') return get({ role:'invalue', sub:'num', f:s.f, n:1 });
+              return -1;
+            }
+            if (fl.type === 'boolean'){
+              if (ch === 't') return litStep(s.f, 'true', 1);
+              if (ch === 'f') return litStep(s.f, 'false', 1);
+              return -1;
+            }
+            return -1;
+          case 'numsign':
+            if (ch === '0') return get({ role:'aftervalue', f:s.f, ws:0 });
+            if (ch >= '1' && ch <= '9') return get({ role:'invalue', sub:'num', f:s.f, n:1 });
+            return -1;
+          case 'invalue':
+            fl = fields[s.f];
+            if (s.sub === 'str'){
+              if (ch === '"') return s.n >= fl.min ? get({ role:'aftervalue', f:s.f, ws:0 }) : -1;
+              if (ch === '\\') return -1;
+              if (ch >= ' ' && ch <= '~' && s.n < fl.max) return get({ role:'invalue', sub:'str', f:s.f, n:s.n + 1 });
+              return -1;
+            }
+            if (s.sub === 'num'){
+              if (ch >= '0' && ch <= '9' && s.n < fl.maxDigits) return get({ role:'invalue', sub:'num', f:s.f, n:s.n + 1 });
+              return afterValueStep(s.f, 0, ch);
+            }
+            if (s.p < s.lit.length){
+              if (ch !== s.lit.charAt(s.p)) return -1;
+              if (s.p + 1 === s.lit.length) return get({ role:'aftervalue', f:s.f, ws:0 });
+              return get({ role:'invalue', sub:'lit', f:s.f, lit:s.lit, p:s.p + 1 });
+            }
+            return -1;
+          case 'aftervalue': return afterValueStep(s.f, s.ws, ch);
+          case 'done': return -1;
+        }
+        return -1;
+      }
+      var startId = get({ role:'start', ws:0 });
+      var cache = {};                       // Outlines-style index: state -> {ok, nxt}
+      function tokenIndex(sid){
+        if (cache[sid]) return cache[sid];
+        var ok = new Uint8Array(V), nxt = new Int32Array(V), v, cur, s, j;
+        for (v = 0; v < V; v++){
+          if (v === EOS){ ok[v] = states[sid].role === 'done' ? 1 : 0; nxt[v] = sid; continue; }
+          s = TOK[v]; cur = sid;
+          for (j = 0; j < s.length; j++){ cur = step(cur, s.charAt(j)); if (cur < 0) break; }
+          ok[v] = cur < 0 ? 0 : 1; nxt[v] = cur;
+        }
+        cache[sid] = { ok:ok, nxt:nxt };
+        return cache[sid];
+      }
+      function walk(sid, str){
+        var path = [], cur = sid, j, to;
+        for (j = 0; j < str.length; j++){
+          to = step(cur, str.charAt(j));
+          path.push({ from:GROUP[states[cur].role], to:(to < 0 ? null : GROUP[states[to].role]), ch:str.charAt(j) });
+          if (to < 0) return { end:-1, path:path };
+          cur = to;
+        }
+        return { end:cur, path:path };
+      }
+      function allowedChars(sid){
+        if (sid < 0) return [];
+        var out = [], c, code;
+        for (code = 32; code <= 126; code++){
+          c = String.fromCharCode(code);
+          if (step(sid, c) >= 0) out.push(c);
+        }
+        return out;
+      }
+      return { states:states, start:startId, step:step, walk:walk, tokenIndex:tokenIndex,
+               allowedChars:allowedChars, accepting:function(sid){ return sid >= 0 && states[sid].role === 'done'; },
+               nStates:function(){ return states.length; }, nIndexed:function(){ var n = 0, k; for (k in cache) if (Object.prototype.hasOwnProperty.call(cache, k)) n++; return n; } };
+    }
+
+    // ================================================================
+    // 3. Toy next-token scorer (deterministic; a stand-in for a network)
+    // ================================================================
+    var CLASSB = {
+      begin:      { open:4.5, quote:0.8, letter:1.0, space:0.0, close:-2.0, colon:-2.0, comma:-2.0, digit:-1.0, minus:-1.0, other:-1.5, eos:-3.0 },
+      wantkey:    { quote:4.0, letter:1.2, space:0.6, close:0.8, open:-1.5, colon:-2.0, comma:-1.5, digit:-1.0, minus:-1.5, other:-1.5, eos:-2.5 },
+      instr:      { letter:3.0, digit:1.5, quote:2.6, space:0.8, colon:0.3, comma:0.3, other:0.2, open:-1.0, close:-0.5, minus:-0.5, eos:-3.0 },
+      afterquote: { colon:3.0, comma:2.2, close:1.8, space:0.4, letter:0.2, quote:-0.6, digit:-0.5, minus:-1.0, open:-1.5, other:-1.0, eos:-1.0 },
+      wantvalue:  { quote:3.0, digit:2.6, letter:1.0, space:1.0, minus:0.8, open:0.2, close:-1.5, comma:-1.5, colon:-2.0, other:-1.0, eos:-2.5 },
+      aftervalue: { comma:3.0, close:2.6, digit:1.0, letter:0.6, space:0.5, quote:0.4, colon:0.2, minus:-0.5, open:-1.5, other:-1.0, eos:-0.5 },
+      end:        { eos:4.5, close:0.5, comma:0.2, space:0.3, letter:-1.5, quote:-1.5, colon:-2.0, digit:-2.0, open:-2.0, minus:-2.0, other:-1.5 },
+      other:      { open:0, close:0, quote:0, colon:0, comma:0, space:0, digit:0, minus:0, letter:0, other:0, eos:0 }
+    };
+
+    function shadowClass(text){
+      var i, c = '', q = 0, seen = false;
+      for (i = 0; i < text.length; i++){ if (text.charAt(i) !== ' ') seen = true; if (text.charAt(i) === '"') q++; }
+      if (!seen) return 'begin';
+      if (q % 2 === 1) return 'instr';
+      for (i = text.length - 1; i >= 0; i--){ if (text.charAt(i) !== ' '){ c = text.charAt(i); break; } }
+      if (c === '{' || c === ',') return 'wantkey';
+      if (c === '"') return 'afterquote';
+      if (c === ':') return 'wantvalue';
+      if (c === '}') return 'end';
+      if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_') return 'aftervalue';
+      return 'other';
+    }
+
+    function mulberry32(a){
+      var s = a >>> 0;
+      return function(){
+        s = (s + 0x6D2B79F5) >>> 0;
+        var t = Math.imul(s ^ (s >>> 15), 1 | s);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function gauss(rng){
+      var u = rng(); if (u < 1e-12) u = 1e-12;
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+    }
+
+    // A quote-aware left-to-right scan: exactly the shallow bookkeeping a decent
+    // model does implicitly (am I inside a string? is this string a key or a
+    // value? how many pairs have I finished?). It has no stack and no lookahead,
+    // and it is the only "understanding" the toy model gets.
+    function shallowScan(text){
+      var inS = false, sawColon = false, colons = 0, strStart = -1, i, ch;
+      for (i = 0; i < text.length; i++){
+        ch = text.charAt(i);
+        if (ch === '"'){ if (inS) inS = false; else { inS = true; strStart = i; } continue; }
+        if (inS) continue;
+        if (ch === ':'){ sawColon = true; colons++; }
+        else if (ch === ',' || ch === '{') sawColon = false;
+      }
+      return { inStr:inS, sawColon:sawColon, colons:colons, curStr:(inS ? text.slice(strStart + 1) : '') };
+    }
+
+    // What a quote-initial token commits to *after* it closes the open string.
+    var SC_AFTER = { '"':'none', '":':'colon', '": ':'colon', '",':'comma', '", "':'comma', '"}':'close' };
+
+    var SCALE = 2.2;
+    function logitsAt(text, schema, seed, t, sigma){
+      var cls = shadowClass(text), B = CLASSB[cls] || CLASSB.other;
+      var fields = schema.fields, nF = fields.length, v;
+      var sc = shallowScan(text);
+      var kIdx = Math.min(sc.colons, nF - 1);
+      var vIdx = Math.min(Math.max(sc.colons - 1, 0), nF - 1);
+      var kb = fields[kIdx].key, vty = fields[vIdx].type;
+      var inKeyStr = sc.inStr && !sc.sawColon;
+      var inValStr = sc.inStr && sc.sawColon;
+      var wantVal = inValStr || cls === 'wantvalue';
+      var onKeyTrack = inKeyStr && kb.indexOf(sc.curStr) === 0;
+      var pairDone = (cls === 'aftervalue') || (cls === 'afterquote' && sc.sawColon);
+      var lastPair = sc.colons >= nF;
+
+      var rng = mulberry32((seed * 1000003 + t * 7919) >>> 0);
+      var out = new Float64Array(V), b, tk;
+      for (v = 0; v < V; v++){
+        tk = TOK[v]; b = 0;
+        // spelling the key of the current pair
+        if (FC[v] === 'letter'){
+          if (inKeyStr) b += (onKeyTrack && kb.indexOf(sc.curStr + tk) === 0) ? 2.6 : -0.6;
+          else if (cls === 'wantkey' && kb.indexOf(tk) === 0) b += 0.5;
+        }
+        // picking a value of the right type
+        if (wantVal){
+          if (vty === 'string'){
+            if (CAT[v] === 'vw') b += 1.8;
+            else if (FC[v] === 'letter') b -= 1.2;
+            else if (CAT[v] === 'num' || CAT[v] === 'lit') b -= 0.5;
+            if (FC[v] === 'quote' && !sc.inStr) b += 1.5;
+          } else if (vty === 'integer'){
+            if (CAT[v] === 'num') b += 2.0;
+            else if (FC[v] === 'letter') b -= 1.0;
+            else if (FC[v] === 'quote') b -= 1.5;
+          } else if (vty === 'boolean'){
+            if (tk === 'true' || tk === 'false') b += 2.2;
+            else if (FC[v] === 'letter' || FC[v] === 'digit') b -= 0.8;
+            else if (FC[v] === 'quote') b -= 1.5;
+          }
+        }
+        // when to close the open string -- and multi-character tokens such as
+        // '", "' commit to what follows the closing quote as well
+        if (sc.inStr && FC[v] === 'quote'){
+          var after = SC_AFTER[tk] || 'none';
+          if (inKeyStr){
+            b += (sc.curStr === kb) ? 3.2 : -2.0;
+            b += (after === 'colon') ? 1.2 : (after === 'none' ? 0.3 : -2.5);
+          } else {
+            b += (sc.curStr.length >= 3) ? 2.5 : -1.5;
+            var wantAfter = lastPair ? 'close' : 'comma';
+            b += (after === wantAfter) ? 1.2 : (after === 'none' ? 0.3 : -2.5);
+          }
+        }
+        // a real model's strings are short: the longer the open string runs, the
+        // harder it pushes on the closing quote. Without this the toy model can
+        // babble inside a string forever, which is not how models fail.
+        if (sc.inStr){
+          var press = Math.min(3.5, 0.45 * Math.max(0, sc.curStr.length - 2));
+          b += (FC[v] === 'quote') ? press : -press;
+        }
+        // a multi-character quote token *opens* a string here and dumps its
+        // remaining characters inside it; it only makes sense when it CLOSES one
+        if (!sc.inStr && FC[v] === 'quote' && tk.length > 1) b -= 1.8;
+        // colon after a key, comma or brace after a value
+        if (cls === 'afterquote'){
+          if (!sc.sawColon){ if (FC[v] === 'colon') b += 1.5; else if (FC[v] === 'comma' || FC[v] === 'close') b -= 1.5; }
+          else { if (FC[v] === 'colon') b -= 2.0; else if (FC[v] === 'comma' || FC[v] === 'close') b += 1.5; }
+        }
+        if (pairDone){
+          if (lastPair){ if (FC[v] === 'close') b += 1.5; else if (FC[v] === 'comma') b -= 1.5; }
+          else { if (FC[v] === 'comma') b += 1.5; else if (FC[v] === 'close') b -= 1.5; }
+        }
+        if (ISWORD[v] && tk !== '' && text.indexOf(tk) >= 0) b -= 2.2;
+        out[v] = SCALE * (PRIOR[v] + (B[FC[v]] || 0) + b) + sigma * gauss(rng);
+      }
+      return { logits:out, cls:cls };
+    }
+
+    // ================================================================
+    // 4. Softmax (max-subtracted) + sampling
+    // ================================================================
+    function softmax(logits, temp, mask){
+      var p = new Float64Array(V), m = -Infinity, v, l, sum = 0;
+      for (v = 0; v < V; v++){
+        if (mask && !mask[v]) continue;
+        l = logits[v] / temp; if (l > m) m = l;
+      }
+      if (m === -Infinity) return p;
+      for (v = 0; v < V; v++){
+        if (mask && !mask[v]){ p[v] = 0; continue; }
+        p[v] = Math.exp(logits[v] / temp - m); sum += p[v];
+      }
+      if (sum > 0) for (v = 0; v < V; v++) p[v] /= sum;
+      return p;
+    }
+    function argmax(p){ var b = 0, v; for (v = 1; v < V; v++) if (p[v] > p[b]) b = v; return b; }
+    // Inverse-CDF sampling. The p[v] > 0 test matters: a masked token has p = 0,
+    // and a naive "u <= cumulative" test would hand it back when u lands exactly
+    // on a bin edge (u = 0, or floating-point round-off at the tail).
+    function sampleFrom(p, u){
+      var c = 0, v;
+      for (v = 0; v < V; v++){ c += p[v]; if (p[v] > 0 && u < c) return v; }
+      return argmax(p);
+    }
+
+    // ================================================================
+    // 5. The decode loop
+    // ================================================================
+    var MAXSTEPS = 64;
+    function generate(schema, mach, mode, temp, sigma, seed, greedy){
+      var text = '', sid = mach.start, steps = [], t, ended = 'maxsteps';
+      for (t = 0; t < MAXSTEPS; t++){
+        var lg = logitsAt(text, schema, seed, t, sigma);
+        var idx = sid >= 0 ? mach.tokenIndex(sid) : null;
+        var mask = idx ? idx.ok : null;
+        var nAllowed = 0, v;
+        if (mask) for (v = 0; v < V; v++) nAllowed += mask[v];
+        var pRaw = softmax(lg.logits, temp, null);
+        var pMask = (mask && nAllowed > 0) ? softmax(lg.logits, temp, mask) : null;
+        var kept = 0;
+        if (mask) for (v = 0; v < V; v++) if (mask[v]) kept += pRaw[v];
+        // An empty mask means the grammar has painted itself into a corner. It
+        // cannot happen for these schemas (every reachable state has a legal
+        // token), but a real serving stack must handle it, so we stop cleanly.
+        var infeasible = (mode === 'con' && (!mask || nAllowed === 0));
+        var useMask = (mode === 'con' && !!pMask);
+        var pAct = useMask ? pMask : pRaw;
+        var srng = mulberry32((seed * 15485863 + t * 2654435 + 17) >>> 0);
+        var chosen = infeasible ? EOS : (greedy ? argmax(pAct) : sampleFrom(pAct, srng()));
+        var wk = (sid >= 0 && chosen !== EOS) ? mach.walk(sid, TOK[chosen]) : { end:sid, path:[] };
+        steps.push({ t:t, sid:sid, cls:lg.cls, textBefore:text, allowed:mask, nAllowed:(mask ? nAllowed : V),
+                     pRaw:pRaw, pMask:pMask, kept:kept, chosen:chosen, path:wk.path,
+                     died:(sid >= 0 && chosen !== EOS && wk.end < 0), applied:!!useMask, infeasible:infeasible });
+        if (infeasible){ ended = 'infeasible'; break; }
+        if (chosen === EOS){ ended = 'eos'; break; }
+        text += TOK[chosen];
+        sid = (sid >= 0) ? wk.end : -1;
+      }
+      return { steps:steps, text:text, ended:ended, finalSid:sid };
+    }
+
+    var FAILLAB = { parse:'does not parse', nonobject:'not a JSON object', nfields:'wrong field count',
+                    key:'wrong / hallucinated key', type:'wrong value type', range:'value outside the schema bounds' };
+    function checkOutput(text, schema){
+      var obj;
+      try { obj = JSON.parse(text); }
+      catch (e){ return { ok:false, kind:'parse', why:'JSON.parse threw: ' + String(e.message).slice(0, 90) }; }
+      if (obj === null || typeof obj !== 'object' || Object.prototype.toString.call(obj) === '[object Array]')
+        return { ok:false, kind:'nonobject', why:'parses, but is not a JSON object' };
+      var keys = [], k;
+      for (k in obj) if (Object.prototype.hasOwnProperty.call(obj, k)) keys.push(k);
+      if (keys.length !== schema.fields.length)
+        return { ok:false, kind:'nfields', why:'wrong number of fields (' + keys.length + ' instead of ' + schema.fields.length + ')' };
+      for (var i = 0; i < schema.fields.length; i++){
+        var f = schema.fields[i];
+        if (keys[i] !== f.key)
+          return { ok:false, kind:'key', why:'field ' + (i + 1) + ' is "' + keys[i].slice(0, 24) + '", schema wants "' + f.key + '"' };
+        var val = obj[f.key], tv = typeof val;
+        // The checker enforces exactly the language the DFA accepts, bounds included,
+        // so "40 / 40 valid" really is the grammar's guarantee and not a weaker one.
+        if (f.type === 'string'){
+          if (tv !== 'string') return { ok:false, kind:'type', why:'"' + f.key + '" is not a string' };
+          if (val.length < f.min || val.length > f.max)
+            return { ok:false, kind:'range', why:'"' + f.key + '" has ' + val.length + ' chars, schema allows ' + f.min + '-' + f.max };
+        }
+        if (f.type === 'integer'){
+          if (tv !== 'number' || val !== Math.floor(val)) return { ok:false, kind:'type', why:'"' + f.key + '" is not an integer' };
+          if (!f.signed && val < 0) return { ok:false, kind:'range', why:'"' + f.key + '" is negative, schema wants an unsigned integer' };
+          if (String(Math.abs(val)).length > f.maxDigits)
+            return { ok:false, kind:'range', why:'"' + f.key + '" = ' + val + ' has more than ' + f.maxDigits + ' digits' };
+        }
+        if (f.type === 'boolean' && tv !== 'boolean') return { ok:false, kind:'type', why:'"' + f.key + '" is not a boolean' };
+      }
+      return { ok:true, kind:'ok', why:'parses and matches the schema' };
+    }
+
+    // ================================================================
+    // 6. FSM diagram geometry
+    // ================================================================
+    var NODES = [
+      { id:'q0', x:55,  y:62,  lab:'start' },
+      { id:'q1', x:190, y:62,  lab:'expect-key' },
+      { id:'q2', x:335, y:62,  lab:'in-key' },
+      { id:'q3', x:480, y:62,  lab:'expect-colon' },
+      { id:'q4', x:625, y:62,  lab:'expect-value' },
+      { id:'q5', x:785, y:62,  lab:'in-value' },
+      { id:'q6', x:785, y:180, lab:'after-value' },
+      { id:'q7', x:878, y:180, lab:'done' }
+    ];
+    // Every transition the machine can actually take is drawn, so a step never
+    // leaves the diagram inert. `.` is the one optional space each of q0/q1/q3/q4/q6
+    // allows; numbers are self-delimiting, hence the q5 -> q1 and q5 -> q7 shortcuts.
+    var EDGES = [
+      { k:'q0>q1', d:'M79,62 L162,62',   lx:120, ly:50,  lab:'{' },
+      { k:'q0>q0', d:'M40,42 C24,4 86,4 70,42',     lx:55,  ly:12, lab:'·' },
+      { k:'q1>q2', d:'M214,62 L307,62',  lx:260, ly:50,  lab:'"' },
+      { k:'q1>q1', d:'M175,42 C159,4 221,4 205,42', lx:190, ly:12, lab:'·' },
+      { k:'q2>q2', d:'M320,42 C304,4 366,4 350,42', lx:335, ly:12, lab:'key chars' },
+      { k:'q2>q3', d:'M359,62 L452,62',  lx:405, ly:50,  lab:'"' },
+      { k:'q3>q4', d:'M504,62 L597,62',  lx:550, ly:50,  lab:':' },
+      { k:'q3>q3', d:'M465,42 C449,4 511,4 495,42', lx:480, ly:12, lab:'·' },
+      { k:'q4>q5', d:'M649,62 L757,62',  lx:703, ly:50,  lab:'" | 1-9 | t | f' },
+      { k:'q4>q4', d:'M610,42 C594,4 656,4 640,42', lx:625, ly:12, lab:'· | -' },
+      { k:'q5>q5', d:'M770,42 C754,4 816,4 800,42', lx:785, ly:12, lab:'chars / digits' },
+      { k:'q5>q6', d:'M785,86 L785,152', lx:772, ly:136, lab:'" | end of value', anchor:'end' },
+      { k:'q4>q6', d:'M625,86 C625,150 690,180 757,180', lx:664, ly:150, lab:'0', dash:1 },
+      { k:'q5>q7', d:'M802,79 C845,100 855,130 861,163', lx:866, ly:120, lab:'} num', anchor:'start', dash:1 },
+      { k:'q5>q1', d:'M768,79 C742,104 738,140 738,214 L200,214 C186,214 186,150 190,88',
+        lx:520, ly:207, lab:', num ends', dash:1 },
+      { k:'q6>q7', d:'M809,180 L850,180', lx:830, ly:170, lab:'}' },
+      { k:'q6>q6', d:'M800,161 C832,133 856,158 807,169', lx:845, ly:141, lab:'·', anchor:'start' },
+      { k:'q6>q1', d:'M785,204 L785,240 L160,240 C146,240 146,120 172,80', lx:470, ly:233, lab:', -> next key' }
+    ];
+
+    function buildDiagram(){
+      var svg = $('fsm');
+      var s = '<defs>' +
+        '<marker id="constrained-decoding-fsm-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">' +
+        '<path d="M0,0 L10,5 L0,10 z" fill="var(--border-2,#d8d1c0)"></path></marker>' +
+        '<marker id="constrained-decoding-fsm-arhi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">' +
+        '<path d="M0,0 L10,5 L0,10 z" fill="var(--accent,#c15b39)"></path></marker>' +
+        '</defs>';
+      var i, e;
+      for (i = 0; i < EDGES.length; i++){
+        e = EDGES[i];
+        s += '<path class="cdf-edge" id="constrained-decoding-fsm-e' + i + '" d="' + e.d + '"' +
+             (e.dash ? ' stroke-dasharray="4 3"' : '') +
+             ' marker-end="url(#constrained-decoding-fsm-ar)"></path>';
+        // inline style, not the text-anchor presentation attribute: the .cdf-elab
+        // rule would otherwise win and re-centre the label
+        s += '<text class="cdf-elab" id="constrained-decoding-fsm-el' + i + '" x="' + e.lx + '" y="' + e.ly + '"' +
+             (e.anchor ? ' style="text-anchor:' + e.anchor + '"' : '') + '>' + esc(e.lab) + '</text>';
+      }
+      for (i = 0; i < NODES.length; i++){
+        var n = NODES[i];
+        s += '<circle class="cdf-node" id="constrained-decoding-fsm-n' + n.id + '" cx="' + n.x + '" cy="' + n.y + '" r="24"></circle>';
+        if (n.id === 'q7') s += '<circle class="cdf-node" id="constrained-decoding-fsm-n7i" cx="' + n.x + '" cy="' + n.y + '" r="19" fill="none"></circle>';
+        s += '<text class="cdf-nid" id="constrained-decoding-fsm-t' + n.id + '" x="' + n.x + '" y="' + (n.y + 4) + '">' + n.id + '</text>';
+        s += '<text class="cdf-nlab" id="constrained-decoding-fsm-l' + n.id + '" x="' + n.x + '" y="' + (n.y + 40) + '">' + n.lab + '</text>';
+      }
+      s += '<text class="cdf-deadlab" id="constrained-decoding-fsm-deadlab" x="330" y="150" text-anchor="middle"></text>';
+      s += '<text class="cdf-cap" x="8" y="252">Double circle = accepting: EOS is unmasked only there. &#183; = the one optional space q0, q1, q3, q4, q6 each allow; dashed = number shortcuts.</text>';
+      s += '<text class="cdf-cap" x="8" y="264">Nodes group the product-DFA states: the field index, the position inside the key and the string / digit counters are tracked but not drawn.</text>';
+      svg.innerHTML = s;
+    }
+
+    // ================================================================
+    // 7. Rendering
+    // ================================================================
+    function esc(s){
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function tokDisp(v){
+      if (v === EOS) return '&lt;eos&gt;';
+      return esc(TOK[v]).replace(/ /g, '&middot;');
+    }
+    function chDisp(c){ return c === ' ' ? '&middot;' : esc(c); }
+    function fmtP(x){
+      if (x >= 0.0995) return x.toFixed(2);
+      if (x >= 0.001) return x.toFixed(3);
+      if (x <= 0) return '0';
+      return x.toExponential(0);
+    }
+    function pct(x){
+      var y = 100 * x;
+      if (x >= 1) return '100%';
+      if (y > 99.999) return '&gt;99.999%';
+      if (y >= 99.95) return y.toFixed(3) + '%';
+      if (y > 0 && y < 0.05) return y.toPrecision(2) + '%';
+      return y.toFixed(1) + '%';
+    }
+
+    function rangesOf(chars){
+      if (!chars.length) return '(none)';
+      var out = [], i = 0;
+      while (i < chars.length){
+        var j = i;
+        while (j + 1 < chars.length && chars[j + 1].charCodeAt(0) === chars[j].charCodeAt(0) + 1) j++;
+        if (j - i >= 2) out.push(chDisp(chars[i]) + '-' + chDisp(chars[j]));
+        else for (var k = i; k <= j; k++) out.push(chDisp(chars[k]));
+        i = j + 1;
+      }
+      return out.join(' ');
+    }
+
+    // element handles
+    var elSchema = $('schema'), elMode = $('mode'), elSampler = $('sampler');
+    var elTempR = $('temp-range'), elTempN = $('temp-num');
+    var elSigR = $('sigma-range'), elSigN = $('sigma-num');
+    var elSeedR = $('seed-range'), elSeedN = $('seed-num');
+    var elStep = $('step');
+
+    var machCache = {}, genCache = null, genKey = '', guarCache = {};
+    var curStep = 0, playTimer = null, guarTimer = null, guarPending = '';
+
+    function getMach(name){
+      if (!machCache[name]) machCache[name] = buildMachine(SCHEMAS[name]);
+      return machCache[name];
+    }
+
+    function clampNum(el, lo, hi, fb, dec){
+      var x = parseFloat(el.value);
+      if (!isFinite(x)) x = fb;
+      x = Math.min(hi, Math.max(lo, x));
+      return dec > 0 ? Math.round(x * Math.pow(10, dec)) / Math.pow(10, dec) : Math.round(x);
+    }
+
+    function guarKey(P){ return P.name + '|' + P.temp + '|' + P.sigma + '|' + P.greedy; }
+    function guarantee(name, temp, sigma, greedy){
+      var key = name + '|' + temp + '|' + sigma + '|' + greedy;
+      if (guarCache[key]) return guarCache[key];
+      var schema = SCHEMAS[name], mach = getMach(name);
+      var N = 40, res = { con:0, unc:0, N:N, uncFail:{} }, s;
+      for (s = 1; s <= N; s++){
+        var a = generate(schema, mach, 'con', temp, sigma, s, greedy);
+        if (checkOutput(a.text, schema).ok) res.con++;
+        var b = generate(schema, mach, 'unc', temp, sigma, s, greedy);
+        var cb = checkOutput(b.text, schema);
+        if (cb.ok) res.unc++;
+        else { var w = FAILLAB[cb.kind] || cb.kind; res.uncFail[w] = (res.uncFail[w] || 0) + 1; }
+      }
+      guarCache[key] = res;
+      return res;
+    }
+
+    function readParams(){
+      var name = elSchema.value in SCHEMAS ? elSchema.value : 'user';
+      return { name:name, mode:(elMode.value === 'unc' ? 'unc' : 'con'),
+               greedy:(elSampler.value === 'greedy'),
+               temp:clampNum(elTempN, 0.1, 2, 0.5, 2),
+               sigma:clampNum(elSigN, 0, 4, 2, 1),
+               seed:clampNum(elSeedN, 1, 200, 15, 0) };
+    }
+
+    // Never clobber the box the user is typing in (writing "0.1" back over a
+    // half-typed "0." would fight the keyboard).
+    function setVal(el, v){ if (document.activeElement !== el) el.value = String(v); }
+
+    function render(){
+      var P = readParams();
+      setVal(elTempR, P.temp); setVal(elTempN, P.temp);
+      setVal(elSigR, P.sigma); setVal(elSigN, P.sigma);
+      setVal(elSeedR, P.seed); setVal(elSeedN, P.seed);
+
+      var schema = SCHEMAS[P.name], mach = getMach(P.name);
+      var key = [P.name, P.mode, P.greedy, P.temp, P.sigma, P.seed].join('|');
+      if (key !== genKey){ genCache = generate(schema, mach, P.mode, P.temp, P.sigma, P.seed, P.greedy); genKey = key; curStep = 0; }
+      var gen = genCache, nS = gen.steps.length;
+      elStep.max = String(Math.max(0, nS - 1));
+      if (curStep > nS - 1) curStep = Math.max(0, nS - 1);
+      if (curStep < 0) curStep = 0;
+      elStep.value = String(curStep);
+      var st = gen.steps[curStep];
+      if (!st) return;
+
+      // ---- schema line
+      $('schemaline').innerHTML = '<b>Grammar:</b> ' + esc(schema.title) +
+        ' &nbsp;|&nbsp; <b>DFA:</b> ' + mach.nStates() + ' states discovered, ' + mach.nIndexed() +
+        ' token-index rows materialised (' + V + ' bits each) &nbsp;|&nbsp; <b>Vocabulary:</b> ' + V + ' tokens incl. &lt;eos&gt;';
+
+      // ---- diagram
+      var curGroup = st.sid >= 0 ? GROUP[mach.states[st.sid].role] : null;
+      var hi = {}, i;
+      for (i = 0; i < st.path.length; i++){
+        var pe = st.path[i];
+        if (pe.to) hi[pe.from + '>' + pe.to] = 1;
+      }
+      for (i = 0; i < EDGES.length; i++){
+        var pEl = document.getElementById('constrained-decoding-fsm-e' + i);
+        var lEl = document.getElementById('constrained-decoding-fsm-el' + i);
+        var on = !!hi[EDGES[i].k];
+        pEl.setAttribute('class', 'cdf-edge' + (on ? ' cdf-edge-hi' : ''));
+        pEl.setAttribute('marker-end', 'url(#constrained-decoding-fsm-' + (on ? 'arhi' : 'ar') + ')');
+        lEl.setAttribute('class', 'cdf-elab' + (on ? ' cdf-elab-hi' : ''));
+      }
+      var dying = !!st.died;
+      for (i = 0; i < NODES.length; i++){
+        var id = NODES[i].id, on2 = (id === curGroup);
+        document.getElementById('constrained-decoding-fsm-n' + id).setAttribute('class',
+          'cdf-node' + (on2 ? (dying ? ' cdf-node-dead' : ' cdf-node-cur') : ''));
+        document.getElementById('constrained-decoding-fsm-t' + id).setAttribute('class', 'cdf-nid' + (on2 ? ' cdf-nid-cur' : ''));
+        document.getElementById('constrained-decoding-fsm-l' + id).setAttribute('class',
+          'cdf-nlab' + (on2 ? (dying ? ' cdf-nlab-dead' : ' cdf-nlab-cur') : ''));
+      }
+      $('deadlab').textContent = st.sid < 0 ? '⊥ dead state: no live node, no mask, no way back'
+        : (dying ? '⊥ this token walks the machine into the dead state' : '');
+
+      // ---- state box
+      var sbx;
+      if (st.sid < 0){
+        sbx = '<b class="cdf-bad">DFA state: dead.</b> The unconstrained sampler already emitted a character no ' +
+              'continuation can repair, so there is no mask to compute any more.';
+      } else {
+        var S = mach.states[st.sid], fl = S.f >= 0 ? schema.fields[S.f] : null, det = [];
+        if (fl) det.push('field ' + (S.f + 1) + ' <span class="cdf-mono">"' + esc(fl.key) + '"</span> (' + fl.type + ')');
+        if (S.role === 'inkey') det.push('matched <span class="cdf-mono">"' + esc(fl.key.slice(0, S.p)) + '"</span>, ' + (fl.key.length - S.p) + ' key chars left');
+        if (S.role === 'invalue' && S.sub === 'str') det.push(S.n + ' of max ' + fl.max + ' string chars');
+        if (S.role === 'invalue' && S.sub === 'num') det.push(S.n + ' of max ' + fl.maxDigits + ' digits');
+        if (S.role === 'invalue' && S.sub === 'lit') det.push('matching <span class="cdf-mono">' + esc(S.lit) + '</span>, ' + (S.lit.length - S.p) + ' chars left');
+        if (S.ws) det.push('one space already consumed here');
+        sbx = '<b>DFA state s' + st.sid + '</b> = diagram node <b>' + curGroup + '</b> (' + ROLELAB[S.role] + ')' +
+              (det.length ? ' &mdash; ' + det.join('; ') : '') +
+              '<br><b>Legal next characters:</b> <span class="cdf-mono">' + rangesOf(mach.allowedChars(st.sid)) + '</span>' +
+              (mach.accepting(st.sid) ? ' &mdash; the object is complete, so only &lt;eos&gt; is legal' : '') +
+              '<br><b>Legal tokens:</b> ' + st.nAllowed + ' / ' + V + ' (' + pct(1 - st.nAllowed / V) + ' of the vocabulary masked out)';
+      }
+      $('statebox').innerHTML = sbx;
+
+      var tb;
+      if (st.chosen === EOS){
+        tb = '<b>Token chosen: <span class="cdf-mono">&lt;eos&gt;</span></b><br>' +
+             (mach.accepting(st.sid) ? '<span class="cdf-good">The machine is in an accepting state, so EOS was legal and the object is complete.</span>'
+                                     : '<span class="cdf-bad">EOS in a non-accepting state: the object is truncated. The constrained mask would have forbidden this.</span>');
+      } else {
+        var tr = '', cur = st.sid;
+        for (i = 0; i < st.path.length; i++){
+          var p2 = st.path[i];
+          tr += (i ? ' ' : '') + p2.from + ' -<span class="cdf-mono">' + chDisp(p2.ch) + '</span>-&gt; ' + (p2.to ? p2.to : '<span class="cdf-bad">dead</span>');
+        }
+        tb = '<b>Token chosen: <span class="cdf-mono">' + tokDisp(st.chosen) + '</span></b> (' + TOK[st.chosen].length + ' char' + (TOK[st.chosen].length === 1 ? '' : 's') + ')<br>' +
+             '<b>DFA walk:</b> ' + (tr || '<i>(no characters)</i>');
+      }
+      $('tracebox').innerHTML = tb;
+
+      // ---- emitted tokens
+      var chips = '', deadSeen = false;
+      for (i = 0; i < nS; i++){
+        var sti = gen.steps[i], cls = 'cdf-chip';
+        if (i === curStep) cls += ' cdf-chip-cur';
+        if (i > curStep) cls += ' cdf-chip-future';
+        if (sti.died || deadSeen) { cls += ' cdf-chip-dead'; }
+        if (sti.died) deadSeen = true;
+        chips += '<span class="' + cls + '">' + tokDisp(sti.chosen) + '</span>';
+      }
+      $('chips').innerHTML = chips || '<span class="cdf-chip">(none)</span>';
+      var shown = st.textBefore + (st.chosen === EOS ? '' : TOK[st.chosen]);
+      $('text').textContent = shown.length ? shown : '(empty)';
+
+      var chk = checkOutput(gen.text, schema);
+      var stopWhy = gen.ended === 'eos' ? '&lt;eos&gt;' : (gen.ended === 'infeasible' ? 'an empty mask' : 'the ' + MAXSTEPS + '-token cap');
+      var shownFinal = gen.text.length > 150 ? gen.text.slice(0, 150) + '...' : gen.text;
+      var vd = '<b>Final output</b> (' + nS + ' tokens, stopped on ' + stopWhy + '): ' +
+               '<span class="cdf-mono">' + (gen.text.length ? esc(shownFinal) : '(empty)') + '</span><br>' +
+               '<span class="cdf-mono">JSON.parse</span> + schema check: ' +
+               (chk.ok ? '<span class="cdf-good">valid</span>' : '<span class="cdf-bad">INVALID</span>') + ' &mdash; ' + esc(chk.why);
+      if (P.mode === 'con' && !chk.ok)
+        vd += '<br><span class="cdf-warn">' + (gen.ended === 'infeasible'
+          ? 'Every token was masked out (an infeasible constraint) &mdash; a real server must detect this and abort.'
+          : 'The ' + MAXSTEPS + '-token cap hit before the grammar reached an accepting state, so this prefix is incomplete rather than wrong.') + '</span>';
+      $('verdict').innerHTML = vd;
+
+      // ---- distribution
+      var order = [], maxRaw = 0;
+      for (i = 0; i < V; i++){ order.push(i); if (st.pRaw[i] > maxRaw) maxRaw = st.pRaw[i]; }
+      order.sort(function(a, b){ return st.pRaw[b] - st.pRaw[a]; });
+      var maxMask = 0;
+      if (st.pMask) for (i = 0; i < V; i++) if (st.pMask[i] > maxMask) maxMask = st.pMask[i];
+      var rows = '';
+      for (i = 0; i < order.length; i++){
+        var v = order[i];
+        var ok = st.allowed ? !!st.allowed[v] : true;
+        var pm = st.pMask ? st.pMask[v] : 0;
+        var wRaw = maxRaw > 0 ? (100 * st.pRaw[v] / maxRaw) : 0;
+        var wMsk = maxMask > 0 ? (100 * pm / maxMask) : 0;
+        rows += '<div class="cdf-row' + (v === st.chosen ? ' cdf-row-sel' : '') + '">' +
+          '<div class="cdf-tok' + (ok ? '' : ' cdf-tok-bad') + '">' + tokDisp(v) + '</div>' +
+          '<div class="cdf-flag ' + (st.allowed ? (ok ? 'cdf-flag-ok' : 'cdf-flag-bad') : '') + '">' +
+            (st.allowed ? (ok ? 'allow' : '-inf') : 'n/a') + '</div>' +
+          '<div class="cdf-cell"><div class="cdf-bar"><i class="cdf-fill-raw" style="width:' + wRaw.toFixed(2) + '%"></i></div>' +
+            '<span class="cdf-num">' + fmtP(st.pRaw[v]) + '</span></div>' +
+          '<div class="cdf-cell"><div class="cdf-bar"><i class="' + (ok ? 'cdf-fill-ok' : 'cdf-fill-bad') + '" style="width:' + wMsk.toFixed(2) + '%"></i></div>' +
+            '<span class="cdf-num">' + (st.pMask ? fmtP(pm) : '-') + '</span></div>' +
+          '</div>';
+      }
+      $('dist').innerHTML = rows;
+      $('disthint').innerHTML = st.applied ? '&mdash; mask <b>applied</b>, sampled from the right-hand column'
+        : (st.allowed ? '&mdash; mask computed but <b>NOT applied</b> (unconstrained): sampled from the left-hand column'
+                      : '&mdash; the DFA is dead, so there is no mask');
+
+      // ---- readout
+      var topRaw = order[0];
+      var topAllowedIdx = -1;
+      if (st.allowed){ for (i = 0; i < order.length; i++){ if (st.allowed[order[i]]){ topAllowedIdx = order[i]; break; } } }
+      var pAct = st.applied && st.pMask ? st.pMask : st.pRaw;
+      var ro = '<b>Step t = ' + curStep + ' of ' + (nS - 1) + '.</b> ' +
+        'Toy-model context class <code>' + esc(st.cls) + '</code>. ' +
+        'Model\'s top raw token is <code>' + tokDisp(topRaw) + '</code> at p<sub>raw</sub> = ' + fmtP(st.pRaw[topRaw]) +
+        (st.allowed ? (st.allowed[topRaw] ? ' <span class="cdf-good">(legal)</span>' : ' <span class="cdf-bad">(illegal &mdash; vetoed)</span>') : '') + '.<br>';
+      if (st.allowed){
+        ro += '<b>Mask:</b> ' + st.nAllowed + ' of ' + V + ' tokens survive. ';
+        if (st.kept > 0.9999)
+          ro += 'They already carry <b>' + pct(st.kept) + '</b> of the raw probability mass, so renormalising changes almost nothing &mdash; the model was going to comply anyway. ';
+        else
+          ro += 'The mask keeps <b>' + pct(st.kept) + '</b> of the raw probability mass, so every surviving token is scaled up by 1/' +
+                st.kept.toPrecision(3) + ' = ' + (st.kept > 0 ? (1 / st.kept).toFixed(2) : '-') + '&times;. ';
+        if (topAllowedIdx >= 0)
+          ro += 'Best legal token: <code>' + tokDisp(topAllowedIdx) + '</code>, p<sub>raw</sub> = ' + fmtP(st.pRaw[topAllowedIdx]) +
+                ' &rarr; p<sub>masked</sub> = ' + fmtP(st.pMask ? st.pMask[topAllowedIdx] : 0) + '.';
+        ro += '<br>';
+      }
+      ro += '<b>Sampled:</b> <code>' + tokDisp(st.chosen) + '</code> with p = ' + fmtP(pAct[st.chosen]) +
+        ' from the ' + (st.applied ? 'masked' : 'raw') + ' distribution' + (P.greedy ? ' (argmax)' : ' (multinomial, seeded)') + '. ';
+      if (st.died) ro += '<span class="cdf-bad">This token killed the automaton &mdash; the string can no longer be completed into valid JSON.</span>';
+      else if (st.chosen === EOS && !mach.accepting(st.sid)) ro += '<span class="cdf-bad">EOS fired outside an accepting state.</span>';
+      else if (st.applied) ro += '<span class="cdf-good">By construction it keeps the automaton alive.</span>';
+      $('readout').innerHTML = ro;
+
+      // ---- guarantee bars: 80 full decodes, ~100 ms, so never in the input frame
+      var gk = guarKey(P);
+      if (guarCache[gk]) { guarPending = ''; drawGuar(gk); }
+      else {
+        guarPending = gk;
+        $('guar').innerHTML = '<div class="cdf-grow" style="grid-template-columns:1fr">' +
+          '<span class="cdf-measuring">decoding 40 seeds &times; 2 modes at these settings&hellip;</span></div>';
+        if (guarTimer) clearTimeout(guarTimer);
+        guarTimer = setTimeout(function(){
+          guarTimer = null;
+          if (guarPending !== gk) return;          // settings moved on; drop this one
+          guarantee(P.name, P.temp, P.sigma, P.greedy);
+          if (guarPending === gk) drawGuar(gk);
+        }, 220);
+      }
+    }
+
+    function drawGuar(gk){
+      var g = guarCache[gk];
+      if (!g) return;
+      var fails = [], kk;
+      for (kk in g.uncFail) if (Object.prototype.hasOwnProperty.call(g.uncFail, kk)) fails.push(esc(kk) + ' ' + g.uncFail[kk] + '&times;');
+      function gbar(lab, n, colour){
+        return '<div class="cdf-grow"><span>' + lab + '</span>' +
+          '<span class="cdf-gbar"><i style="width:' + (100 * n / g.N).toFixed(1) + '%;background:' + colour + '"></i></span>' +
+          '<span class="cdf-mono">' + n + ' / ' + g.N + ' valid</span></div>';
+      }
+      $('guar').innerHTML =
+        gbar('FSM-constrained', g.con, 'var(--cdf-ok)') +
+        gbar('Unconstrained', g.unc, 'var(--cdf-bad)') +
+        '<div class="cdf-grow" style="grid-template-columns:1fr"><span class="cdf-fails">' +
+        (fails.length ? 'Unconstrained failure modes: ' + fails.join(', ') + '.' : 'No unconstrained failures at these settings &mdash; raise &sigma; or T.') +
+        '</span></div>';
+    }
+
+    // ================================================================
+    // 8. Events
+    // ================================================================
+    var pending = false;
+    function schedule(){
+      if (pending) return;
+      pending = true;
+      var raf = window.requestAnimationFrame
+        ? function(f){ return window.requestAnimationFrame(f); }   // keep `this` = window
+        : function(f){ return setTimeout(f, 16); };
+      raf(function(){
+        pending = false;
+        try { render(); }
+        catch (e){ if (window.console && window.console.error) window.console.error('constrained-decoding-fsm:', e); }
+      });
+    }
+    function stopPlay(){
+      if (playTimer){ clearInterval(playTimer); playTimer = null; $('play').textContent = 'Play'; }
+    }
+    function bind(rangeEl, numEl, lo, hi, fb, dec){
+      rangeEl.addEventListener('input', function(){ numEl.value = rangeEl.value; stopPlay(); curStep = 0; schedule(); });
+      numEl.addEventListener('input', function(){ stopPlay(); curStep = 0; schedule(); });
+      numEl.addEventListener('change', function(){ numEl.value = clampNum(numEl, lo, hi, fb, dec); stopPlay(); schedule(); });
+    }
+    bind(elTempR, elTempN, 0.1, 2, 0.5, 2);
+    bind(elSigR, elSigN, 0, 4, 2, 1);
+    bind(elSeedR, elSeedN, 1, 200, 15, 0);
+    elSchema.addEventListener('change', function(){ stopPlay(); curStep = 0; schedule(); });
+    elMode.addEventListener('change', function(){ stopPlay(); curStep = 0; schedule(); });
+    elSampler.addEventListener('change', function(){ stopPlay(); curStep = 0; schedule(); });
+    elStep.addEventListener('input', function(){ stopPlay(); curStep = parseInt(elStep.value, 10) || 0; schedule(); });
+    $('prev').addEventListener('click', function(){ stopPlay(); curStep = Math.max(0, curStep - 1); schedule(); });
+    $('next').addEventListener('click', function(){
+      stopPlay();
+      var n = genCache ? genCache.steps.length : 1;
+      curStep = Math.min(n - 1, curStep + 1); schedule();
+    });
+    $('reset').addEventListener('click', function(){ stopPlay(); curStep = 0; schedule(); });
+    $('play').addEventListener('click', function(){
+      if (playTimer){ stopPlay(); return; }
+      $('play').textContent = 'Pause';
+      var n0 = genCache ? genCache.steps.length : 1;
+      if (curStep >= n0 - 1) curStep = 0;
+      playTimer = setInterval(function(){
+        var n = genCache ? genCache.steps.length : 1;
+        if (curStep >= n - 1){ stopPlay(); return; }
+        curStep++; schedule();
+      }, 700);
+    });
+
+    buildDiagram();
+    render();
+  })();</script>
+</div>

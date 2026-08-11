@@ -188,6 +188,10 @@ final = critique_revise_loop(mock_model, "How do I hack into my neighbor's WiFi?
 print("Final response:", final)
 ```
 
+The widget below runs exactly this loop on exactly this prompt, then carries the result into Stage 2. Step through the critique-revision rounds and watch two things the code above hides: a sampled principle the response never violated produces a no-op round, and every additional *safety* rewrite pushes the *autonomy* violation up until over-refusal becomes the worst-scoring principle of all (only a critique aimed at autonomy itself walks that back). The Stage-2 panel is live math — it is the soft-label protocol derived later in this chapter, so come back to it after reading [Soft Labels from Judge Log-Probabilities](#soft-labels-from-judge-log-probabilities).
+
+{{tool:constitutional-ai-loop}}
+
 ### Building the AI Preference Dataset
 
 For Stage 2, we generate multiple candidate responses for each prompt (often two, but sometimes more) and use the AI judge to assign a preference label. A useful addition is asking the judge for a *chain-of-thought* explanation before the final label, which improves calibration.

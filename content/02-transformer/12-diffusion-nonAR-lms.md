@@ -269,6 +269,8 @@ This is the central quality–latency knob. With $N = L$ steps and a one-token-p
 
 {{fig:dllm-confidence-remasking-trajectory}}
 
+{{tool:diffusion-lm-denoising}}
+
 ---
 
 ## Semi-Autoregressive Block Diffusion

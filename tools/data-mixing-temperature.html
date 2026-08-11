@@ -1,0 +1,563 @@
+<div class="viz-tool" id="tool-data-mixing-temperature">
+  <div class="vt-title">Data mixing: temperature sampling, domain weights &amp; the epoch budget</div>
+  <div class="vt-hint">Five cleaned, deduplicated pools (the chapter&rsquo;s worked example: web 3&nbsp;T, multilingual 400&nbsp;B, code 250&nbsp;B, books 80&nbsp;B, math 30&nbsp;B). Temperature sampling sets the mixture from the pool sizes alone: <b>w<sub>i</sub> &#8733; n<sub>i</sub><sup>&#945;</sup></b> with <b>&#945; = 1/T</b>. At <b>&#945; = 1 (T = 1)</b> you sample proportionally &mdash; web eats 80% of every batch. Drive &#945; toward <b>0 (T &#8594; &#8734;)</b> and the mixture flattens toward uniform, which is just another way of saying <i>you start re-reading the small domains</i>. Watch the epochs column: that is the bill temperature sends you. Then switch on the <b>UniMax epoch cap</b> to pay it differently.</div>
+
+  <div class="vt-grid vt-controls">
+    <label for="data-mixing-temperature-alpha">Exponent &#945; = 1/T <span class="vt-val" id="data-mixing-temperature-alphaval">0.30</span>
+      <input id="data-mixing-temperature-alpha" type="range" min="0" max="1" step="0.01" value="0.3"
+             aria-label="Sampling exponent alpha, equal to one over temperature T">
+    </label>
+    <label for="data-mixing-temperature-budget">Token budget D <span class="vt-val" id="data-mixing-temperature-budgetval">1.00 T</span>
+      <input id="data-mixing-temperature-budget" type="range" min="100" max="4000" step="50" value="1000"
+             aria-label="Total training token budget D in billions of tokens">
+    </label>
+    <label for="data-mixing-temperature-cap">Epoch cap c <span class="vt-val" id="data-mixing-temperature-capval">4.0</span>
+      <input id="data-mixing-temperature-cap" type="range" min="0.5" max="10" step="0.5" value="4"
+             aria-label="Maximum epochs allowed per domain when the UniMax epoch cap is enabled">
+    </label>
+    <label class="dmt-check" for="data-mixing-temperature-capon">
+      <span class="dmt-check-row">
+        <input id="data-mixing-temperature-capon" type="checkbox"
+               aria-label="Enforce the epoch cap by water-filling the excess onto uncapped domains, UniMax style">
+        <span>Enforce cap (UniMax)</span>
+      </span>
+      <span class="dmt-check-hint">Re-fill the excess onto domains that still have unique tokens left. Cap + &#945;&nbsp;=&nbsp;0 is literal UniMax.</span>
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn" id="data-mixing-temperature-p1" type="button">Proportional (&#945;=1, T=1)</button>
+    <button class="vt-btn" id="data-mixing-temperature-p2" type="button">mT5 (&#945;=0.3, T&#8776;3.3)</button>
+    <button class="vt-btn" id="data-mixing-temperature-p4" type="button">XLM / mBERT (&#945;=0.7)</button>
+    <button class="vt-btn" id="data-mixing-temperature-p3" type="button">Uniform (&#945;=0, T&#8594;&#8734;)</button>
+    <button class="vt-btn" id="data-mixing-temperature-p5" type="button">UniMax (&#945;=0 + cap)</button>
+    <button class="vt-btn" id="data-mixing-temperature-reset" type="button">Reset</button>
+  </div>
+
+  <div class="dmt-panel-h">Mixture weight vs. natural share &nbsp;&#183;&nbsp; <span class="dmt-key"><span class="dmt-key-nat"></span> natural share n<sub>i</sub>/&#8721;n</span></div>
+  <div class="dmt-head">
+    <div>domain</div><div>sampling weight w<sub>i</sub></div><div class="dmt-r">w<sub>i</sub> / natural</div><div class="dmt-r">epochs e<sub>i</sub></div>
+  </div>
+  <div class="dmt-rows" id="data-mixing-temperature-rows"></div>
+
+  <div class="dmt-panel-h dmt-panel-h2">Epochs per domain as &#945; sweeps uniform &#8594; proportional</div>
+  <div class="dmt-wrap">
+    <svg id="data-mixing-temperature-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 220"
+         preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Log-scale plot of epochs per domain versus the sampling exponent alpha, with a marker at the current alpha"></svg>
+  </div>
+
+  <div class="dmt-formula" id="data-mixing-temperature-formula"></div>
+  <div class="vt-out" id="data-mixing-temperature-out" aria-live="polite"></div>
+  <div class="vt-note" id="data-mixing-temperature-note"></div>
+
+  <style>
+    #tool-data-mixing-temperature{
+      --dmt-accent: var(--accent,#c15b39);
+      --dmt-ink: var(--ink,#211f1b);
+      --dmt-soft: var(--ink-soft,#45413a);
+      --dmt-muted: var(--muted,#6d675d);
+      --dmt-line: var(--border-2,#d8d1c0);
+      --dmt-warn: #b45309;
+      --dmt-c1:#c1553b; --dmt-c2:#1f6fb2; --dmt-c3:#0b7d4e; --dmt-c4:#8f55c0; --dmt-c5:#8a6d0f;
+      border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff);
+    }
+    html[data-theme="dark"] #tool-data-mixing-temperature{
+      --dmt-warn:#f0b429;
+      --dmt-c1:#d0713f; --dmt-c2:#4f97d8; --dmt-c3:#17a472; --dmt-c4:#ae79d6; --dmt-c5:#d8b02e;
+    }
+    @media (prefers-color-scheme:dark){
+      html:not([data-theme="light"]) #tool-data-mixing-temperature{
+        --dmt-warn:#f0b429;
+        --dmt-c1:#d0713f; --dmt-c2:#4f97d8; --dmt-c3:#17a472; --dmt-c4:#ae79d6; --dmt-c5:#d8b02e;
+      }
+    }
+    #tool-data-mixing-temperature .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--dmt-ink); }
+    #tool-data-mixing-temperature .vt-hint{ font-size:.8rem; color:var(--dmt-muted); margin-bottom:14px; line-height:1.55; }
+    #tool-data-mixing-temperature .vt-hint b{ color:var(--dmt-soft); }
+    #tool-data-mixing-temperature .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:12px 18px; }
+    #tool-data-mixing-temperature label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--dmt-muted); }
+    #tool-data-mixing-temperature .vt-val{ color:var(--dmt-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-data-mixing-temperature input[type="range"]{ width:100%; accent-color:var(--dmt-accent); }
+    #tool-data-mixing-temperature input[type="range"]:focus-visible{ outline:2px solid var(--dmt-accent); outline-offset:3px; }
+    #tool-data-mixing-temperature input[type="checkbox"]{ accent-color:var(--dmt-accent); width:15px; height:15px; margin:0; }
+    #tool-data-mixing-temperature input[type="checkbox"]:focus-visible{ outline:2px solid var(--dmt-accent); outline-offset:2px; }
+    #tool-data-mixing-temperature .dmt-check{ justify-content:center; gap:4px; }
+    #tool-data-mixing-temperature .dmt-check-row{ display:flex; align-items:center; gap:8px; color:var(--dmt-ink); font-weight:600; }
+    #tool-data-mixing-temperature .dmt-check-hint{ font-size:.72rem; color:var(--dmt-muted); line-height:1.4; }
+    #tool-data-mixing-temperature .vt-actions{ margin-top:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    #tool-data-mixing-temperature .vt-btn{ font:inherit; font-size:.78rem; padding:6px 11px; border:1px solid var(--border-2,#d8d1c0);
+      border-radius:7px; background:var(--surface,#fff); color:var(--dmt-ink); cursor:pointer; }
+    #tool-data-mixing-temperature .vt-btn:hover{ background:var(--surface-3,#ece7da); }
+    #tool-data-mixing-temperature .vt-btn:focus-visible{ outline:2px solid var(--dmt-accent); outline-offset:2px; }
+
+    #tool-data-mixing-temperature .dmt-panel-h{ margin-top:20px; font-size:.74rem; font-weight:600; letter-spacing:.03em;
+      text-transform:uppercase; color:var(--dmt-muted); }
+    #tool-data-mixing-temperature .dmt-panel-h2{ margin-top:24px; }
+    #tool-data-mixing-temperature .dmt-key{ text-transform:none; letter-spacing:0; font-weight:400; }
+    #tool-data-mixing-temperature .dmt-key-nat{ display:inline-block; width:2px; height:11px; vertical-align:-2px;
+      background:var(--dmt-ink); opacity:.55; margin-right:5px; }
+    #tool-data-mixing-temperature .dmt-head, #tool-data-mixing-temperature .dmt-row{
+      display:grid; grid-template-columns:minmax(96px,1.15fr) minmax(90px,2.4fr) 72px 92px; gap:10px; align-items:center; }
+    #tool-data-mixing-temperature .dmt-head{ margin:10px 0 6px; font-size:.68rem; text-transform:uppercase;
+      letter-spacing:.03em; color:var(--dmt-muted); }
+    #tool-data-mixing-temperature .dmt-r{ text-align:right; }
+    #tool-data-mixing-temperature .dmt-rows{ display:flex; flex-direction:column; gap:9px; }
+    #tool-data-mixing-temperature .dmt-s0{ --dmt-c:var(--dmt-c1); }
+    #tool-data-mixing-temperature .dmt-s1{ --dmt-c:var(--dmt-c2); }
+    #tool-data-mixing-temperature .dmt-s2{ --dmt-c:var(--dmt-c3); }
+    #tool-data-mixing-temperature .dmt-s3{ --dmt-c:var(--dmt-c4); }
+    #tool-data-mixing-temperature .dmt-s4{ --dmt-c:var(--dmt-c5); }
+    #tool-data-mixing-temperature .dmt-name{ font-size:.79rem; color:var(--dmt-ink); font-weight:600; min-width:0;
+      overflow-wrap:anywhere; }
+    #tool-data-mixing-temperature .dmt-head > div{ min-width:0; overflow-wrap:anywhere; }
+    #tool-data-mixing-temperature .dmt-chip{ display:inline-block; width:9px; height:9px; border-radius:2px;
+      background:var(--dmt-c,var(--dmt-accent)); margin-right:6px; }
+    #tool-data-mixing-temperature .dmt-pool{ display:block; font-size:.68rem; font-weight:400; color:var(--dmt-muted);
+      font-variant-numeric:tabular-nums; margin-left:15px; }
+    #tool-data-mixing-temperature .dmt-track{ position:relative; height:17px; border-radius:5px; background:var(--surface-3,#ece7da); }
+    #tool-data-mixing-temperature .dmt-fill{ position:absolute; top:0; left:0; height:100%; border-radius:5px;
+      background:var(--dmt-c,var(--dmt-accent)); opacity:.85; }
+    #tool-data-mixing-temperature .dmt-nat{ position:absolute; top:-3px; height:23px; width:2px;
+      background:var(--dmt-ink); opacity:.55; }
+    #tool-data-mixing-temperature .dmt-num{ font-size:.78rem; text-align:right; color:var(--dmt-ink);
+      font-variant-numeric:tabular-nums; }
+    #tool-data-mixing-temperature .dmt-sub{ display:block; font-size:.67rem; color:var(--dmt-muted); }
+    #tool-data-mixing-temperature .dmt-hot{ color:var(--dmt-warn); font-weight:600; }
+    #tool-data-mixing-temperature .dmt-thin{ opacity:.75; }
+
+    #tool-data-mixing-temperature .dmt-wrap{ max-width:100%; margin-top:10px; }
+    #tool-data-mixing-temperature svg{ display:block; width:100%; height:auto; max-width:520px; }
+    #tool-data-mixing-temperature .dmt-lab{ font-size:9.5px; fill:var(--dmt-muted); font-family:var(--sans,sans-serif); }
+    #tool-data-mixing-temperature .dmt-lab-strong{ font-size:9.5px; font-weight:600; fill:var(--dmt-ink); font-family:var(--sans,sans-serif); }
+    #tool-data-mixing-temperature .dmt-axtitle{ font-size:10px; font-weight:600; fill:var(--dmt-muted); font-family:var(--sans,sans-serif); }
+    #tool-data-mixing-temperature .dmt-grid{ stroke:var(--dmt-line); fill:none; }
+    #tool-data-mixing-temperature .dmt-ref{ stroke:var(--dmt-line); fill:none; stroke-dasharray:4 3; }
+    #tool-data-mixing-temperature .dmt-refw{ stroke:var(--dmt-warn); fill:none; stroke-dasharray:4 3; opacity:.8; }
+    #tool-data-mixing-temperature .dmt-mark{ stroke:var(--dmt-ink); fill:none; opacity:.45; }
+    #tool-data-mixing-temperature .dmt-curve{ fill:none; stroke:var(--dmt-c,var(--dmt-accent)); stroke-width:1.9; }
+    #tool-data-mixing-temperature .dmt-dot{ fill:var(--dmt-c,var(--dmt-accent)); }
+    #tool-data-mixing-temperature .dmt-clab{ font-size:9px; font-weight:600; fill:var(--dmt-c,var(--dmt-accent));
+      font-family:var(--sans,sans-serif); }
+
+    #tool-data-mixing-temperature .dmt-formula{ margin-top:16px; font-family:var(--mono,monospace); font-size:.73rem;
+      line-height:1.7; color:var(--dmt-muted); background:var(--surface-3,#ece7da); border-radius:8px;
+      padding:9px 12px; overflow-x:auto; }
+    #tool-data-mixing-temperature .vt-out{ margin-top:14px; display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    #tool-data-mixing-temperature .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:11px 13px; }
+    #tool-data-mixing-temperature .vt-stat .n{ font-size:1.15rem; font-weight:700; color:var(--dmt-accent);
+      font-variant-numeric:tabular-nums; }
+    #tool-data-mixing-temperature .vt-stat .l{ font-size:.72rem; color:var(--dmt-muted); margin-top:2px; line-height:1.35; }
+    #tool-data-mixing-temperature .vt-stat.dmt-warn .n{ color:var(--dmt-warn); }
+    #tool-data-mixing-temperature .vt-note{ margin-top:14px; font-size:.78rem; color:var(--dmt-muted); line-height:1.55; }
+    #tool-data-mixing-temperature .vt-note b{ color:var(--dmt-soft); }
+    @media (max-width:520px){
+      #tool-data-mixing-temperature{ padding:13px 12px; }
+      #tool-data-mixing-temperature .dmt-head, #tool-data-mixing-temperature .dmt-row{
+        grid-template-columns:minmax(62px,1fr) minmax(38px,1.1fr) 46px 62px; gap:5px; }
+      #tool-data-mixing-temperature .dmt-name{ font-size:.72rem; }
+      #tool-data-mixing-temperature .dmt-pool{ margin-left:0; font-size:.63rem; }
+      #tool-data-mixing-temperature .dmt-num{ font-size:.7rem; }
+      #tool-data-mixing-temperature .dmt-sub{ font-size:.6rem; }
+      #tool-data-mixing-temperature .dmt-head{ font-size:.62rem; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-data-mixing-temperature');
+    if(!root) return;
+    function q(id){ return root.querySelector('#data-mixing-temperature-' + id); }
+
+    var aIn=q('alpha'), dIn=q('budget'), cIn=q('cap'), capOn=q('capon');
+    var aVal=q('alphaval'), dVal=q('budgetval'), cVal=q('capval');
+    var rowsEl=q('rows'), svg=q('svg'), formulaEl=q('formula'), outEl=q('out'), noteEl=q('note');
+    if(!aIn||!dIn||!cIn||!capOn||!aVal||!dVal||!cVal) return;
+    if(!rowsEl||!svg||!formulaEl||!outEl||!noteEl) return;
+
+    // Pools in billions of unique tokens -- the chapter's worked example.
+    var DOM = [
+      {name:'Web',          n:3000},
+      {name:'Multilingual', n:400},
+      {name:'Code',         n:250},
+      {name:'Books',        n:80},
+      {name:'Math',         n:30}
+    ];
+    var K = DOM.length;
+    var NTOT = 0, i;
+    for(i=0;i<K;i++) NTOT += DOM[i].n;
+    var NATURAL = [];
+    for(i=0;i<K;i++) NATURAL.push(DOM[i].n / NTOT);
+
+    var RSTAR = 15;      // Muennighoff et al. repeated-token decay constant (epochs)
+    var NPTS  = 101;     // alpha grid for the sweep panel
+    var DEFAULTS = {alpha:0.3, budget:1000, cap:4, capon:false};
+
+    // ------------------------------------------------------------ the mixture
+    // Temperature sampling: w_i = n_i^alpha / sum_j n_j^alpha,  alpha = 1/T.
+    // alpha=1 -> proportional (w = natural); alpha=0 -> uniform (w = 1/k).
+    // Note (n_i/N)^alpha normalizes to exactly the same vector, so pool units
+    // are irrelevant. Computed via exp(alpha*ln n - max) for numerical safety.
+    function tempWeights(alpha){
+      var ls=new Array(K), mx=-Infinity, j;
+      for(j=0;j<K;j++){ ls[j]=alpha*Math.log(DOM[j].n); if(ls[j]>mx) mx=ls[j]; }
+      var w=new Array(K), Z=0;
+      for(j=0;j<K;j++){ w[j]=Math.exp(ls[j]-mx); Z+=w[j]; }
+      for(j=0;j<K;j++) w[j]=w[j]/Z;
+      return w;
+    }
+
+    // UniMax-style epoch cap: allocate D tokens with alloc_i <= c*n_i, spending the
+    // overflow on the domains that still have unique tokens left, in proportion to
+    // their temperature weights (water-filling; terminates in <= K rounds).
+    function allocate(alpha, D, useCap, cap){
+      var w = tempWeights(alpha), alloc = new Array(K), capped = new Array(K), j;
+      for(j=0;j<K;j++){ alloc[j]=w[j]*D; capped[j]=false; }
+      if(!useCap) return {w:w, alloc:alloc, capped:capped, infeasible:false};
+
+      var capacity = 0;
+      for(j=0;j<K;j++) capacity += cap*DOM[j].n;
+      if(capacity <= D){
+        // Not enough unique tokens to stay under the cap anywhere. The allocation
+        // that minimizes the WORST epoch count is the proportional one (all e_i equal).
+        for(j=0;j<K;j++){ alloc[j]=D*NATURAL[j]; capped[j]=true; }
+        return {w:NATURAL.slice(), alloc:alloc, capped:capped, infeasible:true};
+      }
+      var free=new Array(K), rem=D, guard=0;
+      for(j=0;j<K;j++){ free[j]=true; alloc[j]=0; }
+      while(guard++ < K+2){
+        var S=0;
+        for(j=0;j<K;j++) if(free[j]) S+=w[j];
+        if(S<=0){                                   // degenerate: spread by pool size
+          var Sn=0;
+          for(j=0;j<K;j++) if(free[j]) Sn+=DOM[j].n;
+          for(j=0;j<K;j++) if(free[j]) alloc[j]=Sn>0 ? rem*DOM[j].n/Sn : 0;
+          break;
+        }
+        var over=false;
+        for(j=0;j<K;j++){
+          if(free[j] && rem*w[j]/S > cap*DOM[j].n + 1e-12){
+            alloc[j]=cap*DOM[j].n; capped[j]=true; free[j]=false; rem-=alloc[j]; over=true;
+          }
+        }
+        if(!over){
+          for(j=0;j<K;j++) if(free[j]) alloc[j]=rem*w[j]/S;
+          break;
+        }
+      }
+      var wOut=new Array(K);
+      for(j=0;j<K;j++) wOut[j] = D>0 ? alloc[j]/D : 0;
+      return {w:wOut, alloc:alloc, capped:capped, infeasible:false};
+    }
+
+    // Derived quantities: epochs, unique coverage, and effective tokens under the
+    // repeated-data decay of Muennighoff et al. (2023):
+    //   U = unique tokens actually touched = min(alloc, n)
+    //   R = repetitions = alloc/U - 1
+    //   D' = U + U*R*(1 - exp(-R/R*)),  R* ~ 15
+    function derive(res, D){
+      var e=new Array(K), U=new Array(K), Deff=new Array(K), j;
+      var Utot=0, DeffTot=0;
+      for(j=0;j<K;j++){
+        var a=res.alloc[j], n=DOM[j].n;
+        e[j] = n>0 ? a/n : 0;
+        U[j] = Math.min(a, n);
+        var R = U[j]>0 ? a/U[j]-1 : 0;
+        Deff[j] = U[j]>0 ? U[j] + U[j]*RSTAR*(1-Math.exp(-R/RSTAR)) : 0;
+        Utot += U[j]; DeffTot += Deff[j];
+      }
+      var H=0;
+      for(j=0;j<K;j++) if(res.w[j]>0) H -= res.w[j]*Math.log(res.w[j]);
+      return {e:e, U:U, Deff:Deff, Utot:Utot, DeffTot:DeffTot, kEff:Math.exp(H),
+              fresh: D>0 ? Utot/D : 0, value: D>0 ? DeffTot/D : 0};
+    }
+
+    // ------------------------------------------------------------- formatting
+    function fmtTok(b){
+      if(!isFinite(b)) return '--';
+      if(b>=1000) return (b/1000).toFixed(b>=10000?0:2)+' T';
+      if(b>=10)   return b.toFixed(0)+' B';
+      if(b>=1)    return b.toFixed(1)+' B';
+      return b.toFixed(2)+' B';
+    }
+    function fmtE(e){
+      if(!isFinite(e)) return '--';
+      if(e>=100) return e.toFixed(0);
+      if(e>=10)  return e.toFixed(1);
+      if(e>=1)   return e.toFixed(2);
+      return e.toFixed(3);
+    }
+    function fmtRatio(r){
+      if(!isFinite(r)) return '--';
+      if(r>=10) return r.toFixed(0)+'×';
+      if(r>=1)  return r.toFixed(2)+'×';
+      return r.toFixed(2)+'×';
+    }
+    function fmtT(alpha){
+      if(alpha<=0) return '∞';
+      var T=1/alpha;
+      return T>=100 ? T.toFixed(0) : T.toFixed(2);
+    }
+
+    // ------------------------------------------------------------------- rows
+    function drawRows(R){
+      var res=R.res, dv=R.dv, j;
+      var maxBar=0;
+      for(j=0;j<K;j++){
+        if(res.w[j]>maxBar) maxBar=res.w[j];
+        if(NATURAL[j]>maxBar) maxBar=NATURAL[j];
+      }
+      maxBar=Math.max(maxBar, 0.02)*1.06;
+      var html=[];
+      for(j=0;j<K;j++){
+        var w=res.w[j], e=dv.e[j], ratio = NATURAL[j]>0 ? w/NATURAL[j] : 0;
+        var hot = R.useCap ? e > R.cap+1e-9 : e > R.cap;
+        var thin = e < 1;
+        var atCap = res.capped[j] && !res.infeasible;
+        var epochNote = res.infeasible
+          ? 'cap unreachable'
+          : (thin
+              ? (100*e).toFixed(e<0.1?1:0)+'% of pool seen'
+              : (atCap ? 'pinned at the cap' : 'each token seen '+fmtE(e)+'×'));
+        html.push(
+          '<div class="dmt-row dmt-s'+j+'">'+
+            '<div class="dmt-name"><span class="dmt-chip"></span>'+DOM[j].name+
+              '<span class="dmt-pool">'+fmtTok(DOM[j].n)+' unique</span></div>'+
+            '<div class="dmt-track">'+
+              '<div class="dmt-fill" style="width:'+Math.max(0.8, w/maxBar*100).toFixed(2)+'%"></div>'+
+              '<div class="dmt-nat" style="left:'+(NATURAL[j]/maxBar*100).toFixed(2)+'%"></div>'+
+            '</div>'+
+            '<div class="dmt-num">'+(100*w).toFixed(1)+'%'+
+              '<span class="dmt-sub">'+fmtRatio(ratio)+'</span></div>'+
+            '<div class="dmt-num'+(hot?' dmt-hot':(thin?' dmt-thin':''))+'">'+fmtE(e)+
+              '<span class="dmt-sub">'+epochNote+'</span></div>'+
+          '</div>');
+      }
+      rowsEl.innerHTML=html.join('');
+    }
+
+    // ------------------------------------------------------------- sweep plot
+    function drawSweep(R){
+      var W=470, H=220, padL=42, padR=16, padT=18, padB=34, j, s;
+      var lo=Infinity, hi=-Infinity;
+      var sweep=new Array(NPTS);
+      for(s=0;s<NPTS;s++){
+        var a=s/(NPTS-1);
+        var d=derive(allocate(a,R.D,R.useCap,R.cap), R.D);
+        sweep[s]=d.e;
+        for(j=0;j<K;j++){
+          var v=d.e[j];
+          if(v>0 && v<lo) lo=v;
+          if(v>hi) hi=v;
+        }
+      }
+      if(!isFinite(lo)||lo<=0) lo=0.001;
+      if(!isFinite(hi)||hi<=0) hi=1;
+      // snap the log axis to whole decades (integer exponents keep the gridline loop exact)
+      var lLo=Math.max(-3, Math.floor(Math.log10(lo)));
+      var lHi=Math.min( 4, Math.ceil (Math.log10(hi)));
+      if(lHi<=lLo) lHi=lLo+1;
+      lo=Math.pow(10,lLo); hi=Math.pow(10,lHi);
+      function X(a){ return padL + a*(W-padL-padR); }
+      function Y(v){
+        var c=Math.min(hi, Math.max(lo, v));
+        return padT + (lHi-Math.log10(c))/(lHi-lLo)*(H-padT-padB);
+      }
+      function dec(v){
+        if(v>=1000) return String(Math.round(v));
+        if(v>=1) return String(v);
+        return v.toFixed(Math.min(3, Math.max(0, -Math.round(Math.log10(v)))));
+      }
+
+      var p=[];
+      for(var d10=lLo; d10<=lHi+1e-9; d10++){
+        var yv=Math.pow(10,d10), y=Y(yv);
+        p.push('<line class="dmt-grid" x1="'+padL+'" y1="'+y.toFixed(1)+'" x2="'+(W-padR)+'" y2="'+y.toFixed(1)+'" opacity="0.5"></line>');
+        p.push('<text class="dmt-lab" x="'+(padL-5)+'" y="'+(y+3.2).toFixed(1)+'" text-anchor="end">'+dec(yv)+'</text>');
+      }
+      p.push('<line class="dmt-grid" x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+(H-padB)+'"></line>');
+      p.push('<line class="dmt-grid" x1="'+padL+'" y1="'+(H-padB)+'" x2="'+(W-padR)+'" y2="'+(H-padB)+'"></line>');
+      if(1>=lo && 1<=hi){
+        p.push('<line class="dmt-ref" x1="'+padL+'" y1="'+Y(1).toFixed(1)+'" x2="'+(W-padR)+'" y2="'+Y(1).toFixed(1)+'"></line>');
+        p.push('<text class="dmt-lab" x="'+(W-padR)+'" y="'+(Y(1)-4).toFixed(1)+'" text-anchor="end">1 epoch (every unique token once)</text>');
+      }
+      if(R.cap>=lo && R.cap<=hi){
+        p.push('<line class="dmt-refw" x1="'+padL+'" y1="'+Y(R.cap).toFixed(1)+'" x2="'+(W-padR)+'" y2="'+Y(R.cap).toFixed(1)+'"></line>');
+        p.push('<text class="dmt-lab" x="'+(W-padR)+'" y="'+(Y(R.cap)+11).toFixed(1)+'" text-anchor="end">c = '+R.cap.toFixed(1)+' epochs'+
+               (R.useCap?' (enforced)':' (cap off &#8212; reference only)')+'</text>');
+      }
+      if(R.res.infeasible){
+        p.push('<text class="dmt-lab-strong" x="'+((padL+W-padR)/2).toFixed(1)+'" y="'+(padT+12)+'" text-anchor="middle">'+
+               'cap infeasible at D = '+fmtTok(R.D)+' &#8212; every &#945; collapses to proportional</text>');
+      }
+
+      // one curve per domain
+      for(j=0;j<K;j++){
+        var dd='';
+        for(s=0;s<NPTS;s++) dd += (s===0?'M':'L')+X(s/(NPTS-1)).toFixed(1)+' '+Y(sweep[s][j]).toFixed(1)+' ';
+        p.push('<path class="dmt-curve dmt-s'+j+'" d="'+dd+'"></path>');
+      }
+      // direct labels near the left edge, nudged apart so they never collide
+      var LS=6, lab=[];
+      for(j=0;j<K;j++) lab.push({j:j, y:Y(sweep[LS][j])});
+      lab.sort(function(a,b){ return a.y-b.y; });
+      for(var t=1;t<lab.length;t++) if(lab[t].y-lab[t-1].y < 11) lab[t].y = lab[t-1].y+11;
+      var over = lab.length ? lab[lab.length-1].y-(H-padB-2) : 0;
+      if(over>0) for(t=0;t<lab.length;t++) lab[t].y=Math.max(padT+8, lab[t].y-over);
+      for(t=0;t<lab.length;t++){
+        p.push('<text class="dmt-clab dmt-s'+lab[t].j+'" x="'+(X(LS/(NPTS-1))+4).toFixed(1)+'" y="'+lab[t].y.toFixed(1)+'">'+DOM[lab[t].j].name+'</text>');
+      }
+      // marker at the current alpha
+      var mi=Math.round(R.alpha*(NPTS-1)), mx=X(mi/(NPTS-1));
+      p.push('<line class="dmt-mark" x1="'+mx.toFixed(1)+'" y1="'+padT+'" x2="'+mx.toFixed(1)+'" y2="'+(H-padB)+'"></line>');
+      for(j=0;j<K;j++) p.push('<circle class="dmt-dot dmt-s'+j+'" cx="'+mx.toFixed(1)+'" cy="'+Y(sweep[mi][j]).toFixed(1)+'" r="3"></circle>');
+      // fixed top-right status label: never collides with the axis title on the left
+      p.push('<text class="dmt-lab-strong" x="'+(W-padR)+'" y="'+(padT-6)+'" text-anchor="end">&#945; = '+
+             R.alpha.toFixed(2)+' &#183; T = '+fmtT(R.alpha)+'</text>');
+
+      p.push('<text class="dmt-axtitle" x="'+padL+'" y="'+(padT-6)+'">epochs e&#7522; (log)</text>');
+      p.push('<text class="dmt-lab" x="'+padL+'" y="'+(H-16)+'">&#945; = 0</text>');
+      p.push('<text class="dmt-lab" x="'+padL+'" y="'+(H-5)+'">uniform, T &#8594; &#8734;</text>');
+      p.push('<text class="dmt-lab" x="'+(W-padR)+'" y="'+(H-16)+'" text-anchor="end">&#945; = 1</text>');
+      p.push('<text class="dmt-lab" x="'+(W-padR)+'" y="'+(H-5)+'" text-anchor="end">proportional, T = 1</text>');
+
+      svg.setAttribute('viewBox','0 0 '+W+' '+H);
+      var eMaxS=0, iMaxS=0;
+      for(j=0;j<K;j++) if(sweep[mi][j]>eMaxS){ eMaxS=sweep[mi][j]; iMaxS=j; }
+      svg.setAttribute('aria-label',
+        'Log-scale plot of epochs per domain against the sampling exponent alpha, from uniform on the left to proportional on the right. '+
+        'At the current alpha of '+R.alpha.toFixed(2)+', the most-repeated domain is '+DOM[iMaxS].name+' at '+fmtE(eMaxS)+' epochs.');
+      svg.innerHTML=p.join('');
+    }
+
+    // --------------------------------------------------------------- readouts
+    function drawReadout(R){
+      var res=R.res, dv=R.dv, D=R.D, j;
+      var small=K-1;                                   // Math -- the smallest pool
+      var eMax=0, iMax=0;
+      for(j=0;j<K;j++) if(dv.e[j]>eMax){ eMax=dv.e[j]; iMax=j; }
+      var nCap=0;
+      if(!res.infeasible) for(j=0;j<K;j++) if(res.capped[j]) nCap++;
+
+      formulaEl.innerHTML =
+        'w&#7522; = n&#7522;<sup>&#945;</sup> / &#8721;&#11002; n&#11002;<sup>&#945;</sup>, &nbsp; &#945; = 1/T = '+R.alpha.toFixed(2)+
+          ' &nbsp;(T = '+fmtT(R.alpha)+') &nbsp;&#183;&nbsp; &#945;=1 &#8594; proportional, &#945;=0 &#8594; uniform<br>'+
+        'tokens&#7522; = w&#7522;&#183;D, &nbsp; epochs e&#7522; = w&#7522;&#183;D / n&#7522; &nbsp;&#183;&nbsp; D = '+fmtTok(D)+', &nbsp; &#8721;n = '+fmtTok(NTOT)+'<br>'+
+        (R.useCap
+          ? 'UniMax cap: tokens&#7522; &#8804; c&#183;n&#7522; (c = '+R.cap.toFixed(1)+'); the overflow is water-filled onto the uncapped domains &#8733; w&#7522;'
+          : 'UniMax cap: OFF &#8212; nothing stops a small pool from being read '+fmtE(eMax)+'&#215;') + '<br>'+
+        'effective tokens D&prime; = &#8721;&#7522; [U&#7522; + U&#7522;&#183;R*&#183;(1 &minus; e<sup>&minus;R&#7522;/R*</sup>)], &nbsp; U&#7522; = min(tokens&#7522;, n&#7522;), &nbsp; R&#7522; = tokens&#7522;/U&#7522; &minus; 1, &nbsp; R* = '+RSTAR;
+
+      var stats=[
+        ['', (100*res.w[small]).toFixed(1)+'%',
+         DOM[small].name+' share of every batch &#183; natural is '+(100*NATURAL[small]).toFixed(2)+'% ('+fmtRatio(NATURAL[small]>0?res.w[small]/NATURAL[small]:0)+')'],
+        [eMax>R.cap?'dmt-warn':'', fmtE(eMax),
+         'Worst epoch count (' + DOM[iMax].name + ') &#183; '+fmtTok(res.alloc[iMax])+' drawn from a '+fmtTok(DOM[iMax].n)+' pool'],
+        [dv.fresh<0.6?'dmt-warn':'', (100*dv.fresh).toFixed(1)+'%',
+         'Fresh fraction &#8721;U&#7522;/D &#183; the rest of the budget is re-reads'],
+        [dv.value<0.8?'dmt-warn':'', (100*dv.value).toFixed(1)+'%',
+         'Value kept: D&prime;/D after repeat decay &#183; D&prime; = '+fmtTok(dv.DeffTot)],
+        ['', dv.kEff.toFixed(2)+' / '+K,
+         'Effective #domains exp(H(w)) &#183; 1 = one domain owns the batch, '+K+' = uniform'],
+        [R.useCap&&(nCap>0||res.infeasible)?'dmt-warn':'',
+         R.useCap ? (res.infeasible ? 'n/a' : (nCap+' / '+K)) : 'off',
+         R.useCap
+           ? (res.infeasible
+               ? 'Cap infeasible: c&#183;&#8721;n = '+fmtTok(R.cap*NTOT)+' &lt; D, so every domain is over c = '+R.cap.toFixed(1)
+               : 'Domains pinned at the epoch cap c = '+R.cap.toFixed(1))
+           : 'Epoch cap disabled &#183; epochs are whatever &#945; implies']
+      ];
+      outEl.innerHTML = stats.map(function(s){
+        return '<div class="vt-stat '+s[0]+'"><div class="n">'+s[1]+'</div><div class="l">'+s[2]+'</div></div>';
+      }).join('');
+
+      var regime;
+      if(res.infeasible){
+        regime='Your <b>&#945; = '+R.alpha.toFixed(2)+'</b> mixture never runs here &mdash; the epoch cap binds on every domain at once and overrides it.';
+      } else if(R.alpha>=0.995){
+        regime='At <b>&#945; = 1</b> the mixture <i>is</i> the corpus: every domain gets exactly '+fmtE(dv.e[0])+
+               ' epochs (e&#7522; = D&#183;n&#7522;/&#8721;n/n&#7522; = D/&#8721;n, the same number for all i &mdash; that is why the curves meet at the right edge). '+
+               DOM[0].name+' owns '+(100*res.w[0]).toFixed(0)+'% of every batch and '+DOM[small].name+' contributes '+(100*res.w[small]).toFixed(2)+'% &mdash; that is Team A.';
+      } else if(R.alpha<=0.005 && nCap===0){
+        regime='At <b>&#945; = 0</b> every domain gets exactly 1/'+K+' of the batch regardless of size, so '+DOM[small].name+
+               ' is read '+fmtE(dv.e[small])+' times over while '+DOM[0].name.toLowerCase()+' is seen for only '+fmtE(dv.e[0])+
+               ' of an epoch. Uniform is not &ldquo;fair&rdquo;: it is maximal upsampling of your smallest pool.';
+      } else if(R.alpha<=0.005){
+        regime='&#945; = 0 asks for a flat 1/'+K+' = '+(100/K).toFixed(0)+'% per domain, but the cap intercepts it: '+
+               nCap+' of '+K+' domains would blow past c = '+R.cap.toFixed(1)+' epochs, so they are held at exactly c and the freed budget goes to the pools that still have unread tokens. '+
+               DOM[small].name+' ends at '+(100*res.w[small]).toFixed(1)+'% of the batch instead of '+(100/K).toFixed(0)+'%. <b>This is exactly UniMax</b>: the flattest mixture a repetition budget allows.';
+      } else {
+        regime='At <b>&#945; = '+R.alpha.toFixed(2)+'</b> (T = '+fmtT(R.alpha)+') you are '+((1-R.alpha)*100).toFixed(0)+
+               '% of the way from proportional toward uniform: '+DOM[small].name+' is upsampled '+
+               fmtRatio(NATURAL[small]>0?res.w[small]/NATURAL[small]:0)+' to '+(100*res.w[small]).toFixed(1)+
+               '% of the batch, which costs '+fmtE(dv.e[small])+' epochs over it.';
+      }
+      var capTxt;
+      if(res.infeasible){
+        capTxt=' The cap is <b>infeasible</b> here: c&#183;&#8721;n = '+fmtTok(R.cap*NTOT)+' &lt; D = '+fmtTok(D)+
+               ', so <i>no</i> allocation stays under '+R.cap.toFixed(1)+' epochs. The tool falls back to the min-max-epoch answer &mdash; the proportional mixture, which spreads a flat '+
+               fmtE(dv.e[0])+' epochs across every domain. Cure it with fewer training tokens or more unique data (dedup harder, or generate synthetic tokens).';
+      } else if(R.useCap){
+        capTxt=' With the cap on, '+(nCap>0
+          ? nCap+(nCap===1?' domain sits':' domains sit')+' exactly at c = '+R.cap.toFixed(1)+' and the overflow was water-filled onto the pools that still have unique tokens left. That is <b>UniMax</b>: keep the mixture as flat as you can <i>subject to</i> a repetition budget, instead of letting &#945; decide repetition implicitly.'
+          : 'nothing binds &mdash; this &#945; already respects c = '+R.cap.toFixed(1)+' epochs, so the cap changes nothing.');
+      } else {
+        capTxt=' Turn on the cap to see the fix: <b>UniMax</b> flattens the mixture only as far as a repetition budget allows.';
+      }
+      noteEl.innerHTML =
+        '<b>Takeaway:</b> temperature sampling is one scalar, &#945; = 1/T, sliding the mixture between &ldquo;what I happen to have&rdquo; (&#945;=1) and &ldquo;every domain matters equally&rdquo; (&#945;=0) &mdash; and <b>the price of flattening is always paid in epochs</b>, because the only way to give a 30&nbsp;B pool 20% of a 1&nbsp;T-token run is to read it many times over. '+
+        regime+capTxt+
+        ' Right now '+(100*dv.fresh).toFixed(0)+'% of your '+fmtTok(D)+' budget is unique tokens and, after the repeat-decay model of Muennighoff et&nbsp;al. (R* = '+RSTAR+', applied per domain &mdash; a deliberate simplification of their corpus-level fit), the run is worth about '+fmtTok(dv.DeffTot)+
+        ' of fresh data &mdash; '+(100*dv.value).toFixed(0)+'% of what it cost in FLOPs. Size is only half the story: a real mixture also weights <i>quality and target use</i> (that is what DoReMi and RegMix learn), and it may change over training &mdash; but every one of those methods still has to answer this epoch question.';
+    }
+
+    // ----------------------------------------------------------------- render
+    function fv(el, def, lo, hi){
+      var v=parseFloat(el.value);
+      if(!isFinite(v)) v=def;
+      return Math.max(lo, Math.min(hi, v));
+    }
+
+    function render(){
+      var alpha=fv(aIn, DEFAULTS.alpha, 0, 1);
+      var D=fv(dIn, DEFAULTS.budget, 1, 100000);
+      var cap=fv(cIn, DEFAULTS.cap, 0.05, 1000);
+      var useCap=!!capOn.checked;
+
+      aVal.textContent = alpha.toFixed(2)+'  (T = '+fmtT(alpha)+')';
+      dVal.textContent = fmtTok(D);
+      cVal.textContent = cap.toFixed(1)+' ep';
+
+      var res=allocate(alpha, D, useCap, cap);
+      var dv=derive(res, D);
+      var R={alpha:alpha, D:D, cap:cap, useCap:useCap, res:res, dv:dv};
+
+      drawRows(R); drawSweep(R); drawReadout(R);
+    }
+
+    var inputs=root.querySelectorAll('input');
+    for(var ii=0; ii<inputs.length; ii++){
+      inputs[ii].addEventListener('input', render);
+      inputs[ii].addEventListener('change', render);
+    }
+    function preset(a, cap){ return function(){
+      aIn.value=String(a);
+      if(cap !== undefined){ capOn.checked=!!cap; }
+      render();
+    }; }
+    var b1=q('p1'), b2=q('p2'), b3=q('p3'), b4=q('p4'), b5=q('p5'), br=q('reset');
+    if(b1) b1.addEventListener('click', preset(1));
+    if(b2) b2.addEventListener('click', preset(0.3));
+    if(b3) b3.addEventListener('click', preset(0));
+    if(b4) b4.addEventListener('click', preset(0.7));
+    if(b5) b5.addEventListener('click', preset(0, true));
+    if(br) br.addEventListener('click', function(){
+      aIn.value=String(DEFAULTS.alpha); dIn.value=String(DEFAULTS.budget);
+      cIn.value=String(DEFAULTS.cap);   capOn.checked=DEFAULTS.capon;
+      render();
+    });
+
+    render();
+  })();</script>
+</div>

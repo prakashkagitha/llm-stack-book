@@ -54,6 +54,8 @@ Each topology has a natural failure mode:
 | Blackboard | Concurrent writers, emergent synthesis | Race conditions, stale reads, key collisions |
 | Hierarchical | Scales to large tasks | Latency explodes; cross-tree communication is awkward |
 
+{{tool:multi-agent-orchestration}}
+
 ## Workflow vs. Agent: The Critical Distinction
 
 The LLM agent community overuses the word "agent." It is worth being precise.

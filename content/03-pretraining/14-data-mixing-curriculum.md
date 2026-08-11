@@ -36,6 +36,20 @@ So a mixture choice is implicitly an **epoch-budget choice**. You are deciding, 
 
 {{fig:mixing-epoch-budget-tree}}
 
+### Size-based baselines: temperature sampling and UniMax
+
+Before any learned method, there is a one-knob family that sets the mixture from the pool sizes alone. **Temperature sampling** — the standard multilingual recipe in mBERT, XLM and mT5 — raises each domain's size to a power:
+
+$$
+w_i = \frac{n_i^{\alpha}}{\sum_{j=1}^{k} n_j^{\alpha}}, \qquad \alpha = \frac{1}{T}.
+$$
+
+At $\alpha = 1$ ($T = 1$) this is exactly the natural mixture. As $\alpha \to 0$ ($T \to \infty$) it flattens toward uniform, $w_i = 1/k$ — every domain gets an equal share of every batch regardless of how much of it you own. (mT5 used $\alpha = 0.3$; XLM and mBERT used $\alpha = 0.7$.) The knob does exactly one thing: it slides you between "sample what I have" and "give every domain a voice." And by the epoch identity above, **the price of flattening is always paid in repetition** — $e_i = w_i D / n_i$ means the smallest pool is the one that gets re-read the most.
+
+**UniMax** (Chung et al., 2023) makes that price explicit instead of implicit. Rather than choosing $\alpha$ and discovering the epochs afterward, you choose the epoch budget $c$ and ask for the flattest mixture subject to $w_i D \le c \, n_i$. The allocation is a water-fill: hand out equal shares, cap any domain that would exceed $c$ epochs at exactly $c \, n_i$ tokens, redistribute the freed budget among the domains that still have unused unique tokens, and repeat until nothing is over. UniMax outperformed temperature sampling across mT5 scales — unsurprisingly, since character-count temperature can silently drive a small language to dozens of epochs, whereas a cap cannot.
+
+{{tool:data-mixing-temperature}}
+
 ### Upsampling vs. deduplication: the trade-off
 
 A subtle but important interaction: **upsampling and deduplication push in opposite directions on the same axis — how many times a token is effectively seen.**
@@ -434,6 +448,7 @@ Get these right and you buy capability gains that would otherwise cost a substan
 !!! key "Key Takeaways"
 
     - A **mixture** is a sampling distribution $w$ over domains; the natural (proportional) mixture is almost never optimal because you care about a *target* distribution $p^{\star}$ of downstream uses, not raw token counts — and $w$ is a separate object from $p^{\star}$: setting $w = p^{\star}$ is usually suboptimal because domains differ in difficulty and in how much they transfer.
+    - The cheapest baselines set $w$ from sizes alone: **temperature sampling** $w_i \propto n_i^{\alpha}$ ($\alpha = 1/T$; $\alpha=1$ proportional, $\alpha \to 0$ uniform) and **UniMax**, which replaces the implicit $\alpha$ with an explicit per-domain epoch cap plus water-filling.
     - Mixing is fundamentally an **epoch-budget** decision: $e_i = w_i D / n_i$. **Deduplicate first** (to make epochs honest), **then upsample deliberately** (small high-value domains to ~2–4 epochs; beyond ~4–6, returns to repeated data decay and memorization rises).
     - A mixture is only real when the **dataloader** realizes it: pack *within* domains, draw a domain per sequence, seed the draw from the global step so resumption is exact, and log realized weights and epochs. In practice this is `interleave_datasets(probabilities=...)` (HF `datasets`), weighted `--data-path` blends (Megatron-Core), or `Stream(proportion=...)` (MosaicML `streaming`).
     - **Manual ablations** at a proxy scale are the robust workhorse; **DoReMi** automates this with a reference + proxy run using **Group-DRO on excess loss** (closeable loss, not raw loss) to avoid over-investing in intrinsically hard domains, while **RegMix** fits a regression surrogate over many tiny proxy runs and optimizes it over the simplex.
@@ -454,6 +469,7 @@ Get these right and you buy capability gains that would otherwise cost a substan
     **Recent advances (2023–2026)**
 
     - [Xie et al., *DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining* (2023)](https://arxiv.org/abs/2305.10429) — reference + proxy excess-loss Group-DRO method; finds mixture weights with a single extra small run, reaching 8B baseline accuracy 2.6x faster.
+    - [Chung et al., *UniMax: Fairer and More Effective Language Sampling for Large-Scale Multilingual Pretraining* (2023)](https://arxiv.org/abs/2304.09151) — ICLR 2023; replaces temperature sampling with an explicit per-domain **epoch cap** and a water-filling allocation, beating $\alpha$-sampling across mT5 scales.
     - [Fan, Pagliardini, Jaggi, *DoGE: Domain Reweighting with Generalization Estimation* (2023)](https://arxiv.org/abs/2310.15393) — alternative proxy-model approach using generalization estimation rather than excess loss.
     - [Albalak, Pan, Raffel, Wang, *Efficient Online Data Mixing For Language Model Pre-Training* (2023)](https://arxiv.org/abs/2312.02406) — bandit-style (EXP3) adaptive mixing during training; reaches final perplexity with 19% fewer steps.
     - [Liu et al., *RegMix: Data Mixture as Regression for Language Model Pre-training* (2024)](https://arxiv.org/abs/2407.01492) — frames mixture selection as regression over small proxy runs; ICLR 2025; matches or beats DoReMi at ~10% of its compute.
@@ -478,6 +494,7 @@ Get these right and you buy capability gains that would otherwise cost a substan
 - Xie, Pham, Dong, et al., *DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining* (2023) — the reference/proxy excess-loss Group-DRO method central to this chapter.
 - Sagawa, Koh, Hashimoto, Liang, *Distributionally Robust Neural Networks for Group Shifts* (Group-DRO, 2020) — the optimization framework DoReMi builds on.
 - Muennighoff, Rush, et al., *Scaling Data-Constrained Language Models* (2023) — the value of repeated tokens and the limits of upsampling.
+- Chung et al., *UniMax: Fairer and More Effective Language Sampling for Large-Scale Multilingual Pretraining* (2023) — size-based temperature sampling and its epoch-capped replacement.
 - Liu et al., *RegMix: Data Mixture as Regression for Language Model Pre-training* (2024) — regression surrogate over many tiny proxy runs, optimized over the simplex.
 - Albalak et al., *Online Data Mixing for Language Model Pre-training* — bandit-style adaptive mixing during the real run.
 - Hu et al. (MiniCPM), *MiniCPM: Unveiling the Potential of Small Language Models* — the Warmup-Stable-Decay schedule and the high-quality annealing phase.

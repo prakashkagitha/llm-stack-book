@@ -486,6 +486,8 @@ ef=200   recall@10 = 0.955     (slow, high recall)
 
 That table *is* the recall-latency tradeoff, made concrete. You turn one knob, `ef`, and slide along the curve.
 
+{{tool:hnsw-ann-search}}
+
 !!! note "Aside: the neighbor-selection heuristic we simplified"
 
     Our `_select_neighbors` keeps the $M$ *closest* candidates. The paper's Algorithm 4 does something smarter, and on real data it matters a great deal: it accepts a candidate $c$ only if $c$ is closer to the node being linked than it is to *any already-accepted neighbor*. This is the **relative neighborhood graph** (RNG) pruning rule, and what it buys is *diversity of direction*. Without it, every one of a node's $M$ links inside a dense cluster points back into that same cluster; the graph fragments into cliques with no bridges between them, and greedy search dead-ends in local minima. With it, each link is spent on a distinct direction out of the node, which is precisely what makes long-range navigation work. Swapping it in is a few lines:

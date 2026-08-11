@@ -1,0 +1,546 @@
+<div class="viz-tool" id="tool-gradient-checkpointing">
+  <div class="vt-title">Activation checkpointing: the memory–recompute tradeoff</div>
+
+  <div class="vt-grid">
+    <label for="gradient-checkpointing-layers">Layers L
+      <input id="gradient-checkpointing-layers" type="number" min="1" max="256" step="1" value="32" aria-label="number of transformer blocks">
+    </label>
+    <label for="gradient-checkpointing-dmodel">Hidden size d
+      <input id="gradient-checkpointing-dmodel" type="number" min="64" max="32768" step="64" value="4096" aria-label="model hidden dimension">
+    </label>
+    <label for="gradient-checkpointing-heads">Attention heads a
+      <input id="gradient-checkpointing-heads" type="number" min="1" max="256" step="1" value="32" aria-label="number of attention heads">
+    </label>
+    <label for="gradient-checkpointing-batch">Micro-batch B
+      <input id="gradient-checkpointing-batch" type="number" min="1" max="4096" step="1" value="1" aria-label="micro-batch size, sequences per forward pass">
+    </label>
+    <label for="gradient-checkpointing-seq">Sequence length T
+      <input id="gradient-checkpointing-seq" type="number" min="16" max="1048576" step="16" value="2048" aria-label="sequence length in tokens">
+    </label>
+    <label for="gradient-checkpointing-vocab">Vocab V
+      <input id="gradient-checkpointing-vocab" type="number" min="256" max="1000000" step="256" value="32000" aria-label="vocabulary size, sets the size of the logits tensor">
+    </label>
+    <label for="gradient-checkpointing-attn">Attention kernel
+      <select id="gradient-checkpointing-attn" aria-label="whether the T by T score matrix is materialized">
+        <option value="flash" selected>FlashAttention (scores never stored)</option>
+        <option value="dense">Materialize the T&times;T scores</option>
+      </select>
+    </label>
+    <label for="gradient-checkpointing-capacity">GPU memory (GiB)
+      <input id="gradient-checkpointing-capacity" type="number" min="1" max="4096" step="1" value="80" aria-label="HBM capacity of one GPU, in gibibytes">
+    </label>
+  </div>
+
+  <div class="gc-k-row">
+    <label class="gc-k-label" for="gradient-checkpointing-k-num">Checkpoint segments k <span class="gc-k-hint">(0 = checkpointing off)</span>
+      <span class="gc-k-in">
+        <input id="gradient-checkpointing-k-range" type="range" min="0" max="32" step="1" value="0" aria-label="number of checkpointed segments, slider">
+        <input id="gradient-checkpointing-k-num" type="number" min="0" max="256" step="1" value="0" aria-label="number of checkpointed segments, exact value">
+      </span>
+    </label>
+    <span class="gc-btn-row" role="group" aria-label="checkpointing presets">
+      <button id="gradient-checkpointing-btn-off"  type="button" class="gc-btn" aria-pressed="false">Off (store all)</button>
+      <button id="gradient-checkpointing-btn-sqrt" type="button" class="gc-btn" aria-pressed="false">k = &radic;L</button>
+      <button id="gradient-checkpointing-btn-opt"  type="button" class="gc-btn gc-btn-primary" aria-pressed="false">k = k* (min memory)</button>
+      <button id="gradient-checkpointing-btn-full" type="button" class="gc-btn" aria-pressed="false">Every block (k = L)</button>
+    </span>
+  </div>
+
+  <div class="gc-formula" id="gradient-checkpointing-formula"></div>
+
+  <div class="gc-blocks-caption" id="gradient-checkpointing-blocks-caption"></div>
+  <div class="gc-blocks-scroll">
+    <div class="gc-blocks" id="gradient-checkpointing-blocks" role="img" aria-label="layer stack showing which block inputs are stored"></div>
+  </div>
+  <div class="gc-legend">
+    <span class="gc-key"><i aria-hidden="true" class="gc-sw gc-sw-ckpt"></i>stored checkpoint (segment input, 2BTd bytes)</span>
+    <span class="gc-key"><i aria-hidden="true" class="gc-sw gc-sw-recomp"></i>recomputed in backward (nothing stored)</span>
+    <span class="gc-key"><i aria-hidden="true" class="gc-sw gc-sw-live"></i>live segment during backward (peak)</span>
+    <span class="gc-key"><i aria-hidden="true" class="gc-sw gc-sw-stored"></i>whole block kept in HBM (checkpointing off)</span>
+  </div>
+
+  <div class="gc-chart-wrap">
+    <svg id="gradient-checkpointing-chart" viewBox="0 0 660 260" preserveAspectRatio="xMidYMid meet"
+         role="img" aria-label="activation memory as a function of the number of checkpoint segments"></svg>
+  </div>
+
+  <div class="gc-budget" id="gradient-checkpointing-budget"></div>
+  <div class="gc-legend">
+    <span class="gc-key"><i aria-hidden="true" class="gc-sw gc-sw-state"></i>model state 16P (weights + grads + Adam)</span>
+    <span class="gc-key"><i aria-hidden="true" class="gc-sw gc-sw-act"></i>activations</span>
+    <span class="gc-key"><i aria-hidden="true" class="gc-sw gc-sw-head"></i>fp32 logits B&times;T&times;V</span>
+  </div>
+
+  <div class="vt-out" id="gradient-checkpointing-out" aria-live="polite"></div>
+
+  <div class="vt-note">
+    Split the stack into <b>k</b> segments, store only each segment's input, and recompute the rest during backward:
+    <b>M(k) &asymp; k&middot;(2BTd) + (L/k)&middot;a<sub>layer</sub></b> &mdash; stored checkpoints grow with k, the one segment brought back to life shrinks with k. (Exactly, since backward pops segments last&rarr;first and only checkpoints 1&hellip;i survive while segment&nbsp;i is re-materialized, the peak is max<sub>i</sub>&nbsp;[&thinsp;i&middot;2BTd + size<sub>i</sub>&middot;a<sub>layer</sub>&thinsp;] &mdash; which is what the chart plots, hence the sawtooth.) The textbook answer <b>k = &radic;L</b> assumes the two tensors cost the same; in a real block they do not. Per Korthikanti et al. the stored bytes per layer are <b>a<sub>layer</sub> = 34&middot;B&middot;T&middot;d</b> (+ <b>5&middot;a&middot;B&middot;T&sup2;</b> when the T&times;T scores are materialized) &mdash; <b>17&times;</b> the bf16 block input &mdash; so the optimum sits at k* &asymp; &radic;(17L), far to the right of &radic;L. For any stack shallower than 17 blocks that is <i>past</i> L, i.e. k* = L exactly; at L = 32 it is 24 of 32, and even at L = 80 (&asymp;37) the curve around the minimum is shallow enough that checkpointing every block costs only tens of percent more activation memory than the true optimum. That is why frameworks expose &ldquo;checkpoint every block&rdquo; and stop thinking about it. (The 34 counts every tensor a block stashes, dropout masks included; the chapter&rsquo;s back-of-envelope 12 elements &times; 2 bytes = 24 B/token/layer counts only the big ones, which is why it says &asymp;6.4 GB where this widget says 8.5 GiB for the same 7B config &mdash; same story, one constant apart.) The compute price is <b>one extra forward pass</b>, i.e. +33% on a fwd+bwd step, <i>for every k &gt; 0</i> &mdash; it does not grow with k, so there is no reason to stop short of the memory optimum. Note also what checkpointing never touches: the 16P of weights, gradients and Adam state, and the B&times;T&times;V fp32 logits of the loss head &mdash; which is why a small model with a big vocabulary OOMs on the head, not on the blocks. Everything here is closed form: no randomness, same inputs &rarr; same numbers.
+  </div>
+
+  <style>
+    /* Local tokens. Media query first as a fallback; explicit data-theme wins in both directions. */
+    #tool-gradient-checkpointing{
+      --gc-accent: var(--accent,#c15b39);
+      --gc-on-accent:#ffffff;
+      --gc-state: var(--muted,#6d675d);
+      --gc-head:#2f7d9e;
+      --gc-good:#1f7a52;
+      --gc-warn:#8a6404;
+      --gc-grid: var(--border-2,#d8d1c0);
+    }
+    @media (prefers-color-scheme: dark){
+      #tool-gradient-checkpointing{ --gc-on-accent:#1b1815; --gc-head:#7cc4e0; --gc-good:#6ed3a2; --gc-warn:#e6b450; }
+    }
+    :root[data-theme="light"] #tool-gradient-checkpointing{ --gc-on-accent:#ffffff; --gc-head:#2f7d9e; --gc-good:#1f7a52; --gc-warn:#8a6404; }
+    :root[data-theme="dark"]  #tool-gradient-checkpointing{ --gc-on-accent:#1b1815; --gc-head:#7cc4e0; --gc-good:#6ed3a2; --gc-warn:#e6b450; }
+
+    #tool-gradient-checkpointing{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0; background:var(--surface,#fff); font-family:var(--sans,sans-serif); max-width:100%; box-sizing:border-box; }
+    #tool-gradient-checkpointing *{ box-sizing:border-box; }
+    #tool-gradient-checkpointing .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-gradient-checkpointing .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:12px 18px; }
+    #tool-gradient-checkpointing label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft,#45413a); min-width:0; }
+    #tool-gradient-checkpointing input, #tool-gradient-checkpointing select{ font:inherit; font-size:.9rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px; background:var(--surface,#fff); color:var(--ink,#211f1b); min-width:0; max-width:100%; }
+    #tool-gradient-checkpointing input[type="range"]{ padding:0; accent-color:var(--gc-accent); }
+    #tool-gradient-checkpointing input:focus-visible, #tool-gradient-checkpointing select:focus-visible, #tool-gradient-checkpointing button:focus-visible{ outline:2px solid var(--gc-accent); outline-offset:2px; }
+
+    #tool-gradient-checkpointing .gc-k-row{ margin-top:16px; display:flex; flex-wrap:wrap; gap:12px 18px; align-items:flex-end; }
+    #tool-gradient-checkpointing .gc-k-label{ flex:1 1 250px; min-width:0; }
+    #tool-gradient-checkpointing .gc-k-hint{ color:var(--muted,#6d675d); font-size:.74rem; }
+    #tool-gradient-checkpointing .gc-k-in{ display:flex; gap:8px; align-items:center; min-width:0; }
+    #tool-gradient-checkpointing .gc-k-in input[type="range"]{ flex:2 1 auto; min-width:0; }
+    #tool-gradient-checkpointing .gc-k-in input[type="number"]{ flex:0 0 74px; }
+    #tool-gradient-checkpointing .gc-btn-row{ display:flex; flex-wrap:wrap; gap:8px; }
+    #tool-gradient-checkpointing .gc-btn{ font:inherit; font-size:.78rem; font-weight:600; padding:7px 11px; border-radius:8px; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-2,#f3efe6); color:var(--ink,#211f1b); cursor:pointer; }
+    #tool-gradient-checkpointing .gc-btn:hover{ filter:brightness(0.97); }
+    #tool-gradient-checkpointing .gc-btn-primary{ background:var(--gc-accent); border-color:var(--gc-accent); color:var(--gc-on-accent); }
+    /* active preset: the same green ring the block strip uses for "this is the live one" */
+    #tool-gradient-checkpointing .gc-btn[aria-pressed="true"]{ box-shadow:inset 0 0 0 2px var(--gc-good); }
+
+    #tool-gradient-checkpointing .gc-formula{ margin-top:16px; padding:9px 11px; border-radius:8px; background:var(--surface-2,#f3efe6); border:1px solid var(--border,#e7e1d4); font-family:var(--mono,monospace); font-size:.75rem; line-height:1.65; color:var(--ink-soft,#45413a); overflow-x:auto; }
+    #tool-gradient-checkpointing .gc-formula b{ color:var(--gc-accent); font-weight:700; }
+
+    #tool-gradient-checkpointing .gc-blocks-caption{ margin-top:16px; font-size:.76rem; line-height:1.5; color:var(--muted,#6d675d); }
+    #tool-gradient-checkpointing .gc-blocks-scroll{ margin-top:6px; overflow-x:auto; max-width:100%; }
+    #tool-gradient-checkpointing .gc-blocks{ display:flex; flex-wrap:wrap; gap:3px; padding-bottom:2px; }
+    #tool-gradient-checkpointing .gc-block{ width:13px; height:20px; border-radius:3px; flex:0 0 auto; border:1px solid var(--border-2,#d8d1c0); background:var(--surface-3,#ece7da); }
+    #tool-gradient-checkpointing .gc-block.is-ckpt{ background:var(--gc-accent); border-color:var(--gc-accent); }
+    #tool-gradient-checkpointing .gc-block.is-stored{ background:var(--gc-accent); border-color:var(--gc-accent); opacity:.45; }
+    #tool-gradient-checkpointing .gc-block.is-live{ box-shadow:inset 0 0 0 2px var(--gc-good); }
+
+    #tool-gradient-checkpointing .gc-legend{ margin-top:8px; display:flex; flex-wrap:wrap; gap:6px 16px; font-size:.72rem; color:var(--muted,#6d675d); }
+    #tool-gradient-checkpointing .gc-key{ display:inline-flex; align-items:center; gap:6px; }
+    #tool-gradient-checkpointing .gc-sw{ width:12px; height:12px; border-radius:3px; border:1px solid var(--border-2,#d8d1c0); flex:0 0 auto; }
+    #tool-gradient-checkpointing .gc-sw-ckpt{ background:var(--gc-accent); border-color:var(--gc-accent); }
+    #tool-gradient-checkpointing .gc-sw-recomp{ background:var(--surface-3,#ece7da); }
+    #tool-gradient-checkpointing .gc-sw-stored{ background:var(--gc-accent); border-color:var(--gc-accent); opacity:.45; }
+    #tool-gradient-checkpointing .gc-sw-live{ background:var(--surface-3,#ece7da); box-shadow:inset 0 0 0 2px var(--gc-good); }
+    #tool-gradient-checkpointing .gc-sw-state{ background:var(--gc-state); border-color:var(--gc-state); }
+    #tool-gradient-checkpointing .gc-sw-act{ background:var(--gc-accent); border-color:var(--gc-accent); }
+    #tool-gradient-checkpointing .gc-sw-head{ background:var(--gc-head); border-color:var(--gc-head); }
+
+    #tool-gradient-checkpointing .gc-chart-wrap{ margin-top:18px; width:100%; overflow:hidden; }
+    #tool-gradient-checkpointing svg{ display:block; width:100%; height:auto; max-width:100%; }
+    #tool-gradient-checkpointing .gc-ax{ fill:var(--muted,#6d675d); font-size:10px; font-family:var(--sans,sans-serif); }
+    #tool-gradient-checkpointing .gc-ax-title{ fill:var(--ink-soft,#45413a); font-size:11px; font-weight:600; font-family:var(--sans,sans-serif); }
+    #tool-gradient-checkpointing .gc-grid-line{ stroke:var(--gc-grid); stroke-width:1; opacity:.55; }
+    #tool-gradient-checkpointing .gc-curve{ fill:none; stroke:var(--gc-accent); stroke-width:2.2; stroke-linejoin:round; }
+    #tool-gradient-checkpointing .gc-off-line{ stroke:var(--gc-state); stroke-width:1.6; stroke-dasharray:5 4; }
+    #tool-gradient-checkpointing .gc-opt-line{ stroke:var(--gc-good); stroke-width:1.6; stroke-dasharray:3 3; }
+    #tool-gradient-checkpointing .gc-dot{ fill:var(--gc-accent); stroke:var(--surface,#fff); stroke-width:2; }
+    #tool-gradient-checkpointing .gc-dot-opt{ fill:none; stroke:var(--gc-good); stroke-width:2; }
+    #tool-gradient-checkpointing .gc-lbl{ fill:var(--ink,#211f1b); font-size:10.5px; font-weight:700; font-family:var(--sans,sans-serif); }
+    #tool-gradient-checkpointing .gc-lbl-soft{ fill:var(--muted,#6d675d); font-size:10px; font-family:var(--sans,sans-serif); }
+    #tool-gradient-checkpointing .gc-lbl-good{ fill:var(--gc-good); font-size:10px; font-weight:600; font-family:var(--sans,sans-serif); }
+
+    #tool-gradient-checkpointing .gc-budget{ margin-top:18px; display:flex; flex-direction:column; gap:9px; }
+    #tool-gradient-checkpointing .gc-bar-row{ display:flex; align-items:center; gap:10px; }
+    #tool-gradient-checkpointing .gc-bar-label{ flex:0 0 auto; width:118px; font-size:.75rem; line-height:1.3; color:var(--ink-soft,#45413a); }
+    #tool-gradient-checkpointing .gc-bar-track{ position:relative; flex:1 1 auto; min-width:0; height:20px; background:var(--surface-3,#ece7da); border-radius:5px; overflow:hidden; border:1px solid var(--border-2,#d8d1c0); display:flex; }
+    #tool-gradient-checkpointing .gc-seg{ height:100%; }
+    #tool-gradient-checkpointing .gc-seg-state{ background:var(--gc-state); }
+    #tool-gradient-checkpointing .gc-seg-act{ background:var(--gc-accent); }
+    #tool-gradient-checkpointing .gc-seg-head{ background:var(--gc-head); }
+    #tool-gradient-checkpointing .gc-cap{ position:absolute; top:0; bottom:0; width:2px; background:var(--gc-warn); }
+    #tool-gradient-checkpointing .gc-bar-value{ flex:0 0 auto; width:96px; text-align:right; font-size:.76rem; font-variant-numeric:tabular-nums; color:var(--ink,#211f1b); }
+    #tool-gradient-checkpointing .gc-bar-value.is-over{ color:var(--gc-warn); font-weight:700; }
+
+    #tool-gradient-checkpointing .vt-out{ margin-top:18px; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    #tool-gradient-checkpointing .vt-stat{ background:var(--surface-3,#ece7da); border-radius:9px; padding:11px 13px; min-width:0; }
+    #tool-gradient-checkpointing .vt-stat .n{ font-size:1.15rem; font-weight:700; color:var(--gc-accent); font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
+    #tool-gradient-checkpointing .vt-stat .l{ font-size:.73rem; line-height:1.35; color:var(--muted,#6d675d); margin-top:2px; }
+    #tool-gradient-checkpointing .vt-stat.vt-good .n{ color:var(--gc-good); }
+    #tool-gradient-checkpointing .vt-stat.vt-warn .n{ color:var(--gc-warn); }
+    #tool-gradient-checkpointing .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.6; }
+    #tool-gradient-checkpointing .vt-note b{ color:var(--ink-soft,#45413a); }
+    @media (max-width:520px){
+      #tool-gradient-checkpointing .gc-bar-label{ width:86px; font-size:.7rem; }
+      #tool-gradient-checkpointing .gc-bar-value{ width:78px; font-size:.71rem; }
+    }
+  </style>
+
+  <script>(function(){
+    'use strict';
+    var root = document.getElementById('tool-gradient-checkpointing');
+    if(!root) return;
+    var q = function(s){ return root.querySelector('#gradient-checkpointing-' + s); };
+
+    var els = {
+      L:q('layers'), d:q('dmodel'), heads:q('heads'), B:q('batch'), T:q('seq'), V:q('vocab'),
+      attn:q('attn'), cap:q('capacity'),
+      kR:q('k-range'), kN:q('k-num'),
+      bOff:q('btn-off'), bSqrt:q('btn-sqrt'), bOpt:q('btn-opt'), bFull:q('btn-full'),
+      formula:q('formula'), blocksCaption:q('blocks-caption'), blocks:q('blocks'),
+      chart:q('chart'), budget:q('budget'), out:q('out')
+    };
+    for(var key in els){ if(!els[key]) return; }   // bail out safely if the markup was edited
+
+    var GIB = 1073741824;   // 2^30
+
+    // ---------- helpers ----------
+    function readNum(el, def, min, max, integer){
+      var v = parseFloat(el.value);
+      if(!isFinite(v)) v = def;
+      if(integer) v = Math.round(v);
+      if(v < min) v = min;
+      if(v > max) v = max;
+      return v;
+    }
+    function fmtInt(x){ return isFinite(x) ? Math.round(x).toLocaleString('en-US') : 'n/a'; }
+    var BIN = [['TiB',1099511627776],['GiB',1073741824],['MiB',1048576],['KiB',1024],['B',1]];
+    function fmtBytes(bytes){
+      if(!isFinite(bytes) || bytes <= 0) return '0 B';
+      for(var i=0;i<BIN.length;i++){
+        if(bytes >= BIN[i][1] || i === BIN.length - 1){
+          var v = bytes / BIN[i][1];
+          if(BIN[i][0] === 'B') return fmtInt(v) + ' B';
+          return v.toFixed(v < 10 ? 2 : (v < 100 ? 1 : 0)) + ' ' + BIN[i][0];
+        }
+      }
+      return fmtInt(bytes) + ' B';
+    }
+    function fmtCount(n){
+      if(!isFinite(n)) return 'n/a';
+      if(n >= 1e9) return (n/1e9).toFixed(n/1e9 < 10 ? 2 : 1) + 'B';
+      if(n >= 1e6) return (n/1e6).toFixed(n/1e6 < 10 ? 2 : 1) + 'M';
+      if(n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+      return fmtInt(n);
+    }
+    function fmtX(x){
+      if(!isFinite(x)) return 'n/a';
+      return (x < 10 ? x.toFixed(2) : x.toFixed(1)) + '×';
+    }
+    function plural(n, word){ return n + ' ' + word + (n === 1 ? '' : 's'); }
+
+    // ---------- model ----------
+    // Korthikanti et al., "Reducing Activation Recomputation in Large Transformer Models":
+    // stored activation bytes per transformer layer = 34*s*b*h + 5*a*s^2*b, with
+    // s = T, b = B, h = d, a = heads. The second term is the T x T score matrix and is
+    // absent under FlashAttention, which never materializes it.
+    function params(){
+      var L    = readNum(els.L, 32, 1, 256, true);
+      var d    = readNum(els.d, 4096, 64, 32768, true);
+      var head = readNum(els.heads, 32, 1, 256, true);
+      var B    = readNum(els.B, 1, 1, 4096, true);
+      var T    = readNum(els.T, 2048, 16, 1048576, true);
+      var V    = readNum(els.V, 32000, 256, 1000000, true);
+      var flash = (els.attn.value !== 'dense');
+      var capBytes = readNum(els.cap, 80, 1, 4096, false) * GIB;
+
+      // keep the k slider's range tied to L, and k itself inside [0, L]
+      if(els.kR.max !== String(L)) els.kR.max = String(L);
+      if(els.kN.max !== String(L)) els.kN.max = String(L);
+      var kRaw = parseFloat(els.kN.value);
+      var k = isFinite(kRaw) ? Math.round(kRaw) : 0;
+      if(k < 0) k = 0;
+      if(k > L) k = L;
+      if(isFinite(kRaw) && Math.round(kRaw) !== k) els.kN.value = String(k);
+      if(els.kR.value !== String(k)) els.kR.value = String(k);
+
+      var aLayer  = 34 * B * T * d + (flash ? 0 : 5 * head * B * T * T); // bytes per layer
+      var bCkpt   = 2 * B * T * d;                                       // bf16 block input
+      var P       = 12 * L * d * d + V * d;    // 12d^2 per block (4d^2 attn + 8d^2 MLP) + tied embedding
+      var stateBytes  = 16 * P;                // bf16 weights + fp32 master + bf16 grads + Adam m,v
+      var logitsBytes = 4 * B * T * V;         // one fp32 logits tensor held by the loss head
+
+      // FLOPs per layer, forward: 24BTd^2 (qkv, out, MLP) + 4BT^2d (score + AV matmuls)
+      var fwdLayer = 24 * B * T * d * d + 4 * B * T * T * d;
+      var fwdTotal = L * fwdLayer;
+
+      return { L:L, d:d, head:head, B:B, T:T, V:V, flash:flash, capBytes:capBytes, k:k,
+               aLayer:aLayer, bCkpt:bCkpt, P:P, stateBytes:stateBytes, logitsBytes:logitsBytes,
+               fwdLayer:fwdLayer, fwdTotal:fwdTotal };
+    }
+
+    // Uniform partition of L blocks into k segments: the first (L mod k) segments get
+    // ceil(L/k) layers, the rest get floor(L/k).
+    function segSizes(L, k){
+      var base = Math.floor(L / k), rem = L % k, out = [];
+      for(var i=0;i<k;i++) out.push(base + (i < rem ? 1 : 0));
+      return out;
+    }
+
+    // Peak activation memory with k segments. Backward pops segments last -> first, so while
+    // segment i (1-based) is re-materialized, only checkpoints 1..i are still live:
+    //   peak = max_i ( i * bCkpt + size_i * aLayer ).
+    // Sizes are non-increasing in i, so only two candidates can win: i = (L mod k) (the last
+    // big segment) and i = k (the last segment overall). k = 0 means "store everything".
+    function peakInfo(p, k){
+      if(k <= 0) return { mem: p.L * p.aLayer, seg: 0, segSize: p.L, nCkpt: 0 };
+      var base = Math.floor(p.L / k), rem = p.L % k;
+      var cand = [{ mem: k * p.bCkpt + base * p.aLayer, seg: k, segSize: base, nCkpt: k }];
+      if(rem > 0) cand.push({ mem: rem * p.bCkpt + (base + 1) * p.aLayer, seg: rem, segSize: base + 1, nCkpt: rem });
+      return (cand.length > 1 && cand[1].mem > cand[0].mem) ? cand[1] : cand[0];
+    }
+    function actMem(p, k){ return peakInfo(p, k).mem; }
+    function bestK(p){
+      var best = 1, bestM = actMem(p, 1);
+      for(var k=2;k<=p.L;k++){
+        var m = actMem(p, k);
+        if(m < bestM){ bestM = m; best = k; }
+      }
+      return best;
+    }
+
+    // ---------- rendering ----------
+    function renderFormula(p, pk, mOff, kOpt){
+      var scoreTerm = p.flash
+        ? '0 (FlashAttention never stores the T&times;T scores)'
+        : '5&middot;' + fmtInt(p.head) + '&middot;B&middot;T&sup2; = ' + fmtBytes(5 * p.head * p.B * p.T * p.T);
+      var ratio = p.aLayer / p.bCkpt;
+      var kExact = Math.sqrt(p.L * ratio);
+      var lines = [
+        'a_layer = 34&middot;B&middot;T&middot;d + score term = ' + fmtBytes(34 * p.B * p.T * p.d) + ' + ' + scoreTerm + ' = <b>' + fmtBytes(p.aLayer) + '</b> per layer',
+        'checkpoint tensor = 2&middot;B&middot;T&middot;d = <b>' + fmtBytes(p.bCkpt) + '</b>   (a_layer / checkpoint = <b>' + fmtX(ratio) + '</b>)',
+        (p.k > 0
+          ? 'peak M(' + p.k + ') = ' + plural(pk.nCkpt, 'live checkpoint') + '&middot;' + fmtBytes(p.bCkpt) +
+            ' + ' + plural(pk.segSize, 're-materialized layer') + '&middot;' + fmtBytes(p.aLayer) +
+            ' = <b>' + fmtBytes(pk.mem) + '</b>'
+          : 'M(off) = L&middot;a_layer = ' + p.L + '&middot;' + fmtBytes(p.aLayer) + ' = <b>' + fmtBytes(mOff) + '</b>'),
+        'k* &asymp; &radic;(L&middot;a_layer/2BTd) = &radic;(' + p.L + '&middot;' + ratio.toFixed(1) + ') = ' + kExact.toFixed(1) +
+          ' &rarr; exact integer optimum <b>k* = ' + kOpt + '</b>   (the textbook &radic;L = ' + Math.sqrt(p.L).toFixed(1) + ')'
+      ];
+      els.formula.innerHTML = lines.join('<br>');
+    }
+
+    function renderBlocks(p, pk){
+      var i, html = [], liveIdx = {}, ckptIdx = {}, sz = null;
+      if(p.k > 0){
+        sz = segSizes(p.L, p.k);
+        var start = 0, peakStart = 0;
+        for(i=0;i<sz.length;i++){
+          ckptIdx[start] = true;
+          if(i === pk.seg - 1){ peakStart = start; }
+          start += sz[i];
+        }
+        for(i=peakStart;i<peakStart+pk.segSize;i++) liveIdx[i] = true;
+      }
+      for(i=0;i<p.L;i++){
+        var cls = 'gc-block', title;
+        if(p.k <= 0){ cls += ' is-stored'; title = 'block ' + (i+1) + ': all of its activations stay in HBM'; }
+        else if(ckptIdx[i]){ cls += ' is-ckpt'; title = 'block ' + (i+1) + ': segment start — its input is the stored checkpoint'; }
+        else { title = 'block ' + (i+1) + ': nothing stored, recomputed in backward'; }
+        if(liveIdx[i]) cls += ' is-live';
+        html.push('<div class="' + cls + '" title="' + title + '"></div>');
+      }
+      els.blocks.innerHTML = html.join('');
+      if(p.k <= 0){
+        els.blocks.setAttribute('aria-label', 'All ' + p.L + ' blocks store their activations; nothing is recomputed.');
+        els.blocksCaption.textContent = 'Checkpointing off: every one of the ' + p.L +
+          ' blocks keeps its own activations alive from its forward until its backward — activation memory grows linearly in L.';
+      } else {
+        els.blocks.setAttribute('aria-label', p.L + ' blocks in ' + p.k + ' segments; ' + p.k +
+          ' segment inputs are stored and the other blocks are recomputed in backward.');
+        var sizeTxt = (sz[0] === sz[sz.length-1])
+          ? plural(sz[0], 'layer') + ' each'
+          : sz[sz.length-1] + '–' + sz[0] + ' layers each';
+        els.blocksCaption.textContent = p.L + ' blocks split into ' + plural(p.k, 'segment') + ' of ' + sizeTxt +
+          '. Solid = the segment inputs kept in HBM. Backward pops segments last→first, so the peak lands on segment ' +
+          pk.seg + ' (outlined): ' + plural(pk.segSize, 'layer') + ' re-materialized while ' +
+          pk.nCkpt + (pk.nCkpt === 1 ? ' checkpoint is' : ' checkpoints are') + ' still live.';
+      }
+    }
+
+    function renderChart(p, mAct, mOff, kOpt){
+      var W = 660, H = 260, padL = 66, padR = 14, padT = 16, padB = 38;
+      var pw = W - padL - padR, ph = H - padT - padB;
+      var ks = [], vals = [], k, m, vmin = Infinity, vmax = 0;
+      for(k=1;k<=p.L;k++){
+        m = actMem(p, k);
+        ks.push(k); vals.push(m);
+        if(m < vmin) vmin = m;
+        if(m > vmax) vmax = m;
+      }
+      if(mOff < vmin) vmin = mOff;
+      if(mOff > vmax) vmax = mOff;
+      if(!(vmin > 0)) vmin = 1;
+      var lo = Math.log(vmin * 0.75) / Math.LN10;
+      var hi = Math.log(vmax * 1.35) / Math.LN10;
+      if(!(hi > lo)){ hi = lo + 1; }
+
+      function X(kk){ return p.L > 1 ? padL + (kk - 1) / (p.L - 1) * pw : padL + pw / 2; }
+      function Y(v){ return padT + (hi - Math.log(Math.max(v, 1e-9)) / Math.LN10) / (hi - lo) * ph; }
+
+      var s = [];
+      // y grid + labels
+      var nY = 4, t, yv, yy;
+      for(t=0;t<=nY;t++){
+        yv = Math.pow(10, lo + (hi - lo) * t / nY);
+        yy = Y(yv);
+        s.push('<line class="gc-grid-line" x1="' + padL + '" y1="' + yy.toFixed(1) + '" x2="' + (padL + pw) + '" y2="' + yy.toFixed(1) + '"/>');
+        s.push('<text class="gc-ax" x="' + (padL - 6) + '" y="' + (yy + 3.5).toFixed(1) + '" text-anchor="end">' + fmtBytes(yv) + '</text>');
+      }
+      // x ticks
+      var step = Math.max(1, Math.round(p.L / 6)), xs = [1], xk;
+      for(xk = step; xk < p.L; xk += step){ if(xk > 1) xs.push(xk); }
+      if(xs[xs.length-1] !== p.L) xs.push(p.L);
+      for(t=0;t<xs.length;t++){
+        s.push('<text class="gc-ax" x="' + X(xs[t]).toFixed(1) + '" y="' + (padT + ph + 14) + '" text-anchor="middle">' + xs[t] + '</text>');
+      }
+      s.push('<text class="gc-ax-title" x="' + (padL + pw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">checkpoint segments k</text>');
+      s.push('<text class="gc-ax-title" x="' + padL + '" y="' + (padT - 5) + '" text-anchor="start">peak activation memory (log scale)</text>');
+
+      // "no checkpointing" reference line
+      var yOff = Y(mOff);
+      s.push('<line class="gc-off-line" x1="' + padL + '" y1="' + yOff.toFixed(1) + '" x2="' + (padL + pw) + '" y2="' + yOff.toFixed(1) + '"/>');
+      s.push('<text class="gc-lbl-soft" x="' + (padL + pw - 2) + '" y="' + (yOff - 5).toFixed(1) + '" text-anchor="end">no checkpointing: ' + fmtBytes(mOff) + '</text>');
+
+      // curve
+      var pts = [];
+      for(t=0;t<ks.length;t++) pts.push(X(ks[t]).toFixed(1) + ',' + Y(vals[t]).toFixed(1));
+      if(pts.length > 1) s.push('<polyline class="gc-curve" points="' + pts.join(' ') + '"/>');
+
+      // optimum — only marked when some split actually beats storing everything
+      // (it fails only in the degenerate L = 1 case, where there is nothing to segment).
+      var mOptV = actMem(p, kOpt), optBeats = mOptV < mOff;
+      if(optBeats){
+        var xOpt = X(kOpt), yOpt = Y(mOptV);
+        s.push('<line class="gc-opt-line" x1="' + xOpt.toFixed(1) + '" y1="' + (padT + ph) + '" x2="' + xOpt.toFixed(1) + '" y2="' + yOpt.toFixed(1) + '"/>');
+        s.push('<circle class="gc-dot-opt" cx="' + xOpt.toFixed(1) + '" cy="' + yOpt.toFixed(1) + '" r="6"/>');
+        var optAnchor = (xOpt > padL + pw * 0.7) ? 'end' : 'start';
+        var optDx = (optAnchor === 'end') ? -9 : 9;
+        var yOptLbl = Math.min(yOpt + 16, padT + ph - 3);
+        s.push('<text class="gc-lbl-good" x="' + (xOpt + optDx).toFixed(1) + '" y="' + yOptLbl.toFixed(1) + '" text-anchor="' + optAnchor + '">k* = ' + kOpt + '</text>');
+      }
+
+      // current k — label flips below the dot when the dot sits near the top edge
+      if(p.k > 0){
+        var xc = X(p.k), yc = Y(mAct);
+        s.push('<circle class="gc-dot" cx="' + xc.toFixed(1) + '" cy="' + yc.toFixed(1) + '" r="5"/>');
+        var anchor = (xc > padL + pw * 0.6) ? 'end' : 'start';
+        var dx = (anchor === 'end') ? -9 : 9;
+        var yLbl = (yc - 8 < padT + 12) ? Math.min(yc + 17, padT + ph - 3) : yc - 8;
+        s.push('<text class="gc-lbl" x="' + (xc + dx).toFixed(1) + '" y="' + yLbl.toFixed(1) + '" text-anchor="' + anchor + '">k = ' + p.k + ' → ' + fmtBytes(mAct) + '</text>');
+      }
+      els.chart.innerHTML = s.join('');
+      els.chart.setAttribute('aria-label',
+        'Peak activation memory versus number of checkpoint segments, log scale. Without checkpointing ' +
+        fmtBytes(mOff) + '; ' + (optBeats
+          ? 'the minimum is ' + fmtBytes(mOptV) + ' at k = ' + kOpt
+          : 'no split beats storing everything at L = ' + p.L) +
+        (p.k > 0 ? '; the current setting k = ' + p.k + ' gives ' + fmtBytes(mAct) : '; checkpointing is currently off') + '.');
+    }
+
+    function renderBudget(p, mAct, mOff){
+      var totalOn  = p.stateBytes + mAct + p.logitsBytes;
+      var totalOff = p.stateBytes + mOff + p.logitsBytes;
+      var axis = Math.max(totalOff, p.capBytes, 1);
+      function row(label, act, total){
+        var w = function(v){ return (Math.max(0, v) / axis * 100).toFixed(3) + '%'; };
+        var over = total > p.capBytes;
+        return '<div class="gc-bar-row">' +
+          '<div class="gc-bar-label">' + label + '</div>' +
+          '<div class="gc-bar-track">' +
+            '<div class="gc-seg gc-seg-state" style="width:' + w(p.stateBytes) + '" title="model state 16P = ' + fmtBytes(p.stateBytes) + '"></div>' +
+            '<div class="gc-seg gc-seg-act" style="width:' + w(act) + '" title="activations = ' + fmtBytes(act) + '"></div>' +
+            '<div class="gc-seg gc-seg-head" style="width:' + w(p.logitsBytes) + '" title="fp32 logits = ' + fmtBytes(p.logitsBytes) + '"></div>' +
+            '<div class="gc-cap" style="left:' + (p.capBytes / axis * 100).toFixed(3) + '%" title="GPU capacity = ' + fmtBytes(p.capBytes) + '"></div>' +
+          '</div>' +
+          '<div class="gc-bar-value' + (over ? ' is-over' : '') + '">' + fmtBytes(total) + '</div>' +
+        '</div>';
+      }
+      els.budget.innerHTML = (p.k > 0)
+        ? row('k = ' + p.k + ' segments', mAct, totalOn) + row('no checkpointing', mOff, totalOff)
+        : row('no checkpointing', mOff, totalOff);
+    }
+
+    function renderStats(p, mAct, mOff, kOpt){
+      var baseFlops  = 3 * p.fwdTotal;                                  // forward (1x) + backward (2x)
+      var ckptOver   = (p.k > 0 && baseFlops > 0) ? p.fwdTotal / baseFlops : 0;          // one extra forward
+      var flashOver  = (p.flash && baseFlops > 0) ? (p.L * 2 * p.B * p.T * p.T * p.d) / baseFlops : 0; // S = QK^T redone
+      var overhead   = ckptOver + flashOver;
+      var overParts  = [];
+      if(ckptOver  > 0) overParts.push('one extra forward pass (+' + (ckptOver * 100).toFixed(1) + '%)');
+      if(flashOver > 0) overParts.push('FlashAttention score recompute (+' + (flashOver * 100).toFixed(1) + '%)');
+      var totalOn = p.stateBytes + mAct + p.logitsBytes;
+      var frac = p.capBytes > 0 ? totalOn / p.capBytes : Infinity;
+      var reduction = mAct > 0 ? mOff / mAct : Infinity;
+      var mBest = actMem(p, kOpt);
+      var kSqrt = Math.max(1, Math.min(p.L, Math.round(Math.sqrt(p.L))));
+
+      var stats = [
+        ['', fmtBytes(mAct), 'Peak activation memory' + (p.k > 0 ? ' at k = ' + p.k : ' (checkpointing off)')],
+        [reduction > 1.01 ? 'vt-good' : (reduction < 0.99 ? 'vt-warn' : ''), fmtX(reduction),
+          'Activation memory vs. storing everything (' + fmtBytes(mOff) + ')'],
+        [overhead > 0.5 ? 'vt-warn' : '', '+' + (overhead * 100).toFixed(1) + '%',
+          'Extra FLOPs per step: ' + (overParts.length ? overParts.join(' + ') : 'none — nothing is recomputed')],
+        ['', fmtCount(p.P) + ' params', 'P = 12Ld² + Vd → model state 16P = ' + fmtBytes(p.stateBytes) + ', untouched by checkpointing'],
+        ['', fmtBytes(p.logitsBytes), 'fp32 logits B×T×V — outside the blocks, so checkpointing them never helps'],
+        [frac > 1 ? 'vt-warn' : 'vt-good', (frac * 100).toFixed(1) + '%',
+          'Of the ' + fmtBytes(p.capBytes) + ' GPU: ' + fmtBytes(totalOn) + (frac > 1 ? ' — does not fit' : ' — fits')],
+        [p.k === kOpt ? 'vt-good' : '', 'k* = ' + kOpt,
+          (mBest < mOff ? 'Memory-optimal segments (' + fmtBytes(mBest) + '); √L = ' + kSqrt + ' gives ' + fmtBytes(actMem(p, kSqrt))
+                        : 'At L = ' + p.L + ' no split beats storing everything (' + fmtBytes(mBest) + ' vs ' + fmtBytes(mOff) + ')')]
+      ];
+      els.out.innerHTML = stats.map(function(st){
+        return '<div class="vt-stat ' + st[0] + '"><div class="n">' + st[1] + '</div><div class="l">' + st[2] + '</div></div>';
+      }).join('');
+    }
+
+    function renderPresets(p, kOpt){
+      var kSqrt = Math.max(1, Math.min(p.L, Math.round(Math.sqrt(p.L))));
+      var on = [[els.bOff, p.k === 0], [els.bSqrt, p.k > 0 && p.k === kSqrt],
+                [els.bOpt, p.k > 0 && p.k === kOpt], [els.bFull, p.k > 0 && p.k === p.L]];
+      for(var i=0;i<on.length;i++) on[i][0].setAttribute('aria-pressed', on[i][1] ? 'true' : 'false');
+    }
+
+    function render(){
+      var p = params();
+      var mOff = actMem(p, 0);
+      var pk = peakInfo(p, p.k);
+      var mAct = pk.mem;
+      var kOpt = bestK(p);
+      renderFormula(p, pk, mOff, kOpt);
+      renderBlocks(p, pk);
+      renderChart(p, mAct, mOff, kOpt);
+      renderBudget(p, mAct, mOff);
+      renderStats(p, mAct, mOff, kOpt);
+      renderPresets(p, kOpt);
+    }
+
+    function setK(k){
+      var L = readNum(els.L, 32, 1, 256, true);
+      if(k < 0) k = 0;
+      if(k > L) k = L;
+      els.kN.value = String(k);
+      els.kR.value = String(k);
+      render();
+    }
+
+    // ---------- wiring ----------
+    els.kR.addEventListener('input', function(){ els.kN.value = els.kR.value; render(); });
+    els.kN.addEventListener('input', function(){ render(); });
+    els.bOff.addEventListener('click',  function(){ setK(0); });
+    els.bSqrt.addEventListener('click', function(){ setK(Math.max(1, Math.round(Math.sqrt(readNum(els.L, 32, 1, 256, true))))); });
+    els.bOpt.addEventListener('click',  function(){ setK(bestK(params())); });
+    els.bFull.addEventListener('click', function(){ setK(readNum(els.L, 32, 1, 256, true)); });
+
+    root.querySelectorAll('input, select').forEach(function(el){
+      if(el === els.kR || el === els.kN) return;   // handled above
+      el.addEventListener('input', render);
+      el.addEventListener('change', render);
+    });
+
+    render();
+  })();</script>
+</div>

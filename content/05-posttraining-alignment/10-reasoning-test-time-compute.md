@@ -616,6 +616,8 @@ The key findings:
 
     The crossover point is task-dependent: for tasks with reliable verifiers (math, code), test-time scaling is very effective. For open-ended tasks without a verifier, ORM quality becomes the bottleneck.
 
+{{tool:test-time-compute}}
+
 ## Long-Thinking Models: o1, DeepSeek-R1, and the Reasoning Era
 
 OpenAI's o1 (September 2024) was the first publicly released model designed around extended internal reasoning — a "thinking" trace visible to the model but (in the initial release) hidden from users. DeepSeek-R1 (January 2025) reproduced and open-sourced the training recipe. Within a year the approach became the industry default: OpenAI's o3 (April 2025) and unified GPT-5 (August 2025), Anthropic's Claude, and Google's Gemini all ship extended reasoning as a built-in mode rather than a separate product. The key innovations:

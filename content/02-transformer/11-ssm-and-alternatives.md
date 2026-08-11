@@ -430,6 +430,8 @@ where $\bar{A}_t = \exp(\Delta_t A)$ and $\bar{B}_t = (\exp(\Delta_t A) - I) A^{
 
 Critically, $A$ is kept diagonal (not the full HiPPO matrix) for efficiency, and initialized with a specific negative-real diagonal structure that encourages stable long-range memory.
 
+{{tool:ssm-selective-scan}}
+
 ```text
 Mamba Block (per layer):
 

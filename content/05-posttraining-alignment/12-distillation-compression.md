@@ -50,6 +50,8 @@ Common choices are $\tau \in [2, 5]$ and $\alpha \in [0.1, 0.5]$.
 
     The soft distribution at $\tau = 4$ tells the student that tokens 1 and 2 are plausible alternatives, carrying meaningful signal about inter-token similarity. At $\tau = 1$ this information is almost entirely suppressed. Setting $\tau$ too high (say, 20) eventually flattens the distribution toward uniform, losing the ordering information — this is why values of 2–5 are typical.
 
+{{tool:distillation-temperature}}
+
 ## 5.2 On-Policy vs Off-Policy Distillation
 
 The terminology "on-policy" vs "off-policy" in distillation borrows from RL and describes *who generated the context being trained on*.

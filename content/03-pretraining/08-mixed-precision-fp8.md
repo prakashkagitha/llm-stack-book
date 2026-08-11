@@ -141,6 +141,10 @@ class DynamicLossScaler:
                 self._good_steps = 0
 ```
 
+The widget below makes both failure modes concrete. Slide the loss scale and watch the gradient distribution translate across fp16's representable window — too far left and a fifth of your gradients round to exactly zero, too far right and the largest of a billion gradients hits `inf` and the step is discarded. The second panel runs the controller above and shows it settling into a sawtooth a couple of octaves *below* the ceiling — it balances where the per-step overflow probability equals one over the growth interval, which for a realistic gradient distribution lands right around PyTorch's default $2^{16}$.
+
+{{tool:mixed-precision-scaling}}
+
 ### bf16 needs no loss scaling — here is exactly why
 
 This is a favorite interview question, so be precise. Loss scaling exists to combat gradient **underflow**, which is a *range* problem: fp16's smallest normal is ~6e-5, and gradients live below that. bf16 has the **same exponent width as fp32**, so its smallest normal is ~1.2e-38 — gradients simply never underflow there. There is nothing to rescue, so loss scaling adds complexity for zero benefit. You drop the `GradScaler` entirely. (You still keep fp32 master weights inside the optimizer if you want the most precise updates, though with bf16 + a state-fp32 optimizer like Adam this is often handled implicitly — see below.) The trade you accept is bf16's coarser 7-bit mantissa, but the network tolerates that rounding noise.

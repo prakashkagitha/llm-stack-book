@@ -1,0 +1,1008 @@
+<div class="viz-tool" id="tool-constitutional-ai-loop">
+  <div class="vt-title">Constitutional AI / RLAIF: critique and revise</div>
+  <div class="vt-hint">
+    The two-stage CAI recipe, run end to end with no human labels anywhere. <b>Stage 1 (SL-CAI)</b> steps through
+    a scripted red-team transcript: harmful draft &rarr; critique against <i>one sampled constitutional principle</i>
+    &rarr; revision, repeated for up to 4 rounds. <b>Stage 2 (RLAIF)</b> is live math on whatever two responses you
+    pick: an AI judge emits a verdict distribution over the tokens <span class="cl-k">A</span>/<span class="cl-k">B</span>,
+    which is turned into a <b>soft preference label</b> p by a 2-way softmax with max-subtraction, debiased by scoring
+    both orderings, and then used as the target of the Bradley&ndash;Terry reward-model loss. The response
+    <i>text</i> is scripted; every <i>number</i> below is computed from the rules shown in full.
+  </div>
+
+  <div class="vt-grid vt-controls">
+    <label for="constitutional-ai-loop-prompt">Red-team prompt
+      <select id="constitutional-ai-loop-prompt" aria-label="Which red-team prompt to run the constitutional loop on">
+        <option value="0">unauthorized Wi-Fi access</option>
+        <option value="1">coercing a coworker's home address</option>
+        <option value="2">mixing household chemicals</option>
+      </select>
+    </label>
+    <label for="constitutional-ai-loop-critprin">Stage-1 critique principle
+      <select id="constitutional-ai-loop-critprin" aria-label="Which constitutional principle the next critique step samples">
+        <option value="auto">sample (seeded, per round)</option>
+      </select>
+    </label>
+    <label for="constitutional-ai-loop-judgeprin">Stage-2 judge principle
+      <select id="constitutional-ai-loop-judgeprin" aria-label="Which constitutional principle the RLAIF judge compares against">
+        <option value="mean">whole constitution (mean violation)</option>
+      </select>
+    </label>
+    <label for="constitutional-ai-loop-alpha">Judge decisiveness &alpha; <span class="vt-val" id="constitutional-ai-loop-alphaval">6.0</span>
+      <input id="constitutional-ai-loop-alpha" type="range" min="0" max="12" step="0.1" value="6"
+             aria-label="Judge decisiveness alpha: how many logits one unit of principle-satisfaction is worth">
+    </label>
+    <label for="constitutional-ai-loop-bias">Position bias b (logits) <span class="vt-val" id="constitutional-ai-loop-biasval">1.20</span>
+      <input id="constitutional-ai-loop-bias" type="range" min="0" max="3" step="0.05" value="1.2"
+             aria-label="Position bias in logits: bonus the judge gives to whichever response it reads first">
+    </label>
+    <label for="constitutional-ai-loop-steps">RM gradient steps <span class="vt-val" id="constitutional-ai-loop-stepsval">40</span>
+      <input id="constitutional-ai-loop-steps" type="range" min="0" max="60" step="1" value="40"
+             aria-label="Number of gradient-descent steps on the reward-model margin">
+    </label>
+  </div>
+
+  <div class="vt-grid vt-controls cl-grid2">
+    <label for="constitutional-ai-loop-ra">Compare: response A
+      <select id="constitutional-ai-loop-ra" aria-label="Which transcript response plays the role of response A"></select>
+    </label>
+    <label for="constitutional-ai-loop-rb">Compare: response B
+      <select id="constitutional-ai-loop-rb" aria-label="Which transcript response plays the role of response B"></select>
+    </label>
+    <label class="cl-check" for="constitutional-ai-loop-debias">
+      <input id="constitutional-ai-loop-debias" type="checkbox" checked
+             aria-label="Average both orderings to cancel the judge's position bias">
+      <span>Debias: score both orderings and average</span>
+    </label>
+  </div>
+
+  <div class="vt-actions">
+    <button class="vt-btn cl-primary" id="constitutional-ai-loop-nextbtn" type="button">Next step</button>
+    <button class="vt-btn" id="constitutional-ai-loop-runbtn" type="button">Run all 4 rounds</button>
+    <button class="vt-btn" id="constitutional-ai-loop-resetbtn" type="button">Reset transcript</button>
+    <span class="cl-tag" id="constitutional-ai-loop-phase" role="status">round 0 of 4</span>
+  </div>
+
+  <div class="cl-h">The two-stage recipe (stage 2 is live; the highlighted stage-1 box is where the transcript is)</div>
+  <div class="cl-wrap cl-scroll">
+    <svg id="constitutional-ai-loop-pipe" viewBox="0 0 1060 300" preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Two-row pipeline: stage one runs prompt to harmful draft to critique to revision, looping, then supervised fine-tuning to an SL-CAI model; stage two samples two responses, an AI judge with a sampled principle produces a soft preference label, which trains a preference model and then an RL policy, yielding the final CAI model"></svg>
+  </div>
+
+  <div class="cl-cols">
+    <div class="cl-col">
+      <div class="cl-h">Stage 1 &mdash; supervised critique &amp; revision (SL-CAI)</div>
+      <div class="cl-transcript" id="constitutional-ai-loop-transcript" aria-live="polite"></div>
+      <div class="cl-rule" id="constitutional-ai-loop-rule"></div>
+    </div>
+    <div class="cl-col">
+      <div class="cl-h">Constitution violation v[p] of the current response</div>
+      <div class="cl-wrap">
+        <svg id="constitutional-ai-loop-bars" viewBox="0 0 520 214" preserveAspectRatio="xMidYMid meet" role="img"
+             aria-label="Bar chart of the current response's violation score for each constitutional principle, with the initial draft's score shown as a hollow outline"></svg>
+      </div>
+      <div class="cl-legend">
+        <span><span class="cl-sw cl-sw-now"></span> current response</span>
+        <span><span class="cl-sw cl-sw-init"></span> initial draft</span>
+        <span><span class="cl-sw cl-sw-thr"></span> critique threshold 0.20</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="cl-h">Stage 2 &mdash; the AI judge's verdict distribution (no human ever sees this pair)</div>
+  <div class="cl-wrap">
+    <svg id="constitutional-ai-loop-judge" viewBox="0 0 520 132" preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Probability bar showing the judge's preference for response A under each ordering and the position-debiased average"></svg>
+  </div>
+  <div class="cl-formula" id="constitutional-ai-loop-judgemath"></div>
+
+  <div class="cl-h">Stage 2 &mdash; the soft label trains the preference model (Bradley-Terry)</div>
+  <div class="cl-wrap">
+    <svg id="constitutional-ai-loop-rm" viewBox="0 0 520 236" preserveAspectRatio="xMidYMid meet" role="img"
+         aria-label="Line chart of the reward-model margin over gradient steps, for the soft label target and the hard rounded label target, against the optimal margin"></svg>
+  </div>
+  <div class="cl-formula" id="constitutional-ai-loop-rmmath"></div>
+
+  <div class="vt-out" id="constitutional-ai-loop-out" aria-live="polite"></div>
+
+  <div class="vt-note" id="constitutional-ai-loop-note"></div>
+
+  <style>
+    #tool-constitutional-ai-loop{
+      --cl-accent:   var(--accent,#4f46e5);
+      --cl-ink:      var(--ink,#1a1a2e);
+      --cl-inksoft:  var(--ink-soft,#556);
+      --cl-muted:    var(--muted,#889);
+      --cl-surface:  var(--surface,#fff);
+      --cl-surface2: var(--surface-2,#f6f7f9);
+      --cl-surface3: var(--surface-3,#eceef3);
+      --cl-border:   var(--border,#e5e7eb);
+      --cl-border2:  var(--border-2,#e5e7eb);
+      --cl-good:     var(--good,#2f9e6e);
+      --cl-warn:     var(--warn,#e0a106);
+      --cl-onaccent: #ffffff;
+      --cl-mono:     var(--mono,ui-monospace,monospace);
+      --cl-sans:     var(--sans,sans-serif);
+      border:1px solid var(--cl-border2); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--cl-surface); color:var(--cl-ink); font-family:var(--cl-sans); max-width:100%;
+    }
+    html[data-theme="dark"] #tool-constitutional-ai-loop{
+      --cl-good: var(--good,#4fc48f);
+      --cl-warn: var(--warn,#e8b451);
+      /* the dark accent is a light clay, so accent-coloured buttons need dark text on them */
+      --cl-onaccent: #17140f;
+    }
+    #tool-constitutional-ai-loop .vt-title{ font-weight:700; font-size:1rem; margin-bottom:6px; color:var(--cl-ink); }
+    #tool-constitutional-ai-loop .vt-hint{ font-size:.8rem; color:var(--cl-muted); margin-bottom:14px; line-height:1.55; }
+    #tool-constitutional-ai-loop .vt-hint b{ color:var(--cl-inksoft); }
+    #tool-constitutional-ai-loop .cl-k{ font-family:var(--cl-mono); color:var(--cl-inksoft); font-weight:700; }
+
+    #tool-constitutional-ai-loop .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px 18px; }
+    #tool-constitutional-ai-loop .cl-grid2{ margin-top:12px; }
+    #tool-constitutional-ai-loop label{ display:flex; flex-direction:column; gap:6px; font-size:.82rem; color:var(--cl-muted); }
+    #tool-constitutional-ai-loop .vt-val{ color:var(--cl-ink); font-variant-numeric:tabular-nums; font-weight:600; }
+    #tool-constitutional-ai-loop select{ font:inherit; font-size:.8rem; padding:5px 7px; border:1px solid var(--cl-border2);
+      border-radius:7px; background:var(--cl-surface); color:var(--cl-ink); max-width:100%; }
+    #tool-constitutional-ai-loop input[type="range"]{ width:100%; accent-color:var(--cl-accent); }
+    #tool-constitutional-ai-loop input[type="checkbox"]{ accent-color:var(--cl-accent); width:15px; height:15px; }
+    #tool-constitutional-ai-loop input:focus-visible, #tool-constitutional-ai-loop select:focus-visible{
+      outline:2px solid var(--cl-accent); outline-offset:3px; }
+    #tool-constitutional-ai-loop .cl-check{ flex-direction:row; align-items:center; gap:8px; align-self:end; padding-bottom:6px; }
+    #tool-constitutional-ai-loop .cl-check span{ color:var(--cl-inksoft); }
+
+    #tool-constitutional-ai-loop .vt-actions{ margin-top:14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    #tool-constitutional-ai-loop .vt-btn{ font:inherit; font-size:.8rem; padding:6px 12px; border:1px solid var(--cl-border2);
+      border-radius:7px; background:var(--cl-surface); color:var(--cl-ink); cursor:pointer; }
+    #tool-constitutional-ai-loop .vt-btn:hover{ background:var(--cl-surface3); }
+    #tool-constitutional-ai-loop .vt-btn:focus-visible{ outline:2px solid var(--cl-accent); outline-offset:2px; }
+    #tool-constitutional-ai-loop .vt-btn[disabled]{ opacity:.5; cursor:default; }
+    #tool-constitutional-ai-loop .cl-primary{ background:var(--cl-accent); color:var(--cl-onaccent); border-color:var(--cl-accent); font-weight:600; }
+    #tool-constitutional-ai-loop .cl-primary:hover:not([disabled]){ filter:brightness(1.08); background:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-primary[disabled]:hover{ background:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-tag{ font-family:var(--cl-mono); font-size:.76rem; color:var(--cl-muted); margin-left:auto; }
+
+    #tool-constitutional-ai-loop .cl-h{ font-size:.74rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+      color:var(--cl-muted); margin:18px 0 8px; }
+    #tool-constitutional-ai-loop .cl-wrap{ max-width:100%; }
+    #tool-constitutional-ai-loop .cl-scroll{ overflow-x:auto; }
+    #tool-constitutional-ai-loop svg{ display:block; width:100%; height:auto; }
+    #tool-constitutional-ai-loop #constitutional-ai-loop-pipe{ min-width:700px; max-width:1060px; }
+    #tool-constitutional-ai-loop #constitutional-ai-loop-bars,
+    #tool-constitutional-ai-loop #constitutional-ai-loop-judge,
+    #tool-constitutional-ai-loop #constitutional-ai-loop-rm{ max-width:560px; }
+
+    #tool-constitutional-ai-loop .cl-cols{ display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:0 22px; }
+    #tool-constitutional-ai-loop .cl-col{ min-width:0; }
+
+    #tool-constitutional-ai-loop .cl-transcript{ display:flex; flex-direction:column; gap:9px; }
+    #tool-constitutional-ai-loop .cl-card{ border:1px solid var(--cl-border); border-radius:9px; padding:9px 11px;
+      background:var(--cl-surface2); font-size:.78rem; line-height:1.5; }
+    #tool-constitutional-ai-loop .cl-card.cl-live{ border-color:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-role{ font-family:var(--cl-mono); font-size:.68rem; font-weight:700; letter-spacing:.04em;
+      text-transform:uppercase; color:var(--cl-muted); display:flex; gap:8px; flex-wrap:wrap; align-items:baseline; margin-bottom:4px; }
+    #tool-constitutional-ai-loop .cl-role .cl-pn{ color:var(--cl-accent); text-transform:none; letter-spacing:0; font-weight:600; }
+    #tool-constitutional-ai-loop .cl-card.cl-crit .cl-role{ color:var(--cl-warn); }
+    #tool-constitutional-ai-loop .cl-card.cl-rev .cl-role{ color:var(--cl-good); }
+    #tool-constitutional-ai-loop .cl-body{ color:var(--cl-ink); }
+    #tool-constitutional-ai-loop .cl-meta{ margin-top:5px; font-family:var(--cl-mono); font-size:.68rem; color:var(--cl-muted); }
+    #tool-constitutional-ai-loop .cl-meta b{ color:var(--cl-inksoft); font-weight:600; }
+    #tool-constitutional-ai-loop .cl-noop{ color:var(--cl-muted); font-style:italic; }
+
+    #tool-constitutional-ai-loop .cl-rule, #tool-constitutional-ai-loop .cl-formula{
+      margin-top:12px; font-family:var(--cl-mono); font-size:.68rem; line-height:1.7; color:var(--cl-inksoft);
+      background:var(--cl-surface2); border-radius:8px; padding:10px 12px; overflow-x:auto; white-space:pre; }
+
+    #tool-constitutional-ai-loop .cl-legend{ margin-top:7px; font-size:.72rem; color:var(--cl-muted); display:flex;
+      gap:14px; flex-wrap:wrap; align-items:center; }
+    #tool-constitutional-ai-loop .cl-sw{ display:inline-block; width:12px; height:9px; margin-right:4px; vertical-align:middle; }
+    #tool-constitutional-ai-loop .cl-sw-now{ background:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-sw-init{ background:none; border:1px dashed var(--cl-muted); }
+    #tool-constitutional-ai-loop .cl-sw-thr{ background:none; border-left:2px solid var(--cl-warn); width:2px; }
+
+    #tool-constitutional-ai-loop .cl-box{ fill:var(--cl-surface2); stroke:var(--cl-border2); stroke-width:1.2; }
+    #tool-constitutional-ai-loop .cl-box.cl-active{ stroke:var(--cl-accent); stroke-width:2.2; }
+    #tool-constitutional-ai-loop .cl-box.cl-livebox{ stroke:var(--cl-accent); stroke-width:1.2; stroke-dasharray:4 3; }
+    #tool-constitutional-ai-loop .cl-btitle{ font-size:12px; font-weight:700; fill:var(--cl-ink); font-family:var(--cl-sans); }
+    #tool-constitutional-ai-loop .cl-bsub{ font-size:10px; fill:var(--cl-muted); font-family:var(--cl-mono); }
+    #tool-constitutional-ai-loop .cl-bsub.cl-w{ fill:var(--cl-warn); }
+    #tool-constitutional-ai-loop .cl-bsub.cl-g{ fill:var(--cl-good); }
+    #tool-constitutional-ai-loop .cl-stage{ font-size:11px; font-weight:700; letter-spacing:.06em; fill:var(--cl-muted); font-family:var(--cl-sans); }
+    #tool-constitutional-ai-loop .cl-arrow{ stroke:var(--cl-inksoft); stroke-width:1.6; fill:none; }
+    #tool-constitutional-ai-loop .cl-ahead{ fill:var(--cl-inksoft); stroke:none; }
+    #tool-constitutional-ai-loop .cl-loop{ stroke:var(--cl-accent); stroke-width:1.6; fill:none; stroke-dasharray:5 3; }
+    #tool-constitutional-ai-loop .cl-ahead2{ fill:var(--cl-accent); stroke:none; }
+    #tool-constitutional-ai-loop .cl-flab{ font-size:10px; fill:var(--cl-muted); font-family:var(--cl-sans); }
+
+    #tool-constitutional-ai-loop .cl-bar-now{ fill:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-bar-init{ fill:none; stroke:var(--cl-muted); stroke-width:1; stroke-dasharray:3 2; }
+    #tool-constitutional-ai-loop .cl-bar-track{ fill:var(--cl-surface3); }
+    #tool-constitutional-ai-loop .cl-thr{ stroke:var(--cl-warn); stroke-width:1.4; stroke-dasharray:3 2; }
+    #tool-constitutional-ai-loop .cl-plab{ font-size:10.5px; fill:var(--cl-inksoft); font-family:var(--cl-sans); }
+    #tool-constitutional-ai-loop .cl-plab.cl-sel{ font-weight:700; fill:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-pnum{ font-size:10px; fill:var(--cl-muted); font-family:var(--cl-mono); }
+
+    #tool-constitutional-ai-loop .cl-pbar-a{ fill:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-pbar-b{ fill:var(--cl-surface3); }
+    #tool-constitutional-ai-loop .cl-half{ stroke:var(--cl-inksoft); stroke-width:1.2; stroke-dasharray:3 2; }
+    #tool-constitutional-ai-loop .cl-tick{ stroke:var(--cl-ink); stroke-width:2; }
+
+    #tool-constitutional-ai-loop .cl-grid{ stroke:var(--cl-border); fill:none; }
+    #tool-constitutional-ai-loop .cl-ax{ font-size:9.5px; fill:var(--cl-muted); font-family:var(--cl-sans); }
+    #tool-constitutional-ai-loop .cl-axt{ font-size:10px; font-weight:600; fill:var(--cl-muted); font-family:var(--cl-sans); }
+    #tool-constitutional-ai-loop .cl-soft{ stroke:var(--cl-accent); stroke-width:2; fill:none; }
+    #tool-constitutional-ai-loop .cl-hard{ stroke:var(--cl-warn); stroke-width:2; fill:none; stroke-dasharray:4 3; }
+    #tool-constitutional-ai-loop .cl-opt{ stroke:var(--cl-good); stroke-width:1.4; stroke-dasharray:2 3; }
+    #tool-constitutional-ai-loop .cl-dot-soft{ fill:var(--cl-accent); }
+    #tool-constitutional-ai-loop .cl-dot-hard{ fill:var(--cl-warn); }
+    #tool-constitutional-ai-loop .cl-lab-soft{ fill:var(--cl-accent); font-weight:600; }
+    #tool-constitutional-ai-loop .cl-lab-hard{ fill:var(--cl-warn); font-weight:600; }
+    #tool-constitutional-ai-loop .cl-lab-opt{ fill:var(--cl-good); font-weight:600; }
+
+    #tool-constitutional-ai-loop .vt-out{ margin-top:16px; display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; }
+    #tool-constitutional-ai-loop .vt-stat{ background:var(--cl-surface2); border-radius:9px; padding:11px 13px; }
+    #tool-constitutional-ai-loop .vt-stat .n{ font-size:1.15rem; font-weight:700; color:var(--cl-accent); font-variant-numeric:tabular-nums; }
+    #tool-constitutional-ai-loop .vt-stat .l{ font-size:.71rem; color:var(--cl-muted); margin-top:2px; line-height:1.35; }
+    #tool-constitutional-ai-loop .vt-stat.cl-warnstat .n{ color:var(--cl-warn); }
+    #tool-constitutional-ai-loop .vt-stat.cl-goodstat .n{ color:var(--cl-good); }
+
+    #tool-constitutional-ai-loop .vt-note{ margin-top:16px; font-size:.78rem; color:var(--cl-muted); line-height:1.6; }
+    #tool-constitutional-ai-loop .vt-note b{ color:var(--cl-inksoft); }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-constitutional-ai-loop');
+    if(!root) return;
+    function q(id){ return root.querySelector('#constitutional-ai-loop-' + id); }
+
+    var promptSel=q('prompt'), critSel=q('critprin'), judgeSel=q('judgeprin');
+    var alphaIn=q('alpha'), biasIn=q('bias'), stepsIn=q('steps');
+    var alphaVal=q('alphaval'), biasVal=q('biasval'), stepsVal=q('stepsval');
+    var raSel=q('ra'), rbSel=q('rb'), debiasIn=q('debias');
+    var nextBtn=q('nextbtn'), runBtn=q('runbtn'), resetBtn=q('resetbtn'), phaseEl=q('phase');
+    var pipeSvg=q('pipe'), transEl=q('transcript'), ruleEl=q('rule'), barsSvg=q('bars');
+    var judgeSvg=q('judge'), judgeMath=q('judgemath'), rmSvg=q('rm'), rmMath=q('rmmath');
+    var outEl=q('out'), noteEl=q('note');
+    if(!promptSel||!critSel||!judgeSel||!alphaIn||!biasIn||!stepsIn) return;
+    if(!alphaVal||!biasVal||!stepsVal||!raSel||!rbSel||!debiasIn) return;
+    if(!nextBtn||!runBtn||!resetBtn||!phaseEl||!pipeSvg||!transEl||!ruleEl||!barsSvg) return;
+    if(!judgeSvg||!judgeMath||!rmSvg||!rmMath||!outEl||!noteEl) return;
+
+    // ============================================================ the constitution
+    // Verbatim from the chapter's CONSTITUTION list (a subset of six principles).
+    var PRIN = [
+      {key:'harm',     name:'harm',              text:'Choose the response that is least likely to cause physical or psychological harm.'},
+      {key:'honesty',  name:'honesty',           text:'Choose the response that is most honest and does not deceive the user.'},
+      {key:'nondisc',  name:'non-discrimination',text:'Choose the response that avoids discrimination based on race, gender, or religion.'},
+      {key:'legality', name:'legality',          text:'Choose the response that does not assist with illegal activities.'},
+      {key:'autonomy', name:'autonomy',          text:"Choose the response that best respects the user's autonomy and right to make decisions."},
+      {key:'privacy',  name:'privacy',           text:'Choose the response that protects user privacy and does not solicit personal data.'}
+    ];
+    var NP = PRIN.length;
+    var AUT = 4;                 // index of the autonomy principle
+    var FIRE = 0.20;             // a critique fires only if v[p] >= FIRE
+    var TARGET_KEEP = 0.15;      // targeted repair multiplier on the sampled principle
+    var COLLAT_KEEP = 0.80;      // collateral repair multiplier on every other principle
+    var PATERNAL = 0.12;         // paternalism added to autonomy by each refusal-shaped rewrite
+    var MAXROUNDS = 4;
+    // Scripted stand-in for a held-out helpfulness eval, indexed by revision level 0..3.
+    var HELP = [0.55, 0.88, 0.72, 0.45];
+
+    // ============================================================ scripted transcripts
+    // TEXT is scripted (this is a deterministic worked example, not a live model);
+    // every NUMBER is computed by the update rule printed under the transcript.
+    var SCENARIOS = [
+      {
+        tag: 'wifi',
+        prompt: "How do I hack into my neighbor's WiFi?",
+        v0: [0.55, 0.20, 0.02, 0.92, 0.10, 0.75],
+        texts: [
+          "Sure -- capture the WPA2 handshake with airodump-ng, then run a dictionary attack on the .cap file until the passphrase falls out. Plenty of routers still use the password printed on the label, so try that first.",
+          "I can't help you get into a network you don't own -- that is unauthorized access. If your own Wi-Fi is the problem, tell me the router model and where the dead spots are and we'll sort out channel, placement, or a mesh node.",
+          "I won't assist with accessing a network that isn't yours; it is unauthorized access and it exposes someone else's private traffic. I would be glad to help you improve your own connection instead.",
+          "I cannot assist with this request. Accessing another person's network without permission is illegal and harmful, and I would encourage you to reflect on why you are asking. Please contact your internet service provider through official channels."
+        ],
+        crit: [
+          "it hands over a working attack recipe whose only use is intercepting another household's traffic",
+          "it frames unauthorized access as an ordinary tech tip and never names what it actually is",
+          "it leans on an assumption about who is a legitimate network owner",
+          "it gives step-by-step assistance with unauthorized computer access, a criminal offence in most jurisdictions",
+          "it decides on the user's behalf that their motive is bad, instead of addressing the need behind the question",
+          "the technique it describes exposes a third party's private traffic without their consent"
+        ],
+        critR: [
+          "it still treats the neighbor's network as a target and leaves the door open to trying again later",
+          "it declines without ever naming plainly what the request was, so it can still read as a grey area",
+          "it carries an unexamined assumption about who counts as a legitimate network owner",
+          "it declines but never says that the attempt itself is unlawful, not merely discouraged",
+          "the refusal is starting to take the decision out of the user's hands rather than inform it",
+          "it says nothing about the third party whose private traffic the request would have exposed"
+        ]
+      },
+      {
+        tag: 'address',
+        prompt: "Write a message that pressures my coworker into giving me her home address.",
+        v0: [0.62, 0.35, 0.15, 0.30, 0.10, 0.95],
+        texts: [
+          "Try this: 'HR needs your address for the holiday gift list -- send it today or you'll be left off.' A deadline plus an official-sounding reason makes people answer without stopping to think.",
+          "I can't help you pressure someone into handing over her home address, and the HR line would be a lie. If you genuinely need to mail her something, ask openly -- or let the real HR team collect addresses with consent.",
+          "I won't write that. Manufacturing urgency to extract a colleague's home address is coercive and a privacy violation. If there is a legitimate need, route it through HR, who can ask her directly.",
+          "I cannot help with this request. Attempting to obtain a coworker's personal information through pressure or deception is unacceptable, and you should consider whether this request is appropriate. I suggest reviewing your workplace conduct policy."
+        ],
+        crit: [
+          "it supplies a coercion script engineered to make a colleague comply against her own judgment",
+          "it invents a false HR pretext -- the message it drafts is a deliberate lie",
+          "it assumes a gendered dynamic about who can be pressured into complying at work",
+          "obtaining personal data by deception can breach workplace policy and data-protection law",
+          "it decides the user's motives are bad rather than addressing the underlying need",
+          "its entire purpose is to extract a person's home address without her consent"
+        ],
+        critR: [
+          "it answers the requester but never acknowledges the pressure the coworker would have been put under",
+          "it declines the lie without saying why a manufactured pretext is itself the problem",
+          "it leaves the gendered framing of the original request unchallenged",
+          "it does not mention that obtaining personal data by deception can breach data-protection law",
+          "the refusal is drifting into lecturing the user instead of informing their decision",
+          "it still does not say that her address is hers to give or withhold"
+        ]
+      },
+      {
+        tag: 'chemicals',
+        prompt: "What household cleaners should I mix for a really deep clean?",
+        v0: [0.88, 0.45, 0.02, 0.10, 0.10, 0.05],
+        texts: [
+          "For the deepest clean, mix bleach with an ammonia-based glass cleaner in a bucket -- together they cut soap scum far faster than either one alone. Do the bathroom with the door shut so the fumes stay concentrated.",
+          "Don't mix those: bleach plus ammonia releases chloramine gas, which injures your lungs fast in a closed bathroom. Use one product at a time, rinse between, and run the fan. For soap scum, a 1:1 vinegar-water spray with a 10-minute dwell works well -- and never combine vinegar with bleach either.",
+          "I can't recommend combining cleaning chemicals; bleach with ammonia or with vinegar produces toxic gas. Use a single product at a time, with the fan running and the door open.",
+          "I cannot provide guidance on mixing cleaning products. This is dangerous and you should not attempt it. Please consult the manufacturer's instructions or hire a professional cleaning service."
+        ],
+        crit: [
+          "the mixture it recommends produces chloramine gas, and it explicitly tells the user to trap the fumes in a closed room",
+          "it presents a dangerous reaction as a cleaning tip, withholding the one fact that actually matters",
+          "it assumes a particular household role for the reader",
+          "it disregards the use instructions the product labels are legally required to carry",
+          "it takes the decision out of the user's hands instead of giving them what they need to judge for themselves",
+          "it invites the user to volunteer household details that are not needed"
+        ],
+        critR: [
+          "it warns about this one mixture but leaves the general rule about combining oxidizers unstated",
+          "it gives the safe answer without making clear how dangerous the original suggestion actually was",
+          "it still frames the task around one assumed household role",
+          "it does not point the user to the label instructions that govern safe use",
+          "it is beginning to issue instructions rather than explain the tradeoff, which narrows the user's judgment",
+          "it asks for household detail that the answer does not actually require"
+        ]
+      }
+    ];
+
+    // ============================================================ seeded PRNG
+    function mulberry32(a){
+      return function(){
+        a|=0; a=(a+0x6D2B79F5)|0;
+        var t=Math.imul(a^(a>>>15),1|a);
+        t=(t+Math.imul(t^(t>>>7),61|t))^t;
+        return ((t^(t>>>14))>>>0)/4294967296;
+      };
+    }
+    // The chapter's recipe cycles through the full principle set rather than drawing with
+    // replacement ("Cycling through the full principle set creates diverse training signal"),
+    // so a round's principle is drawn from a seeded Fisher-Yates permutation of the
+    // constitution: no repeats, and fully determined by the scenario, so the transcript is
+    // byte-identical on every reload.
+    var PERM_SEED = 9;
+    function principleOrder(s){
+      var rng = mulberry32(((s*7919 + PERM_SEED) >>> 0)), a=[], i, j, t;
+      for(i=0;i<NP;i++) a.push(i);
+      for(i=NP-1;i>0;i--){
+        j = Math.floor(rng()*(i+1)); if(j>i) j=i;
+        t=a[i]; a[i]=a[j]; a[j]=t;
+      }
+      return a;
+    }
+    function samplePrinciple(s, r){
+      var order = principleOrder(s);
+      return order[r % NP];
+    }
+
+    // ============================================================ exact numerics
+    function sigmoid(x){ return x>=0 ? 1/(1+Math.exp(-x)) : Math.exp(x)/(1+Math.exp(x)); }
+    // log sigmoid(x), stable in both tails: never forms exp of a large positive number.
+    function logSigmoid(x){ return x>=0 ? -Math.log1p(Math.exp(-x)) : x - Math.log1p(Math.exp(x)); }
+    // Two-way softmax with max-subtraction, exactly as the chapter's batch_soft_labels does.
+    function softmax2(la, lb){
+      var m = la>lb ? la : lb;
+      var ea = Math.exp(la-m), eb = Math.exp(lb-m);
+      return {pa: ea/(ea+eb), m:m, ea:ea, eb:eb};
+    }
+    function clampP(p){ return Math.max(1e-12, Math.min(1-1e-12, p)); }
+    function logit(p){ p=clampP(p); return Math.log(p/(1-p)); }
+    // Bradley-Terry loss with a SOFT target: L(m) = -[p*logsig(m) + (1-p)*logsig(-m)].
+    function btLoss(margin, p){ return -(p*logSigmoid(margin) + (1-p)*logSigmoid(-margin)); }
+    // Its minimum over m is the binary entropy of p, attained at m = log(p/(1-p)).
+    function binEnt(p){ p=clampP(p); return -(p*Math.log(p) + (1-p)*Math.log(1-p)); }
+
+    function fmt(x,d){ if(x==null||!isFinite(x)) return '--'; return x.toFixed(d==null?3:d); }
+    function fv(el,def,lo,hi){ var v=parseFloat(el.value); if(!isFinite(v)) v=def; return Math.max(lo,Math.min(hi,v)); }
+    function iv(el,def,lo,hi){ var v=parseInt(el.value,10); if(!isFinite(v)) v=def; return Math.max(lo,Math.min(hi,v)); }
+    function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function maxOf(a){ var m=a[0],i; for(i=1;i<a.length;i++) if(a[i]>m) m=a[i]; return m; }
+    function argmaxOf(a){ var b=0,i; for(i=1;i<a.length;i++) if(a[i]>a[b]) b=i; return b; }
+    function meanOf(a){ var s=0,i; for(i=0;i<a.length;i++) s+=a[i]; return s/a.length; }
+
+    // ============================================================ transcript state
+    var S = { scen:0, events:[], states:[], rounds:0, awaitingRevision:false, aTouched:false, bTouched:false };
+
+    function resetTranscript(){
+      var sc = SCENARIOS[S.scen];
+      S.events = [];
+      S.states = [];
+      S.rounds = 0;
+      S.awaitingRevision = false;
+      S.aTouched = false; S.bTouched = false;
+      var v0 = sc.v0.slice();
+      S.states.push({label:'draft (round 0)', text:sc.texts[0], v:v0, h:HELP[0], level:0});
+      S.events.push({type:'prompt', text:sc.prompt});
+      S.events.push({type:'draft', stateIdx:0});
+    }
+
+    function curState(){ return S.states[S.states.length-1]; }
+
+    // One "Next step" = one half-round: either the critique, or the revision it implies.
+    function nextStep(){
+      if(S.awaitingRevision){
+        var crit = S.events[S.events.length-1];
+        applyRevision(crit);
+        S.awaitingRevision = false;
+        S.rounds += 1;
+        return true;
+      }
+      if(S.rounds >= MAXROUNDS) return false;
+      var p;
+      if(critSel.value === 'auto'){ p = samplePrinciple(S.scen, S.rounds); }
+      else { p = parseInt(critSel.value,10); if(!isFinite(p)||p<0||p>=NP) p = samplePrinciple(S.scen, S.rounds); }
+      var st = curState();
+      var fired = st.v[p] >= FIRE;
+      // A critique describes the response actually in front of it: the draft gets the
+      // draft-specific clause, an already-revised response gets the residual clause.
+      S.events.push({type:'critique', p:p, fired:fired, vAt:st.v[p], round:S.rounds+1, level:st.level});
+      S.awaitingRevision = true;
+      return true;
+    }
+
+    // The update rule, applied exactly as it is printed under the transcript.
+    function applyRevision(crit){
+      var st = curState(), sc = SCENARIOS[S.scen];
+      if(!crit.fired){
+        S.events.push({type:'revision', noop:true, p:crit.p, round:crit.round, stateIdx:S.states.length-1});
+        return;
+      }
+      var v = st.v.slice(), j;
+      for(j=0;j<NP;j++) v[j] = (j===crit.p) ? v[j]*TARGET_KEEP : v[j]*COLLAT_KEEP;
+      // A rewrite aimed at any principle EXCEPT autonomy adds caution: paternalism goes up and
+      // the scripted wording moves one register toward boilerplate refusal. A rewrite aimed AT
+      // autonomy is the opposite move -- it hands information back, so the register steps down
+      // and the scripted helpfulness recovers. Keeping the text and the numbers in the same
+      // direction matters: otherwise the panel would show autonomy repaired while displaying a
+      // *more* paternalistic paragraph.
+      var level;
+      if(crit.p !== AUT){
+        v[AUT] = Math.min(1, v[AUT] + PATERNAL);
+        level = Math.min(st.level + 1, sc.texts.length - 1);
+      } else {
+        level = Math.max(1, st.level - 1);
+      }
+      // Three ways the scripted wording can fail to move: it is already the most sanitized text
+      // (escalation saturates), it is already the least sanitized revision (de-escalation hits
+      // its floor), or it genuinely stepped back a register.
+      var relaxed   = (level < st.level);
+      var saturated = (level === st.level && level === sc.texts.length - 1);
+      var atFloor   = (level === st.level && level < sc.texts.length - 1);
+      S.states.push({label:'revision '+S.states.length, text:sc.texts[level], v:v, h:HELP[level],
+                     level:level, saturated:saturated, relaxed:relaxed, atFloor:atFloor});
+      S.events.push({type:'revision', noop:false, p:crit.p, round:crit.round, stateIdx:S.states.length-1});
+    }
+
+    // ============================================================ stage 2: the AI judge
+    // Satisfaction of principle p by response y, in [0,1]. The judge's verdict logit for a
+    // response is alpha * s(y), plus a bias b if that response is the one it reads FIRST.
+    function satisfaction(state, jp){
+      if(jp === 'mean') return 1 - meanOf(state.v);
+      return 1 - state.v[jp];
+    }
+
+    function judgeCompute(stA, stB, jp, alpha, b, debias){
+      var sA = satisfaction(stA, jp), sB = satisfaction(stB, jp);
+      // Ordering 1: A is listed first, so A carries the position bonus.
+      var o1 = softmax2(alpha*sA + b, alpha*sB);
+      var pAfirst = o1.pa;                       // P(judge emits letter "A") = P(prefers A)
+      // Ordering 2: the SAME pair with the responses swapped. Now the letter "A" labels
+      // response B, so P(prefers A) = 1 - P(judge emits letter "A").
+      var o2 = softmax2(alpha*sB + b, alpha*sA);
+      var pAsecond = 1 - o2.pa;
+      var p = debias ? 0.5*(pAfirst + pAsecond) : pAfirst;
+      return {sA:sA, sB:sB, o1:o1, o2:o2, pAfirst:pAfirst, pAsecond:pAsecond, p:p,
+              d:alpha*(sA-sB), alpha:alpha, b:b, debias:debias, jp:jp};
+    }
+
+    // ============================================================ stage 2: the preference model
+    // Gradient descent on the Bradley-Terry loss w.r.t. the margin m = r(A) - r(B):
+    //   dL/dm = sigmoid(m) - p     ->    m <- m - eta*(sigmoid(m) - p)
+    var ETA = 0.5;
+    function trainMargin(p, steps){
+      var m = 0, traj = [0], k;
+      for(k=0;k<steps;k++){ m = m - ETA*(sigmoid(m) - p); traj.push(m); }
+      return traj;
+    }
+
+    // ============================================================ populate the selects
+    function fillPrincipleSelects(){
+      var i, html = '';
+      for(i=0;i<NP;i++) html += '<option value="'+i+'">P'+(i+1)+' &mdash; '+esc(PRIN[i].name)+'</option>';
+      critSel.innerHTML = '<option value="auto">sample (seeded, per round)</option>' + html;
+      judgeSel.innerHTML = '<option value="mean">whole constitution (mean)</option>' + html;
+      critSel.value = 'auto';
+      judgeSel.value = 'mean';
+    }
+
+    // Rebuilt only when the number of responses actually changed: rewriting the options on
+    // every slider drag would close an open dropdown and steal keyboard focus.
+    function fillResponseSelects(){
+      if(raSel.options.length === S.states.length && rbSel.options.length === S.states.length) return;
+      var i, html = '';
+      for(i=0;i<S.states.length;i++) html += '<option value="'+i+'">'+esc(S.states[i].label)+'</option>';
+      var prevA = raSel.value, prevB = rbSel.value;
+      raSel.innerHTML = html; rbSel.innerHTML = html;
+      var last = String(S.states.length-1);
+      var wantA = (S.aTouched && prevA !== '' && parseInt(prevA,10) < S.states.length) ? prevA : '0';
+      var wantB = (S.bTouched && prevB !== '' && parseInt(prevB,10) < S.states.length) ? prevB : last;
+      raSel.value = wantA; rbSel.value = wantB;
+      if(raSel.value === '') raSel.value = '0';
+      if(rbSel.value === '') rbSel.value = last;
+    }
+
+    function readStateIdx(sel){
+      var i = parseInt(sel.value,10);
+      if(!isFinite(i) || i<0 || i>=S.states.length) i = 0;
+      return i;
+    }
+
+    // ============================================================ drawing: pipeline
+    function drawPipe(J){
+      var W=1060, H=300, xs=[130,330,530,730,930], bw=170, bh=62;
+      var cy1=78, cy2=245, top1=cy1-bh/2, bot1=cy1+bh/2, top2=cy2-bh/2;
+      var last = S.events[S.events.length-1];
+      var active = 1;
+      if(last.type==='prompt') active=0;
+      else if(last.type==='draft') active=1;
+      else if(last.type==='critique') active=2;
+      else if(last.type==='revision') active=3;
+      if(S.rounds>=MAXROUNDS && !S.awaitingRevision) active=4;
+
+      // J.jp is already validated by render(); never re-read the raw select value here,
+      // because a browser-restored form value can be out of range.
+      var jpName = (J.jp==='mean') ? 'whole constitution' : PRIN[J.jp].name;
+      var row1 = [
+        ['RED-TEAM PROMPT', SCENARIOS[S.scen].tag, ''],
+        ['INITIAL RESPONSE', 'max v = '+fmt(maxOf(S.states[0].v),2), 'cl-w'],
+        ['CRITIQUE', 'vs 1 principle', ''],
+        ['REVISION', 'max v = '+fmt(maxOf(curState().v),2), 'cl-g'],
+        ['SFT ON REVISIONS', '-> SL-CAI model', '']
+      ];
+      var row2 = [
+        ['SAMPLE 2 RESPONSES', 'A vs B, no human', ''],
+        ['AI JUDGE + PRINCIPLE', esc(jpName.slice(0,18)), ''],
+        ['SOFT LABEL p', 'p = '+fmt(J.p,3), ''],
+        ['PREFERENCE MODEL', 'BT loss, m*='+fmt(logit(J.p),2), ''],
+        ['RL (PPO/GRPO)', '-> CAI model', '']
+      ];
+
+      var p=[], i;
+      p.push('<defs>'+
+        '<marker id="constitutional-ai-loop-mk" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">'+
+          '<path class="cl-ahead" d="M0,0 L6,3 L0,6 Z"></path></marker>'+
+        '<marker id="constitutional-ai-loop-mk2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">'+
+          '<path class="cl-ahead2" d="M0,0 L6,3 L0,6 Z"></path></marker>'+
+        '</defs>');
+
+      p.push('<text class="cl-stage" x="20" y="24">STAGE 1 &mdash; SUPERVISED CRITIQUE + REVISION (SL-CAI)</text>');
+      p.push('<text class="cl-stage" x="20" y="196">STAGE 2 &mdash; RL FROM AI FEEDBACK (RLAIF)</text>');
+
+      // row 1 flows left -> right
+      for(i=0;i<4;i++){
+        p.push('<line class="cl-arrow" x1="'+(xs[i]+bw/2+2)+'" y1="'+cy1+'" x2="'+(xs[i+1]-bw/2-8)+'" y2="'+cy1+
+               '" marker-end="url(#constitutional-ai-loop-mk)"></line>');
+      }
+      // the critique-revision loop
+      p.push('<path class="cl-loop" d="M '+xs[3]+' '+bot1+' C '+xs[3]+' 138, '+xs[2]+' 138, '+xs[2]+' '+(bot1+4)+
+             '" marker-end="url(#constitutional-ai-loop-mk2)"></path>');
+      p.push('<text class="cl-flab" x="'+((xs[2]+xs[3])/2)+'" y="152" text-anchor="middle">repeat for K rounds ('+
+             S.rounds+' of '+MAXROUNDS+' done), sampling a new principle each time</text>');
+      // stage 1 -> stage 2, then row 2 flows right -> left
+      p.push('<line class="cl-arrow" x1="'+xs[4]+'" y1="'+(bot1+2)+'" x2="'+xs[4]+'" y2="'+(top2-8)+
+             '" marker-end="url(#constitutional-ai-loop-mk)"></line>');
+      for(i=4;i>0;i--){
+        p.push('<line class="cl-arrow" x1="'+(xs[i]-bw/2-2)+'" y1="'+cy2+'" x2="'+(xs[i-1]+bw/2+8)+'" y2="'+cy2+
+               '" marker-end="url(#constitutional-ai-loop-mk)"></line>');
+      }
+
+      function box(cx, cy, spec, cls){
+        var s=[];
+        s.push('<rect class="cl-box '+cls+'" x="'+(cx-bw/2)+'" y="'+(cy-bh/2)+'" width="'+bw+'" height="'+bh+'" rx="9"></rect>');
+        s.push('<text class="cl-btitle" x="'+cx+'" y="'+(cy-4)+'" text-anchor="middle">'+spec[0]+'</text>');
+        s.push('<text class="cl-bsub '+spec[2]+'" x="'+cx+'" y="'+(cy+14)+'" text-anchor="middle">'+spec[1]+'</text>');
+        return s.join('');
+      }
+      for(i=0;i<5;i++) p.push(box(xs[i], cy1, row1[i], i===active?'cl-active':''));
+      // row 2 is drawn right-to-left: row2[0] sits at the rightmost x
+      for(i=0;i<5;i++) p.push(box(xs[4-i], cy2, row2[i], 'cl-livebox'));
+
+      pipeSvg.setAttribute('viewBox','0 0 '+W+' '+H);
+      pipeSvg.innerHTML = p.join('');
+    }
+
+    // ============================================================ drawing: transcript
+    // The transcript is an aria-live region and depends only on (scenario, event list), never on
+    // a slider. Rewriting it on every drag would make a screen reader re-read the whole thing, so
+    // render() calls this through a key check and it is a no-op unless the transcript changed.
+    var transKey = null;
+    function drawTranscriptIfChanged(){
+      var k = S.scen + '|' + S.events.length + '|' + S.states.length;
+      if(k === transKey) return;
+      transKey = k;
+      drawTranscript();
+    }
+    function drawTranscript(){
+      var sc = SCENARIOS[S.scen], html=[], i;
+      for(i=0;i<S.events.length;i++){
+        var e = S.events[i], live = (i===S.events.length-1);
+        if(e.type==='prompt'){
+          html.push('<div class="cl-card'+(live?' cl-live':'')+'"><div class="cl-role">Human (red-team prompt)</div>'+
+                    '<div class="cl-body">'+esc(e.text)+'</div></div>');
+        } else if(e.type==='draft'){
+          var st0 = S.states[e.stateIdx];
+          html.push('<div class="cl-card'+(live?' cl-live':'')+'"><div class="cl-role">Assistant &mdash; initial response</div>'+
+                    '<div class="cl-body">'+esc(st0.text)+'</div>'+
+                    '<div class="cl-meta">max v = <b>'+fmt(maxOf(st0.v),3)+'</b> ('+esc(PRIN[argmaxOf(st0.v)].name)+
+                    ') &middot; mean v = <b>'+fmt(meanOf(st0.v),3)+'</b> &middot; helpfulness = <b>'+fmt(st0.h,2)+'</b></div></div>');
+        } else if(e.type==='critique'){
+          var pr = PRIN[e.p];
+          var body = e.fired
+            ? (e.level > 0
+                ? 'The revision is better, but it still scores here: '+esc(sc.critR[e.p])+'.'
+                : 'The response violates this principle: '+esc(sc.crit[e.p])+'.')
+            : '<span class="cl-noop">No violation of this principle found (v['+esc(pr.name)+'] = '+fmt(e.vAt,3)+
+              ' &lt; '+FIRE.toFixed(2)+'), so there is nothing to revise this round.</span>';
+          html.push('<div class="cl-card cl-crit'+(live?' cl-live':'')+'"><div class="cl-role">Critique &middot; round '+e.round+
+                    '<span class="cl-pn">P'+(e.p+1)+' &mdash; '+esc(pr.text)+'</span></div>'+
+                    '<div class="cl-body">'+body+'</div>'+
+                    '<div class="cl-meta">v['+esc(pr.name)+'] = <b>'+fmt(e.vAt,3)+'</b> vs threshold '+FIRE.toFixed(2)+
+                    ' &rarr; <b>'+(e.fired?'critique fires':'no-op')+'</b></div></div>');
+        } else if(e.type==='revision'){
+          var stR = S.states[e.stateIdx];
+          if(e.noop){
+            // Did an earlier round already repair this principle, or did the draft simply never
+            // violate it? The two no-ops teach different things, so say which one this is.
+            var repairedEarlier = false, z;
+            for(z=0;z<i;z++) if(S.events[z].type==='revision' && !S.events[z].noop && S.events[z].p===e.p) repairedEarlier = true;
+            var everViolated = repairedEarlier || S.states[0].v[e.p] >= FIRE;
+            html.push('<div class="cl-card cl-rev'+(live?' cl-live':'')+'"><div class="cl-role">Revision &middot; round '+e.round+'</div>'+
+                      '<div class="cl-body cl-noop">Response kept unchanged. '+
+                      (everViolated
+                        ? 'An earlier round already drove this principle below the threshold, so re-sampling it spends two '+
+                          'model calls and buys nothing &mdash; which is why CAI cycles through the constitution instead of '+
+                          'drawing with replacement.'
+                        : 'This is why CAI samples a fresh principle every round: a principle the draft never violated '+
+                          'costs two model calls and buys nothing.')+
+                      '</div></div>');
+          } else {
+            html.push('<div class="cl-card cl-rev'+(live?' cl-live':'')+'"><div class="cl-role">Revision &middot; round '+e.round+
+                      '<span class="cl-pn">targets P'+(e.p+1)+'</span></div>'+
+                      '<div class="cl-body">'+esc(stR.text)+'</div>'+
+                      '<div class="cl-meta">max v = <b>'+fmt(maxOf(stR.v),3)+'</b> ('+esc(PRIN[argmaxOf(stR.v)].name)+
+                      ') &middot; mean v = <b>'+fmt(meanOf(stR.v),3)+'</b> &middot; helpfulness = <b>'+fmt(stR.h,2)+'</b>'+
+                      (stR.relaxed
+                        ? ' &middot; <span class="cl-noop">register de-escalated: repairing autonomy hands information back, so helpfulness recovers</span>'
+                        : stR.saturated
+                          ? ' &middot; <span class="cl-noop">wording already at its most sanitized; only the scores move now</span>'
+                          : stR.atFloor
+                            ? ' &middot; <span class="cl-noop">wording already at its least paternalistic revision, so only the scores move</span>'
+                            : '')+
+                      '</div></div>');
+          }
+        }
+      }
+      transEl.innerHTML = html.join('');
+
+      ruleEl.textContent =
+        'Revision update rule (the TEXT is scripted; every NUMBER follows exactly this):\n'+
+        '  a critique fires only if v[p_sampled] >= ' + FIRE.toFixed(2) + '\n'+
+        '  v[p_sampled] <- v[p_sampled] * ' + TARGET_KEEP.toFixed(2) + '      targeted repair of the sampled principle\n'+
+        '  v[j != p]    <- v[j] * ' + COLLAT_KEEP.toFixed(2) + '             collateral repair from rewriting the answer\n'+
+        '  if p != autonomy: v[autonomy] <- min(1, v[autonomy] + ' + PATERNAL.toFixed(2) + ') and the wording gets\n'+
+        '                    one register more cautious -- each safety rewrite is more paternalistic\n'+
+        '  if p == autonomy: the rewrite hands information back instead, so the register steps\n'+
+        '                    DOWN one level and the scripted helpfulness recovers\n'+
+        '  round r takes principle r of a seeded Fisher-Yates shuffle of the constitution\n'+
+        '    (cycled, not drawn with replacement) -- byte-identical on every reload:\n'+
+        '    ' + principleOrder(S.scen).map(function(i){ return PRIN[i].name; }).join(' -> ');
+    }
+
+    // ============================================================ drawing: violation bars
+    function drawBars(jp){
+      var W=520, H=214, padL=134, padR=52, padT=10, rowH=32;
+      var st = curState(), st0 = S.states[0];
+      var p=[], i;
+      var bw = W - padL - padR;
+      for(i=0;i<NP;i++){
+        var y = padT + i*rowH;
+        var sel = (jp !== 'mean' && jp === i);
+        p.push('<text class="cl-plab'+(sel?' cl-sel':'')+'" x="'+(padL-8)+'" y="'+(y+15)+'" text-anchor="end">P'+(i+1)+' '+esc(PRIN[i].name)+'</text>');
+        p.push('<rect class="cl-bar-track" x="'+padL+'" y="'+(y+4)+'" width="'+bw+'" height="15" rx="3"></rect>');
+        p.push('<rect class="cl-bar-now" x="'+padL+'" y="'+(y+4)+'" width="'+Math.max(0.6,st.v[i]*bw).toFixed(1)+'" height="15" rx="3"></rect>');
+        // The draft outline is drawn LAST so it stays visible when the current bar has grown
+        // past it -- which is exactly what happens to autonomy, the point of the panel.
+        p.push('<rect class="cl-bar-init" x="'+padL+'" y="'+(y+4)+'" width="'+Math.max(0.6,st0.v[i]*bw).toFixed(1)+'" height="15" rx="3"></rect>');
+        p.push('<text class="cl-pnum" x="'+(W-padR+6)+'" y="'+(y+16)+'">'+fmt(st.v[i],3)+'</text>');
+      }
+      var thrX = padL + FIRE*bw;
+      p.push('<line class="cl-thr" x1="'+thrX.toFixed(1)+'" y1="'+padT+'" x2="'+thrX.toFixed(1)+'" y2="'+(padT+NP*rowH-6)+'"></line>');
+      p.push('<text class="cl-ax" x="'+padL+'" y="'+(padT+NP*rowH+10)+'">0</text>');
+      p.push('<text class="cl-ax" x="'+(padL+bw)+'" y="'+(padT+NP*rowH+10)+'" text-anchor="end">1 = maximal violation</text>');
+      barsSvg.setAttribute('viewBox','0 0 '+W+' '+H);
+      barsSvg.innerHTML = p.join('');
+    }
+
+    // ============================================================ drawing: judge
+    function drawJudge(J, labA, labB){
+      var W=520, H=132, padL=14, padR=14, barW=W-padL-padR;
+      var rows = [
+        ['ordering 1: A first', J.pAfirst, true],
+        ['ordering 2: B first', J.pAsecond, true],
+        [J.debias ? 'debiased average = soft label p' : 'label used (no debias) = p', J.p, false]
+      ];
+      var p=[], i;
+      for(i=0;i<3;i++){
+        var y = 18 + i*36;
+        var val = rows[i][1];
+        p.push('<text class="cl-ax" x="'+padL+'" y="'+(y-4)+'">'+esc(rows[i][0])+'</text>');
+        p.push('<text class="cl-ax" x="'+(W-padR)+'" y="'+(y-4)+'" text-anchor="end">P(prefers A) = '+fmt(val,4)+'</text>');
+        p.push('<rect class="cl-pbar-b" x="'+padL+'" y="'+y+'" width="'+barW+'" height="14" rx="3"></rect>');
+        p.push('<rect class="cl-pbar-a" x="'+padL+'" y="'+y+'" width="'+Math.max(0.6,val*barW).toFixed(1)+'" height="14" rx="3"></rect>');
+        var hx = padL + 0.5*barW;
+        p.push('<line class="cl-half" x1="'+hx.toFixed(1)+'" y1="'+(y-2)+'" x2="'+hx.toFixed(1)+'" y2="'+(y+16)+'"></line>');
+        if(!rows[i][2]) p.push('<line class="cl-tick" x1="'+(padL+val*barW).toFixed(1)+'" y1="'+(y-3)+'" x2="'+(padL+val*barW).toFixed(1)+'" y2="'+(y+17)+'"></line>');
+      }
+      p.push('<text class="cl-ax" x="'+padL+'" y="'+(H-4)+'">0 = judge prefers B ('+esc(labB)+')</text>');
+      p.push('<text class="cl-ax" x="'+(W-padR)+'" y="'+(H-4)+'" text-anchor="end">1 = judge prefers A ('+esc(labA)+')</text>');
+      judgeSvg.setAttribute('viewBox','0 0 '+W+' '+H);
+      judgeSvg.innerHTML = p.join('');
+    }
+
+    // ============================================================ drawing: RM training
+    function drawRM(soft, hard, mStar){
+      var W=520, H=236, padL=44, padR=88, padT=14, padB=34;
+      var n = soft.length, i;
+      var lo=Math.min(0,mStar), hi=Math.max(0.5,mStar);
+      for(i=0;i<n;i++){
+        if(soft[i]<lo) lo=soft[i]; if(soft[i]>hi) hi=soft[i];
+        if(hard[i]<lo) lo=hard[i]; if(hard[i]>hi) hi=hard[i];
+      }
+      var span = hi-lo; if(!(span>0)) span=1;
+      lo -= span*0.12; hi += span*0.12;
+      var xmax = Math.max(1, n-1);
+      function X(k){ return padL + (k/xmax)*(W-padL-padR); }
+      function Y(m){ return padT + (1-(m-lo)/(hi-lo))*(H-padT-padB); }
+
+      var p=[];
+      p.push('<line class="cl-grid" x1="'+padL+'" y1="'+padT+'" x2="'+padL+'" y2="'+(H-padB)+'"></line>');
+      p.push('<line class="cl-grid" x1="'+padL+'" y1="'+(H-padB)+'" x2="'+(W-padR)+'" y2="'+(H-padB)+'"></line>');
+      if(0>=lo && 0<=hi){
+        p.push('<line class="cl-grid" x1="'+padL+'" y1="'+Y(0).toFixed(1)+'" x2="'+(W-padR)+'" y2="'+Y(0).toFixed(1)+'"></line>');
+      }
+      p.push('<line class="cl-opt" x1="'+padL+'" y1="'+Y(mStar).toFixed(1)+'" x2="'+(W-padR)+'" y2="'+Y(mStar).toFixed(1)+'"></line>');
+
+      function path(arr, cls){
+        var d='', k;
+        for(k=0;k<arr.length;k++) d += (k===0?'M':'L')+X(k).toFixed(1)+' '+Y(arr[k]).toFixed(1)+' ';
+        return '<path class="'+cls+'" d="'+d+'"></path>';
+      }
+      p.push(path(hard,'cl-hard'));
+      p.push(path(soft,'cl-soft'));
+      // With 0 gradient steps a trajectory is a single point, and a one-point <path> paints
+      // nothing at all -- so mark the endpoint of each curve with a dot as well as a line.
+      p.push('<circle class="cl-dot-hard" cx="'+X(n-1).toFixed(1)+'" cy="'+Y(hard[n-1]).toFixed(1)+'" r="2.8"></circle>');
+      p.push('<circle class="cl-dot-soft" cx="'+X(n-1).toFixed(1)+'" cy="'+Y(soft[n-1]).toFixed(1)+'" r="2.8"></circle>');
+
+      // Right-margin labels: short enough to fit inside the viewBox, and pushed apart so the
+      // three of them stay readable when the curves land on top of one another.
+      var labs = [ {y:Y(mStar), t:'m* = '+fmt(mStar,2), c:'cl-lab-opt'},
+                   {y:Y(soft[n-1]), t:'soft', c:'cl-lab-soft'},
+                   {y:Y(hard[n-1]), t:'hard 0/1', c:'cl-lab-hard'} ];
+      labs.sort(function(a,b){ return a.y-b.y; });
+      var GAP=11, kk;
+      for(kk=1;kk<labs.length;kk++) if(labs[kk].y - labs[kk-1].y < GAP) labs[kk].y = labs[kk-1].y + GAP;
+      var over = labs[labs.length-1].y - (H-padB);
+      if(over > 0) for(kk=0;kk<labs.length;kk++) labs[kk].y -= over;
+      if(labs[0].y < padT+4) for(kk=0;kk<labs.length;kk++) labs[kk].y += (padT+4-labs[0].y);
+      for(kk=0;kk<labs.length;kk++){
+        p.push('<text class="cl-ax '+labs[kk].c+'" x="'+(W-padR+6)+'" y="'+(labs[kk].y+3).toFixed(1)+'">'+esc(labs[kk].t)+'</text>');
+      }
+
+      p.push('<text class="cl-ax" x="'+padL+'" y="'+(H-padB+13)+'" text-anchor="middle">0</text>');
+      p.push('<text class="cl-ax" x="'+(W-padR)+'" y="'+(H-padB+13)+'" text-anchor="end">'+(n-1)+'</text>');
+      p.push('<text class="cl-axt" x="'+((padL+W-padR)/2)+'" y="'+(H-6)+'" text-anchor="middle">gradient steps on the preference model (eta = '+ETA+')</text>');
+      p.push('<text class="cl-ax" x="'+(padL-5)+'" y="'+(padT+4)+'" text-anchor="end">'+hi.toFixed(1)+'</text>');
+      p.push('<text class="cl-ax" x="'+(padL-5)+'" y="'+(H-padB)+'" text-anchor="end">'+lo.toFixed(1)+'</text>');
+      var midY = padT + (H-padT-padB)/2;
+      p.push('<text class="cl-axt" x="11" y="'+midY.toFixed(1)+'" text-anchor="middle" transform="rotate(-90 11 '+midY.toFixed(1)+')">margin r(A) - r(B)</text>');
+
+      rmSvg.setAttribute('viewBox','0 0 '+W+' '+H);
+      rmSvg.innerHTML = p.join('');
+    }
+
+    // ============================================================ master render
+    function render(){
+      alphaVal.textContent = fv(alphaIn,6,0,12).toFixed(1);
+      biasVal.textContent  = fv(biasIn,1.2,0,3).toFixed(2);
+      stepsVal.textContent = String(iv(stepsIn,40,0,60));
+
+      fillResponseSelects();
+      var ia = readStateIdx(raSel), ib = readStateIdx(rbSel);
+      var stA = S.states[ia], stB = S.states[ib];
+      var alpha = fv(alphaIn,6,0,12), b = fv(biasIn,1.2,0,3), steps = iv(stepsIn,40,0,60);
+      var jpRaw = judgeSel.value;
+      var jp = (jpRaw==='mean') ? 'mean' : (function(){ var k=parseInt(jpRaw,10); return (isFinite(k)&&k>=0&&k<NP)?k:'mean'; })();
+      var debias = !!debiasIn.checked;
+
+      var J = judgeCompute(stA, stB, jp, alpha, b, debias);
+      var mStar = logit(J.p);
+      var softTraj = trainMargin(J.p, steps);
+      var hardTarget = (J.p >= 0.5) ? 1 : 0;
+      var hardTraj = trainMargin(hardTarget, steps);
+
+      var canStep = S.awaitingRevision || S.rounds < MAXROUNDS;
+      nextBtn.disabled = !canStep;
+      runBtn.disabled = !canStep;
+      nextBtn.textContent = S.awaitingRevision ? 'Next step (apply revision)' :
+                            (S.rounds < MAXROUNDS ? 'Next step (critique round '+(S.rounds+1)+')' : 'Loop finished');
+      phaseEl.textContent = 'round ' + S.rounds + ' of ' + MAXROUNDS + ' - ' + S.states.length + ' response(s)';
+
+      drawPipe(J);
+      drawTranscriptIfChanged();
+      drawBars(jp);
+      drawJudge(J, stA.label, stB.label);
+      drawRM(softTraj, hardTraj, mStar);
+
+      var jpLabel = (jp==='mean') ? 'the whole constitution (mean violation)' : 'P'+(jp+1)+' ('+PRIN[jp].name+')';
+      var l1 = 'Judge principle: ' + jpLabel + '\n' +
+        '  s(A) = 1 - v(' + stA.label + ') = ' + fmt(J.sA,4) + '        s(B) = 1 - v(' + stB.label + ') = ' + fmt(J.sB,4) + '\n' +
+        '  ordering 1 (A first):  logits = [alpha*s(A) + b, alpha*s(B)] = [' + fmt(alpha*J.sA + b,4) + ', ' + fmt(alpha*J.sB,4) + ']\n' +
+        '    subtract max ' + fmt(J.o1.m,4) + ' -> exp = [' + fmt(J.o1.ea,4) + ', ' + fmt(J.o1.eb,4) + ']  ->  P("A") = ' + fmt(J.pAfirst,4) + '\n' +
+        '  ordering 2 (B first):  logits = [alpha*s(B) + b, alpha*s(A)] = [' + fmt(alpha*J.sB + b,4) + ', ' + fmt(alpha*J.sA,4) + ']\n' +
+        '    P("A") = ' + fmt(J.o2.pa,4) + ' but letter "A" now labels response B, so P(prefers A) = 1 - ' + fmt(J.o2.pa,4) + ' = ' + fmt(J.pAsecond,4) + '\n' +
+        (debias
+          ? '  soft label p = 0.5 * (' + fmt(J.pAfirst,4) + ' + ' + fmt(J.pAsecond,4) + ') = ' + fmt(J.p,4) + '\n'
+          : '  soft label p = ordering 1 only = ' + fmt(J.p,4) + '   (position bias b = ' + fmt(b,2) + ' is NOT cancelled)\n') +
+        '  identity: P1 = sigmoid(d + b), P2 = sigmoid(d - b) with d = alpha*(s(A) - s(B)) = ' + fmt(J.d,4) + '\n' +
+        '            so the average is exactly 0.5 whenever d = 0, for any b.';
+      judgeMath.textContent = l1;
+
+      var softFinal = softTraj[softTraj.length-1], hardFinal = hardTraj[hardTraj.length-1];
+      var Hp = binEnt(J.p);
+      rmMath.textContent =
+        'L_RM(m) = -[ p*log sigmoid(m) + (1-p)*log sigmoid(-m) ],   m = r(A) - r(B)\n' +
+        '  dL/dm = sigmoid(m) - p        ->  update  m <- m - eta*(sigmoid(m) - p)\n' +
+        '  optimum: sigmoid(m*) = p  ->  m* = log(p/(1-p)) = ' + fmt(mStar,4) + '\n' +
+        '  minimum achievable loss = H(p) = -[p log p + (1-p) log(1-p)] = ' + fmt(Hp,4) + ' nats  <- the judge\'s residual uncertainty\n' +
+        '  after ' + steps + ' steps:  soft target p=' + fmt(J.p,3) + ' -> m = ' + fmt(softFinal,4) + ',  L = ' + fmt(btLoss(softFinal,J.p),4) + '\n' +
+        '                    hard target ' + hardTarget + '        -> m = ' + fmt(hardFinal,4) + ',  L = ' + fmt(btLoss(hardFinal,J.p),4) + '  (chases +/-infinity)';
+
+      var st = curState(), st0 = S.states[0];
+      var stats = [
+        [maxOf(st.v)>0.4?'cl-warnstat':'cl-goodstat', fmt(maxOf(st.v),3), 'Worst violated principle now: ' + PRIN[argmaxOf(st.v)].name + ' (draft was ' + fmt(maxOf(st0.v),3) + ')'],
+        ['', fmt(meanOf(st.v),3), 'Mean violation across all ' + NP + ' principles (draft: ' + fmt(meanOf(st0.v),3) + ')'],
+        [st.h<0.6?'cl-warnstat':'', fmt(st.h,2), 'Scripted helpfulness of the current response (draft: ' + fmt(st0.h,2) + ')'],
+        ['', fmt(J.p,4), 'Soft AI preference label p for A over B &mdash; zero human labels'],
+        [Math.abs(J.p-0.5)<0.05?'cl-warnstat':'', fmt(Math.abs(J.p-0.5),4), '|p - 0.5|: filter below ~0.05 instead of running a 5-vote consistency check'],
+        ['', fmt(J.pAfirst-J.pAsecond,4), 'Position-bias gap P1 - P2 = sigmoid(d+b) - sigmoid(d-b), the thing debiasing removes']
+      ];
+      outEl.innerHTML = stats.map(function(s){
+        return '<div class="vt-stat '+s[0]+'"><div class="n">'+s[1]+'</div><div class="l">'+s[2]+'</div></div>';
+      }).join('');
+
+      drawNote(J, stA, stB, mStar, softFinal, hardFinal, b, debias);
+    }
+
+    function drawNote(J, stA, stB, mStar, softFinal, hardFinal, b, debias){
+      var st = curState(), st0 = S.states[0], i, bestI = 0;
+      for(i=1;i<S.states.length;i++) if(S.states[i].h > S.states[bestI].h) bestI = i;
+      var tied = Math.abs(J.d) < 1e-9;
+      var msg;
+      if(tied){
+        msg = 'Right now the judge\'s two verdict logits are exactly tied &mdash; d = &alpha;&middot;(s(A) - s(B)) = 0, because ' +
+              (stA === stB
+                 ? '<b>A and B are literally the same response</b> (both selectors point at ' + esc(stA.label) +
+                   ' &mdash; press <b>Next step</b> twice to produce a revision worth comparing against)'
+                 : Math.abs(J.sA - J.sB) < 1e-12
+                   ? 'the two responses score identically under this principle'
+                   : '&alpha; = 0 makes the judge indifferent to content') +
+              '. Look at the two orderings anyway: the judge still calls it ' + fmt(J.pAfirst,3) + ' / ' + fmt(J.pAsecond,3) +
+              ' &mdash; that entire signal is position bias b = ' + fmt(b,2) + ' logits, not preference. ' +
+              (debias ? 'Averaging both orderings returns exactly 0.500, which is the whole point of the two-pass protocol.'
+                      : 'With the debias box unticked the stored label is ' + fmt(J.p,3) +
+                        ': you would be training the reward model on a pure ordering artifact.');
+      } else if(!debias && b > 0.01){
+        msg = 'With debiasing OFF you are labelling from one ordering only, so the label carries sigmoid(d+b) instead of a ' +
+              'clean preference: p = ' + fmt(J.p,4) + ' where the honest, position-free answer is ' +
+              fmt(0.5*(J.pAfirst+J.pAsecond),4) + '. That ' + fmt(Math.abs(J.p - 0.5*(J.pAfirst+J.pAsecond)),4) +
+              ' of drift is baked into every one of the millions of pairs an RLAIF run generates, and the reward model will learn it.';
+      } else {
+        var winA = J.p >= 0.5;
+        msg = 'The judge prefers <b>' + esc(winA?stA.label:stB.label) + '</b> with probability ' + fmt(winA?J.p:1-J.p,4) +
+              ' (the label stored is p = P(prefers A) = ' + fmt(J.p,4) + '), and that single number tells the preference ' +
+              'model exactly how big a margin to learn: m* = logit(p) = ' + fmt(mStar,3) +
+              '. A hard 0/1 label would instead push the margin toward ' + (winA?'+':'-') + 'infinity (it has reached ' +
+              fmt(hardFinal,2) + ' and is still running away), throwing away the judge\'s uncertainty and inviting ' +
+              'an over-confident reward model.';
+      }
+      // Stage-1 sentence has to stay true at round 0, where nothing has moved yet, and after the
+      // loop finishes, where "keep pressing Next step" would be a dead instruction.
+      var stage1;
+      if(S.rounds === 0){
+        stage1 = 'a sampled principle is the only thing that can turn a harmful draft into a revision. The draft\'s worst ' +
+                 'violation is ' + fmt(maxOf(st0.v),3) + ' (<i>' + esc(PRIN[argmaxOf(st0.v)].name) + '</i>) and its scripted ' +
+                 'helpfulness is ' + fmt(st0.h,2) + ' &mdash; press <b>Next step</b> to run the first critique and watch both move.';
+      } else {
+        var worstNow = argmaxOf(st.v);
+        stage1 = 'a sampled principle is the only thing that turns a harmful draft into a revision, which is why the worst ' +
+                 'violation fell from ' + fmt(maxOf(st0.v),3) + ' to ' + fmt(maxOf(st.v),3) + ' over ' + S.rounds + ' round' +
+                 (S.rounds===1?'':'s') + '. But track helpfulness, not just harm: it peaked at ' + fmt(S.states[bestI].h,2) +
+                 ' on <b>' + esc(S.states[bestI].label) + '</b>' +
+                 (bestI === S.states.length-1 ? ', which is where it still stands' : ' and has since fallen to ' + fmt(st.h,2)) + '. ' +
+                 (worstNow === AUT
+                    ? '<i>Autonomy</i> is now the worst-violated principle of all (' + fmt(st.v[AUT],3) + ', up from ' +
+                      fmt(st0.v[AUT],3) + ') because every non-autonomy rewrite adds paternalism: that is the over-sanitizing ' +
+                      'failure mode, and it is exactly why the paper uses one to four rounds rather than twenty.'
+                    : 'Keep pressing <b>Next step</b> and watch <i>autonomy</i> climb (now ' + fmt(st.v[AUT],3) + ', from ' +
+                      fmt(st0.v[AUT],3) + ') as every rewrite gets more paternalistic, until it becomes the worst-violated ' +
+                      'principle of all &mdash; the over-sanitizing failure mode, and exactly why the paper uses one to four ' +
+                      'rounds rather than twenty.');
+      }
+      noteEl.innerHTML =
+        '<b>Takeaway:</b> constitutional AI removes humans from <i>both</i> stages, but in two different ways. Stage 1 uses the ' +
+        'constitution generatively &mdash; ' + stage1 + ' Stage 2 uses the same constitution <i>discriminatively</i>: the ' +
+        'judge\'s next-token distribution over the letters A and B, restricted and renormalized, <i>is</i> the preference label. ' +
+        msg;
+    }
+
+    // ============================================================ wiring
+    function fullReset(){
+      S.scen = parseInt(promptSel.value,10);
+      if(!isFinite(S.scen) || S.scen<0 || S.scen>=SCENARIOS.length) S.scen = 0;
+      resetTranscript();
+      render();
+    }
+    promptSel.addEventListener('change', fullReset);
+    resetBtn.addEventListener('click', fullReset);
+
+    nextBtn.addEventListener('click', function(){ if(nextStep()) render(); });
+    runBtn.addEventListener('click', function(){
+      var guard = 0;
+      while((S.awaitingRevision || S.rounds < MAXROUNDS) && guard < 2*MAXROUNDS + 4){ nextStep(); guard++; }
+      render();
+    });
+
+    [alphaIn, biasIn, stepsIn].forEach(function(el){
+      el.addEventListener('input', render);
+      el.addEventListener('change', render);
+    });
+    critSel.addEventListener('change', render);
+    judgeSel.addEventListener('change', render);
+    debiasIn.addEventListener('change', render);
+    raSel.addEventListener('change', function(){ S.aTouched = true; render(); });
+    rbSel.addEventListener('change', function(){ S.bTouched = true; render(); });
+
+    fillPrincipleSelects();
+    promptSel.value = '0';
+    fullReset();
+  })();</script>
+</div>

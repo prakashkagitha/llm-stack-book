@@ -171,6 +171,8 @@ $$
 
 That is per token, per MoE layer, in *each* direction — and DeepSeek-V3 has 58 MoE layers. The volume is not the killer on fast interconnect (NVLink at ~900 GB/s, or 8×400 Gb/s InfiniBand per node); the killer is that **each all-to-all is a barrier**. Decode is one token per request per step, so the batch must cross the all-to-all 2× per MoE layer, and the step cannot finish until the last byte from the slowest rank arrives. Latency, not bandwidth, is what large-EP engineering fights — which is exactly what DeepEP is built for.
 
+{{tool:moe-expert-parallel}}
+
 ---
 
 ## DeepEP: A Production All-to-All Kernel

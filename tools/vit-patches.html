@@ -1,0 +1,1079 @@
+<div class="viz-tool" id="tool-vit-patches">
+  <div class="vt-title">Vision Transformer: an image becomes a sequence of tokens</div>
+
+  <div class="vp-presets" role="group" aria-label="Example images">
+    <span class="vp-plabel">Image</span>
+    <button type="button" class="vp-preset" data-vp-preset="horizon">Horizon</button>
+    <button type="button" class="vp-preset" data-vp-preset="cross">Cross</button>
+    <button type="button" class="vp-preset" data-vp-preset="disc">Disc</button>
+    <button type="button" class="vp-preset" data-vp-preset="checker">Checker</button>
+    <button type="button" class="vp-preset" data-vp-preset="stripes">Stripes</button>
+    <button type="button" class="vp-preset" data-vp-preset="clear">Clear</button>
+  </div>
+
+  <div class="vt-grid">
+    <label for="vit-patches-size">Image size H = W (pixels)
+      <select id="vit-patches-size" aria-label="Toy image side length in pixels">
+        <option value="16">16 &times; 16</option>
+        <option value="24" selected>24 &times; 24</option>
+        <option value="32">32 &times; 32</option>
+      </select>
+    </label>
+    <label for="vit-patches-patch">Patch size P
+      <span class="vp-in">
+        <input id="vit-patches-patch" type="range" min="0" max="3" step="1" value="2" aria-label="Patch size P (snaps to divisors of the image size)">
+        <input id="vit-patches-patch-out" type="text" value="" readonly tabindex="-1" aria-hidden="true">
+      </span>
+    </label>
+    <label for="vit-patches-dim">Token width D (toy model)
+      <select id="vit-patches-dim" aria-label="Embedding dimension D of the toy model">
+        <option value="4">D = 4</option>
+        <option value="8" selected>D = 8</option>
+        <option value="16">D = 16</option>
+      </select>
+    </label>
+    <label for="vit-patches-query">Query / inspected token
+      <select id="vit-patches-query" aria-label="Which token to trace through the pipeline and use as the attention query"></select>
+    </label>
+    <label for="vit-patches-seed">Weight seed
+      <input id="vit-patches-seed" type="number" min="1" max="999" step="1" value="7" aria-label="Seed for the random patch-embedding, positional and attention weights">
+    </label>
+    <label class="vp-check" for="vit-patches-pos">
+      <input id="vit-patches-pos" type="checkbox" checked>
+      <span>Add positional embeddings <b>E</b><sub>pos</sub></span>
+    </label>
+    <label class="vp-check" for="vit-patches-sim">
+      <input id="vit-patches-sim" type="checkbox" checked>
+      <span>Content-similarity head (W<sub>K</sub> = W<sub>Q</sub>)</span>
+    </label>
+  </div>
+
+  <div class="vp-steps" role="group" aria-label="Pipeline stage">
+    <button type="button" id="vit-patches-prev">&#9664; Back</button>
+    <button type="button" id="vit-patches-next">Next &#9654;</button>
+    <button type="button" id="vit-patches-play" aria-pressed="false">&#9654; Play</button>
+    <span class="vp-stagelbl" id="vit-patches-stage-label" role="status" aria-live="polite"></span>
+  </div>
+
+  <div class="vp-panels">
+    <div class="vp-panel">
+      <div class="vp-h">Steps 1&ndash;2 &middot; pixels &rarr; patches <span class="vp-hint">click / drag the image to paint</span></div>
+      <svg id="vit-patches-img" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Toy image split into patches"></svg>
+      <div class="vp-swatches" id="vit-patches-swatches" role="group" aria-label="Paint colour"></div>
+    </div>
+    <div class="vp-panel vp-stage" data-vp-min="5">
+      <div class="vp-h">Step 5 &middot; attention weights of the query token <span class="vp-hint">click a patch to query it</span></div>
+      <svg id="vit-patches-attn" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Attention weights over patches"></svg>
+      <div class="vp-chips" id="vit-patches-attn-meta"></div>
+    </div>
+  </div>
+
+  <div class="vp-readout" id="vit-patches-seqmath"></div>
+
+  <div class="vp-stage" data-vp-min="3">
+    <div class="vp-h">Step 3 &middot; one patch &rarr; one token: flatten, then multiply by the shared matrix <b>E</b>
+      <span class="vp-hint">tracing the token selected above</span></div>
+    <div class="vp-scroll"><svg id="vit-patches-pipe" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Patch to token pipeline"></svg></div>
+  </div>
+
+  <div class="vp-stage" data-vp-min="4">
+    <div class="vp-h">Step 4 &middot; the sequence the transformer actually consumes</div>
+    <div class="vp-scroll"><svg id="vit-patches-seq" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Token sequence heat map"></svg></div>
+    <div class="vp-legend"><span>token value</span><i class="vp-ramp"></i><span id="vit-patches-legend-range"></span></div>
+  </div>
+
+  <div class="vp-stage" data-vp-min="5">
+    <div class="vp-h">Where the query looks &middot; top attention weights</div>
+    <div class="vp-top" id="vit-patches-top"></div>
+  </div>
+
+  <div class="vp-h vp-h-sep">Patch size is the compute dial &middot; real ViT configurations</div>
+  <div class="vp-scroll"><table class="vp-table" id="vit-patches-real"></table></div>
+
+  <div class="vt-note" id="vit-patches-note">
+    <b>An image becomes a sequence &mdash; that is the whole trick.</b> Patchify cuts H&times;W into
+    N = (H/P)&thinsp;&middot;&thinsp;(W/P) non-overlapping P&times;P patches; each is flattened to P&sup2;C numbers and hit with
+    <i>one shared</i> matrix <b>E</b> to become a D-dimensional token &mdash; arithmetically the same thing as a
+    <code>Conv2d(C, D, kernel_size=P, stride=P)</code>, up to the order in which each patch's pixels are flattened
+    (this widget uses the chapter's <code>(P, P, C)</code> einops order; <code>Conv2d</code> uses <code>(C, P, P)</code>,
+    a column permutation of <b>E</b>). Prepend a learned <code>[CLS]</code> token, add a learned positional
+    embedding to every position, and an <i>unmodified</i> transformer encoder does the rest. <b>E</b>,
+    <code>x_cls</code> and <b>E</b><sub>pos</sub> are <i>parameters</i>: they depend on the seed and nothing else, so
+    they hold perfectly still while you repaint &mdash; only the patch rows move.
+    <b>Patch size is the compute dial:</b> halving P quadruples N and multiplies attention's (N+1)&sup2; score matrix by
+    about 16 &mdash; which is why ViT-B/16 (196 patch tokens) is cheap while a 1024&thinsp;px input at P = 16 (4096 tokens)
+    needs FlashAttention. <b>Positional embeddings are not decoration:</b> switch them off and two identical patches produce
+    <i>byte-identical</i> tokens; self-attention is permutation-invariant over its inputs, so the model then literally cannot
+    tell top-left from bottom-right (watch the duplicate-token counter on the Checker or Stripes preset).
+    <b>Read the attention honestly:</b> these weights are seeded-random, not trained. LayerNorm (Pre-LN, exactly as in the
+    chapter's <code>ViTBlock</code>) puts every token on the sphere of radius &radic;D, so with the content-similarity head
+    (W<sub>K</sub> = W<sub>Q</sub>) the score q&middot;k/&radic;D is an unbiased estimate of
+    &radic;D&thinsp;&middot;&thinsp;cos(&#7825;<sub>i</sub>, &#7825;<sub>j</sub>): a patch attends to patches that <i>look like it</i>,
+    which is the texture/locality behaviour real ViT heads do learn. The <i>weight vs. looks-like-the-query</i> chip measures
+    exactly that, and typically lands around r &asymp; 0.6&ndash;0.8 for this head (median 0.64 over the first 60 seeds).
+    Untick the box for independent random W<sub>Q</sub>, W<sub>K</sub>
+    and that correlation collapses to about zero on average (roll the seed a few times to see past the noise &mdash; any single
+    seed can land anywhere): the head still paints a
+    confident-looking map, it just has nothing to do with what the query looks like. The architecture supplies the mechanism;
+    training supplies the meaning. Query the <code>[CLS]</code> token and you see the same lesson from the other side: its row
+    is usually <i>sharper</i> than a patch's (lower entropy on about two seeds in three), yet <code>[CLS]</code> has no pixels
+    at all &mdash; it is one learned constant vector, so
+    at initialisation its &ldquo;favourite&rdquo; patches are simply whichever ones happen to align with a random direction.
+    Object-centric CLS attention &mdash; the DINO maps later in this chapter &mdash; is a product of training, not of the architecture.
+  </div>
+
+  <style>
+    #tool-vit-patches{ border:1px solid var(--border-2,#d8d1c0); border-radius:12px; padding:16px 18px; margin:1.5rem 0;
+      background:var(--surface,#fff); font-family:var(--sans,sans-serif); }
+    #tool-vit-patches .vt-title{ font-weight:700; font-size:1rem; margin-bottom:12px; color:var(--ink,#211f1b); }
+    #tool-vit-patches .vt-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px 18px; }
+    #tool-vit-patches label{ display:flex; flex-direction:column; gap:5px; font-size:.78rem; color:var(--muted,#6d675d); }
+    #tool-vit-patches input, #tool-vit-patches select, #tool-vit-patches button{
+      font:inherit; font-size:.88rem; padding:6px 8px; border:1px solid var(--border-2,#d8d1c0); border-radius:7px;
+      background:var(--surface,#fff); color:var(--ink,#211f1b); }
+    #tool-vit-patches input[readonly]{ text-align:center; background:var(--surface-2,#f3efe6); color:var(--muted,#6d675d); }
+    #tool-vit-patches input[type="range"]{ padding:0; accent-color:var(--accent,#c15b39); }
+    #tool-vit-patches input[type="checkbox"]{ accent-color:var(--accent,#c15b39); width:15px; height:15px; padding:0; flex:0 0 auto; }
+    #tool-vit-patches :focus-visible{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+    #tool-vit-patches .vp-in{ display:flex; gap:6px; align-items:center; }
+    #tool-vit-patches .vp-in input[type="range"]{ flex:1 1 auto; min-width:0; }
+    #tool-vit-patches .vp-in input[type="text"]{ flex:0 1 120px; min-width:0; font-size:.76rem; }
+    #tool-vit-patches .vp-check{ flex-direction:row; align-items:center; gap:8px; align-self:end; padding-bottom:6px; line-height:1.3; }
+    #tool-vit-patches .vp-check b{ color:var(--ink-soft,#45413a); }
+
+    #tool-vit-patches .vp-presets{ display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin-bottom:14px; }
+    #tool-vit-patches .vp-plabel{ font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:var(--muted,#6d675d); }
+    #tool-vit-patches .vp-preset{ font-size:.74rem; padding:4px 9px; border-radius:999px; cursor:pointer;
+      background:var(--surface-2,#f3efe6); color:var(--ink-soft,#45413a); }
+    #tool-vit-patches .vp-preset:hover{ border-color:var(--accent,#c15b39); color:var(--accent,#c15b39); }
+
+    #tool-vit-patches .vp-steps{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:16px; }
+    #tool-vit-patches .vp-steps button{ font-size:.76rem; padding:5px 11px; border-radius:999px; cursor:pointer;
+      background:var(--surface-2,#f3efe6); color:var(--ink-soft,#45413a); }
+    #tool-vit-patches .vp-steps button:hover{ border-color:var(--accent,#c15b39); color:var(--accent,#c15b39); }
+    #tool-vit-patches .vp-stagelbl{ font-size:.76rem; color:var(--muted,#6d675d); }
+    #tool-vit-patches .vp-stagelbl b{ color:var(--ink-soft,#45413a); }
+
+    #tool-vit-patches .vp-panels{ display:flex; flex-wrap:wrap; gap:18px; margin-top:16px; }
+    #tool-vit-patches .vp-panel{ flex:1 1 250px; min-width:0; }
+    #tool-vit-patches .vp-h{ font-size:.72rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted,#6d675d);
+      margin:0 0 8px; }
+    #tool-vit-patches .vp-h b{ text-transform:none; letter-spacing:0; color:var(--ink-soft,#45413a); }
+    #tool-vit-patches .vp-h-sep{ margin-top:20px; }
+    #tool-vit-patches .vp-hint{ text-transform:none; letter-spacing:0; opacity:.85; }
+    #tool-vit-patches .vp-panel svg{ display:block; width:100%; max-width:330px; height:auto;
+      border-radius:9px; background:var(--surface-2,#f3efe6); touch-action:none; }
+    #tool-vit-patches #vit-patches-img{ cursor:crosshair; }
+    #tool-vit-patches #vit-patches-attn{ cursor:pointer; }
+    #tool-vit-patches .vp-scroll{ overflow-x:auto; max-width:100%; }
+    #tool-vit-patches .vp-scroll svg{ display:block; width:100%; min-width:420px; height:auto; }
+
+    #tool-vit-patches .vp-swatches{ display:flex; flex-wrap:wrap; gap:5px; margin-top:9px; }
+    #tool-vit-patches .vp-sw{ width:24px; height:24px; padding:0; border-radius:6px; cursor:pointer;
+      border:1px solid var(--border-2,#d8d1c0); }
+    #tool-vit-patches .vp-sw[aria-pressed="true"]{ outline:2px solid var(--accent,#c15b39); outline-offset:2px; }
+
+    #tool-vit-patches .vp-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; }
+    #tool-vit-patches .vp-chip{ font-size:.7rem; padding:3px 8px; border-radius:999px; background:var(--surface-2,#f3efe6);
+      color:var(--muted,#6d675d); font-variant-numeric:tabular-nums; }
+    #tool-vit-patches .vp-chip b{ color:var(--ink,#211f1b); }
+
+    #tool-vit-patches .vp-readout{ margin-top:16px; font-size:.76rem; line-height:1.6; color:var(--muted,#6d675d);
+      font-variant-numeric:tabular-nums; background:var(--surface-2,#f3efe6); border-radius:9px; padding:9px 11px; }
+    #tool-vit-patches .vp-readout b{ color:var(--ink,#211f1b); }
+    #tool-vit-patches .vp-readout code{ font-family:var(--mono,monospace); font-size:.95em; }
+
+    #tool-vit-patches .vp-stage{ margin-top:18px; }
+    #tool-vit-patches .vp-off{ display:none; }
+
+    #tool-vit-patches .vp-legend{ display:flex; align-items:center; gap:8px; margin-top:7px; font-size:.7rem;
+      color:var(--muted,#6d675d); }
+    #tool-vit-patches .vp-ramp{ display:inline-block; width:110px; height:9px; border-radius:5px;
+      background:linear-gradient(90deg, var(--surface-3,#ece7da), var(--accent,#c15b39)); }
+
+    #tool-vit-patches .vp-top{ display:flex; flex-direction:column; gap:6px; }
+    #tool-vit-patches .vp-toprow{ display:grid; grid-template-columns:120px 1fr 64px; gap:10px; align-items:center;
+      font-size:.74rem; color:var(--muted,#6d675d); font-variant-numeric:tabular-nums; }
+    #tool-vit-patches .vp-topbar{ position:relative; height:16px; border-radius:5px; background:var(--surface-3,#ece7da); overflow:hidden; }
+    #tool-vit-patches .vp-topbar i{ position:absolute; left:0; top:0; height:100%; background:var(--accent,#c15b39); opacity:.45; }
+    #tool-vit-patches .vp-topsw{ display:inline-block; width:11px; height:11px; border-radius:3px; vertical-align:-1px;
+      margin-right:6px; border:1px solid var(--border-2,#d8d1c0); }
+    #tool-vit-patches .vp-topval{ text-align:right; color:var(--ink,#211f1b); }
+    #tool-vit-patches .vp-isq{ color:var(--accent,#c15b39); font-weight:600; }
+
+    #tool-vit-patches .vp-table{ border-collapse:collapse; width:100%; min-width:420px; font-size:.74rem;
+      font-variant-numeric:tabular-nums; color:var(--muted,#6d675d); }
+    #tool-vit-patches .vp-table th, #tool-vit-patches .vp-table td{ padding:5px 9px; text-align:right;
+      border-bottom:1px solid var(--border,#e7e1d4); white-space:nowrap; }
+    #tool-vit-patches .vp-table th:first-child, #tool-vit-patches .vp-table td:first-child{ text-align:left; }
+    #tool-vit-patches .vp-table th{ font-weight:600; color:var(--ink-soft,#45413a); }
+    #tool-vit-patches .vp-table td b{ color:var(--ink,#211f1b); }
+
+    #tool-vit-patches .vp-gap{ stroke:var(--surface,#fff); stroke-width:1.7; fill:none; pointer-events:none; }
+    #tool-vit-patches .vp-frame{ fill:none; stroke:var(--border-2,#d8d1c0); stroke-width:1; pointer-events:none; }
+    #tool-vit-patches .vp-plabel-t{ font-size:5px; fill:var(--ink,#211f1b); text-anchor:middle;
+      font-family:var(--mono,monospace); pointer-events:none; }
+    #tool-vit-patches .vp-scrim{ fill:var(--surface,#fff); pointer-events:none; }
+    #tool-vit-patches .vp-qbox{ fill:none; stroke:var(--accent,#c15b39); stroke-width:2.2; pointer-events:none; }
+    #tool-vit-patches .vp-wpill{ fill:var(--surface,#fff); opacity:.82; pointer-events:none; }
+    #tool-vit-patches .vp-wtext{ font-size:5.4px; fill:var(--ink,#211f1b); text-anchor:middle;
+      font-family:var(--mono,monospace); pointer-events:none; }
+    #tool-vit-patches .vp-hit{ fill:transparent; }
+
+    #tool-vit-patches .vp-axis{ stroke:var(--border-2,#d8d1c0); stroke-width:.8; }
+    #tool-vit-patches .vp-bar-pos{ fill:var(--accent,#c15b39); }
+    #tool-vit-patches .vp-bar-neg{ fill:var(--muted,#6d675d); }
+    #tool-vit-patches .vp-rowlab{ font-size:11.5px; fill:var(--ink-soft,#45413a); font-weight:600; }
+    #tool-vit-patches .vp-rowsub{ font-size:9.6px; fill:var(--muted,#6d675d); font-family:var(--mono,monospace); }
+    #tool-vit-patches .vp-barval{ font-size:8.2px; fill:var(--muted,#6d675d); text-anchor:middle; font-family:var(--mono,monospace); }
+    #tool-vit-patches .vp-cell{ stroke:none; }
+    #tool-vit-patches .vp-seqcell{ fill:var(--accent,#c15b39); }
+    #tool-vit-patches .vp-seqlab{ font-size:8.6px; fill:var(--muted,#6d675d); text-anchor:middle; font-family:var(--mono,monospace); }
+    #tool-vit-patches .vp-seqcls{ font-size:8.6px; fill:var(--accent,#c15b39); text-anchor:middle; font-weight:700;
+      font-family:var(--mono,monospace); }
+    #tool-vit-patches .vp-seqbox{ fill:none; stroke:var(--accent,#c15b39); stroke-width:1.4; }
+    #tool-vit-patches .vp-note-t{ font-size:10.2px; fill:var(--muted,#6d675d); }
+
+    #tool-vit-patches .vt-note{ margin-top:16px; font-size:.78rem; color:var(--muted,#6d675d); line-height:1.55; }
+    #tool-vit-patches .vt-note b{ color:var(--ink-soft,#45413a); }
+    #tool-vit-patches .vt-note code{ font-family:var(--mono,monospace); font-size:.94em; }
+
+    @media (max-width:560px){
+      #tool-vit-patches .vp-toprow{ grid-template-columns:96px 1fr 54px; }
+    }
+  </style>
+
+  <script>(function(){
+    var root = document.getElementById('tool-vit-patches');
+    if (!root) return;
+    function $(id){ return root.querySelector('#vit-patches-' + id); }
+
+    var elSize = $('size'), elPatch = $('patch'), elPatchOut = $('patch-out'), elDim = $('dim');
+    var elQuery = $('query'), elSeed = $('seed'), elPos = $('pos'), elSim = $('sim');
+    var elPrev = $('prev'), elNext = $('next'), elPlay = $('play'), elStageLbl = $('stage-label');
+    var elImg = $('img'), elAttn = $('attn'), elSw = $('swatches'), elMeta = $('attn-meta');
+    var elSeqMath = $('seqmath'), elPipe = $('pipe'), elSeq = $('seq'), elTop = $('top');
+    var elReal = $('real'), elLegend = $('legend-range');
+    if (!elImg || !elAttn || !elPipe || !elSeq) return;
+
+    var SVGNS = 'http://www.w3.org/2000/svg';
+    function mk(tag, attrs){
+      var e = document.createElementNS(SVGNS, tag), k;
+      for (k in attrs) if (Object.prototype.hasOwnProperty.call(attrs, k)) e.setAttribute(k, attrs[k]);
+      return e;
+    }
+    function setKids(svg, kids){
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      for (var i = 0; i < kids.length; i++) svg.appendChild(kids[i]);
+    }
+    function esc(s){ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+
+    // ---------------------------------------------------------------- seeded PRNG
+    // mulberry32: same seed -> same weights, every load, in every browser.
+    function mulberry32(a){
+      return function(){
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        var t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    // Box-Muller (polar form) on top of the seeded uniform stream.
+    function gaussStream(seed){
+      var r = mulberry32(seed), spare = null;
+      return function(){
+        if (spare !== null){ var s = spare; spare = null; return s; }
+        var u, v, q;
+        do { u = r() * 2 - 1; v = r() * 2 - 1; q = u * u + v * v; } while (q === 0 || q >= 1);
+        var m = Math.sqrt(-2 * Math.log(q) / q);
+        spare = v * m;
+        return u * m;
+      };
+    }
+    function randMat(rows, cols, seed, scale){
+      var g = gaussStream(seed), out = new Float64Array(rows * cols), i;
+      for (i = 0; i < rows * cols; i++) out[i] = g() * scale;
+      return out;
+    }
+    // rows x cols matrix (row-major) times a cols-vector.
+    function matVec(W, rows, cols, x){
+      var out = new Float64Array(rows), r, c, s, off;
+      for (r = 0; r < rows; r++){
+        s = 0; off = r * cols;
+        for (c = 0; c < cols; c++) s += W[off + c] * x[c];
+        out[r] = s;
+      }
+      return out;
+    }
+
+    // ---------------------------------------------------------------- image model
+    // Palette entries are image *content* (data), not UI chrome: they stay fixed in both themes.
+    var PALETTE = [
+      { n: 'ink',   c: [31, 41, 51]    },
+      { n: 'paper', c: [244, 241, 234] },
+      { n: 'clay',  c: [199, 92, 60]   },
+      { n: 'sky',   c: [61, 126, 166]  },
+      { n: 'moss',  c: [107, 154, 74]  },
+      { n: 'amber', c: [230, 184, 76]  },
+      { n: 'plum',  c: [138, 111, 174] },
+      { n: 'slate', c: [154, 165, 173] }
+    ];
+    function rgbOf(i){ var c = PALETTE[i] ? PALETTE[i].c : PALETTE[1].c; return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')'; }
+
+    // ImageNet statistics - the same numbers the chapter's preprocessing section uses.
+    var MEAN = [0.485, 0.456, 0.406], STD = [0.229, 0.224, 0.225];
+
+    // Typical magnitude of an ImageNet-normalised channel value over this palette.
+    // With E ~ N(0, 1/M) entrywise, E[(E p)_a^2] = ||p||^2 / M, so this is also the
+    // expected RMS of a projected patch. Using a CONSTANT (rather than the current
+    // image's RMS) keeps x_cls and E_pos fixed while you paint - they are learned
+    // parameters, so they must not move when the pixels do.
+    var PIX_RMS = (function(){
+      var s = 0, k = 0, i, ch;
+      for (i = 0; i < PALETTE.length; i++) for (ch = 0; ch < 3; ch++){
+        var v = (PALETTE[i].c[ch] / 255 - MEAN[ch]) / STD[ch];
+        s += v * v; k++;
+      }
+      return k > 0 ? Math.sqrt(s / k) : 1;
+    })();
+
+    var PRESETS = {
+      horizon: function(x, y, n){
+        var sx = n * 0.70, sy = n * 0.26;
+        var d = Math.sqrt((x + 0.5 - sx) * (x + 0.5 - sx) + (y + 0.5 - sy) * (y + 0.5 - sy));
+        if (y >= Math.floor(n * 0.62)) return 4;      // ground
+        if (d <= n * 0.14) return 5;                  // sun
+        return 3;                                     // sky
+      },
+      cross: function(x, y, n){
+        var b = Math.floor(n / 4), e = n - b;
+        return ((x >= b && x < e) || (y >= b && y < e)) ? 2 : 1;
+      },
+      disc: function(x, y, n){
+        var d = Math.sqrt((x + 0.5 - n / 2) * (x + 0.5 - n / 2) + (y + 0.5 - n / 2) * (y + 0.5 - n / 2));
+        if (d <= n * 0.22) return 6;
+        if (d <= n * 0.34) return 7;
+        return 1;
+      },
+      checker: function(x, y, n){
+        var b = Math.max(1, Math.round(n / 4));
+        return ((Math.floor(x / b) + Math.floor(y / b)) % 2 === 0) ? 0 : 1;
+      },
+      stripes: function(x, y, n){
+        var b = Math.max(1, Math.round(n / 8));
+        return (Math.floor((x + y) / b) % 2 === 0) ? 3 : 5;
+      },
+      clear: function(){ return 1; }
+    };
+    function buildImage(name, n){
+      var f = PRESETS[name] || PRESETS.clear, a = new Uint8Array(n * n), x, y;
+      for (y = 0; y < n; y++) for (x = 0; x < n; x++) a[y * n + x] = f(x, y, n);
+      return a;
+    }
+    // Nearest-neighbour resample so hand-painted edits survive a change of image size.
+    function resample(src, ns, nd){
+      var out = new Uint8Array(nd * nd), x, y, sx, sy;
+      for (y = 0; y < nd; y++){
+        sy = Math.min(ns - 1, Math.floor(y * ns / nd));
+        for (x = 0; x < nd; x++){
+          sx = Math.min(ns - 1, Math.floor(x * ns / nd));
+          out[y * nd + x] = src[sy * ns + sx];
+        }
+      }
+      return out;
+    }
+
+    // Patch sizes must divide the image side; cap the patch grid at 12x12 so the
+    // sequence stays drawable (and the widget stays responsive while painting).
+    function patchOptions(n){
+      var out = [], d;
+      for (d = 2; d <= n / 2; d++) if (n % d === 0 && n / d <= 12) out.push(d);
+      if (!out.length) out.push(Math.max(2, Math.round(n / 2)) || 2);  // never hand back an empty list
+      return out;
+    }
+    function nearestIdx(arr, target){
+      var best = 0, bd = Infinity, i, d;
+      for (i = 0; i < arr.length; i++){ d = Math.abs(arr[i] - target); if (d < bd){ bd = d; best = i; } }
+      return best;
+    }
+    function clampInt(v, lo, hi, fb){
+      v = parseInt(v, 10);
+      if (!isFinite(v)) v = fb;
+      return Math.max(lo, Math.min(hi, v));
+    }
+
+    // ---------------------------------------------------------------- state
+    var STAGES = [
+      'Image: a grid of pixels, three channels each',
+      'Patchify: N non-overlapping P&times;P patches',
+      'Flatten + linear projection: one token per patch',
+      'Prepend [CLS], add positional embeddings',
+      'Self-attention: every token reads every token'
+    ];
+    var state = {
+      size: 24,
+      P: 4,
+      D: 8,
+      seed: 7,
+      pos: true,
+      sim: true,
+      brush: 2,
+      stage: 5,
+      qCls: false,
+      qu: 0.5,      // query patch location in normalised image coords, so it
+      qv: 0.5,      // survives changes of patch size / image size
+      pix: buildImage('horizon', 24)
+    };
+    var timer = null;
+
+    // ---------------------------------------------------------------- the math
+    // z_i = E p_i + E_pos[i]   with p_i the flattened, ImageNet-normalised patch;
+    // z_0 = x_cls + E_pos[0];  attention uses Pre-LN tokens, one head, d_head = D.
+    function compute(){
+      var n = state.size, P = state.P, D = state.D;
+      var G = n / P, N = G * G, M = P * P * 3;
+      var i, j, a, m, r, c, ch;
+
+      // --- patchify: row-major over the patch grid, (P, P, C) inside each patch
+      //     (the exact order of the chapter's einops pattern '(h2 w2 c)').
+      var patches = [], keys = [];
+      for (r = 0; r < G; r++) for (c = 0; c < G; c++){
+        var v = new Float64Array(M), key = '', t = 0, ry, rx, idx;
+        for (ry = 0; ry < P; ry++) for (rx = 0; rx < P; rx++){
+          idx = state.pix[(r * P + ry) * n + (c * P + rx)];
+          key += String.fromCharCode(48 + idx);
+          for (ch = 0; ch < 3; ch++) v[t++] = (PALETTE[idx].c[ch] / 255 - MEAN[ch]) / STD[ch];
+        }
+        patches.push(v); keys.push(key);
+      }
+
+      // --- shared patch-embedding matrix E (D x M), scaled 1/sqrt(fan_in)
+      var E = randMat(D, M, state.seed * 1009 + 11, 1 / Math.sqrt(M));
+      var proj = [];
+      for (i = 0; i < N; i++) proj.push(matVec(E, D, M, patches[i]));
+
+      // x_cls and E_pos are *parameters*: seeded once, at a scale comparable to a
+      // projected patch (PIX_RMS), and deliberately independent of the pixels - repaint
+      // the image and these bars must not budge. Measured patch scale, for the readout:
+      var ss = 0;
+      for (i = 0; i < N; i++) for (a = 0; a < D; a++) ss += proj[i][a] * proj[i][a];
+      var rms = N > 0 ? Math.sqrt(ss / (N * D)) : 0;
+
+      var posE = randMat(N + 1, D, state.seed * 2027 + 23, 0.5 * PIX_RMS);
+      var cls  = randMat(1, D, state.seed * 3049 + 31, PIX_RMS);
+
+      // --- the sequence: [CLS] then the N patch tokens
+      var z = [], zi;
+      zi = new Float64Array(D);
+      for (a = 0; a < D; a++) zi[a] = cls[a] + (state.pos ? posE[a] : 0);
+      z.push(zi);
+      for (i = 0; i < N; i++){
+        zi = new Float64Array(D);
+        for (a = 0; a < D; a++) zi[a] = proj[i][a] + (state.pos ? posE[(i + 1) * D + a] : 0);
+        z.push(zi);
+      }
+
+      // --- Pre-LN (no learnable gain/bias, i.e. identity init): ||LN(z)|| = sqrt(D)
+      var zn = [];
+      for (i = 0; i < z.length; i++){
+        var mu = 0, va = 0;
+        for (a = 0; a < D; a++) mu += z[i][a];
+        mu /= D;
+        for (a = 0; a < D; a++) va += (z[i][a] - mu) * (z[i][a] - mu);
+        va /= D;
+        var inv = 1 / Math.sqrt(va + 1e-5), zz = new Float64Array(D);
+        for (a = 0; a < D; a++) zz[a] = (z[i][a] - mu) * inv;
+        zn.push(zz);
+      }
+
+      // --- one attention head, d_head = D
+      var WQ = randMat(D, D, state.seed * 4093 + 41, 1 / Math.sqrt(D));
+      var WK = state.sim ? WQ : randMat(D, D, state.seed * 5077 + 53, 1 / Math.sqrt(D));
+      var qi = state.qCls ? 0 : (Math.min(G - 1, Math.floor(state.qv * G)) * G + Math.min(G - 1, Math.floor(state.qu * G))) + 1;
+      if (qi > N) qi = 0;
+      var q = matVec(WQ, D, D, zn[qi]);
+      var scores = new Float64Array(N + 1), scale = 1 / Math.sqrt(D);
+      for (j = 0; j <= N; j++){
+        var k = matVec(WK, D, D, zn[j]), s = 0;
+        for (a = 0; a < D; a++) s += q[a] * k[a];
+        scores[j] = s * scale;
+      }
+      // numerically stable softmax (max-subtraction), exactly as in the softmax chapter
+      var mx = -Infinity;
+      for (j = 0; j <= N; j++) if (scores[j] > mx) mx = scores[j];
+      var att = new Float64Array(N + 1), sum = 0;
+      for (j = 0; j <= N; j++){ att[j] = Math.exp(scores[j] - mx); sum += att[j]; }
+      for (j = 0; j <= N; j++) att[j] /= sum;
+
+      // entropy in nats -> "effective number of tokens attended to"
+      var H = 0;
+      for (j = 0; j <= N; j++) if (att[j] > 0) H -= att[j] * Math.log(att[j]);
+
+      // Does this head's attention actually track *appearance*? Pearson r between the
+      // weight a patch receives and its cosine similarity to the query token (the
+      // quantity the head is scoring), over every patch except the query itself.
+      var xs = [], ys = [], qn = 0;
+      for (a = 0; a < D; a++) qn += zn[qi][a] * zn[qi][a];
+      qn = Math.sqrt(qn);
+      for (i = 1; i <= N; i++){
+        if (i === qi) continue;
+        var d0 = 0, nn = 0;
+        for (a = 0; a < D; a++){ d0 += zn[qi][a] * zn[i][a]; nn += zn[i][a] * zn[i][a]; }
+        nn = Math.sqrt(nn);
+        xs.push(nn > 0 && qn > 0 ? d0 / (qn * nn) : 0);
+        ys.push(att[i]);
+      }
+      var rAtt = NaN;
+      if (xs.length >= 3){
+        var mx2 = 0, my2 = 0, kk;
+        for (kk = 0; kk < xs.length; kk++){ mx2 += xs[kk]; my2 += ys[kk]; }
+        mx2 /= xs.length; my2 /= ys.length;
+        var sxy = 0, sxx = 0, syy = 0;
+        for (kk = 0; kk < xs.length; kk++){
+          sxy += (xs[kk] - mx2) * (ys[kk] - my2);
+          sxx += (xs[kk] - mx2) * (xs[kk] - mx2);
+          syy += (ys[kk] - my2) * (ys[kk] - my2);
+        }
+        if (sxx > 1e-18 && syy > 1e-18) rAtt = sxy / Math.sqrt(sxx * syy);
+      }
+
+      // duplicate patches (identical pixels) - the permutation-invariance demo
+      var seen = {}, distinct = 0;
+      for (i = 0; i < N; i++) if (!Object.prototype.hasOwnProperty.call(seen, keys[i])){ seen[keys[i]] = 1; distinct++; }
+
+      return { n: n, P: P, D: D, G: G, N: N, M: M, patches: patches, keys: keys, E: E,
+               proj: proj, posE: posE, cls: cls, z: z, zn: zn, att: att, scores: scores,
+               qi: qi, H: H, rAtt: rAtt, distinct: distinct, rms: rms };
+    }
+
+    // ---------------------------------------------------------------- drawing helpers
+    function drawBars(kids, x, y, w, h, vec, withLabels){
+      var nb = vec.length, i, mxv = 0;
+      for (i = 0; i < nb; i++) mxv = Math.max(mxv, Math.abs(vec[i]));
+      if (!(mxv > 0)) mxv = 1;
+      var mid = y + h / 2, bw = w / nb, wide = bw > 3;
+      kids.push(mk('line', { x1: x.toFixed(2), y1: mid.toFixed(2), x2: (x + w).toFixed(2), y2: mid.toFixed(2), 'class': 'vp-axis' }));
+      for (i = 0; i < nb; i++){
+        var v = vec[i], bh = Math.abs(v) / mxv * (h / 2 - 1);
+        var bx = x + i * bw + (wide ? 0.9 : 0), bwid = Math.max(0.55, bw - (wide ? 1.8 : 0));
+        kids.push(mk('rect', { x: bx.toFixed(2), y: (v >= 0 ? mid - bh : mid).toFixed(2),
+          width: bwid.toFixed(2), height: Math.max(0.7, bh).toFixed(2),
+          'class': v >= 0 ? 'vp-bar-pos' : 'vp-bar-neg' }));
+        if (withLabels && bw >= 24){
+          var t = mk('text', { x: (bx + bwid / 2).toFixed(2), y: (y + h + 8.6).toFixed(2), 'class': 'vp-barval' });
+          t.textContent = v.toFixed(2);
+          kids.push(t);
+        }
+      }
+      return mxv;
+    }
+    function rowLabel(kids, x, y, main, sub){
+      var t = mk('text', { x: x, y: y, 'class': 'vp-rowlab' });
+      t.textContent = main; kids.push(t);
+      if (sub){
+        var s = mk('text', { x: x, y: y + 13, 'class': 'vp-rowsub' });
+        s.textContent = sub; kids.push(s);
+      }
+    }
+
+    // ---------------------------------------------------------------- image panel
+    var CELL = 10;
+    function drawImage(S){
+      var n = S.n, P = S.P, G = S.G, kids = [], x, y, i;
+      var side = n * CELL;
+      for (y = 0; y < n; y++) for (x = 0; x < n; x++){
+        i = y * n + x;
+        kids.push(mk('rect', { x: (x * CELL), y: (y * CELL), width: CELL, height: CELL,
+          fill: rgbOf(state.pix[i]), 'class': 'vp-cell', 'data-vp-cell': i }));
+      }
+      if (state.stage >= 2){
+        for (i = 0; i <= G; i++){
+          kids.push(mk('line', { x1: 0, y1: (i * P * CELL), x2: side, y2: (i * P * CELL), 'class': 'vp-gap' }));
+          kids.push(mk('line', { x1: (i * P * CELL), y1: 0, x2: (i * P * CELL), y2: side, 'class': 'vp-gap' }));
+        }
+        if (P * CELL >= 34){
+          for (i = 0; i < S.N; i++){
+            var r = Math.floor(i / G), c = i % G;
+            var t = mk('text', { x: ((c + 0.5) * P * CELL).toFixed(1), y: ((r + 0.5) * P * CELL + 2).toFixed(1),
+              'class': 'vp-plabel-t' });
+            t.textContent = String(i);
+            kids.push(t);
+          }
+        }
+      }
+      kids.push(mk('rect', { x: 0.5, y: 0.5, width: side - 1, height: side - 1, 'class': 'vp-frame' }));
+      elImg.setAttribute('viewBox', '0 0 ' + side + ' ' + side);
+      elImg.setAttribute('aria-label', n + ' by ' + n + ' pixel image split into ' + S.N + ' patches of ' + P + ' by ' + P);
+      setKids(elImg, kids);
+    }
+
+    // ---------------------------------------------------------------- attention panel
+    function drawAttn(S){
+      var n = S.n, P = S.P, G = S.G, N = S.N, kids = [], x, y, i;
+      var side = n * CELL, pc = P * CELL;
+      var wmax = 0;
+      for (i = 1; i <= N; i++) wmax = Math.max(wmax, S.att[i]);
+      if (!(wmax > 0)) wmax = 1;
+
+      for (y = 0; y < n; y++) for (x = 0; x < n; x++){
+        kids.push(mk('rect', { x: (x * CELL), y: (y * CELL), width: CELL, height: CELL,
+          fill: rgbOf(state.pix[y * n + x]), 'class': 'vp-cell' }));
+      }
+      for (i = 0; i < N; i++){
+        var r = Math.floor(i / G), c = i % G, w = S.att[i + 1];
+        var op = 0.88 * (1 - w / wmax);
+        kids.push(mk('rect', { x: (c * pc), y: (r * pc), width: pc, height: pc,
+          'class': 'vp-scrim', opacity: op.toFixed(3) }));
+      }
+      for (i = 0; i <= G; i++){
+        kids.push(mk('line', { x1: 0, y1: (i * pc), x2: side, y2: (i * pc), 'class': 'vp-gap' }));
+        kids.push(mk('line', { x1: (i * pc), y1: 0, x2: (i * pc), y2: side, 'class': 'vp-gap' }));
+      }
+      if (pc >= 40){
+        for (i = 0; i < N; i++){
+          var rr = Math.floor(i / G), cc = i % G, ww = S.att[i + 1];
+          kids.push(mk('rect', { x: ((cc + 0.5) * pc - 12).toFixed(1), y: ((rr + 0.5) * pc - 4.4).toFixed(1),
+            width: 24, height: 9, rx: 3, 'class': 'vp-wpill' }));
+          var t = mk('text', { x: ((cc + 0.5) * pc).toFixed(1), y: ((rr + 0.5) * pc + 2.2).toFixed(1), 'class': 'vp-wtext' });
+          t.textContent = ww.toFixed(3);
+          kids.push(t);
+        }
+      }
+      // click targets (kept above the scrim so every patch stays selectable)
+      for (i = 0; i < N; i++){
+        var r2 = Math.floor(i / G), c2 = i % G;
+        kids.push(mk('rect', { x: (c2 * pc), y: (r2 * pc), width: pc, height: pc,
+          'class': 'vp-hit', 'data-vp-patch': i }));
+      }
+      if (!state.qCls && S.qi >= 1){
+        var qi = S.qi - 1, qr = Math.floor(qi / G), qc = qi % G;
+        kids.push(mk('rect', { x: (qc * pc + 1.1).toFixed(1), y: (qr * pc + 1.1).toFixed(1),
+          width: (pc - 2.2).toFixed(1), height: (pc - 2.2).toFixed(1), 'class': 'vp-qbox' }));
+      }
+      kids.push(mk('rect', { x: 0.5, y: 0.5, width: side - 1, height: side - 1, 'class': 'vp-frame' }));
+      elAttn.setAttribute('viewBox', '0 0 ' + side + ' ' + side);
+      elAttn.setAttribute('aria-label', 'Attention from ' + (state.qCls ? 'the CLS token' : 'patch ' + (S.qi - 1)) +
+        ' over ' + N + ' patches; brighter patches receive more weight');
+      setKids(elAttn, kids);
+    }
+
+    // ---------------------------------------------------------------- step 3: patch -> token
+    var PW = 900, LX = 6, BX = 200, BW = 686;
+    function drawPipe(S){
+      var kids = [], D = S.D, P = S.P, y = 18;
+      var qi = S.qi, isCls = state.qCls || qi === 0;
+
+      if (isCls){
+        var t0 = mk('text', { x: LX, y: y, 'class': 'vp-rowlab' });
+        t0.textContent = 'The [CLS] token has no pixels: it is a single learned vector, prepended to every sequence.';
+        kids.push(t0);
+        y += 26;
+        rowLabel(kids, LX, y + 16, 'x_cls', 'learned, R^' + D);
+        drawBars(kids, BX, y, BW, 34, S.cls, true);
+        y += 58;
+      } else {
+        var pi = qi - 1, pr = Math.floor(pi / S.G), pc2 = pi % S.G;
+        rowLabel(kids, LX, y + 16, 'patch #' + pi, '(row ' + pr + ', col ' + pc2 + ')');
+        var zoom = 56, cs = zoom / P, rx, ry;
+        for (ry = 0; ry < P; ry++) for (rx = 0; rx < P; rx++){
+          kids.push(mk('rect', { x: (BX + rx * cs).toFixed(2), y: (y + ry * cs).toFixed(2),
+            width: cs.toFixed(2), height: cs.toFixed(2),
+            fill: rgbOf(state.pix[(pr * P + ry) * S.n + (pc2 * P + rx)]), 'class': 'vp-cell' }));
+        }
+        kids.push(mk('rect', { x: (BX - 0.5).toFixed(2), y: (y - 0.5).toFixed(2),
+          width: (zoom + 1).toFixed(2), height: (zoom + 1).toFixed(2), 'class': 'vp-frame' }));
+        var t1 = mk('text', { x: BX + zoom + 14, y: y + zoom / 2, 'class': 'vp-note-t' });
+        t1.textContent = P + ' x ' + P + ' x 3 pixels, ImageNet-normalised: (v/255 - mean) / std';
+        kids.push(t1);
+        var t2 = mk('text', { x: BX + zoom + 14, y: y + zoom / 2 + 14, 'class': 'vp-note-t' });
+        t2.textContent = 'flattened in (P, P, C) order - the chapter’s einops pattern';
+        kids.push(t2);
+        y += zoom + 20;
+
+        rowLabel(kids, LX, y + 16, 'p  (flatten)', 'R^' + S.M + '  = P²C');
+        drawBars(kids, BX, y, BW, 34, S.patches[pi], false);
+        y += 50;
+
+        rowLabel(kids, LX, y + 16, 'E p  (project)', 'E is D x P²C = ' + D + ' x ' + S.M);
+        drawBars(kids, BX, y, BW, 34, S.proj[pi], true);
+        y += 58;
+      }
+
+      if (state.pos){
+        var pv = new Float64Array(D), a;
+        for (a = 0; a < D; a++) pv[a] = S.posE[qi * D + a];
+        rowLabel(kids, LX, y + 16, '+ E_pos[' + qi + ']', 'learned; fixed as you paint');
+        drawBars(kids, BX, y, BW, 34, pv, true);
+        var tp = mk('text', { x: LX, y: y + 40, 'class': 'vp-note-t' });
+        tp.textContent = 'scale ' + (0.5 * PIX_RMS).toFixed(2) + ' vs. patch RMS ' + S.rms.toFixed(2);
+        kids.push(tp);
+        y += 58;
+      } else {
+        var t3 = mk('text', { x: LX, y: y + 16, 'class': 'vp-rowsub' });
+        t3.textContent = 'positional embeddings are switched off';
+        kids.push(t3);
+        y += 26;
+      }
+
+      rowLabel(kids, LX, y + 16, 'z_' + qi, 'the token');
+      drawBars(kids, BX, y, BW, 34, S.z[qi], true);
+      y += 58;
+
+      rowLabel(kids, LX, y + 16, 'LayerNorm(z_' + qi + ')', '||ẑ|| = sqrt(D) = ' + Math.sqrt(D).toFixed(2));
+      drawBars(kids, BX, y, BW, 34, S.zn[qi], true);
+      y += 54;
+
+      elPipe.setAttribute('viewBox', '0 0 ' + PW + ' ' + y);
+      setKids(elPipe, kids);
+    }
+
+    // ---------------------------------------------------------------- step 4: the sequence
+    function drawSeq(S){
+      var kids = [], D = S.D, N = S.N, T = N + 1, i, a;
+      var x0 = 74, avail = PW - x0 - 14;
+      var cw = Math.min(18, avail / T), chh = Math.min(15, Math.max(7, 108 / D));
+      var lo = Infinity, hi = -Infinity;
+      for (i = 0; i < T; i++) for (a = 0; a < D; a++){
+        var v = S.z[i][a];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      if (!(hi > lo)) { hi = lo + 1; }
+      var y0 = 16;
+      var lab = mk('text', { x: x0 - 8, y: y0 + D * chh / 2, 'class': 'vp-rowsub', 'text-anchor': 'end' });
+      lab.textContent = 'D = ' + D;
+      kids.push(lab);
+      var lab2 = mk('text', { x: x0 - 8, y: y0 + D * chh / 2 + 13, 'class': 'vp-rowsub', 'text-anchor': 'end' });
+      lab2.textContent = 'dims';
+      kids.push(lab2);
+
+      for (i = 0; i < T; i++) for (a = 0; a < D; a++){
+        var op = 0.06 + 0.94 * ((S.z[i][a] - lo) / (hi - lo));
+        kids.push(mk('rect', { x: (x0 + i * cw).toFixed(2), y: (y0 + a * chh).toFixed(2),
+          width: Math.max(0.8, cw - 0.6).toFixed(2), height: Math.max(0.8, chh - 0.6).toFixed(2),
+          'class': 'vp-seqcell', 'fill-opacity': op.toFixed(3) }));
+      }
+      var yb = y0 + D * chh + 11;
+      var cls = mk('text', { x: (x0 + cw / 2).toFixed(2), y: yb, 'class': 'vp-seqcls' });
+      cls.textContent = 'CLS';
+      kids.push(cls);
+      var step = Math.max(1, Math.ceil(T / 24));
+      for (i = 1; i < T; i++){
+        if ((i - 1) % step !== 0 && i !== T - 1) continue;
+        var t = mk('text', { x: (x0 + (i + 0.5) * cw).toFixed(2), y: yb, 'class': 'vp-seqlab' });
+        t.textContent = String(i);
+        kids.push(t);
+      }
+      kids.push(mk('rect', { x: (x0 + S.qi * cw - 1.2).toFixed(2), y: (y0 - 1.2).toFixed(2),
+        width: (cw + 0.8).toFixed(2), height: (D * chh + 1.6).toFixed(2), 'class': 'vp-seqbox' }));
+
+      var note = mk('text', { x: x0, y: yb + 16, 'class': 'vp-note-t' });
+      note.textContent = 'z_0 ... z_' + N + ' : ' + T + ' vectors of width ' + D +
+        '. Nothing downstream knows these came from an image.';
+      kids.push(note);
+
+      elSeq.setAttribute('viewBox', '0 0 ' + PW + ' ' + (yb + 26));
+      setKids(elSeq, kids);
+      if (elLegend) elLegend.textContent = lo.toFixed(2) + '  →  ' + hi.toFixed(2);
+    }
+
+    // ---------------------------------------------------------------- readouts
+    function drawReadouts(S){
+      var N = S.N, T = N + 1, D = S.D, P = S.P, G = S.G, M = S.M;
+      var half = Math.max(2, Math.floor(P / 2));
+      var shrink = '';
+      if (half < P && S.n % half === 0){
+        var Nh = (S.n / half) * (S.n / half);
+        var ratio = ((Nh + 1) * (Nh + 1)) / (T * T);
+        shrink = ' Shrinking the patch to P = ' + half + ' would give ' + Nh + ' patches and <b>' +
+          ratio.toFixed(1) + '&times;</b> as many scores.';
+      }
+
+      elSeqMath.innerHTML =
+        '<b>N = (H/P) &middot; (W/P) = (' + S.n + '/' + P + ')&sup2; = ' + G + ' &times; ' + G + ' = ' + N +
+        '</b> patches &rarr; sequence length <b>N + 1 = ' + T + '</b> tokens (patches + <code>[CLS]</code>). ' +
+        'Each patch flattens to P&sup2;C = ' + P + '&sup2;&middot;3 = <b>' + M + '</b> numbers, so the shared embedding matrix ' +
+        '<b>E</b> is D &times; P&sup2;C = ' + D + ' &times; ' + M + ' = <b>' + (D * M).toLocaleString() + '</b> weights here ' +
+        '(ViT-B/16 uses P = 16, D = 768, so its <b>E</b> is 768 &times; 768 = 589,824 weights + 768 bias). ' +
+        'Attention builds a <b>' + T + ' &times; ' + T + ' = ' + (T * T).toLocaleString() + '</b>-entry score matrix.' + shrink;
+
+      var uni = 1 / T, wmax = 0, argmax = 0, j;
+      for (j = 0; j <= N; j++) if (S.att[j] > wmax){ wmax = S.att[j]; argmax = j; }
+      var effN = Math.exp(S.H);
+      var dupTxt = state.pos
+        ? (S.distinct < N
+            ? (N - S.distinct) + ' of ' + N + ' patches repeat pixel-for-pixel, but E_pos still makes every token unique'
+            : 'all ' + N + ' patches are pixel-wise distinct')
+        : (S.distinct < N
+            ? '<b>' + (N - S.distinct) + ' of ' + N + ' tokens are exact duplicates</b> — no positions, no way to tell them apart'
+            : 'no positional embeddings: token order carries no information');
+
+      elMeta.innerHTML =
+        '<span class="vp-chip">query: <b>' + (state.qCls ? '[CLS]' : 'patch ' + (S.qi - 1)) + '</b></span>' +
+        '<span class="vp-chip">max weight: <b>' + wmax.toFixed(3) + '</b> ' +
+          (argmax === 0 ? 'on [CLS]' : 'on patch ' + (argmax - 1)) +
+          (argmax === S.qi ? ' (the query itself)' : '') + '</span>' +
+        '<span class="vp-chip">uniform baseline 1/(N+1) = <b>' + uni.toFixed(3) + '</b></span>' +
+        '<span class="vp-chip">weight on [CLS]: <b>' + S.att[0].toFixed(3) + '</b></span>' +
+        '<span class="vp-chip">entropy <b>' + S.H.toFixed(2) + '</b> nats &rarr; e^H = <b>' + effN.toFixed(1) +
+          '</b> of ' + T + ' tokens</span>' +
+        '<span class="vp-chip">weight vs. looks-like-the-query: r = <b>' +
+          (isFinite(S.rAtt) ? S.rAtt.toFixed(2) : 'n/a') + '</b></span>' +
+        '<span class="vp-chip">' + dupTxt + '</span>';
+
+      // top attended tokens
+      var order = [], i;
+      for (i = 0; i <= N; i++) order.push(i);
+      order.sort(function(a, b){ return S.att[b] - S.att[a] || a - b; });
+      var html = '', lim = Math.min(6, order.length);
+      for (i = 0; i < lim; i++){
+        var t = order[i], w = S.att[t];
+        var name, swatch = '';
+        if (t === 0){ name = '[CLS] token'; }
+        else {
+          var pi = t - 1, r = Math.floor(pi / G), c = pi % G;
+          name = 'patch ' + pi + ' (r' + r + ', c' + c + ')';
+          swatch = '<span class="vp-topsw" style="background:' + rgbOf(meanIdx(pi, S)) + '"></span>';
+        }
+        if (t === S.qi) name += ' <b class="vp-isq">· query</b>';
+        html += '<div class="vp-toprow"><div>' + swatch + name + '</div>' +
+          '<div class="vp-topbar"><i style="width:' + (100 * w / (wmax || 1)).toFixed(1) + '%"></i></div>' +
+          '<div class="vp-topval">' + w.toFixed(3) + '</div></div>';
+      }
+      elTop.innerHTML = html;
+    }
+    // most frequent palette index inside a patch - only used as a colour swatch
+    function meanIdx(pi, S){
+      var G = S.G, P = S.P, n = S.n, r = Math.floor(pi / G), c = pi % G;
+      var counts = {}, best = 1, bestN = -1, rx, ry, k;
+      for (ry = 0; ry < P; ry++) for (rx = 0; rx < P; rx++){
+        k = state.pix[(r * P + ry) * n + (c * P + rx)];
+        counts[k] = (counts[k] || 0) + 1;
+        if (counts[k] > bestN){ bestN = counts[k]; best = k; }
+      }
+      return best;
+    }
+
+    var REAL = [
+      { n: 'ViT-B/32',            res: 224,  p: 32 },
+      { n: 'ViT-B/16 (canonical)', res: 224, p: 16 },
+      { n: 'ViT-L/14 (CLIP)',     res: 224,  p: 14 },
+      { n: 'ViT-L/14 @ 336',      res: 336,  p: 14 },
+      { n: 'ViT/16 @ 1024',       res: 1024, p: 16 }
+    ];
+    function drawReal(){
+      var base = 197 * 197, rows = '', i;
+      for (i = 0; i < REAL.length; i++){
+        var r = REAL[i], g = r.res / r.p, N = g * g, T = N + 1;
+        rows += '<tr><td>' + esc(r.n) + '</td><td>' + r.res + '&sup2;</td><td>' + r.p + '</td>' +
+          '<td>' + g + ' &times; ' + g + '</td><td><b>' + N.toLocaleString() + '</b></td>' +
+          '<td>' + T.toLocaleString() + '</td><td>' + (T * T).toLocaleString() + '</td>' +
+          '<td><b>' + (T * T / base).toFixed(2) + '&times;</b></td></tr>';
+      }
+      elReal.innerHTML =
+        '<thead><tr><th>configuration</th><th>resolution</th><th>P</th><th>patch grid</th><th>N</th>' +
+        '<th>seq len</th><th>scores (N+1)&sup2;</th><th>vs ViT-B/16</th></tr></thead><tbody>' + rows + '</tbody>';
+    }
+
+    // ---------------------------------------------------------------- controls
+    function syncPatchControl(){
+      var opts = patchOptions(state.size);
+      var idx = nearestIdx(opts, state.P);
+      state.P = opts[idx];
+      elPatch.max = opts.length - 1;
+      elPatch.value = idx;
+      var G = state.size / state.P;
+      var txt = 'P = ' + state.P + '  (' + G + '×' + G + ' patches)';
+      elPatchOut.value = txt;
+      elPatch.setAttribute('aria-valuetext', txt);
+    }
+    function syncQuery(S){
+      var want = state.qCls ? 'cls' : String(S.qi - 1);
+      if (elQuery.getAttribute('data-vp-n') !== String(S.N)){
+        var html = '<option value="cls">[CLS] token</option>', i;
+        for (i = 0; i < S.N; i++){
+          html += '<option value="' + i + '">patch ' + i + ' (r' + Math.floor(i / S.G) + ', c' + (i % S.G) + ')</option>';
+        }
+        elQuery.innerHTML = html;
+        elQuery.setAttribute('data-vp-n', String(S.N));
+      }
+      if (elQuery.value !== want) elQuery.value = want;
+    }
+    function syncStage(){
+      var i, nodes = root.querySelectorAll('.vp-stage');
+      for (i = 0; i < nodes.length; i++){
+        var need = parseInt(nodes[i].getAttribute('data-vp-min'), 10) || 1;
+        if (state.stage < need) nodes[i].classList.add('vp-off');
+        else nodes[i].classList.remove('vp-off');
+      }
+      elStageLbl.innerHTML = 'Step <b>' + state.stage + ' / 5</b> · ' + STAGES[state.stage - 1];
+      elPrev.disabled = state.stage <= 1;
+      elNext.disabled = state.stage >= 5;
+    }
+    function buildSwatches(){
+      var html = '', i;
+      for (i = 0; i < PALETTE.length; i++){
+        html += '<button type="button" class="vp-sw" data-vp-color="' + i + '" style="background:' + rgbOf(i) +
+          '" aria-pressed="' + (i === state.brush) + '" aria-label="Paint with ' + PALETTE[i].n + '" title="' +
+          PALETTE[i].n + '"></button>';
+      }
+      elSw.innerHTML = html;
+    }
+    function syncSwatches(){
+      var btns = elSw.querySelectorAll('.vp-sw'), i;
+      for (i = 0; i < btns.length; i++){
+        btns[i].setAttribute('aria-pressed', String(parseInt(btns[i].getAttribute('data-vp-color'), 10) === state.brush));
+      }
+    }
+
+    // ---------------------------------------------------------------- render
+    var pending = false;
+    function scheduleRender(){
+      if (pending) return;
+      pending = true;
+      var run = function(){ pending = false; render(); };
+      if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(run);
+      else setTimeout(run, 16);
+    }
+    function render(){
+      syncPatchControl();
+      var S = compute();
+      syncQuery(S);
+      syncStage();
+      drawImage(S);
+      drawAttn(S);
+      drawPipe(S);
+      drawSeq(S);
+      drawReadouts(S);
+    }
+
+    // ---------------------------------------------------------------- events
+    elSize.addEventListener('change', function(){
+      var old = state.size, next = clampInt(elSize.value, 8, 64, 24);
+      if (next === old) return;
+      state.pix = resample(state.pix, old, next);
+      state.size = next;
+      syncPatchControl();
+      scheduleRender();
+    });
+    elPatch.addEventListener('input', function(){
+      var opts = patchOptions(state.size);
+      state.P = opts[clampInt(elPatch.value, 0, opts.length - 1, 0)];
+      scheduleRender();
+    });
+    elDim.addEventListener('change', function(){
+      state.D = clampInt(elDim.value, 1, 64, 8);
+      scheduleRender();
+    });
+    elSeed.addEventListener('input', function(){
+      state.seed = clampInt(elSeed.value, 1, 999, 7);
+      scheduleRender();
+    });
+    elSeed.addEventListener('change', function(){
+      elSeed.value = clampInt(elSeed.value, 1, 999, 7);
+      state.seed = parseInt(elSeed.value, 10);
+      scheduleRender();
+    });
+    elPos.addEventListener('change', function(){ state.pos = !!elPos.checked; scheduleRender(); });
+    elSim.addEventListener('change', function(){ state.sim = !!elSim.checked; scheduleRender(); });
+    elQuery.addEventListener('change', function(){
+      var v = elQuery.value;
+      if (v === 'cls'){ state.qCls = true; }
+      else {
+        var i = clampInt(v, 0, 1e6, 0), G = state.size / state.P;
+        state.qCls = false;
+        state.qu = ((i % G) + 0.5) / G;
+        state.qv = (Math.floor(i / G) + 0.5) / G;
+      }
+      scheduleRender();
+    });
+
+    Array.prototype.forEach.call(root.querySelectorAll('.vp-preset'), function(btn){
+      btn.addEventListener('click', function(){
+        var name = btn.getAttribute('data-vp-preset');
+        state.pix = buildImage(name, state.size);
+        scheduleRender();
+      });
+    });
+
+    // painting - pure geometry against the SVG box, so it also works over the patch
+    // grid lines, the frame, and while the pointer is captured mid-drag.
+    var painting = false;
+    function cellFromEvent(e){
+      var box = elImg.getBoundingClientRect();
+      if (!box.width || !box.height) return -1;
+      var n = state.size;
+      var x = Math.floor((e.clientX - box.left) / box.width * n);
+      var y = Math.floor((e.clientY - box.top) / box.height * n);
+      if (!(x >= 0 && x < n && y >= 0 && y < n)) return -1;
+      return y * n + x;
+    }
+    function paintAt(i){
+      if (!(i >= 0) || i >= state.pix.length) return;
+      if (state.pix[i] === state.brush) return;
+      state.pix[i] = state.brush;
+      scheduleRender();
+    }
+    elImg.addEventListener('pointerdown', function(e){
+      var i = cellFromEvent(e);
+      if (i < 0) return;
+      painting = true;
+      if (elImg.setPointerCapture){ try { elImg.setPointerCapture(e.pointerId); } catch (err){} }
+      paintAt(i);
+      e.preventDefault();
+    });
+    elImg.addEventListener('pointermove', function(e){
+      if (!painting) return;
+      paintAt(cellFromEvent(e));
+      e.preventDefault();
+    });
+    window.addEventListener('pointerup', function(){ painting = false; });
+    window.addEventListener('pointercancel', function(){ painting = false; });
+
+    elSw.addEventListener('click', function(e){
+      var t = e.target;
+      while (t && t !== elSw && !(t.getAttribute && t.getAttribute('data-vp-color') !== null)) t = t.parentNode;
+      if (!t || t === elSw || !t.getAttribute) return;
+      state.brush = clampInt(t.getAttribute('data-vp-color'), 0, PALETTE.length - 1, 1);
+      syncSwatches();
+    });
+
+    elAttn.addEventListener('click', function(e){
+      var t = e.target;
+      if (!t || !t.getAttribute) return;
+      var a = t.getAttribute('data-vp-patch');
+      if (a === null) return;
+      var i = clampInt(a, 0, 1e6, 0), G = state.size / state.P;
+      state.qCls = false;
+      state.qu = ((i % G) + 0.5) / G;
+      state.qv = (Math.floor(i / G) + 0.5) / G;
+      scheduleRender();
+    });
+
+    function stopPlay(){
+      if (timer !== null){ clearTimeout(timer); timer = null; }
+      elPlay.innerHTML = '▶ Play';
+      elPlay.setAttribute('aria-pressed', 'false');
+    }
+    function stepPlay(){
+      if (state.stage >= 5){ stopPlay(); scheduleRender(); return; }
+      state.stage++;
+      scheduleRender();
+      timer = setTimeout(stepPlay, 1300);
+    }
+    elPrev.addEventListener('click', function(){ stopPlay(); state.stage = Math.max(1, state.stage - 1); scheduleRender(); });
+    elNext.addEventListener('click', function(){ stopPlay(); state.stage = Math.min(5, state.stage + 1); scheduleRender(); });
+    elPlay.addEventListener('click', function(){
+      if (timer !== null){ stopPlay(); return; }
+      state.stage = 1;
+      elPlay.innerHTML = '■ Stop';
+      elPlay.setAttribute('aria-pressed', 'true');
+      scheduleRender();
+      timer = setTimeout(stepPlay, 1300);
+    });
+
+    buildSwatches();
+    drawReal();
+    render();
+  })();</script>
+</div>

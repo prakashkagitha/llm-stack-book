@@ -98,14 +98,16 @@ Without checkpointing, storing all activations for an $L$-layer network costs $O
 The memory–compute tradeoff is:
 
 $$
-M_{\text{act}} = O\!\left(\frac{L}{k}\right), \quad \text{FLOPs}_{\text{extra}} = O(k)
+M_{\text{act}} = O\!\left(k + \frac{L}{k}\right), \quad \text{FLOPs}_{\text{extra}} = \text{one extra forward pass}
 $$
 
-where $k$ is the number of "checkpoints" (layer boundaries where you store a tensor). Choosing $k = \sqrt{L}$ minimizes the product, giving $O(\sqrt{L})$ memory and $O(\sqrt{L})$ extra cost — the classic sublinear memory result.
+where $k$ is the number of "checkpoints" (layer boundaries where you store a tensor). The two memory terms pull in opposite directions: you hold $k$ stored boundary tensors, and during backward you re-materialize one segment of $L/k$ layers at a time. Their sum is minimized at $k = \sqrt{L}$, giving $O(\sqrt{L})$ memory — the classic sublinear memory result. The *compute* side is flat, not growing in $k$: every layer is recomputed exactly once no matter how the segments are drawn, so the price is a single extra forward pass (≈ +33% on a forward+backward step) for any $k \ge 1$. That asymmetry is the practical punchline — since the recompute bill does not grow with $k$, there is no reason to stop short of the memory optimum.
 
 {{fig:memeff-checkpointing-recompute-timeline}}
 
 In practice, modern frameworks let you checkpoint at the granularity of an entire transformer block, so the +33% compute overhead estimate is approximately correct for full-checkpointing of all blocks.
+
+{{tool:gradient-checkpointing}}
 
 ### PyTorch Activation Checkpointing in Practice
 
