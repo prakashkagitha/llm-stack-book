@@ -539,6 +539,21 @@ print("held-out S4:", np.round(pred, 3), "vs actual", np.round(L_obs[~mask], 3))
 
 {{fig:loss-extrapolates-constants-dont}}
 
+!!! example "We actually ran this (one H100, ~10 minutes)"
+    The plots above describe the method; here is the method executed. Using the capstone's own `stacklm` package (`capstone/experiments/real_run.py`), we trained the four-rung ladder and then the full 84.6M-non-embedding-parameter `Stack-100M`, all at a **matched ~20M-token budget**, on a single H100. The training corpus was fully offline and real — *this book's own prose plus the source of its installed libraries* — because the point is to demonstrate the **procedure end to end on genuine text**, not to reproduce the FineWeb numbers.
+
+    | Rung | non-embed $N$ | held-out val loss | MFU |
+    |---|---|---|---|
+    | S1 | 3.94M | 2.205 | 4.1% |
+    | S2 | 9.17M | 2.128 | 6.1% |
+    | S3 | 18.81M | 2.058 | 8.2% |
+    | S4 | 43.98M | 1.994 | 11.9% |
+    | **Stack-100M** | **84.58M** | **1.947** *(measured)* | 13.9% |
+
+    Fitting $L(N)=E+A/N^{\alpha}$ to the four rungs and extrapolating to 84.58M predicts **1.945**; the model actually trained to **1.947** — a **0.002-nat** miss on a held-out model twice the size of the top rung. The fitted exponent ($\alpha\approx0.12$) is loosely pinned by only four points and wandered between reruns, but the *extrapolated loss* did not — which is the whole lesson of the previous section, now measured rather than asserted. As a systems aside, notice **MFU climbs with model size** (4% &rarr; 14%): the tiny rungs are launch-overhead- and memory-bound, and only the larger matmuls start to feed the tensor cores. The generation from that 84.6M model, prompted with *"The attention mechanism"*, was recognizably in-domain English: *"...across the Hybrid model, for each expert, and the routing weights are stored in..."* — a 100M model trained for ten minutes has learned the register, if not yet the facts. All numbers here are the raw output of `results_v2_matched/metrics.json` in the repo; nothing is hand-tuned.
+
+{{fig:capstone-real-scaling-run}}
+
 !!! tip "Practitioner tip: use a variable-projection fitter, not multi-start L-BFGS"
     The multi-start loop above is honest about its own fragility — 60 restarts, and it still needs exponent bounds to stay sane. There is a better structure to exploit: for **fixed** $(\alpha,\beta)$ the model is *linear* in $(E, A, B)$, so you can solve those three by least squares in closed form and search only the two exponents. That is **variable projection**, and it turns a 5-D non-convex search into a well-behaved 2-D grid. [`Open-Athena/vpnls`](https://github.com/Open-Athena/vpnls) implements exactly this for $L=E+A/N^\alpha+B/D^\beta$ (Cython/SciPy/JAX backends, MSE and Huber losses); [`apple/ml-scalefit`](https://github.com/apple/ml-scalefit) is a JAX alternative with basin-hopping and bootstrapped uncertainty. The capstone repo's `stacklm/scaling/fit.py` uses the same trick in 30 lines of NumPy so CI needs no SciPy.
 

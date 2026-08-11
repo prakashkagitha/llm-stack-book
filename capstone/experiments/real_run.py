@@ -202,8 +202,9 @@ def main():
 
     # ---- real generation ----
     try:
-        prompt = "Once upon a time" if "TinyStories" in source else "The"
-        sample = generate(tgt_model, tok, prompt, max_new_tokens=60, temperature=0.8)
+        prompt = "Once upon a time" if "TinyStories" in source else "The attention mechanism"
+        sample = generate(tgt_model, tok, prompt, max_new_tokens=60, temperature=0.7)
+        sample = prompt + sample
     except Exception as e:
         sample = f"(generation failed: {str(e)[:80]})"
     open(os.path.join(OUT, "sample.txt"), "w").write(str(sample))
