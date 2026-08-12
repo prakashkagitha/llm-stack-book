@@ -105,7 +105,7 @@ where $\delta$ is the minimum detectable effect (MDE) you care about, $\sigma^2$
     = \frac{3.765}{0.0004} \approx 9{,}413 \text{ users per arm}
     $$
 
-    At 100,000 active daily users split 50/50, you reach this in under 4 hours. At 1,000 active daily users, it takes roughly 19 days. This illustrates why low-traffic products need either a higher MDE (coarser test) or variance reduction techniques (see CUPED below).
+    At 100,000 active daily users split 50/50, each arm accrues 50,000 users/day, so you reach this in about 4.5 hours. At 1,000 active daily users, it takes roughly 19 days. This illustrates why low-traffic products need either a higher MDE (coarser test) or variance reduction techniques (see CUPED below).
 
 ### Running the test
 
@@ -139,7 +139,9 @@ def assign_variant(
     digest = hashlib.sha256(
         f"{experiment.experiment_id}:{user_id}".encode()
     ).hexdigest()
-    bucket = int(digest[:8], 16) / 0xFFFFFFFF  # uniform [0, 1)
+    # Divide by 2**32, not 0xFFFFFFFF: the 32-bit integer ranges over
+    # [0, 2**32 - 1], so 2**32 is what makes the result uniform on [0, 1).
+    bucket = int(digest[:8], 16) / 2**32  # uniform [0, 1)
 
     if bucket >= experiment.traffic_fraction:
         return "holdout"
@@ -149,7 +151,7 @@ def assign_variant(
     digest2 = hashlib.sha256(
         f"{experiment.experiment_id}:assign:{user_id}".encode()
     ).hexdigest()
-    bucket2 = int(digest2[:8], 16) / 0xFFFFFFFF
+    bucket2 = int(digest2[:8], 16) / 2**32
 
     return "treatment" if bucket2 < experiment.treatment_fraction else "control"
 
@@ -203,7 +205,7 @@ result = two_proportion_z_test(
     n_control=10_000, k_control=4_000,
     n_treatment=10_000, k_treatment=4_200,
 )
-# Expected: ~+5% relative lift, p ≈ 0.001 → significant
+# Expected: ~+5% relative lift, z ≈ 2.88, p ≈ 0.004 → significant
 print(result)
 ```
 
@@ -295,7 +297,7 @@ In search/recommendation, interleaving mixes ranked lists. For LLM chat products
 
 For document editing or summarization, you can show two alternative completions and ask the user to select or edit one. The fraction of users who prefer treatment over control — the **win rate** — is the primary signal.
 
-The statistical efficiency gain is substantial. Because each user sees both models, within-user variance is eliminated. Empirically, interleaving experiments have been reported to require on the order of 100x fewer user-sessions to detect the same effect size as a parallel A/B test for ranking systems (Radlinski & Craswell, "Optimized Interleaving for Online Retrieval Evaluation," WSDM 2013). The gain for LLM completions is product-dependent but typically a factor of 10–30x.
+The statistical efficiency gain is substantial. Because each user sees both models, the between-user variance component is differenced out, leaving only within-user noise. Empirically, interleaving experiments have been reported to require on the order of 100x fewer user-sessions to detect the same effect size as a parallel A/B test for ranking systems (Radlinski & Craswell, "Optimized Interleaving for Online Retrieval Evaluation," WSDM 2013). The gain for LLM completions is product-dependent but typically a factor of 10–30x.
 
 {{fig:online-eval-interleaving-vs-ab-variance}}
 
@@ -328,8 +330,9 @@ def compute_interleaving_win_rate(
     win_rate = wins_treatment / n
 
     # Under H0: win_rate = 0.5; use binomial test
-    # (scipy.stats.binom_test was deprecated in SciPy 1.7 and removed in 1.12+;
-    # use the modern binomtest API, which returns a result object.)
+    # (scipy.stats.binom_test was superseded by binomtest in SciPy 1.7,
+    # deprecated in 1.10 and removed in 1.12; use the modern binomtest API,
+    # which returns a result object.)
     p_value = stats.binomtest(wins_treatment, n, p=0.5, alternative="two-sided").pvalue
 
     return {
@@ -372,7 +375,7 @@ $$
 \text{Var}(\tilde{Y}) = \text{Var}(Y)(1 - \rho^2)
 $$
 
-where $\rho$ is the Pearson correlation between $Y$ and $X$. If $\rho = 0.7$ (typical for behavioral metrics), variance drops by $1 - 0.49 = 51\%$, and required sample size drops by half.
+where $\rho$ is the Pearson correlation between $Y$ and $X$. If $\rho = 0.7$ (typical for behavioral metrics), variance drops by $\rho^2 = 49\%$ (only $1 - \rho^2 = 51\%$ of it remains), and the required sample size drops by roughly half.
 
 {{fig:online-eval-cuped-variance-reduction}}
 
@@ -426,18 +429,26 @@ def cuped_estimate(
         "significant": p_value < 0.05,
     }
 
-# Simulate: 500 users per arm, thumbs-up rate 0.40 control / 0.42 treatment
+# Simulate 500 users per arm. Each user has a persistent thumbs-up propensity
+# (mean 0.40) and rates ~20 messages per period, so the metric is a per-user
+# thumbs-up *rate* and the pre-period rate is strongly correlated with the
+# in-experiment one. True rates: 0.40 control, 0.42 treatment (+2 points).
 rng = np.random.default_rng(42)
-n = 500
-x_c = rng.binomial(1, 0.40, n).astype(float)  # pre-exp covariate
-x_t = rng.binomial(1, 0.40, n).astype(float)
-# In-experiment: add treatment effect + correlation with pre-exp
-y_c = np.clip(x_c * 0.7 + rng.binomial(1, 0.12, n), 0, 1)
-y_t = np.clip(x_t * 0.7 + rng.binomial(1, 0.14, n), 0, 1)
+n, msgs = 500, 20
+p_user_c = rng.beta(4, 6, n)   # per-user propensity, mean 0.40
+p_user_t = rng.beta(4, 6, n)
+
+x_c = rng.binomial(msgs, p_user_c) / msgs           # pre-experiment covariate
+x_t = rng.binomial(msgs, p_user_t) / msgs
+y_c = rng.binomial(msgs, p_user_c) / msgs           # in-experiment, control
+y_t = rng.binomial(msgs, np.clip(p_user_t + 0.02, 0, 1)) / msgs   # treatment
 
 result = cuped_estimate(y_c, y_t, x_c, x_t)
 print(f"Delta: {result['delta']:.4f}, p={result['p_value']:.4f}, "
       f"variance reduction: {result['variance_reduction_fraction']:.1%}")
+# Delta: 0.0137, p=0.0972, variance reduction: 46.3%
+# (the same data unadjusted gives delta=0.0131 at p=0.245 — CUPED barely
+#  moved the point estimate; what it removed was the noise around it.)
 ```
 
 ### Sequential testing (always-valid p-values)
@@ -584,8 +595,9 @@ spec:
         - setWeight: 50      # 50% — effective A/B
           pause: {duration: 24h}
         - setWeight: 100     # full rollout
-      # Automatic rollback if any guardrail fires
-      autoPromotionEnabled: false
+      # Rollback is automatic: a failing `analysis` step aborts the rollout and
+      # shifts all traffic back to the stable ReplicaSet. (Insert a bare
+      # `- pause: {}` step if you also want a manual promotion gate.)
 ```
 
 ```python
@@ -936,7 +948,7 @@ None of this requires a million users. When you deploy the capstone model from [
 
     Two-sided $p$-value: $p = 2\,(1 - \Phi(2.88)) \approx 2 \times 0.00199 \approx 0.004$.
 
-    Since $0.004 < 0.05$, the result **is significant**. The relative lift is $\frac{0.42 - 0.40}{0.40} = 0.05$, i.e. a **+5% relative** improvement. (This matches the comment in the chapter's `two_proportion_z_test` example: ~+5% relative lift, $p \approx 0.001$–$0.004$ range, significant.)
+    Since $0.004 < 0.05$, the result **is significant**. The relative lift is $\frac{0.42 - 0.40}{0.40} = 0.05$, i.e. a **+5% relative** improvement. (This matches the comment in the chapter's `two_proportion_z_test` example: ~+5% relative lift, $p \approx 0.004$, significant.)
 
 **3.** Your thumbs-up rate is $0.40$ with Bernoulli standard deviation $\sigma = 0.49$. You want to detect an MDE of $\delta = 0.02$ (2 percentage points) with 80% power at $\alpha = 0.05$, so $z_{\alpha/2} = 1.96$ and $z_\beta = 0.84$. (a) Compute the required users per arm with a plain A/B test. (b) Now suppose you have a pre-experiment covariate correlated with the metric at $\rho = 0.7$ and apply CUPED. Compute the new required sample size per arm and the number of days to reach it at 500 users/arm/day.
 

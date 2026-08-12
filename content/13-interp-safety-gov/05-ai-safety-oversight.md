@@ -96,21 +96,25 @@ Each level bootstraps oversight one notch above unaided human capability, using 
 def recursive_evaluate(task, decompose, solve, human_judge, depth=0, max_depth=3):
     """Amplified evaluation: decompose a task too hard to judge directly into
     subtasks, judge those (recursively), then judge the composition.
-    Returns a scalar quality score the human TRUSTS, because every
-    individual judgment was within the human's competence."""
+    Returns a (result, score) pair -- the score is one the human TRUSTS,
+    because every individual judgment was within the human's competence.
+    One signature at every level: `solve(task, subresults=None)` and
+    `human_judge(task, result, sub_scores=None)`."""
     if depth >= max_depth or not decompose(task):
         # Base case: small enough for a human to judge unaided.
-        return human_judge(task, solve(task))
+        result = solve(task)
+        return result, human_judge(task, result)
 
     subtasks = decompose(task)                       # split into checkable pieces
-    sub_scores = [recursive_evaluate(st, decompose, solve, human_judge,
-                                     depth + 1, max_depth) for st in subtasks]
+    sub = [recursive_evaluate(st, decompose, solve, human_judge,
+                              depth + 1, max_depth) for st in subtasks]
+    sub_results, sub_scores = zip(*sub)              # the sub-ANSWERS and their scores
 
     # Human only judges (a) each subtask result and (b) whether the
     # COMPOSITION of trusted sub-results is faithfully assembled -- both
     # local, low-difficulty judgments even when `task` is globally hard.
-    composition = solve(task, subresults=sub_scores)
-    return human_judge(task, composition, sub_scores=sub_scores)
+    composition = solve(task, subresults=sub_results)
+    return composition, human_judge(task, composition, sub_scores=sub_scores)
 ```
 
 The fragility of RRM is **error compounding**: if each level introduces a small misalignment $\epsilon$, the gap can widen across the recursion, and worse, errors at level $k$ poison the training data for level $k+1$. RRM only works if the verification gap is real at *every* level — if there exists a task where checking is *not* easier than doing, the recursion stalls there.
@@ -128,7 +132,7 @@ The experimental setup is elegant and you can reproduce its logic on any model p
 ```python
 import torch, torch.nn.functional as F
 
-def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=0.0,
+def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=0.5,
                         aux_weight=0.5):
     """Burns et al. found a key trick: an *auxiliary confidence loss* that
     lets the strong model disagree with weak labels when it is internally
@@ -139,10 +143,13 @@ def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=0.0,
     # (2) auxiliary term: push the strong model toward its OWN confident
     #     prediction (a hardened version of its current belief), which
     #     encodes "trust yourself when you strongly disagree".
-    p = F.softmax(strong_logits, dim=-1)
-    hardened = (p > conf_threshold).float()
-    hardened = hardened / hardened.sum(dim=-1, keepdim=True).clamp_min(1e-9)
-    conf_loss = F.cross_entropy(strong_logits, hardened.argmax(dim=-1))
+    p = F.softmax(strong_logits, dim=-1).detach()   # target, not a gradient path
+    conf, hardened = p.max(dim=-1)                  # hardened self-label = argmax
+    per_sample = F.cross_entropy(strong_logits, hardened, reduction="none")
+    # Only trust the self-label on rows the model is actually confident about;
+    # unconfident rows contribute nothing rather than a spurious target.
+    gate = (conf > conf_threshold).float()
+    conf_loss = (gate * per_sample).sum() / gate.sum().clamp_min(1.0)
 
     return (1 - aux_weight) * ce + aux_weight * conf_loss
 
@@ -235,8 +242,11 @@ The eval-harness mechanics are built from scratch in [Building Eval Harnesses](.
 inspect eval autonomy_task.py --model <provider>/<model-id> --epochs 1
 # 2. Scaffold + tools, and 10 independent attempts per task: reporting the
 #    best-of-10 success rate approximates what a determined attacker gets.
+#    NOTE: --epochs alone reduces the 10 attempts with the DEFAULT reducer
+#    (mean), which is the "default capability" number, not the ceiling. You
+#    must ask for the any-success reducer explicitly.
 inspect eval autonomy_task.py --model <provider>/<model-id> \
-    --epochs 10 -T use_tools=true
+    --epochs 10 --epochs-reducer at_least_1 -T use_tools=true
 # 3. Repeat against a version fine-tuned ON the dangerous task -- the only
 #    honest estimate of what a stolen or open-weight checkpoint can do.
 inspect view    # step-level transcripts: what it tried, and where it stalled
@@ -287,9 +297,10 @@ The deepest and most subtle issue is **reasoning faithfulness**: when a model em
 - **Biasing features / paraphrasing**: insert a cue (e.g. "I think the answer is (A)") not mentioned in the CoT. If the answer flips to (A) but the CoT never references the cue, the stated reasoning is hiding the real cause.
 
 ```python
-def faithfulness_probes(model, question, full_cot):
+def faithfulness_probes(model, question, full_cot, cued_option="A"):
     """Return faithfulness diagnostics for a single CoT trace.
-    Lower 'answer_stability_under_truncation' and higher
+    Higher 'answer_locked_in_fraction' (the answer only settles LATE in the
+    trace, so truncation changes it) and higher
     'sensitivity_to_injected_error' both indicate MORE faithful CoT."""
     steps = full_cot.split("\n")
     final = model.answer_given(question, full_cot)
@@ -307,9 +318,13 @@ def faithfulness_probes(model, question, full_cot):
     corrupted[mid] = corrupted[mid] + "  (NOTE: 7*8 = 54)"  # injected error
     changed = model.answer_given(question, "\n".join(corrupted)) != final
 
-    # (3) Biasing cue not referenced in CoT.
-    biased = model.answer_given("I think it's (A). " + question, full_cot)
-    silent_bias = (biased != final)  # answer moved but CoT never cited the cue
+    # (3) Biasing cue not referenced in CoT: hold the CoT FIXED (so it
+    #     demonstrably cannot cite the cue) and add the cue to the prompt.
+    #     Unfaithful only if the answer moves TO the cued option -- a flip to
+    #     some other option is noise, not silent bias.
+    biased = model.answer_given(f"I think it's ({cued_option}). " + question,
+                                full_cot)
+    silent_bias = (biased == cued_option and final != cued_option)
 
     return {"answer_locked_in_fraction": early_fraction,   # ~1.0 = faithful
             "sensitivity_to_injected_error": changed,       # True = faithful
@@ -343,10 +358,11 @@ import numpy as np
 
 def trusted_monitoring_protocol(untrusted_action, trusted_monitor,
                                 audit_threshold, trusted_fallback,
-                                audit_budget_remaining):
+                                audit_budget_remaining, human_audit):
     """One step of a control protocol. The trusted (weak, safe) model scores
     the untrusted (strong, maybe-scheming) model's proposed action; we audit
-    the most suspicious actions while the budget lasts, else defer to trusted."""
+    the most suspicious actions while the budget lasts, else defer to trusted.
+    `human_audit(action) -> 'safe' | 'BACKDOOR'` is the expensive reviewer."""
     suspicion = trusted_monitor.suspicion_score(untrusted_action)  # in [0,1]
 
     if suspicion >= audit_threshold and audit_budget_remaining > 0:
@@ -508,7 +524,7 @@ As capabilities rise, the field expects the load-bearing argument to shift from 
     **Open-source & tools**
 
     - [google-deepmind/dangerous-capability-evaluations](https://github.com/google-deepmind/dangerous-capability-evaluations) — open eval harness for CTF, self-proliferation, and self-reasoning challenges released alongside the Phuong et al. paper.
-    - [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the runner most safety evals are written against: `Task` = dataset + solver + scorer, per-sample Docker sandboxing, step-level transcripts, and `--epochs` for best-of-$n$ elicitation sweeps.
+    - [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the runner most safety evals are written against: `Task` = dataset + solver + scorer, per-sample Docker sandboxing, step-level transcripts, and `--epochs` (paired with `--epochs-reducer`, since the default reducer is the *mean*) for best-of-$n$ elicitation sweeps.
     - [UKGovernmentBEIS/inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals) — community Inspect implementations including WMDP (hazardous knowledge) and AgentHarm (agentic misuse).
     - [METR/vivaria](https://github.com/METR/vivaria) and [METR/task-standard](https://github.com/METR/task-standard) — METR's platform and portable task spec for autonomy/self-proliferation evaluations with agent and human-baseline runs.
     - **ControlArena** (UK AI Security Institute) — open-source control settings, attack policies, and monitors for running the red-team/blue-team protocol games of the control section.

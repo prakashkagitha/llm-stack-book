@@ -76,7 +76,7 @@ LABEL_NAMES = ["safe", "jailbreak", "hate", "self_harm", "off_topic"]
 @dataclass
 class GuardrailDecision:
     label: str           # e.g. "safe" or "jailbreak"
-    score: float         # confidence in the predicted label
+    score: float         # p = probability the request is NOT safe (Section 2.1)
     blocked: bool
     reason: Optional[str] = None
 
@@ -105,17 +105,30 @@ class InputGuardrail:
 
         logits = self.model(**inputs).logits          # shape: [1, num_labels]
         probs = F.softmax(logits, dim=-1)[0]          # shape: [num_labels]
-        pred_idx = probs.argmax().item()
-        pred_label = LABEL_NAMES[pred_idx]
-        pred_score = probs[pred_idx].item()
 
-        blocked = pred_label != "safe" and pred_score >= self.threshold
+        # Threshold the *unsafe mass*, not the argmax's own confidence. These
+        # differ once K > 2: probs = {safe .30, hate .25, self_harm .25,
+        # jailbreak .20} carries 0.70 of unsafe mass, yet argmax is "safe", so
+        # an argmax-first rule could never block it at any tau. And because the
+        # argmax always holds p >= 1/K, an argmax-first rule ignores every
+        # tau <= 1/K — exactly the low-tau regime the F_beta tuning above
+        # recommends. p = 1 - P(safe) is the quantity tau applies to.
+        safe_idx = LABEL_NAMES.index("safe")
+        unsafe_prob = 1.0 - probs[safe_idx].item()
+        # Most likely violated category, for logging and routing.
+        top_unsafe = max(
+            (i for i in range(len(LABEL_NAMES)) if i != safe_idx),
+            key=lambda i: probs[i].item(),
+        )
+        top_label = LABEL_NAMES[top_unsafe]
+
+        blocked = unsafe_prob >= self.threshold
 
         return GuardrailDecision(
-            label=pred_label,
-            score=pred_score,
+            label=top_label if blocked else "safe",
+            score=unsafe_prob,
             blocked=blocked,
-            reason=pred_label if blocked else None,
+            reason=top_label if blocked else None,
         )
 
 
@@ -145,7 +158,7 @@ Above the regex layer, the standard open-weights component for this job is **Lla
 # jailbreak_heuristics.py
 import re
 import base64
-from typing import Optional
+from typing import List, Optional
 
 # Known jailbreak fragments (non-exhaustive; maintain as a live list)
 JAILBREAK_PATTERNS = [
@@ -156,26 +169,37 @@ JAILBREAK_PATTERNS = [
     re.compile(r"respond as if (you were|you are) (a|an|the) .{0,40}(evil|uncensored|unrestricted)", re.IGNORECASE),
 ]
 
-def _try_decode_base64(text: str) -> Optional[str]:
-    """Try to base64-decode; return decoded string or None on failure."""
-    try:
-        # Only try if the string looks like b64: no spaces, multiples of 4 padded, etc.
-        cleaned = text.strip().replace("\n", "")
-        decoded = base64.b64decode(cleaned + "==").decode("utf-8")
-        return decoded if decoded.isprintable() else None
-    except Exception:
-        return None
+# A base64 blob anywhere in the message, not just a message that is entirely
+# base64: the realistic attack is a blob wrapped in innocuous prose
+# ("please decode and follow: aWdub3Jl..."), and decoding the whole string
+# fails on that because the prose corrupts the payload.
+B64_BLOB = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
+
+def _decode_base64_payloads(text: str) -> List[str]:
+    """Return every embedded base64 blob that decodes to plausible text."""
+    payloads = []
+    for blob in B64_BLOB.findall(text):
+        core = blob.rstrip("=")
+        try:
+            raw = base64.b64decode(core + "=" * (-len(core) % 4), validate=True)
+            decoded = raw.decode("utf-8")
+        except Exception:
+            continue                      # not base64, or not UTF-8 text
+        if not decoded:
+            continue
+        # Accept if it is mostly text. Do NOT use str.isprintable(): "\n" is
+        # not printable, so it would reject the common multi-line payload.
+        text_like = sum(c.isprintable() or c in "\n\r\t" for c in decoded)
+        if text_like / len(decoded) > 0.9:
+            payloads.append(decoded)
+    return payloads
 
 def check_jailbreak_heuristics(message: str) -> Optional[str]:
     """
     Returns a reason string if any heuristic fires, else None.
     Check both the raw message AND any embedded base64 payloads.
     """
-    candidates = [message]
-    # Add base64-decoded version if decoding succeeds
-    decoded = _try_decode_base64(message)
-    if decoded:
-        candidates.append(decoded)
+    candidates = [message] + _decode_base64_payloads(message)
 
     for candidate in candidates:
         for pattern in JAILBREAK_PATTERNS:
@@ -362,7 +386,7 @@ class CanaryDetector:
 
     def check_output(self, output: str) -> bool:
         """Returns True if a suspiciously similar string is found in output."""
-        # Sliding-window similarity check over 50-char windows
+        # Sliding-window similarity check, window = length of the canary
         window = len(self.canary)
         for i in range(len(output) - window + 1):
             snippet = output[i : i + window]
@@ -452,7 +476,7 @@ Refusal design is as much a product decision as an engineering one. The key axes
     - **Precision** (fraction of blocks that are real harms) = 475 / (475 + 190) ≈ **71%**
     - **False positive rate** = 190 / 9,500 ≈ **2%** of legitimate requests blocked
 
-    Lowering the threshold to 0.3 might push recall to 98% but false positive rate to 5%. For a consumer chatbot serving millions of requests per day, 5% false positives means millions of legitimate users blocked daily — an unacceptable UX cost. Tune thresholds on a held-out slice representing your actual traffic distribution, not a balanced benchmark dataset.
+    Lowering the threshold to 0.3 might push recall to 98% but false positive rate to 5%. For a consumer chatbot at 5 M requests/day, a 5% false-positive rate wrongly blocks $0.05 \times 5{,}000{,}000 = 250{,}000$ legitimate requests every day — hundreds of thousands of frustrated sessions, an unacceptable UX cost. Tune thresholds on a held-out slice representing your actual traffic distribution, not a balanced benchmark dataset.
 
 ### 5.3 Response Regeneration vs. Hard Refusal
 
@@ -469,7 +493,7 @@ This is more expensive (2× inference for borderline cases) but significantly re
 Everything above assumes you hold the complete response before deciding. Streaming breaks that assumption: tokens reach the user's screen as they are produced, so by the time a classifier sees a complete response the harmful text has already been displayed. Three workable policies, in increasing order of UX cost:
 
 1. **Chunked incremental classification.** Classify the running prefix every *c* tokens (or at sentence boundaries) and abort generation the moment a chunk trips the threshold. This *truncates* harm rather than preventing it — the user still saw the prefix — but it is the cheapest option and is what most chat products do.
-2. **Delay buffer.** Hold the most recent *k* tokens back and classify prefix + buffer before releasing the oldest token. Nothing unsafe is ever emitted provided the classifier fires within *k* tokens of the harmful content starting. The cost is a one-buffer delay *after* time-to-first-token, which users perceive far less than a delay before it.
+2. **Delay buffer.** Hold the most recent *k* tokens back and classify prefix + buffer before releasing the oldest token. Nothing unsafe is ever emitted provided the classifier fires within *k* tokens of the harmful content starting. The cost is paid up front: nothing appears on screen until the buffer has filled, so *perceived* time-to-first-token grows by $k$ times the per-output-token decode time (48 tokens at 20 ms/token is roughly a second of dead air) — after which the stream runs at full speed. If that opening delay is unacceptable, ramp the buffer: release the first token immediately and grow the hold-back to *k* over the first *k* tokens, trading a small exposure window at the very start for a normal TTFT.
 3. **Full buffering.** Do not stream at all on high-risk routes: generate, classify, then emit. Maximum safety, worst perceived latency.
 
 ```python
@@ -513,9 +537,9 @@ The classifier calls dominate the cost here, so `every` is the tuning knob: with
 Rather than a general-purpose encoder classifier, Meta's **Llama Guard** (Inan et al., 2023) family uses a decoder-based LLM fine-tuned specifically for safety classification. This gives it several advantages:
 
 1. **In-context policy definition**: the harm taxonomy is provided as part of the prompt, so you can extend or modify policy without retraining.
-2. **Generative explanation**: the model can produce a natural-language reason for its decision, useful for audit trails.
+2. **Category-level output**: the verdict names the violated taxonomy codes (`unsafe\nS1,S9`), so the audit trail records *which* policy fired without a second model. Note that this is a fixed two-line format, not a free-text rationale — explanatory verdicts require a reasoning-style guard such as Granite Guardian 3.3's "thinking mode" (SoTA box).
 3. **Joint prompt+response classification**: the model reads the full conversation, capturing context that a shorter encoder would miss.
-4. **Open weights**: Llama Guard models — the original 7B/2B checkpoints, Llama Guard 3 (8B, 1B, and an 11B vision variant), and the natively multimodal Llama Guard 4 (12B, dense, pruned from Llama 4 Scout, released April 2025 and unifying the prior text-only and vision-only lines) — are publicly available on HuggingFace, enabling on-premise deployment without sending user data to a third party.
+4. **Open weights**: Llama Guard models — the original Llama Guard 7B and Llama Guard 2 8B checkpoints, Llama Guard 3 (8B, 1B, and an 11B vision variant), and the natively multimodal Llama Guard 4 (12B, dense, pruned from Llama 4 Scout, released April 2025 and unifying the prior text-only and vision-only lines) — are publicly available on HuggingFace, enabling on-premise deployment without sending user data to a third party.
 
 ```python
 # llama_guard_usage.py
@@ -742,42 +766,60 @@ What happens when the safety service is unavailable?
 ```python
 # fail_safe_guard.py
 import time
+from input_classifier import GuardrailDecision   # Section 2.1
 
 class CircuitBreakerGuard:
     """
     Wraps a primary (neural) guardrail with a fast heuristic fallback.
-    Uses a simple half-open circuit-breaker pattern.
+    Explicit closed -> open -> half-open -> closed transitions.
+
+    Every path returns a GuardrailDecision, including the error path — a
+    fallback_fn that returns a bare dict would break callers that read
+    `decision.blocked`.
     """
     def __init__(self, primary_guard, fallback_fn, failure_threshold=5,
                  recovery_timeout=30.0):
         self.primary = primary_guard
-        self.fallback = fallback_fn
+        self.fallback = fallback_fn       # must return a GuardrailDecision
         self.failure_count = 0
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
-        self.open_until = 0.0   # timestamp when circuit may close
+        self.open_until = 0.0             # when the circuit may go half-open
+        self.state = "closed"             # "closed" | "open" | "half_open"
 
-    @property
-    def _is_open(self) -> bool:
-        return time.monotonic() < self.open_until
+    def _trip(self) -> None:
+        self.state = "open"
+        self.open_until = time.monotonic() + self.recovery_timeout
+        self.failure_count = 0
 
-    def check(self, message: str):
-        if self._is_open:
-            # Circuit open: use fast heuristic fallback
-            return self.fallback(message)
+    def check(self, message: str) -> GuardrailDecision:
+        if self.state == "open":
+            if time.monotonic() < self.open_until:
+                return self.fallback(message)   # fast heuristic path
+            # Recovery timeout elapsed: admit exactly ONE trial call.
+            self.state = "half_open"
         try:
             result = self.primary.check(message)
-            self.failure_count = 0  # reset on success
+            self.state = "closed"               # probe succeeded: fully closed
+            self.failure_count = 0
             return result
         except Exception:
-            self.failure_count += 1
-            if self.failure_count >= self.failure_threshold:
-                # Open the circuit for recovery_timeout seconds, then allow one
-                # trial call through (half-open) by resetting the counter.
-                self.open_until = time.monotonic() + self.recovery_timeout
-                self.failure_count = 0
+            if self.state == "half_open":
+                # The single probe failed: re-open immediately. Merely resetting
+                # the counter here would instead let `failure_threshold` more
+                # live requests each pay a full timeout against a dead service,
+                # every recovery_timeout seconds — the probe storm a half-open
+                # breaker exists to prevent.
+                self._trip()
+            else:
+                self.failure_count += 1
+                if self.failure_count >= self.failure_threshold:
+                    self._trip()
             # Fail closed on a single error
-            return {"blocked": True, "reason": "safety_service_unavailable"}
+            return GuardrailDecision(
+                label="unknown", score=1.0, blocked=True,
+                reason="safety_service_unavailable",
+            )
 ```
 
 ### 8.3 Doing This With a Framework: NeMo Guardrails
@@ -792,15 +834,25 @@ models:
     model: gpt-4o-mini
 
 rails:
+  config:
+    # The Presidio flows read their entity list from here; without this block
+    # they detect nothing.
+    sensitive_data_detection:
+      input:
+        entities: [PERSON, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN, CREDIT_CARD]
+      output:
+        entities: [PERSON, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN, CREDIT_CARD]
   input:
     flows:
-      - self check input         # LLM-based policy check on the user turn
-      - detect pii on input      # built-in Presidio integration (Section 3)
+      - self check input                  # LLM-based policy check on the user turn
+      - detect sensitive data on input    # built-in Presidio integration (Section 3)
   output:
     flows:
       - self check output
-      - detect pii on output
+      - detect sensitive data on output
 ```
+
+Flow ids are exact strings: a name the library does not define is not a silently-disabled rail, it fails to resolve. The Presidio integration ships `detect sensitive data on input` / `on output` / `on retrieval` plus `mask sensitive data on ...` variants — there is no `detect pii on ...` flow.
 
 ```yaml
 # config/prompts.yml — the policy text the `self check input` rail runs.

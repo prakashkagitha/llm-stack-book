@@ -126,7 +126,9 @@ beta2 = 0.95                                   # cfg.betas[1]
 
 [lr_scheduler]
 warmup_steps = 500                            # cfg.warmup_steps
-decay_ratio  = 0.157                           # 6000/38147: fraction of steps spent DECAYING (WSD)
+decay_ratio  = 0.0                             # NO decay leg in this run — see the note below.
+# decay_ratio is a FRACTION OF `steps`, not of some longer schedule: leaving it at 0.157 here
+# would decay the LR to zero over the LAST ~5,047 of these 32,147 steps. Ch. 14.8 owns the decay.
 decay_type   = "sqrt"                          # WSD's short sqrt decay leg (MiniCPM-style)
 min_lr_factor = 0.0                            # decays to 0 (cfg.final_frac)
 
@@ -172,17 +174,24 @@ chapter, because it is exactly the "swap my hand-rolled parts into the productio
 from dataclasses import dataclass
 import torch
 from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
+from torchtitan.protocols.model import BaseModelArgs                  # model args must subclass this
 from torchtitan.components.optimizer import build_optimizers          # default AdamW builder
 from torchtitan.components.lr_scheduler import build_lr_schedulers    # default WSD-capable scheduler
+from torchtitan.components.loss import build_cross_entropy_loss       # the chunked/compiled CE default
 
 from stacklm.config import StackConfig
-from stacklm.model.transformer import Stack100M     # our Ch. 14.4 model, unchanged
+from stacklm.data import build_stack100m_dataloader   # our Ch. 14.2 packed-shard loader
+from stacklm.model.transformer import Stack100M       # our Ch. 14.4 model, unchanged
 
 
 @dataclass
-class Stack100MArgs:
+class Stack100MArgs(BaseModelArgs):
     """torchtitan calls this the model's *args*; it IS StackConfig by another name.
-    `flavor = "100M"` in the TOML selects the entry in the registry below."""
+    `flavor = "100M"` in the TOML selects the entry in the registry below.
+    Subclassing `BaseModelArgs` is not cosmetic: the loop calls `update_from_config()`
+    (to push TOML values like seq_len into the args) and a per-token FLOP hook
+    (`get_nparams_and_flops`) that the MFU logging below depends on — implement both,
+    and check which of the args/model class owns them in your pinned commit."""
     vocab_size: int = 32768
     d_model: int = 512
     n_layers: int = 30
@@ -205,7 +214,10 @@ def build_stack100m(model_args: Stack100MArgs) -> torch.nn.Module:
     """torchtitan hands us the parsed args; we return an nn.Module it will
     shard with FSDP2 and (optionally) torch.compile. The parallelize_fn (next)
     is what actually applies fully_shard / tensor-parallel plans to it."""
-    return Stack100M(StackConfig(**model_args.__dict__))
+    # Skip the private bookkeeping fields BaseModelArgs contributes; only our own
+    # config keys are meaningful to StackConfig.
+    keys = {k: v for k, v in vars(model_args).items() if not k.startswith("_")}
+    return Stack100M(StackConfig(**keys))
 
 
 def parallelize_stack100m(model, world_mesh, parallel_dims, job_config):
@@ -226,10 +238,13 @@ register_train_spec(TrainSpec(
     pipelining_fn=None,                       # no pipeline parallel at 100M
     build_optimizers_fn=build_optimizers,     # <- swap for a Muon+AdamW builder (below)
     build_lr_schedulers_fn=build_lr_schedulers,
-    build_dataloader_fn=None,                 # provide our packed-shard loader here (Ch. 14.2)
-    build_tokenizer_fn=None,                  # or reuse torchtitan's HF tokenizer wrapper
-    build_loss_fn=None,                       # None = torchtitan's chunked cross-entropy default
+    build_dataloader_fn=build_stack100m_dataloader,   # our packed-shard loader (Ch. 14.2)
+    build_tokenizer_fn=None,                  # the one genuinely optional hook (`| None`)
+    build_loss_fn=build_cross_entropy_loss,   # torchtitan's chunked/compiled CE (see below)
 ))
+# Note: `build_dataloader_fn` and `build_loss_fn` are REQUIRED callables — the trainer invokes
+# them unconditionally in __init__, so passing None raises `TypeError: 'NoneType' object is not
+# callable` rather than selecting a default. Name the default explicitly, as above.
 ```
 
 Two of those hooks deserve a closer look because they are where our capstone diverges from
@@ -276,10 +291,14 @@ everything between warmup and the start of decay. So with `steps = 38147`, `warm
 But recall the deliberate design decision from Ch. 14.7: **this chapter stops at the end of the
 stable phase** (`stop_at_step = 32147`) and hands a *pre-decay* checkpoint to
 [mid-training](../14-capstone/08-mid-training.html), which spends the decay leg annealing on premium
-data. You reproduce that in torchtitan two ways: either set `steps = 32147` so the run ends before
-decay (the config above does this — note it means the `decay_ratio` never actually fires, exactly
-like Ch. 14.7's `mult == 1.0` for every stable step), or keep `steps = 38147` and let the decay leg
-run as an integrated mid-training anneal. The general theory of why a stable-then-decay shape beats
+data. You reproduce that in torchtitan two ways. Either set `steps = 32147` **and**
+`decay_ratio = 0.0`, so the whole run is warmup + stable and the LR never leaves its plateau (the
+config above does this — it is exactly Ch. 14.7's `mult == 1.0` for every stable step); or keep
+`steps = 38147` with `decay_ratio = 0.157` and let the decay leg run as an integrated mid-training
+anneal. What you must *not* do is the tempting middle — `steps = 32147` with `decay_ratio = 0.157`
+still decays, because the ratio is taken against `steps` itself, giving 500 warmup / ~26,600 stable
+/ ~5,047 decay and handing mid-training an already-annealed checkpoint, exactly the costly
+re-warming case the split exists to avoid. The general theory of why a stable-then-decay shape beats
 cosine here, and why re-warming a decayed checkpoint is costly, is in
 [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
 
@@ -319,9 +338,37 @@ def build_stack100m_optimizers(model_parts, job_config, parallel_dims=None):
         weight_decay=job_config.optimizer.weight_decay,
         betas=(job_config.optimizer.beta1, job_config.optimizer.beta2),
     )
-    # Wrap [muon, adamw] in torchtitan's OptimizersContainer so step()/state_dict()
-    # fan out to both — the "one clip, two optimizers" pattern of Ch. 14.7, hosted.
-    return _as_optimizers_container([muon, adamw])
+    # Wrap [muon, adamw] so step()/zero_grad()/state_dict() fan out to both —
+    # the "one clip, two optimizers" pattern of Ch. 14.7, hosted.
+    return PairedOptimizers([muon, adamw])
+
+
+class PairedOptimizers:
+    """Duck-types the container interface torchtitan's loop and DCP expect:
+    step/zero_grad on every inner optimizer, and a state_dict keyed per optimizer
+    so a resume restores both. torchtitan's own `OptimizersContainer` *builds* its
+    optimizers from a class + kwargs, which cannot express "two different optimizers
+    over two parameter groups", so we supply the container ourselves. Check the
+    protocol in `torchtitan/components/optimizer.py` at your pinned commit — if it
+    requires more (e.g. an `optimizers` attribute or lr-scheduler hooks), subclass it."""
+
+    def __init__(self, optimizers):
+        self.optimizers = list(optimizers)
+
+    def step(self):
+        for opt in self.optimizers:
+            opt.step()
+
+    def zero_grad(self, set_to_none: bool = True):
+        for opt in self.optimizers:
+            opt.zero_grad(set_to_none=set_to_none)
+
+    def state_dict(self):
+        return {f"opt{i}": opt.state_dict() for i, opt in enumerate(self.optimizers)}
+
+    def load_state_dict(self, sd):
+        for i, opt in enumerate(self.optimizers):
+            opt.load_state_dict(sd[f"opt{i}"])
 ```
 
 The important honesty here: **the library gives you the loop, not the research optimizer.** Muon is
@@ -336,8 +383,9 @@ Ch. 14.7 spent a whole section proving that at `d_model = 512`, `vocab = 32768`,
 (not attention) dominates memory — the unchunked `(B·T, V)` logits peak near 30 GB — and built
 `fused_ce_z_loss` to chunk it. torchtitan reaches the same conclusion and ships a chunked/compiled
 cross-entropy as its default `build_loss_fn`; recent versions integrate variants of the same fused
-linear-cross-entropy kernels we recommended (Liger-Kernel, cut-cross-entropy). Passing
-`build_loss_fn=None` in the `TrainSpec` takes that default. If you need the z-loss term
+linear-cross-entropy kernels we recommended (Liger-Kernel, cut-cross-entropy). You take that default
+by naming it — `build_loss_fn=build_cross_entropy_loss` in the `TrainSpec`; the hook is required, so
+there is no "leave it None and get the default". If you need the z-loss term
 (PLAN.md §1's PaLM-style `logsumexp` penalty), supply a `build_loss_fn` that adds it — the same term
 our `_chunk_ce` computed from the `logsumexp` it already needed. See
 [Memory-Efficient Training](../04-kernels-efficiency/10-memory-efficient-training.html) for the
@@ -387,16 +435,30 @@ Ch. 14.7 built `utilization()` and stressed the discipline of **stating your FLO
 6ND-only understates a deep-thin model at seq_len 2048 by ~31% because it omits attention's
 score/value matmuls. torchtitan computes a `num_flops_per_token` for the registered model and logs
 MFU every `log_freq` steps against the device's known peak (it maintains a table of peak bf16 FLOP/s
-per accelerator). You still owe the reader the convention: torchtitan's per-token FLOP count is
-attention-inclusive, so its MFU is directly comparable to Ch. 14.7's higher (attention-inclusive)
-number, *not* to the 6ND-only figure. A representative torchtitan log line looks like:
+per accelerator). You still owe the reader the convention, and here it is a *third* one — not
+Ch. 14.7's. torchtitan's reference count is
+$6(N - N_{\text{embed}}) + 12\,L\,H\,Q\,s$: attention-inclusive, but with the attention term **not**
+halved for causality (the PaLM convention Ch. 14.1 flags, with an explicit source comment saying it
+deliberately does not credit causal sparsity) and with the embedding parameters **excluded** from
+the $6N$ term. For Stack-100M that is
+$6(101.3 - 16.8)\text{e}6 + 12 \times 30 \times 512 \times 2048 = 5.07\text{e}8 + 3.78\text{e}8
+\approx 8.85\text{e}8$ FLOP/token, against Ch. 14.1/14.7's causal-halved
+$6N + 6Lsd_q \approx 7.97\text{e}8$ — about **11% higher**, so the *same* run reports ~11% more MFU
+under torchtitan's meter than under ours. Convert before you compare: multiply torchtitan's MFU by
+$7.97/8.85 \approx 0.90$ to put it on Ch. 14.7's footing (and neither number is the 6ND-only one,
+which is lower again). A representative torchtitan log line looks like:
 
 ```text
 step: 12000  loss:  3.11  grad_norm:  0.42  lr: 3.00e-03
-  tps: 1.42e5  mfu: 44.3%  memory: 21.7GiB(27.4%)  tflops: 138.4  end_to_end(s): 0.92
+  tps: 1.42e5  mfu: 40.3%  memory: 21.7GiB(27.4%)  tflops: 125.7  end_to_end(s): 0.92
 ```
 
-Every field there is a variable we logged by hand in Ch. 14.7 — `tps` is our `tokens_per_sec`,
+Those three throughput fields are one number in three costumes, and checking that they agree is a
+free sanity test on your registration: `tflops = num_flops_per_token × tps` ($8.85\text{e}8 \times
+1.42\text{e}5 = 1.257\text{e}14$) and `mfu = tflops / peak` ($125.7 / 312 = 40.3\%$ on an A100 —
+consistent with the `memory` field's 79 GiB device). If `tflops` and `tps` do not reconcile through
+the FLOP formula above, your `get_nparams_and_flops` is wrong and every MFU you report is wrong with
+it. Every field there is a variable we logged by hand in Ch. 14.7 — `tps` is our `tokens_per_sec`,
 `mfu` our `utilization()[0]`, `memory` our `max_memory_allocated`, `grad_norm` our pre-clip
 `clip_grad_norm_` return. The trainer did not add observability you did not already understand; it
 made it free.
@@ -430,9 +492,13 @@ Let us put concrete magnitudes on a torchtitan Stack-100M run so the config abov
     ~989 TFLOP/s each (8 GPUs ⇒ ~7.9 PFLOP/s peak) and, say, an achieved MFU of 0.45, sustained
     throughput is $\approx 0.45 \times 7.9\text{e}15 = 3.6\text{e}15$ FLOP/s, so a step takes
     $\approx 4.2\text{e}14 / 3.6\text{e}15 \approx 0.12$ s and the 16.9B-token stable phase
-    ($\approx 32{,}147$ steps) finishes in **on the order of an hour of wall clock** — the wall-clock
-    win over the single-A100's ~22–29 GPU-hours, bought purely by FSDP2 scaling, with the *same total
-    GPU-hours* (8 GPUs × ~1 hr ≈ 8 GPU-hr of useful compute plus communication overhead). Always
+    ($\approx 32{,}147$ steps) finishes in **on the order of an hour of wall clock**, i.e. 8 GPUs ×
+    ~1 hr ≈ **8 GPU-hr** plus communication overhead. Read that against the single A100's ~22–29
+    GPU-hours carefully, because two different effects are stacked in it. FSDP2 buys the ~8×
+    *wall-clock* compression at (approximately) constant GPU-hours — data parallelism never reduces
+    total compute. The remaining ~3× in GPU-hours is the *device*: an H100 at 989 TFLOP/s bf16 dense
+    against an A100 at 312. Compare like with like — 8 GPU-hr on H100s is ≈25 GPU-hr of A100
+    time, squarely inside the 22–29 band Ch. 14.1 budgeted. Always
     quote MFU **with its convention** and confirm the peak-FLOP number for your exact SKU; treat
     989 TFLOP/s as the *denominator*, never as achievable throughput.
 
@@ -466,7 +532,8 @@ model:
 tokens:
   sequence_length: 2048
   micro_batch_size: 8                # per-rank micro-batch (cfg.micro_batch_size analogue)
-  batch_accumulation_per_replica: 8  # nanotron DOES expose grad accum natively
+  batch_accumulation_per_replica: 4  # nanotron DOES expose grad accum natively
+  # global batch = dp x micro_batch_size x accumulation x seq_len = 8 x 8 x 4 x 2048 = 524,288 tokens
   train_steps: 32147                 # stable-phase end (Ch. 14.7 stop_at_step)
 
 optimizer:
@@ -480,7 +547,11 @@ optimizer:
     learning_rate: 3.0e-3            # peak LR
     lr_warmup_steps: 500             # cfg.warmup_steps
     lr_decay_style: "1-sqrt"         # WSD-style stable-then-inverse-sqrt decay
-    lr_decay_steps: 6000             # explicit ABSOLUTE decay leg (Ch. 14.6's 6000)
+    lr_decay_steps: 6000             # LENGTH of the decay leg (Ch. 14.6's 6000) — not its position
+    lr_decay_starting_step: 32147    # WHERE it starts. Omit this and decay begins right after
+                                     # warmup, flattening the LR to 0 by step ~6,500. Setting it to
+                                     # train_steps keeps this run entirely on the stable plateau;
+                                     # Ch. 14.8's anneal owns the leg itself.
     min_decay_lr: 0.0
 
 parallelism:
@@ -506,12 +577,18 @@ CUDA_DEVICE_MAX_CONNECTIONS=1 \
 Two things to notice about nanotron versus torchtitan, both honest trade-offs rather than a verdict.
 First, **nanotron exposes gradient accumulation directly** (`batch_accumulation_per_replica`), so the
 ≈0.5M-token effective batch of Ch. 14.6 is a one-line setting rather than a version-dependent
-feature — a real ergonomic advantage for the small, single-node runs this capstone targets. Second,
-its `lr_decay_style: "1-sqrt"` with an explicit `lr_decay_steps` is a faithful WSD leg (the SmolLM
-recipe used exactly this shape), and `lr_decay_steps` being *absolute* mirrors Ch. 14.7's deliberate
-choice to pass `decay_steps` rather than a fraction. As with torchtitan, the field names above are
-representative of the current schema — nanotron is research code and renames things; validate against
-the examples in the repo you actually cloned.
+feature — a real ergonomic advantage for the small, single-node runs this capstone targets. Do the
+arithmetic explicitly, though: the global batch is `dp × micro_batch_size × accumulation × seq_len`,
+so with `dp: 8` and `micro_batch_size: 8` the accumulation that lands on 524,288 tokens is **4**, not
+8. Second, its `lr_decay_style: "1-sqrt"` with an explicit `lr_decay_steps` is a faithful WSD leg (the
+SmolLM recipe used exactly this shape), and `lr_decay_steps` being *absolute* mirrors Ch. 14.7's
+deliberate choice to pass `decay_steps` rather than a fraction — but it is an absolute *length*, not
+an absolute *position*. The position is `lr_decay_starting_step`, which defaults to the end of warmup:
+leave it out and your "long stable plateau" becomes a 6,000-step decay to zero starting at step 500,
+followed by 25,000 steps at LR 0. This is the exact same trap as torchtitan's `decay_ratio`, wearing
+different clothes, and the same defense catches it — plot the realized LR. As with torchtitan, the
+field names above are representative of the current schema — nanotron is research code and renames
+things; validate against the examples in the repo you actually cloned.
 
 !!! tip "Practitioner tip: pick the trainer your problem already points at"
 
@@ -536,21 +613,28 @@ command-line arguments rather than a config file:
 
 ```bash
 # Megatron-LM, illustrative arg shape (versions move flags; read examples/ in your checkout).
+# UNITS TRAP: --global-batch-size counts SEQUENCES, not tokens (the rest of this chapter counts
+# tokens). 256 sequences x 2048 = 524,288 tokens/step, i.e. 256/(8 micro x 8 dp) = 4 accum steps.
+# Passing 524288 here would ask for 1.07e9 tokens per optimizer step — a ~2000x overshoot.
 torchrun --nproc_per_node=8 pretrain_gpt.py \
   --num-layers 30 --hidden-size 512 --num-attention-heads 8 \
   --group-query-attention --num-query-groups 2 \
   --seq-length 2048 --max-position-embeddings 2048 \
   --tensor-model-parallel-size 1 --pipeline-model-parallel-size 1 \
-  --micro-batch-size 8 --global-batch-size 524288 \
+  --micro-batch-size 8 --global-batch-size 256 \
   --lr 3.0e-3 --min-lr 0.0 --lr-warmup-iters 500 \
   --lr-decay-style WSD --lr-wsd-decay-iters 6000 \
   --clip-grad 1.0 --bf16 --use-distributed-optimizer \
-  --recompute-activations --recompute-method uniform
+  --recompute-activations
+  # --recompute-activations is shorthand for --recompute-granularity selective, and Megatron's
+  # validate_args then asserts recompute_method is None — so do NOT add --recompute-method uniform
+  # here. That flag belongs only with --recompute-granularity full (+ --recompute-num-layers N).
 ```
 
 Note `--lr-decay-style WSD` — Megatron added WSD as a first-class schedule, `--global-batch-size`
-handling the gradient-accumulation arithmetic for you, and `--use-distributed-optimizer` giving you
-ZeRO-1-style optimizer sharding. **DeepSpeed** is the other half of the pair: a ZeRO
+(**in sequences**) handling the gradient-accumulation arithmetic for you, and
+`--use-distributed-optimizer` giving you ZeRO-1-style optimizer sharding. **DeepSpeed** is the
+other half of the pair: a ZeRO
 (Zero Redundancy Optimizer) implementation you attach to an existing model via a `ds_config.json`,
 sharding optimizer state (stage 1), gradients (stage 2), and parameters (stage 3), with CPU/NVMe
 offload for when even the shards do not fit.
@@ -558,7 +642,7 @@ offload for when even the shards do not fit.
 ```json
 {
   "train_micro_batch_size_per_gpu": 8,
-  "gradient_accumulation_steps": 8,
+  "gradient_accumulation_steps": 4,
   "bf16": { "enabled": true },
   "gradient_clipping": 1.0,
   "zero_optimization": {
@@ -568,6 +652,11 @@ offload for when even the shards do not fit.
   }
 }
 ```
+
+Note the units once more: DeepSpeed derives `train_batch_size = train_micro_batch_size_per_gpu ×
+gradient_accumulation_steps × world_size`, so on 8 GPUs the values above are
+$8 \times 4 \times 8 \times 2048 = 524{,}288$ tokens per step. Re-derive that product every time the
+GPU count changes, or the batch your hyperparameters were tuned for changes with it.
 
 Honesty check: Megatron-LM and DeepSpeed are *cluster* tools. Running them for a 101M single-node
 model is using a forklift to carry a grocery bag — everything works, but the operational overhead
@@ -598,7 +687,9 @@ from accelerate import Accelerator
 
 accelerator = Accelerator(
     mixed_precision="bf16",                 # replaces the manual torch.autocast(bf16) block
-    gradient_accumulation_steps=8,          # replaces the hand-written accumulate() loop
+    gradient_accumulation_steps=8,          # replaces the hand-written accumulate() loop;
+                                            # 8 is the ONE-GPU value — divide by the rank count to
+                                            # hold the ≈0.5M-token global batch when sharding
 )
 model, muon, adamw, train_loader = accelerator.prepare(model, muon, adamw, train_loader)
 
@@ -673,9 +764,12 @@ choice is how much of the loop you want to own versus inherit.
       nanotron. Get it wrong and the loss still falls while the LR/optimizer silently mismatch the
       batch they were tuned for.
     - **"WSD" is a shape, not a formula.** Trainers differ on decay curve, whether the decay length is
-      absolute or a ratio, and warmup units. Reproduce Ch. 14.6's split by plotting the *realized* LR
-      before trusting any config, and stop at the stable-phase checkpoint so mid-training owns the
-      decay leg.
+      absolute or a ratio, warmup units, and — the one that bites hardest — where the decay leg is
+      *placed*: torchtitan's `decay_ratio` is a fraction of `steps` (so shortening the run does not
+      remove the decay), while nanotron's `lr_decay_steps` is a length whose position comes from
+      `lr_decay_starting_step` (which defaults to the end of warmup). Reproduce Ch. 14.6's split by
+      plotting the *realized* LR before trusting any config, and stop at the stable-phase checkpoint
+      so mid-training owns the decay leg.
     - **The chunked loss head, DCP checkpointing, selective activation checkpointing, and MFU logging
       all come free** — the exact mechanisms we built by hand in Ch. 14.7, now one config line each.
     - **Pick the tool your problem points at:** torchtitan for newest PyTorch-native distributed;

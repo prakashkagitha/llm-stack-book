@@ -38,7 +38,7 @@ $$
 \tilde{\ell}_{t,v} = \ell_{t,v} + \delta \cdot \mathbf{1}[v \in G_t]
 $$
 
-The model therefore preferentially samples green tokens without requiring any modification to the model weights. An unmodified greedy or nucleus-sampled text would use $\gamma |V|$ green tokens in expectation. A watermarked text uses them at a much higher rate.
+The model therefore preferentially samples green tokens without requiring any modification to the model weights. An unmodified greedy or nucleus-sampled passage of length $T$ would contain $\gamma T$ green tokens in expectation (the green list itself has size $\gamma|V|$). A watermarked text uses them at a much higher rate.
 
 **Detection.** Given a candidate text of $T$ tokens and a secret key $k$, the detector reconstructs each $G_t$ and counts the number of green tokens $g$. Under the null hypothesis (human text), $g \sim \text{Binomial}(T, \gamma)$. The *z-score* is:
 
@@ -59,7 +59,9 @@ Be careful with that null, though: it assumes each scored token is green *indepe
     - Using the standard normal tail: $P(Z > 6.36) \approx 10^{-10}$, an extremely strong rejection of the null.
     - At a threshold of $z^* = 4.0$, this text is flagged with overwhelming confidence.
 
-    Now suppose an adversary randomly replaces 30% of tokens via paraphrase. Empirically, $\approx 50\%$ of replaced tokens will land in the green list (random chance), so $g_{\text{post}} \approx 145 \times 0.7 + 100 \times 0.3 = 101.5 + 30 = 131.5$. $z \approx (131.5 - 100)/7.07 \approx 4.45$ — still well above threshold. This illustrates why moderate paraphrase attacks are insufficient.
+    Now suppose an adversary randomly replaces 30% of tokens via paraphrase. Replaced tokens land in the green list only at the chance rate $\gamma = 50\%$. If the green list were *context-free* — one fixed partition for the whole passage, as in the Unigram watermark — only the replaced positions would lose signal: $g_{\text{post}} \approx 145 \times 0.7 + 100 \times 0.3 = 101.5 + 30 = 131.5$, so $z \approx (131.5 - 100)/7.07 \approx 4.45$, still above threshold.
+
+    But the KGW green list is seeded by the *preceding context*, so a substitution does double damage: it destroys the signal at its own position *and* randomizes the green list used to score the next token. With $h=1$ a position keeps its elevated green rate only if it and its predecessor both survive, a fraction $(1-p)^2 = 0.49$ of positions. Then $g_{\text{post}} \approx 200\,[0.49 \times 0.725 + 0.51 \times 0.5] \approx 122$ and $z \approx (122 - 100)/7.07 \approx 3.1$ — now *below* the $z^* = 4$ threshold. Context hashing buys resistance to the adaptive attacks discussed later at the cost of an extra factor of $(1-p)$ in substitution robustness, so always quote $h$ alongside a robustness number.
 
 {{fig:wmprov-greenlist-mechanism}}
 
@@ -262,7 +264,15 @@ def detect_watermark(
     """
     T = len(tokens)
     if T == 0:
-        return {"z_score": 0.0, "green_count": 0, "total": 0, "p_value": 1.0}
+        # Same keys as the normal return path, so callers never KeyError.
+        return {
+            "z_score": 0.0,
+            "green_count": 0,
+            "total_tokens": 0,
+            "gamma_expected": 0.0,
+            "p_value": 1.0,
+            "flagged": False,
+        }
     
     green_count = 0
     prev = seed_token
@@ -340,7 +350,7 @@ Running this demo (with the fixed seeds shown above) produces exactly this outpu
 {'z_score': 3.3941, 'green_count': 124, 'total_tokens': 200, 'gamma_expected': 100.0, 'p_value': 0.00034426, 'flagged': False}
 ```
 
-Here the 40% substitution attack already drops $z$ below the 4.0 threshold for this particular random draw — a reminder that in this toy simulation (random logits standing in for a real LM, so the model has no genuine preference among tokens) the watermark carries less signal than it would in a real deployment, where a language model's confident, low-entropy continuations mean a much larger fraction of tokens must be destroyed before $z$ drops below threshold. With a real model and this $\delta,\gamma$ setting, published results show an adversary typically needs to replace on the order of 70–80% of tokens to reliably evade detection, at which point the original content is largely gone.
+Here the 40% substitution attack already drops $z$ below the 4.0 threshold — and not just for this draw: averaged over random substitutions the mean $z$ at $p=0.4$ is $\approx 3.7$ (Exercise 5). Two things make the toy this fragile. First, each substitution damages *two* positions, because this implementation seeds the green list from the previous token ($h=1$): the signal decays as $(1-p)^2$, not $(1-p)$. Second, the random logits standing in for a real LM give the model no genuine preference among tokens, so the watermark carries less signal than it would in a real deployment, where a language model's confident, low-entropy continuations mean a much larger fraction of tokens must be destroyed before $z$ drops below threshold. With a real model and this $\delta,\gamma$ setting, published results show an adversary typically needs to replace on the order of 70–80% of tokens to reliably evade detection, at which point the original content is largely gone.
 
 ---
 
@@ -382,12 +392,15 @@ detector = WatermarkDetector(
     watermarking_config=wm_cfg,
     ignore_repeated_ngrams=True,  # see the independence caveat above
 )
-res = detector(out, z_threshold=3.0, return_dict=True)
+# Score ONLY the generated continuation: prompt tokens the model never chose
+# would dilute z (HF's own docs advise removing the prompt).
+prompt_len = prompt["input_ids"].shape[-1]
+res = detector(out[:, prompt_len:], z_threshold=3.0, return_dict=True)
 print(res.num_tokens_scored, res.num_green_tokens, res.green_fraction)
 print("z =", res.z_score, "p =", res.p_value, "flagged =", res.prediction)
 ```
 
-Two things are worth noticing. First, `seeding_scheme="selfhash"` hashes the *candidate* token along with the context, which makes the green list depend on the token being scored and materially raises the cost of the adaptive attacks described below — at the price of a $|V|$-way hash per step instead of one. Second, the detector takes the *full* sequence including the prompt; if you score prompt tokens the model never chose, you dilute $z$ exactly like the copy-paste splicing attack in Exercise 3.
+Two things are worth noticing. First, `seeding_scheme="selfhash"` hashes the *candidate* token along with the context, which makes the green list depend on the token being scored and materially raises the cost of the adaptive attacks described below — at the price of a $|V|$-way hash per step instead of one. Second, the detector scores whatever tensor you hand it — it does *not* strip the prompt for you. Slice the prompt off first (as above); scoring prompt tokens the model never chose dilutes $z$ exactly like the copy-paste splicing attack in Exercise 3.
 
 SynthID-Text lives in the same API surface:
 
@@ -429,7 +442,7 @@ A watermark that fails under modest editing provides only false assurance. The m
 
 | Attack | Description | Effect on $z$ |
 |---|---|---|
-| Random token substitution | Replace $p$ fraction with random tokens | $z$ scales as $(1-p)$; at $p=0.5$, $z$ halved |
+| Random token substitution | Replace $p$ fraction with random tokens | $z$ scales as $(1-p)^{h+1}$ — each edit also corrupts the context hash of the next $h$ positions; $(1-p)$ only for a context-free green list. With $h=1$, $p=0.5$ cuts $z$ to a quarter |
 | Paraphrase (LLM rewrite) | Feed text to a second model and rewrite | Moderate; semantic content preserved, tokens changed |
 | Translation roundtrip | EN→FR→EN | Moderate; depends on vocabulary overlap |
 | Copy-paste splicing | Embed watermarked snippet into human text | Dilutes $z$ by dilution factor |
@@ -647,7 +660,7 @@ Despite their elegance, current watermarking schemes face several real-world lim
 !!! key "Key Takeaways"
     - The KGW green-list watermark biases sampling toward a secret-key-derived token subset. Detection computes a z-score under the Binomial null; a score above ~4 corresponds to a false-positive rate around $10^{-5}$ — provided you deduplicate repeated $n$-grams, whose correlated scores otherwise inflate $z$. In practice you get it from `transformers` as `WatermarkingConfig` + `WatermarkDetector`, applied as a logits processor *after* temperature and top-p.
     - Distortion-free watermarks (Kuditipudi et al.) preserve the exact marginal token distribution while still embedding a detectable signal via inverse-CDF coupling; preferred when output quality is paramount.
-    - A 40% random token substitution attack roughly halves the z-score; an adversary must destroy 70–80% of the text to reliably evade detection — at which point they have rewritten the content anyway.
+    - Substitution robustness scales as $(1-p)^{h+1}$, not $(1-p)$, because each edit also corrupts the context hash of the following $h$ positions: in the chapter's toy $h=1$ simulation a 40% substitution attack cuts $z$ to roughly a *third* (11.5 → 3.7) and clears the threshold. Against a real LM's lower-entropy text an adversary typically has to destroy 70–80% of the tokens — at which point they have rewritten the content anyway.
     - SynthID-class image watermarks use learned neural encoders trained end-to-end against differentiable augmentations; they survive JPEG, resizing, and cropping far better than classical LSB or DFT approaches. SynthID-**Text** instead watermarks the sampling step via a knockout tournament over candidate tokens — non-distortionary at one layer, more detectable with more layers — and is the production-scale text scheme, with a learned Bayesian detector you must fit on your own model.
     - C2PA content credentials provide cryptographically signed manifests with hard and soft asset bindings; they are complementary to watermarking — manifests survive format preservation, watermarks survive metadata stripping.
     - Post-hoc AI-text detectors have fundamental limitations: domain shift, adversarial evasion, and false-positive rates that systematically disadvantage non-native speakers. They should not be used for high-stakes automated decisions.
@@ -691,7 +704,7 @@ Despite their elegance, current watermarking schemes face several real-world lim
 
 - Kirchenbauer, J., Geiping, J., Wen, Y., Kirchenbauer, K., Goldblum, M., and Goldstein, T. — *A Watermark for Large Language Models* (2023). The foundational green-list watermark paper.
 - Kuditipudi, R., Thickstun, J., Hashimoto, T., and Liang, P. — *Robust Distortion-Free Watermarks for Language Models* (2023). Introduces the distortion-free inverse-CDF construction.
-- Fernandez, P., Couairon, G., Jégou, H., Douze, M., and Furon, T. — *The Stable Signature: Rooting Watermarks in Latent Diffusion Models* (NeurIPS 2023). Neural watermarking for latent diffusion.
+- Fernandez, P., Couairon, G., Jégou, H., Douze, M., and Furon, T. — *The Stable Signature: Rooting Watermarks in Latent Diffusion Models* (ICCV 2023). Neural watermarking for latent diffusion.
 - Mitchell, E., Lee, Y., Khazatsky, A., Manning, C. D., and Finn, C. — *DetectGPT: Zero-Shot Machine-Generated Text Detection using Probability Curvature* (ICML 2023).
 - Weber-Wulff, D. et al. — *Testing of Detection Tools for AI-Generated Text* (2023). Rigorous empirical audit of commercial detectors.
 - C2PA Technical Specification v2.0 — Coalition for Content Provenance and Authenticity (2024). The normative standard for content credentials.
@@ -789,7 +802,7 @@ Despite their elegance, current watermarking schemes face several real-world lim
         secret_key=derive_subkey(MASTER_KEY, REQ_ID),
     )
     print("correct id:", correct["z_score"], correct["flagged"])
-    # e.g. z_score ~ 11.5, flagged=True
+    # e.g. z_score ~ 10.6, flagged=True
 
     # --- detection with the WRONG request id -> not flagged ---
     wrong = detect_watermark(
@@ -850,12 +863,18 @@ Despite their elegance, current watermarking schemes face several real-world lim
             print(f"p={p:.1f}  mean_z={mean_z:6.2f}  {flag}")
     ```
 
-    Because the substituted tokens land in the green list only at the chance rate $\gamma=0.5$, the expected green count after replacing fraction $p$ is $\mathbb{E}[g] \approx (1-p)\,g_0 + p\,\gamma T$, where $g_0$ is the unattacked green count. With $g_0 \approx 181$, $\gamma T = 100$, $T=200$, $\sigma=7.07$:
+    Two effects combine. A substituted token lands in the green list only at the chance rate $\gamma=0.5$ — but because `detect_watermark` seeds the green list from the *previous* token ($h=1$), a substitution at position $i$ also randomizes the list used to score position $i+1$. A position therefore keeps its elevated green rate $q = g_0/T$ only when it *and* its predecessor survive, which happens with probability $(1-p)^2$:
 
     $$
-    z(p) \approx \frac{(1-p)\,181 + 100p - 100}{7.07} = \frac{81(1-p)}{7.07} \approx 11.5\,(1-p).
+    \mathbb{E}[g] \approx T\big[(1-p)^2 q + \big(1-(1-p)^2\big)\gamma\big].
     $$
 
-    Setting $z(p) = 4.0$ gives $1-p \approx 4.0/11.5 \approx 0.35$, i.e. $p \approx 0.65$. So in this **toy** simulation the mean $z$ falls below threshold at roughly $p \approx 0.6$–$0.7$ (the single fixed-seed run in the chapter's demo already dips below $4$ at $p=0.4$ because of variance in one draw; averaging over trials smooths this out).
+    With $g_0 \approx 181$ (so $q \approx 0.905$), $\gamma T = 100$, $T=200$, $\sigma=7.07$:
 
-    Reconciliation: this synthetic model uses **random Gaussian logits**, so it has no genuine preference among tokens — the watermark is the *only* structure present and each destroyed token removes signal at close to the theoretical $(1-p)$ rate. A **real** LM produces confident, low-entropy continuations: many positions have one overwhelmingly likely token that the $\delta$ boost barely perturbs, and the watermark's per-token signal is concentrated in the higher-entropy positions. Empirically that redundancy means an adversary must overwrite a much larger fraction — the chapter's cited 70–80% — before $z$ reliably drops under threshold, and by then the passage has been essentially rewritten and its original content is gone.
+    $$
+    z(p) \approx \frac{200\,(1-p)^2\,(0.905 - 0.5)}{7.07} \approx 11.5\,(1-p)^2.
+    $$
+
+    Setting $z(p) = 4.0$ gives $(1-p)^2 \approx 0.35$, i.e. $p \approx 0.41$. Running the sweep confirms it: mean $z \approx 11.5,\ 8.9,\ 7.3,\ 5.6$ at $p = 0.0$–$0.3$, then $3.7$ at $p=0.4$ — so **the smallest grid value at which the mean $z$ drops below $4.0$ is $p = 0.4$**, consistent with the single fixed-seed run in the chapter's demo. (Had the green list been context-free, the decay would be the slower $11.5\,(1-p)$ and the crossing would sit near $p \approx 0.65$; the extra factor of $(1-p)$ is the price of context hashing.)
+
+    Reconciliation: this synthetic model uses **random Gaussian logits**, so it has no genuine preference among tokens — the watermark is the *only* structure present, and with $h=1$ every substitution destroys signal at two positions, giving the fast $(1-p)^2$ decay above. A **real** LM produces confident, low-entropy continuations: many positions have one overwhelmingly likely token that the $\delta$ boost barely perturbs, and the watermark's per-token signal is concentrated in the higher-entropy positions. Empirically that redundancy means an adversary must overwrite a much larger fraction — the chapter's cited 70–80% — before $z$ reliably drops under threshold, and by then the passage has been essentially rewritten and its original content is gone.

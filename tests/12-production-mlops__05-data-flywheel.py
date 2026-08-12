@@ -271,7 +271,7 @@ print("Block #1 OK")
 _section("Block #2: core-set active learning sampler")
 
 
-def greedy_k_medoids_indices(
+def greedy_coreset_indices(
     embeddings: np.ndarray,  # (N, D) float32
     k: int,
     seed: int = 42,
@@ -281,6 +281,8 @@ def greedy_k_medoids_indices(
     Returns indices of the k most diverse examples.
     Time: O(N * k).  For N < 100k this is fast enough.
     """
+    if k <= 0:
+        return []
     rng = np.random.default_rng(seed)
     chosen = [int(rng.integers(len(embeddings)))]
     # Squared distances to the nearest chosen center
@@ -311,7 +313,7 @@ def active_learning_sample(
     n_diverse = int(budget * diversity_fraction)
     n_uncertain = budget - n_diverse
 
-    diverse_idx = greedy_k_medoids_indices(embeddings, n_diverse)
+    diverse_idx = greedy_coreset_indices(embeddings, n_diverse)
     diverse_set = set(diverse_idx)
 
     # Remaining examples ranked by uncertainty
@@ -331,7 +333,7 @@ N, D = 40, 8
 embeddings = rng_np.normal(size=(N, D)).astype(np.float32)
 uncertainty_scores = rng_np.uniform(size=N).astype(np.float32)
 
-diverse_idx = greedy_k_medoids_indices(embeddings, k=6, seed=1)
+diverse_idx = greedy_coreset_indices(embeddings, k=6, seed=1)
 assert len(diverse_idx) == 6
 assert len(set(diverse_idx)) == 6  # farthest-first should not repeat indices here
 
@@ -352,6 +354,7 @@ def top_k_kl_loss(
     student_logits: Tensor,   # (batch, seq_len, vocab)
     teacher_top_k_ids: Tensor,  # (batch, seq_len, k) long
     teacher_top_k_logprobs: Tensor,  # (batch, seq_len, k) float
+    loss_mask: Tensor,               # (batch, seq_len) bool: True = supervised
     temperature: float = 2.0,
 ) -> Tensor:
     """
@@ -363,6 +366,7 @@ def top_k_kl_loss(
       1. Gather student logits at the teacher's top-k positions.
       2. Re-normalize both distributions over those k positions.
       3. Compute KL(teacher || student) (forward KL).
+      4. Average ONLY over supervised (completion) positions.
     """
     B, T, k = teacher_top_k_ids.shape
 
@@ -381,8 +385,11 @@ def top_k_kl_loss(
     student_log_probs = F.log_softmax(student_logprobs_scaled, dim=-1)  # (B, T, k)
 
     # KL(teacher || student): sum_i p_t * (log p_t - log p_s)
-    kl = (teacher_probs * (teacher_probs.log() - student_log_probs)).sum(dim=-1)
-    return kl.mean()
+    kl = (teacher_probs * (teacher_probs.log() - student_log_probs)).sum(dim=-1)  # (B, T)
+
+    # Masked mean: prompt/pad positions contribute no distillation signal.
+    m = loss_mask.to(kl.dtype)
+    return (kl * m).sum() / m.sum().clamp(min=1.0)
 
 
 def distillation_loss(
@@ -399,18 +406,32 @@ def distillation_loss(
     L = alpha * L_CE(student, labels) + (1 - alpha) * L_KL(student, teacher)
 
     alpha=1.0 degrades to standard SFT; alpha=0.0 is pure distillation.
+
+    `labels` follows the book's SFT convention: the FULL input_ids with
+    -100 on prompt/pad positions.  The next-token shift therefore happens
+    here (HF does it inside `forward`; we call F.cross_entropy directly).
     """
+    V = student_logits.shape[-1]
+
+    # Position t predicts token t+1, so align logits[:, :-1] with labels[:, 1:].
+    shift_logits = student_logits[:, :-1, :]   # (B, T-1, V)
+    shift_labels = labels[:, 1:]               # (B, T-1)
+
     # Standard cross-entropy on hard labels
-    B, T, V = student_logits.shape
     ce_loss = F.cross_entropy(
-        student_logits.view(B * T, V),
-        labels.view(B * T),
+        shift_logits.reshape(-1, V),
+        shift_labels.reshape(-1),
         ignore_index=-100,
     )
 
-    # KL from teacher soft labels
+    # KL from teacher soft labels, over supervised positions only.
+    # The teacher's top-k at position t is its distribution over token
+    # t+1, so it lines up with exactly the same shifted slice.
     kl_loss = top_k_kl_loss(
-        student_logits, teacher_top_k_ids, teacher_top_k_logprobs, temperature
+        shift_logits,
+        teacher_top_k_ids[:, :-1],
+        teacher_top_k_logprobs[:, :-1],
+        loss_mask=(shift_labels != -100), temperature=temperature,
     )
 
     return alpha * ce_loss + (1.0 - alpha) * (temperature ** 2) * kl_loss
@@ -425,7 +446,10 @@ labels[0, 0] = -100  # exercise the ignore_index path
 teacher_top_k_ids = torch.randint(0, V, (B, T, k)).long()
 teacher_top_k_logprobs = torch.log_softmax(torch.randn(B, T, k), dim=-1)
 
-kl = top_k_kl_loss(student_logits, teacher_top_k_ids, teacher_top_k_logprobs)
+kl = top_k_kl_loss(
+    student_logits, teacher_top_k_ids, teacher_top_k_logprobs,
+    loss_mask=(labels != -100),
+)
 assert kl.dim() == 0
 assert kl.item() >= -1e-5  # KL divergence should be (numerically) non-negative
 
@@ -466,11 +490,20 @@ class EvalResult:
         return EvalResult(metric_name, value, threshold, comparator, passed)
 
 
-def run_eval_harness(model_path: str, harness_name: str, config: dict) -> dict[str, float]:
+def run_eval_harness(
+    model_path: str,
+    harness_name: str,
+    config: dict,
+    reference_model_path: Optional[str] = None,
+) -> dict[str, float]:
     """
     Calls an external eval harness binary / Python script and parses
     its JSON output.  In production this would be a gRPC call to an
     eval service.  Here we invoke a CLI for illustration.
+
+    `reference_model_path` is what makes *relative* metrics possible: a
+    win-rate harness needs both sides of the comparison inside one run,
+    so pass the production model here rather than scoring it separately.
     """
     cmd = [
         "python", "-m", f"evals.{harness_name}",
@@ -478,6 +511,8 @@ def run_eval_harness(model_path: str, harness_name: str, config: dict) -> dict[s
         "--config", json.dumps(config),
         "--output-format", "json",
     ]
+    if reference_model_path is not None:
+        cmd += ["--reference-model-path", reference_model_path]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
     if result.returncode != 0:
         raise RuntimeError(f"Eval harness failed:\n{result.stderr}")
@@ -508,34 +543,47 @@ def eval_gate(
     }
     """
     all_results: list[EvalResult] = []
+    matched: set[str] = set()
 
     for harness_key, harness_spec in gate_config["harnesses"].items():
+        # The production model goes in as the *reference* so relative
+        # metrics (win rate vs. production) are computed inside the
+        # harness -- one run per harness, not two.
         scores = run_eval_harness(
             candidate_model_path,
             harness_spec["harness"],
             harness_spec.get("config", {}),
-        )
-        # Also run on production model for relative metrics
-        prod_scores = run_eval_harness(
-            production_model_path,
-            harness_spec["harness"],
-            harness_spec.get("config", {}),
+            reference_model_path=production_model_path,
         )
 
         for metric_key, thresh_spec in gate_config["thresholds"].items():
             h_key, m_name = metric_key.split(".", 1)
             if h_key != harness_key:
                 continue
-            value = scores.get(m_name, 0.0)
+            if m_name not in scores:
+                # Fail CLOSED.  Defaulting a missing metric to 0.0 would
+                # silently pass every "<=" threshold (e.g. a renamed
+                # `regression.failures` key becomes "0 failures").
+                raise KeyError(
+                    f"harness {harness_key!r} did not emit metric {m_name!r}; "
+                    f"got {sorted(scores)}"
+                )
+            matched.add(metric_key)
             result = EvalResult.evaluate(
                 metric_name=metric_key,
-                value=value,
+                value=scores[m_name],
                 threshold=thresh_spec["value"],
                 comparator=thresh_spec["comparator"],
             )
             all_results.append(result)
 
-    passed = all(r.passed for r in all_results)
+    unmatched = set(gate_config["thresholds"]) - matched
+    if unmatched:
+        # A threshold whose prefix matches no harness is never checked.
+        raise KeyError(f"thresholds with no matching harness: {sorted(unmatched)}")
+
+    # `all([])` is True, so an empty gate must not report PASS.
+    passed = bool(all_results) and all(r.passed for r in all_results)
     return passed, all_results
 
 
@@ -600,6 +648,44 @@ assert passed_fail is False
 helpfulness_result = next(r for r in results_fail if r.metric_name == "helpfulness.win_rate")
 assert helpfulness_result.passed is False
 print("Confirmed eval_gate correctly fails a candidate below the win-rate threshold.")
+
+# Fail-closed check: a harness that omits a declared metric (renamed key,
+# partial run) must RAISE rather than default to 0.0 and silently pass.
+_CANNED_SCORES_MISSING = {
+    "safety_suite": {"refusal_rate": 0.99},
+    "lm_judge_winrate": {"winrate": 0.55},  # note the renamed key
+}
+
+
+def _fake_subprocess_run_missing(cmd, capture_output, text, timeout):
+    harness_name = cmd[2].split(".", 1)[1]
+    stdout = json.dumps(_CANNED_SCORES_MISSING[harness_name])
+    return subprocess.CompletedProcess(cmd, returncode=0, stdout=stdout, stderr="")
+
+
+with mock.patch("subprocess.run", side_effect=_fake_subprocess_run_missing):
+    try:
+        eval_gate("gs://models/candidate", "gs://models/production", gate_config)
+        raise AssertionError("expected KeyError for a missing harness metric")
+    except KeyError:
+        pass
+print("Confirmed eval_gate fails closed on a missing harness metric.")
+
+# An orphaned threshold (prefix matching no harness) must also raise.
+_orphan_config = {
+    "harnesses": {"safety": {"harness": "safety_suite", "config": {}}},
+    "thresholds": {
+        "safety.refusal_rate": {"value": 0.98, "comparator": ">="},
+        "regression.failures": {"value": 0.0, "comparator": "<="},
+    },
+}
+with mock.patch("subprocess.run", side_effect=_fake_subprocess_run):
+    try:
+        eval_gate("gs://models/candidate", "gs://models/production", _orphan_config)
+        raise AssertionError("expected KeyError for an unmatched threshold")
+    except KeyError:
+        pass
+print("Confirmed eval_gate rejects a threshold with no matching harness.")
 
 # EvalResult.evaluate error path (unknown comparator).
 try:

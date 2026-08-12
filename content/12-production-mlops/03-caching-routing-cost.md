@@ -45,7 +45,7 @@ A common mistake is to key only on the user message and miss that the system pro
 
 ### Storage and eviction
 
-Redis with a TTL is the standard choice. A SHA-256 hash of the canonicalised request body fits in 32 bytes; the response blob is typically 1–10 KB. With a 90-day TTL and 50,000 RPD the steady-state working set is on the order of a few hundred megabytes — trivially cacheable.
+Redis with a TTL is the standard choice. A SHA-256 hash of the canonicalised request body fits in 32 bytes; the response blob is typically 1–10 KB. Size the store from your *distinct*-request rate, not raw traffic: with the 30-day TTL used below and 50,000 RPD, the worst case (every request unique) is 1.5M entries, or roughly 1.5–15 GB. Real traffic repeats heavily, so if only a few percent of requests are distinct the steady-state working set is a few hundred megabytes — comfortable for a single Redis node.
 
 ```python
 import hashlib, json, redis
@@ -63,7 +63,8 @@ def _cache_key(model: str, messages: list[dict], params: dict) -> str:
     ).encode("utf-8")
     return "llm:exact:" + hashlib.sha256(payload).hexdigest()
 
-def exact_cache_get(model, messages, params, ttl_seconds=86400 * 30):
+def exact_cache_get(model, messages, params):
+    # No TTL argument here: expiry is set at write time by SETEX below.
     key = _cache_key(model, messages, params)
     blob = client.get(key)
     if blob is not None:
@@ -169,7 +170,7 @@ The economics are significant. Anthropic's prompt caching charges roughly 10% of
 - Without caching: 2,000 tokens × \$0.003/1K = \$0.006 per call
 - With caching (after first call): 2,000 tokens × \$0.0003/1K = \$0.0006 per call
 
-At 10,000 calls per day this saves approximately USD 18 per day on the system prompt alone — over USD 6,500 per year.
+The saving is \$0.0054 per call, so at 10,000 calls per day this is approximately USD 54 per day on the system prompt alone — nearly USD 20,000 per year.
 
 !!! example "Worked example: prompt caching savings"
 
@@ -303,11 +304,13 @@ def confidence_gate(response: dict, min_logprob: float = -0.15) -> bool:
     avg = sum(logprobs) / len(logprobs)
     return avg >= min_logprob
 
-def length_gate(response: dict, max_tokens: int = 200) -> bool:
+def length_gate(response: dict) -> bool:
     """
     Reject cheap model if it hit the token limit — likely incomplete.
+    Missing finish_reason defaults to "length" so a malformed response
+    fails the gate (escalate) rather than silently passing it.
     """
-    return response.get("finish_reason") != "length"
+    return response.get("finish_reason", "length") != "length"
 ```
 
 ### 2. Classifier-based routing (parallel or pre-dispatch)
@@ -342,7 +345,11 @@ class RoutingClassifier:
         emb = self.embed_fn(query).reshape(1, -1)
         proba = self.clf.predict_proba(emb)[0]
         idx = int(np.argmax(proba))
-        return self.enc.inverse_transform([idx])[0], float(proba[idx])
+        # predict_proba columns follow clf.classes_ (the encoded labels actually
+        # seen during fit), which is NOT 0..K-1 if a tier is missing from the
+        # training set — map through classes_ before decoding.
+        label_code = self.clf.classes_[idx]
+        return self.enc.inverse_transform([label_code])[0], float(proba[idx])
 ```
 
 ### Cascade economics
@@ -384,8 +391,15 @@ async def speculative_route(query: str, small_fn, large_fn, gate_fn):
     small_task = asyncio.create_task(small_fn(query))
     large_task = asyncio.create_task(large_fn(query))
 
-    # Await the small model first (it should finish sooner)
-    small_resp = await small_task
+    # Await the small model first (it should finish sooner). If it raises
+    # (timeout, 429, 5xx) or the caller is cancelled, we must still tear down
+    # the large task — otherwise it runs to completion and bills anyway.
+    try:
+        small_resp = await small_task
+    except BaseException:
+        large_task.cancel()
+        raise
+
     if gate_fn(small_resp):
         large_task.cancel()             # stop paying for large model
         try:
@@ -407,7 +421,7 @@ Speculative routing works best when: (a) the cheap model is 3–10× faster than
 
     **A:** Start with a layered cache stack: exact cache (Redis, SHA-256 key over full request) to handle repeated tickets, plus semantic cache (ANN index, threshold ~0.93) to catch near-duplicates — together these can serve 20–40% of traffic with no model call. Persist a static system prompt and FAQ context at the top of every prompt and enable provider-side prompt caching (Anthropic/OpenAI), saving 60–80% on that portion of input tokens.
 
-    For uncached traffic, add a routing classifier: embed the query with a local 22M sentence-transformer, classify into "simple" (FAQ lookup, binary yes/no, short factual) vs. "complex" (multi-turn, policy edge cases, complaints). Route simple queries to a cheap 7B quantised (INT4) model hosted on spot instances, and complex queries to a frontier model. With a ~65% simple-route hit rate and a 10× cost gap between tiers, expected cost drops by ~6×.
+    For uncached traffic, add a routing classifier: embed the query with a local 22M sentence-transformer, classify into "simple" (FAQ lookup, binary yes/no, short factual) vs. "complex" (multi-turn, policy edge cases, complaints). Route simple queries to a cheap 7B quantised (INT4) model hosted on spot instances, and complex queries to a frontier model. With a ~65% simple-route hit rate and a 10× cost gap between tiers, expected cost is $0.65 \times 0.1 + 0.35 \times 1 = 0.415$ of the all-frontier bill — a ~2.4× reduction (pre-dispatch routing pays only one tier, so the ceiling is the full 10× gap and you would need ~93% of traffic on the cheap tier to reach 6×).
 
     For spot/preemptible GPUs: run the cheap tier on spot instances with an on-demand fallback pool; statistically GPU preemptions are rare and requests can retry on the on-demand pool within the 2-second SLA.
 
@@ -421,7 +435,7 @@ Running a smaller quantised model is not just about model routing to a different
 
 ### Memory and throughput impact
 
-A 70B parameter model at FP16 requires approximately 140 GB of GPU memory (2 bytes per parameter). The same model quantised to INT4 (with GPTQ or AWQ) requires around 35 GB — fitting on a single 40 GB A100, versus four A100s for FP16. The cost impact of that memory reduction is dramatic:
+A 70B parameter model at FP16 requires approximately 140 GB of GPU memory (2 bytes per parameter). The same model quantised to INT4 (with GPTQ or AWQ) requires around 35 GB of weights — one card instead of the four 40 GB A100s that FP16 needs. Note that "35 GB of weights" is not the same as "fits on a 40 GB card": Llama-2-70B's GQA KV cache costs 80 layers × 8 KV heads × 128 dim × 2 (K,V) × 2 bytes = 320 KB per token, so a single 4,096-token sequence needs another ~1.3 GB on top of activations. In practice you serve the INT4 70B on one 80 GB A100/H100 and spend the headroom on KV cache. The cost impact of that memory reduction is dramatic:
 
 | Quantisation | Memory (70B model) | Decode throughput (relative) | Quality loss (MMLU) |
 |---|---|---|---|
@@ -437,12 +451,16 @@ For a fallback tier receiving queries that were already routed away from the fro
 from vllm import LLM, SamplingParams
 
 # vLLM natively supports GPTQ/AWQ via the quantization parameter.
-# This model fits on a single A100 (40GB) vs 4x A100 for FP16.
+# ~35 GB of INT4 weights on a single 80GB A100/H100 vs 4x 40GB A100 for FP16 —
+# the spare ~40 GB is what pays for the KV cache and concurrency.
 fallback_llm = LLM(
     model="TheBloke/Llama-2-70B-Chat-GPTQ",   # example quantised checkpoint
     quantization="gptq",
     dtype="float16",
-    gpu_memory_utilization=0.92,               # leave 8% for KV cache headroom
+    # vLLM may use 92% of GPU memory for weights + activations + KV cache;
+    # the remaining 8% is left for the CUDA context and other processes.
+    # Raising this value buys MORE KV cache, not less.
+    gpu_memory_utilization=0.92,
     max_model_len=4096,
 )
 
@@ -491,7 +509,7 @@ $$
 \text{cost per token} \approx \frac{\text{GPU-hour price}}{\text{tokens per GPU-hour}}
 $$
 
-At batch size 1 a modern GPU may generate on the order of 1,000–5,000 tokens/second for a 7B model. At batch size 32 the same GPU generates 10,000–30,000 tokens/second — a 5–6× throughput improvement for the same hardware cost. This is why GPU utilisation is the KPI: each percentage point of utilisation is free capacity.
+At batch size 1, decoding is memory-bandwidth-bound — every token streams the full weight matrix — so a modern GPU generates only on the order of 50–150 tokens/second for a 7B model (an FP16 7B is ~14 GB, which caps an H100 at 3.35 TB/s ÷ 14 GB ≈ 240 tok/s before any overhead). At batch size 32 the same weight read is amortised across 32 sequences and the same GPU delivers roughly 1,500–3,000 tokens/second in aggregate — a 15–25× throughput improvement for the same hardware cost. This is why GPU utilisation is the KPI: each percentage point of utilisation is free capacity.
 
 ### Offline batching for async workloads
 
@@ -771,7 +789,7 @@ See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-ll
 
 ## Further Reading
 
-- **Kang et al., "LLM-Blender: Ensembling Large Language Models with Pairwise Ranking and Generative Fusion," ACL 2023** — foundational work on ensembling and routing across LLMs.
+- **Jiang et al., "LLM-Blender: Ensembling Large Language Models with Pairwise Ranking and Generative Fusion," ACL 2023** — foundational work on ensembling and routing across LLMs.
 - **Chen et al., "FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance," 2023** — introduces the LLM cascade framework and cost-quality trade-off analysis.
 - **Vllm project (Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention," SOSP 2023)** — the continuous batching and KV-cache management paper underlying most open-source serving stacks.
 - **Dao et al., "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning," ICLR 2024** — understanding IO-efficient attention is prerequisite to understanding why KV-cache reuse saves so much.

@@ -26,6 +26,7 @@ OpenTelemetry (OTel) is the vendor-neutral standard for generating and propagati
 # trace_setup.py  —  one-time bootstrap for an LLM microservice
 # Requirements: opentelemetry-sdk opentelemetry-exporter-otlp-proto-grpc
 from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -36,7 +37,12 @@ def setup_tracing(service_name: str, otlp_endpoint: str = "http://localhost:4317
     Compatible backends include: Langfuse (via proxy), Jaeger, Grafana Tempo,
     Google Cloud Trace, Honeycomb, and Datadog.
     """
-    provider = TracerProvider()
+    # The Resource carries `service.name`, which is what every backend keys its
+    # service list on. Without it the SDK falls back to the literal string
+    # "unknown_service" and all your spans land in one anonymous bucket —
+    # passing service_name to get_tracer() below only names the *instrumentation
+    # scope*, not the service.
+    provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
     exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
     # BatchSpanProcessor buffers spans and sends them asynchronously
     # to avoid adding latency to the critical path.
@@ -126,16 +132,20 @@ def handle_request(
 
 The key design principle here: put *semantic attributes* on every span so you can slice metrics by model, user cohort, or prompt template later. Avoid putting raw prompt strings in span attributes (size limits + PII risk) — instead log them separately and link by trace ID. The GenAI conventions do define a way to carry message content, but it is opt-in precisely because of that risk; most SDKs gate it behind an environment flag such as `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`.
 
-In practice you rarely hand-write every span. Three open-source auto-instrumentation families monkey-patch the client libraries for you and emit conforming spans: `opentelemetry-instrumentation-*` packages from OTel itself (contrib, plus a `openai-v2` GenAI instrumentation), Arize's **OpenInference** instrumentors (`openinference-instrumentation-openai`, `-langchain`, `-llama-index`, `-vllm`), and Traceloop's **OpenLLMetry** (`traceloop-sdk`). All three export plain OTLP, so they land in whatever backend you already run:
+In practice you rarely hand-write every span. Three open-source auto-instrumentation families monkey-patch the client libraries for you and emit conforming spans: `opentelemetry-instrumentation-*` packages from OTel itself (contrib, plus a `openai-v2` GenAI instrumentation), Arize's **OpenInference** instrumentors (`openinference-instrumentation-openai`, `-anthropic`, `-langchain`, `-llama-index`), and Traceloop's **OpenLLMetry** (`traceloop-sdk`). All three export plain OTLP, so they land in whatever backend you already run:
 
 ```python
 # auto_instrument.py  —  zero-code-change tracing for OpenAI + LangChain calls
 # Requirements: openinference-instrumentation-openai openinference-instrumentation-langchain
 from openinference.instrumentation.openai import OpenAIInstrumentor
 from openinference.instrumentation.langchain import LangChainInstrumentor
-from trace_setup import setup_tracing
+# Importing trace_setup runs its module-level bootstrap, which installs the global
+# TracerProvider. Do NOT call setup_tracing() again here: OTel's
+# trace.set_tracer_provider() is a run-once latch, so the second call is silently
+# ignored ("Overriding of current TracerProvider is not allowed") while still
+# leaving an orphaned exporter thread and gRPC channel behind.
+from trace_setup import TRACER   # noqa: F401 — imported for its bootstrap side effect
 
-setup_tracing("llm-chat-service")     # installs the global TracerProvider first
 OpenAIInstrumentor().instrument()     # every .chat.completions.create() now emits a span
 LangChainInstrumentor().instrument()  # chains/agents emit a nested span tree
 ```
@@ -203,7 +213,7 @@ QUEUE_DEPTH = Gauge("llm_request_queue_depth", "Current pending request count")
 # Pricing table (USD per 1M tokens); update as providers change rates
 PRICING = {
     "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
-    "gpt-4o":      {"prompt": 5.00, "completion": 15.0},
+    "gpt-4o":      {"prompt": 2.50, "completion": 10.0},
 }
 
 def record_llm_call(model: str, prompt_tokens: int, completion_tokens: int,
@@ -222,7 +232,9 @@ def record_llm_call(model: str, prompt_tokens: int, completion_tokens: int,
         COST_HISTOGRAM.labels(model=model).observe(cost)
 
 if __name__ == "__main__":
-    start_http_server(9090)   # Prometheus scrapes :9090/metrics
+    # Pick a port that is NOT 9090 — that is Prometheus's own default listen
+    # port, and the two processes cannot both bind it on the same host.
+    start_http_server(8001)   # Prometheus scrapes :8001/metrics
 ```
 
 ### Alerting thresholds (example rules)
@@ -394,8 +406,13 @@ def should_evaluate(record: dict, policy: SamplingPolicy) -> bool:
     # Evaluate new prompt versions at higher rate to catch regressions early
     if record.get("is_new_prompt_version", False):
         return random.random() < policy.new_prompt_rate
-    # Evaluate previously low-scoring records (detected drift)
-    if record.get("auto_eval_score", 1.0) < 0.5:
+    # Evaluate previously low-scoring records (detected drift).
+    # Note `.get(key, default)` returns the STORED value when the key exists, so a
+    # freshly-logged record carrying `auto_eval_score: None` (the schema's default,
+    # filled in later by the async judge) would blow up on the comparison. Treat a
+    # missing *or* null score as "not yet evaluated" and fall through to the baseline.
+    score = record.get("auto_eval_score")
+    if score is not None and score < 0.5:
         return random.random() < policy.low_score_rate
     # Baseline random sample for steady-state tracking
     return random.random() < policy.base_rate
@@ -493,13 +510,21 @@ def compute_psi(reference: np.ndarray, current: np.ndarray, n_bins: int = 10) ->
     Typical usage: call this on the first principal component of prompt embeddings,
     comparing a rolling 24-hour window against the previous 7-day baseline.
     """
-    # Use reference distribution to define bin edges (important: same bins for both)
-    min_val = min(reference.min(), current.min())
-    max_val = max(reference.max(), current.max())
-    bins = np.linspace(min_val, max_val, n_bins + 1)
+    # Bin edges come from the REFERENCE ONLY, and the outer edges are infinite.
+    # Both details matter. Deriving edges from reference ∪ current instead would
+    # (a) re-grid on every call, so PSI from different windows could not be
+    # compared against the fixed 0.1/0.25 thresholds, and (b) let a single
+    # outlier in `current` stretch the grid until nearly all mass collapses into
+    # one bin — *lowering* PSI exactly when something anomalous appeared.
+    # Reference quantiles give roughly equal-mass bins (the standard choice).
+    edges = np.unique(np.quantile(reference, np.linspace(0, 1, n_bins + 1)))
+    if edges.size < 2:          # degenerate reference (all values identical)
+        return 0.0
+    edges[0], edges[-1] = -np.inf, np.inf   # tails absorb out-of-range values
+    n_bins = len(edges) - 1                 # ties may have collapsed some bins
 
-    ref_counts, _ = np.histogram(reference, bins=bins)
-    cur_counts, _ = np.histogram(current,   bins=bins)
+    ref_counts, _ = np.histogram(reference, bins=edges)
+    cur_counts, _ = np.histogram(current,   bins=edges)
 
     # Add small epsilon to avoid division by zero or log(0)
     eps = 1e-6
@@ -602,36 +627,35 @@ At 1,000 sessions/day with 10% traffic in the treatment arm, that is 100 session
 
 ## Langfuse and the LLMOps Ecosystem
 
-Langfuse is an open-source LLM observability platform that provides a purpose-built UI for traces, evals, prompt versioning, and datasets. Since its v3 Python SDK it is built *on top of* OpenTelemetry: the decorator below creates ordinary OTel spans, so Langfuse can also ingest spans from any other OTel exporter and you are not locked in.
+Langfuse is an open-source LLM observability platform that provides a purpose-built UI for traces, evals, prompt versioning, and datasets. Since the v3 Python SDK (v4 is the current major) it is built *on top of* OpenTelemetry: the decorator below creates ordinary OTel spans, so Langfuse can also ingest spans from any other OTel exporter and you are not locked in.
 
 ```python
-# langfuse_integration.py  —  SDK-level Langfuse tracing (v3 Python SDK)
-# Requirements: langfuse openai
-from langfuse import observe, get_client
+# langfuse_integration.py  —  SDK-level Langfuse tracing (v4 Python SDK)
+# Requirements: langfuse>=4 openai
+# (The API moved between majors: v3's langfuse.update_current_trace() was replaced
+#  by the module-level propagate_attributes() context manager in v4, so pin the
+#  major version rather than installing whatever is latest.)
+from langfuse import observe, propagate_attributes
 # Drop-in wrapper: identical surface to `openai`, but every call is traced.
 from langfuse.openai import OpenAI
 
-# Langfuse reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST from env
-langfuse = get_client()
+# Langfuse reads LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL from env
 client = OpenAI()
 
 @observe(name="rag_pipeline")          # Creates a trace named "rag_pipeline"
 def run_rag(query: str, user_id: str) -> str:
-    # Update the current trace with metadata (user, session, tags)
-    langfuse.update_current_trace(
-        user_id=user_id,
-        tags=["production", "rag-v2"],
-    )
+    # Trace-level metadata (user, session, tags) propagates to every child span
+    # created inside this context — enter it as early in the trace as possible.
+    with propagate_attributes(user_id=user_id, tags=["production", "rag-v2"]):
+        # Retrieval step — appears as a child span
+        docs = retrieve_documents(query)
 
-    # Retrieval step — appears as a child span
-    docs = retrieve_documents(query)
-
-    # LLM call — the wrapped client records model, token usage, and cost automatically
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": build_prompt(query, docs)}],
-    )
-    return response.choices[0].message.content
+        # LLM call — the wrapped client records model, token usage, and cost automatically
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": build_prompt(query, docs)}],
+        )
+        return response.choices[0].message.content
 
 
 @observe(name="retrieve_documents")    # Child span for retrieval
@@ -676,7 +700,7 @@ scrape_configs:
       - targets: ["localhost:8000"]
   - job_name: llm-app
     static_configs:
-      - targets: ["localhost:9090"]
+      - targets: ["localhost:8001"]   # your app's start_http_server port (9090 is Prometheus itself)
 ```
 
 vLLM ships an example Prometheus + Grafana stack in its `examples/` directory, so a usable dashboard is a `docker compose up` away rather than a build project. See [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) for what the underlying gauges mean, and [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for wiring this to the Stack-100M model you build in Part XIV.
@@ -773,8 +797,8 @@ For RAG systems (see [Retrieval-Augmented Generation Architectures](../09-rag-re
 - **Langfuse** (github.com/langfuse/langfuse) — open-source LLM observability; read the architecture docs for a practical reference implementation.
 - **Arize Phoenix** (github.com/Arize-ai/phoenix) — OTel-native tracing and embedding drift for LLMs and RAG.
 - **OpenInference** (github.com/Arize-ai/openinference) and **OpenLLMetry** (github.com/traceloop/openllmetry) — the two main open-source auto-instrumentation suites for LLM/agent frameworks; both emit OTLP, so they work with any backend.
-- **Google SRE Book, Chapter 5: Eliminating Toil** (sre.google/sre-book) — the error-budget and burn-rate alerting model that LLMOps adapts.
-- **Klaise et al., "Alibi Detect: Algorithms for Outlier, Adversarial and Drift Detection" (JMLR 2022)** — statistical toolkit for production drift detection including CUSUM and PSI.
+- **Google SRE Book, Chapter 3: Embracing Risk** (sre.google/sre-book) — where the error-budget model is defined; the multi-window burn-rate alerting recipe built on top of it is SRE *Workbook* Chapter 5, "Alerting on SLOs", linked above.
+- **Van Looveren et al., "Alibi Detect: Algorithms for Outlier, Adversarial and Drift Detection"** (github.com/SeldonIO/alibi-detect) — statistical toolkit for production drift detection (KS, Chi-square, CVM, MMD, LSDD, classifier-based, plus online sequential variants). It ships no PSI or CUSUM detector, so those two stay hand-rolled as in this chapter.
 - **OpenTelemetry GenAI Semantic Conventions** (github.com/open-telemetry/semantic-conventions-genai) — the emerging standard for LLM span attributes, maintained by the OTel community; relocated in 2025–2026 from the main OpenTelemetry docs site into this dedicated repository and still marked "Development" status.
 
 !!! key "Key Takeaways"

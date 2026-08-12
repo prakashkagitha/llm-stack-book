@@ -353,7 +353,10 @@ class BatchPolicy:
         prefill_budget = self.max_num_batched_tokens - decode_tokens
         chunks = []
         for req in waiting_prefills:
-            if prefill_budget <= 0 or len(running_seqs) >= self.max_num_seqs:
+            # Count the prefills admitted so far this step: `running_seqs` is
+            # loop-invariant, so checking it alone would let the concurrency cap
+            # slip and overcommit KV memory.
+            if prefill_budget <= 0 or len(running_seqs) + len(chunks) >= self.max_num_seqs:
                 break
             take = min(self.prefill_chunk_size, req.remaining_prefill, prefill_budget)
             chunks.append((req, take))
@@ -401,6 +404,7 @@ import math
 def desired_replicas(current_replicas,
                      waiting_tokens, running_tokens,
                      replica_token_capacity,   # tokens/sec one replica sustains
+                     drain_horizon_s=10.0,     # clear the current backlog this fast
                      target_utilization=0.7,
                      warm_buffer=2,
                      min_replicas=2, max_replicas=64):
@@ -408,13 +412,16 @@ def desired_replicas(current_replicas,
     Target-tracking autoscaler driven by QUEUE load (a leading indicator),
     not GPU utilization (a lagging one).
 
-    offered_load: tokens of work the fleet currently owes (queued + in-flight).
-    We size so that this load sits at `target_utilization` of total capacity,
+    Watch the units: the backlog (queued + in-flight tokens) is a *stock* of
+    tokens, while `replica_token_capacity` is a *rate* (tokens/sec). Convert one
+    into the other with an explicit drain horizon -- we want the work the fleet
+    currently owes cleared within `drain_horizon_s` seconds -- and size so that
+    the resulting token rate sits at `target_utilization` of total capacity,
     then add a warm buffer to absorb spikes during the slow cold-start window.
     """
-    offered_load = waiting_tokens + running_tokens
-    total_capacity_needed = offered_load / target_utilization
-    raw = math.ceil(total_capacity_needed / replica_token_capacity)
+    backlog_tokens = waiting_tokens + running_tokens
+    offered_rate = backlog_tokens / drain_horizon_s          # tokens/sec
+    raw = math.ceil(offered_rate / (target_utilization * replica_token_capacity))
     desired = raw + warm_buffer
     # Hysteresis: clamp and let the caller apply scale-down delay separately.
     return max(min_replicas, min(max_replicas, desired))
@@ -596,7 +603,7 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
 
     Growth factor from $\rho=0.70$ to $\rho=0.95$:
     $$
-    \frac{1.600}{0.267} = \frac{1-0.30}{1-0.05}\cdot\frac{1}{1} = \frac{0.30}{0.05} = 6\times.
+    \frac{1.600}{0.267} = \frac{1-0.70}{1-0.95} = \frac{0.30}{0.05} = 6\times.
     $$
     A 25-point rise in utilization multiplies latency by **6x**, driven entirely by the $1/(1-\rho)$ queueing term (from $1/0.30=3.33$ to $1/0.05=20$). The mean already blows up; the tail percentiles (p99) blow up faster still. This is the "queueing cliff": at 95% the system is technically keeping up on average yet sitting at 1.6 s mean wait. Provisioning to 60-75% keeps $1/(1-\rho)$ in the $2.5$-$4$ range, so the headroom is not waste — it is the budget that holds p99 inside the SLO.
 
@@ -605,12 +612,14 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
 ??? note "Solution"
     KV bytes per token (both K and V):
     $$
-    2 \cdot L \cdot H_{kv} \cdot d_h \cdot \text{bytes\_per\_elem} = 2 \cdot 48 \cdot 8 \cdot 128 \cdot 2 = 196{,}608\ \text{bytes/token} \approx 0.1875\ \text{MB/token}.
+    2 \cdot L \cdot H_{kv} \cdot d_h \cdot \text{bytes\_per\_elem} = 2 \cdot 48 \cdot 8 \cdot 128 \cdot 2 = 196{,}608\ \text{bytes/token} \approx 0.1875\ \text{MiB/token}.
     $$
     Per request at 4,096 tokens:
     $$
-    196{,}608 \times 4096 = 805{,}306{,}368\ \text{bytes} \approx 0.75\ \text{GB}.
+    196{,}608 \times 4096 = 805{,}306{,}368\ \text{bytes} = 0.75\ \text{GiB} \approx 0.81\ \text{GB}.
     $$
+    (Keep the units straight: the rest of this solution — and the chapter's `* 1e9` — uses *decimal* GB, so divide in raw bytes rather than mixing 0.75 GiB with 46 GB.)
+
     Free HBM for KV:
     $$
     (80 - 30 - 4)\ \text{GB} = 46\ \text{GB} = 46\times10^{9}\ \text{bytes}.
@@ -621,7 +630,7 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
     $$
     (Check: $57 \times 805{,}306{,}368 = 4.590\times10^{10} < 4.6\times10^{10}$; $58$ would need $4.671\times10^{10}$, which overflows.)
 
-    Switching the KV cache to **fp8** halves `bytes_per_elem` from 2 to 1, so bytes/token halves and per-request footprint drops to $\approx 0.375$ GB. Concurrency roughly **doubles to $\lfloor 46\times10^9 / 402{,}653{,}184\rfloor = 114$** — the weights term is untouched, only the KV term shrank. This is why KV quantization and a low $H_{kv}$ (GQA/MQA) are such direct levers on how many sequences a replica can hold.
+    Switching the KV cache to **fp8** halves `bytes_per_elem` from 2 to 1, so bytes/token halves and per-request footprint drops to $402{,}653{,}184$ bytes ($0.375$ GiB $\approx 0.40$ GB). Concurrency roughly **doubles to $\lfloor 46\times10^9 / 402{,}653{,}184\rfloor = 114$** — the weights term is untouched, only the KV term shrank. This is why KV quantization and a low $H_{kv}$ (GQA/MQA) are such direct levers on how many sequences a replica can hold.
 
 **4.** Combine the chapter's two independent sizing constraints. A streaming chat model sees peak $\lambda = 40$ requests/sec, and the average request lives in the system for $W = 20$ s (long generations). Each replica prefills at a service rate of $\mu = 12.5$ requests/sec and, from Exercise 3, holds $N_{\text{concurrent}} = 57$ sequences in KV. Compute (a) the throughput-bound replica count at target utilization $\rho = 0.70$, and (b) the memory/concurrency-bound replica count via Little's Law. Which constraint binds, and what does that tell you about the workload's regime?
 
@@ -637,7 +646,7 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
     $$
     Each replica holds 57, so
     $$
-    c_{\text{mem}} = \left\lceil \frac{800}{57} \right\rceil = \lceil 14.0 \rceil = 15\ \text{replicas}.
+    c_{\text{mem}} = \left\lceil \frac{800}{57} \right\rceil = \lceil 14.04 \rceil = 15\ \text{replicas}.
     $$
 
     **Binding constraint:** take the **max**, so the fleet needs $\max(5, 15) = \textbf{15 replicas}$, and it is **memory-bound**. The tell is that concurrency ($L = 800$) is enormous relative to prefill throughput demand because each request lingers for 20 s holding a KV slot. This is the "many concurrent long-context chats" regime the chapter names: KV capacity, not prefill compute, limits you. Ordering only the 5 replicas that throughput sizing suggests would OOM the moment real concurrency arrived.

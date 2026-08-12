@@ -124,11 +124,15 @@ pip install \
   "tokenizers==0.21.*" \
   "torch==2.7.*" \
   "torchtitan==0.1.*" \
-  "trl==0.15.*" \
+  "trl==0.19.*" \
   "peft==0.14.*" \
-  "vllm==0.8.*" \
   "llmcompressor==0.5.*" \
   "lm-eval==0.4.*"
+
+# vLLM hard-pins the exact torch it was built against (0.8.x -> torch 2.6.0,
+# 0.9.x -> torch 2.7.0), so it fights any torch pin you make yourself. Give the
+# serving engine its own virtualenv; the seam between train and serve is a file.
+pip install "vllm==0.9.*"     # separate env, matches torch 2.7 above
 
 # Freeze the ACTUAL resolved versions next to the checkpoint, not the loose pins above.
 pip freeze > runs/stack100m/requirements.lock.txt
@@ -136,15 +140,16 @@ pip freeze > runs/stack100m/requirements.lock.txt
 
 Treat the numbers above as illustrative, not gospel — they reflect the shape of releases in this era, and you should read the current version off the upstream release page rather than trust a printed book. That honesty *is* the practice: a book cannot ship you a working `pip install` line that survives two years; it can teach you to check.
 
-**2. Prefer the API's stable core over its fashionable edge.** Libraries have a stable spine and a churning surface. `SFTTrainer(model, train_dataset, args=SFTConfig(...))` has been stable in shape for a long time; whether packing is `packing=True` on the config or a separate collator has moved around. When you write code you intend to keep, lean on the spine and isolate the churny bits behind a thin adapter so a rename touches one line.
+**2. Prefer the API's stable core over its fashionable edge.** Libraries have a stable spine and a churning surface. `SFTTrainer(model, args=SFTConfig(...), train_dataset=ds)` has been stable in shape for a long time (note the second *positional* slot is `args`, inherited from `transformers.Trainer` — pass the dataset by keyword); whether packing is `packing=True` on the config or a separate collator has moved around. When you write code you intend to keep, lean on the spine and isolate the churny bits behind a thin adapter so a rename touches one line.
 
-**3. When in doubt, read the upstream example, pinned to your version's git tag.** Every serious library ships runnable examples. If your installed version is `trl==0.15.2`, check out the repo at tag `v0.15.2` and read `examples/` there — not `main`, which may already be two breaking changes ahead of you.
+**3. When in doubt, read the upstream example, pinned to your version's git tag.** Every serious library ships runnable examples. If your installed version is `trl==0.19.1`, check out the repo at tag `v0.19.1` and read `examples/` there — not `main`, which may already be two breaking changes ahead of you.
 
 ```bash
 # The single most reliable way to get a WORKING snippet for your exact version:
 git clone https://github.com/huggingface/trl && cd trl
-git checkout v0.15.2          # match the version you actually pip-installed
-ls examples/scripts/          # sft.py, dpo.py, grpo.py — runnable, version-matched
+git checkout v0.19.1          # match the version you actually pip-installed
+ls examples/scripts/          # sft.py, dpo.py, … — runnable, version-matched
+ls trl/scripts/               # the CLI entry points (grpo.py lives HERE, not in examples/)
 ```
 
 Throughout Part XV, whenever we show a library call, we will (a) hedge the version, (b) show the *mechanism* the call performs so you can recognize its renamed cousin, and (c) point at the upstream example directory rather than pretending our snippet is eternal. If a snippet in this book errors on an argument, the fix is almost always "an argument moved" — not "the concept changed." Fix the argument; the concept is what you came for.
@@ -159,7 +164,7 @@ The map is not just topological; it has a budget attached, and the budget is wha
 
 !!! example "Worked example: where the ~$100 goes"
 
-    **Compute model.** Training FLOPs follow the standard rule $C \approx 6ND$ for $N$ parameters and $D$ tokens (attention-inclusive it is $C=(6N+6Lsd_q)D$, but $6ND$ is the headline). Stack-100M has $N \approx 1.01\times10^{8}$ params and the stable phase burns $D \approx 1.8\times10^{10}$ tokens.
+    **Compute model.** Training FLOPs follow the standard rule $C \approx 6ND$ for $N$ parameters and $D$ tokens (attention-inclusive it is $C=(6N+6Lsd_{\text{model}})D$, which at Stack-100M's $L=30$, $s=2048$, $d_{\text{model}}=512$ adds 31% on top, but $6ND$ is the headline). Stack-100M has $N \approx 1.01\times10^{8}$ params and the stable phase burns $D \approx 1.8\times10^{10}$ tokens.
 
     **Pretraining FLOPs (the dominant cost):**
 
@@ -167,15 +172,15 @@ The map is not just topological; it has a budget attached, and the budget is wha
     C_{\text{stable}} \approx 6 \times (1.01\times10^{8}) \times (1.8\times10^{10}) \approx 1.09\times10^{19}\ \text{FLOPs}.
     $$
 
-    An A100 (80GB) delivers on the order of $3\times10^{14}$ bf16 FLOP/s peak. At a realistic **MFU of ~0.45** (attention-inclusive convention), effective throughput is $\approx 1.35\times10^{14}$ FLOP/s. Wall-clock:
+    An A100 (80GB) delivers on the order of $3\times10^{14}$ bf16 FLOP/s peak. At a realistic **MFU of ~0.45** — quoted against the same $6ND$ numerator we just used, which is ~0.59 of peak once the attention term is counted (see [Ch 14.12](../14-capstone/12-retrospective-and-scaleup.html) for why the convention must be stated) — effective throughput is $\approx 1.35\times10^{14}$ FLOP/s. Wall-clock:
 
     $$
     t \approx \frac{1.09\times10^{19}}{1.35\times10^{14}} \approx 8.1\times10^{4}\ \text{s} \approx 22\ \text{GPU-hours}.
     $$
 
-    That lands squarely in the spec's **22–29 GPU-hour** band, and at ~$1–2/GPU-hr it is **~$25–$50** — the biggest single line item.
+    That is the well-tuned end of the spec's **22–29 GPU-hour** band — the top of the band is the same run at MFU(6ND) ~0.34 — and at ~$1.20–$1.80/GPU-hr it is **~$25–$50**, the biggest single line item.
 
-    **Now the crosswalk insight.** The production library (`torchtitan`) does *not* change the $6ND$ FLOP count — physics is physics. What it changes is the **MFU multiplier**. A naive from-scratch loop with no activation checkpointing, no fused kernels, and eager attention might run at MFU ~0.20 instead of ~0.45. That is not a rounding error: it is the difference between 22 and ~50 GPU-hours — it **doubles the bill**. So on the pretraining row, the library's payoff is measured in *dollars*, directly, through hardware utilization.
+    **Now the crosswalk insight.** The production library (`torchtitan`) does *not* change the $6ND$ FLOP count — physics is physics. What it changes is the **MFU multiplier**. A naive from-scratch loop with no fused kernels, eager attention, and a micro-batch too small to fill the tensor cores might run at MFU ~0.20 instead of ~0.45. (Activation checkpointing is *not* on that list: recompute buys memory headroom at the price of ~30% extra hardware FLOPs that the $6ND$ numerator never counts, so it lowers MFU even as it raises HFU — the flagship run uses none.) That is not a rounding error: it is the difference between 22 and ~50 GPU-hours — it **doubles the bill**. So on the pretraining row, the library's payoff is measured in *dollars*, directly, through hardware utilization.
 
     **The other stages are cheap by comparison.** Tokenizer training, data tokenization, SFT (a few hundred million tokens), DPO (tens of thousands of pairs), and a narrow GRPO run are each a small fraction of the pretraining burn — on the order of single-digit GPU-hours combined. Here the library's payoff is measured in *engineer-hours and correctness*, not compute dollars: `datatrove`'s MinHash dedup is not saving you GPU time, it is saving you from training on 30% duplicated garbage.
 
@@ -187,7 +192,7 @@ The lesson of the costing is the same as the lesson of the crosswalk: **the libr
 
 With the map in hand, here is how the rest of the part cashes out each region of the diagram. Every chapter follows the same contract from the spec: name the real library and why it is standard in 2026, show the runnable command, cross-link the Part-XIV chapter where we hand-rolled it, and be honest about version drift.
 
-- **[15.2 — Data at Scale](../14-capstone/02-data-pipeline.html) (mirrors Ch 14.2).** The FineWeb-style pipeline in `datatrove`: readers, URL/language/quality filters, MinHash near-dedup, a tokenizing writer, and the `LocalPipelineExecutor` → `SlurmPipelineExecutor` scale-out. Plus HF `datasets` streaming, and `nemo-curator`/`dolma` as alternatives. It produces the exact packed shards `stacklm` consumes — same seam, industrial pipe.
+- **15.2 — Data at Scale (mirrors [Ch 14.2](../14-capstone/02-data-pipeline.html)).** The FineWeb-style pipeline in `datatrove`: readers, URL/language/quality filters, MinHash near-dedup, a tokenizing writer, and the `LocalPipelineExecutor` → `SlurmPipelineExecutor` scale-out. Plus HF `datasets` streaming, and `nemo-curator`/`dolma` as alternatives. It produces the exact packed shards `stacklm` consumes — same seam, industrial pipe.
 
 - **15.3 — Tokenizer Training (mirrors [Ch 14.3](../14-capstone/03-tokenizer.html)).** Train a real byte-level BPE with the Rust `BpeTrainer` and `ByteLevel` pre-tokenizer, wrap it in `PreTrainedTokenizerFast`, reserve the chat/tool special tokens up front, and export. The `sentencepiece` path and when a unigram model beats BPE. Cross-links the [tokenization chapter](../02-transformer/01-tokenization.html).
 
@@ -201,9 +206,11 @@ A concrete taste of the substitution — the same three seams (train → align �
 
 ```bash
 # ── SEAM 1: pretrain (torchtitan owns FSDP2, WSD, checkpointing, MFU) ───────────
-# Launch a distributed run from a config; the config IS the hand-written loop's knobs.
-torchrun --nproc_per_node=8 -m torchtitan.train \
-    --job.config_file ./stack100m.toml      # d_model=512, n_layers=30, WSD, bf16, ac
+# Launch from a config; the config IS the hand-written loop's knobs.
+# nproc_per_node = the GPUs you actually have: 1 for the single-A100 Stack-100M run,
+# 8 on a full node (torchrun errors out if you ask for more devices than exist).
+torchrun --nproc_per_node=1 -m torchtitan.train \
+    --job.config_file ./stack100m.toml  # d_model=512, n_layers=30, WSD, bf16, no recompute
 # → writes runs/stack100m/checkpoint/step-XXXXX/ in safetensors + distributed format
 
 # ── SEAM 2: post-train (TRL owns the SFT/DPO/GRPO trainers) ─────────────────────
@@ -220,7 +227,7 @@ vllm serve runs/stack100m-int4 --max-model-len 8192 --port 8000
 # → OpenAI-compatible endpoint; curl it exactly like you'd curl a frontier API
 ```
 
-Notice what is *not* in those commands: no attention kernel, no sharding logic, no PagedAttention block table, no NDCG-style dedup hashing. Every one of those is something you *understand* from Part XIV and *do not maintain* in Part XV. That is the entire point of the map.
+Notice what is *not* in those commands: no attention kernel, no sharding logic, no PagedAttention block table, no MinHash/LSH dedup banding. Every one of those is something you *understand* from Part XIV and *do not maintain* in Part XV. That is the entire point of the map.
 
 !!! interview "Interview Corner"
 

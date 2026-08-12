@@ -43,9 +43,9 @@ Engineers need to care most about **2 Aug 2025** (GPAI model obligations — aff
 
 The Act classifies AI systems into four tiers:
 
-1. **Prohibited** — Social scoring by public authorities, real-time biometric surveillance in public spaces, AI that exploits vulnerable groups. No compliance path; simply illegal in the EU.
+1. **Prohibited** — Social scoring by public *or private* actors (Art. 5(1)(c) — the "public authorities" limiter was in the 2021 proposal and did not survive into the enacted text); real-time remote biometric identification in publicly accessible spaces for law-enforcement purposes, subject to the narrow Art. 5(1)(h) exceptions; emotion inference in the workplace and in education institutions outside medical and safety uses (Art. 5(1)(f)); AI that exploits vulnerabilities of specific groups. No compliance path; simply illegal in the EU.
 2. **High-risk** — Listed in Annex III (biometric identification, critical infrastructure, employment decisions, essential services, law enforcement, migration, administration of justice, democratic processes). Also anything that is a safety component of a product under EU product safety law.
-3. **Limited-risk** — Chatbots, deep-fakes, emotion recognition. Transparency obligations only (must disclose AI-generated content to users).
+3. **Limited-risk** — Chatbots and deep-fakes: Article 50 transparency obligations only (disclose the machine, mark and label synthetic content). Beware the common miscategorisation of **emotion recognition** here: it is *prohibited* in the workplace and in education (Art. 5(1)(f)) and otherwise *high-risk* under Annex III point 1(c); the Art. 50(3) duty to inform exposed persons stacks on top of that, it does not replace it.
 4. **Minimal-risk** — Spam filters, AI in video games. No mandatory obligations.
 
 Most LLM applications land in **limited-risk** if deployed for open consumer use, but many enterprise applications (hiring tools, medical triage, credit scoring) tip into **high-risk**, triggering a heavy compliance programme.
@@ -107,7 +107,7 @@ The key definitions:
 Every GPAI model provider, regardless of compute, must:
 
 1. **Technical documentation** — Maintain up-to-date documentation covering architecture, training data, compute, evaluation results, known limitations, intended and foreseeable uses, and content filtering measures.
-2. **Training-data summary** — Publish a "sufficiently detailed summary" of training data used. The Office of AI (European AI Office) publishes a template; it includes: data sources, languages covered, data selection methodology, filtering applied, personal data handling, and copyright measures.
+2. **Training-data summary** — Publish a "sufficiently detailed summary" of training data used. The European AI Office publishes a mandatory template; it includes: data sources, languages covered, data selection methodology, filtering applied, personal data handling, and copyright measures.
 3. **Copyright compliance** — Implement a policy to comply with EU copyright law, including the text-and-data mining exceptions in the 2019 Copyright Directive. Retain records to demonstrate compliance.
 4. **Downstream deployer information** — Provide AI system providers who integrate the GPAI model with documentation and instructions sufficient to comply with their own obligations.
 
@@ -150,11 +150,11 @@ Article 55(2) adds the compliance route that actually matters in practice: provi
 
 ## High-Risk Application Requirements
 
-When an LLM is deployed in a high-risk context (Annex III), the *deployer* (or developer, if they are also the deployer) must implement a compliance programme before placing the system on the EU market or putting it into service.
+When an LLM is deployed in a high-risk context (Annex III), a compliance programme must be in place before the system is placed on the EU market or put into service. Keep the two roles straight, because the duties differ: the **provider** builds the system and owns conformity assessment and registration; the **deployer** uses it and owns the Article 26 duties (use per the instructions, human oversight, input-data relevance, log retention, informing affected persons). If you fine-tune and ship your own system you are the provider and you carry both sets.
 
 ### Conformity Assessment
 
-The deployer must perform a conformity assessment and register the system in the EU AI database before deployment. For most Annex III categories, this is a self-assessment. For biometric identification and law-enforcement use-cases, a notified body (third-party auditor) must be involved.
+The *provider* must perform a conformity assessment and register the system in the EU database before placing it on the market (Art. 43, Art. 49(1)); deployers that are public authorities register their use separately under Art. 49(3). For Annex III points 2–8 — critical infrastructure, education, employment, essential services, law enforcement, migration, administration of justice — Article 43(2) prescribes conformity assessment based on **internal control** (Annex VI), which explicitly does *not* involve a notified body. Third-party assessment bites only on the **biometrics** category (Annex III point 1), and even there it is conditional: under Article 43(1) a provider that has applied the relevant harmonised standards may still choose internal control, and the notified-body route (Annex VII) becomes mandatory only where those standards were not applied, were applied only in part, or do not exist.
 
 ### Required Technical Controls
 
@@ -162,9 +162,9 @@ The deployer must perform a conformity assessment and register the system in the
 {{fig:gov-high-risk-requirements-grid}}
 
 
-The **logging** requirement is operationally significant. Article 12 requires that high-risk AI systems be designed to automatically generate logs throughout their lifecycle — including: input data (or a reference to it), output data, the identity of persons or processes that invoked the system, and the date/time of operation.
+The **logging** requirement is operationally significant, and it is also the one most often mis-cited. Article 12(1)–(2) requires that high-risk AI systems technically allow the automatic recording of events over the system's lifetime, at a level of traceability appropriate to the intended purpose — specifically enough to identify situations where the system presents a risk under Article 79(1), to support post-market monitoring under Article 72, and to support the deployer's Article 26(5) monitoring. It does **not** enumerate fields. The concrete minimum field list lives in Article 12(3) and applies only to the remote-biometric-identification systems in Annex III point 1(a): period of each use, the reference database checked against, the input data that produced a match, and the identification of the natural persons who verified the results per Article 14(5).
 
-Here is a minimal compliant logging schema for an LLM application, implemented as a structured JSON record:
+So the schema below is not a verbatim statutory list. It is a defensible superset for a general high-risk LLM deployment: enough to reconstruct what the system did, for whom, and on what input, which is what "traceability appropriate to the intended purpose" cashes out to in an audit.
 
 ```python
 # eu_ai_act_logger.py
@@ -182,8 +182,9 @@ from typing import Optional
 @dataclass
 class AIActLogRecord:
     """
-    One inference event, structured to meet Art. 12 (logging) and
-    Art. 26(5) (transparency) of the EU AI Act.
+    One inference event, structured to support Art. 12 (logging /
+    traceability) and the deployer's Art. 26(5) duty to monitor the
+    operation of the system.
     """
     # Unique identifier for this event (for incident correlation)
     event_id: str
@@ -275,7 +276,7 @@ From August 2026, enforcement is live. Fines are capped at:
 
 - Up to **EUR 35 million or 7 % of global annual turnover** (whichever is higher) for violations of prohibited AI practices.
 - Up to **EUR 15 million or 3 %** for other violations of the Act.
-- Up to **EUR 7.5 million or 1.5 %** for providing incorrect information to authorities.
+- Up to **EUR 7.5 million or 1 %** for providing incorrect, incomplete or misleading information to notified bodies or national competent authorities (Art. 99(5)).
 
 The EU AI Office has enforcement jurisdiction over GPAI models; national market surveillance authorities handle high-risk application violations.
 
@@ -313,7 +314,7 @@ architecture:
 
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
-  compute_flops: "~6e23"           # below 1e25 systemic-risk threshold
+  compute_flops: "~8.4e23"         # 6ND for 70B x 2T; below 1e25 systemic-risk threshold
   hardware: "4096 x H100 SXM5"
   duration_days: 42
   training_objective: "Next-token prediction (causal LM)"
@@ -495,6 +496,8 @@ class DataSourceRecord:
         """
         if self.opt_out_detected and not self.opt_out_respected:
             return False   # Violation: ignored an opt-out
+        if self.opt_out_detected and self.opt_out_respected:
+            return True    # Case (c): opt-out honoured, source excluded from training
         if self.text_data_mining_exception_applies and not self.opt_out_detected:
             return True    # Clean TDM exception
         # Otherwise fall through to licence check
@@ -590,6 +593,14 @@ class AIIncidentReport:
     # Internal tracking
     detected_by: str               # "automated_monitor", "user_report", "red_team"
     assigned_to: str
+
+    # Art. 73 (national market surveillance authority) and Art. 55(1)(c)
+    # (European AI Office) are INDEPENDENT obligations with different
+    # recipients and different clocks. `severity` is the escalation label;
+    # this flag keeps the Art. 73 track alive even when severity == SYSTEMIC,
+    # so a frontier incident that also killed someone is not silently
+    # de-scoped to a single notification.
+    art73_serious: bool = False
     notified_authority: Optional[str] = None
     notification_timestamp_ms: Optional[float] = None
 
@@ -601,16 +612,20 @@ def triage_incident(
 ) -> AIIncidentReport:
     """
     Triage an incoming event and assign severity.
-    harm_indicators keys: death, serious_injury, service_disruption,
-    fundamental_rights_violation, property_damage (all bool).
+    harm_indicators keys (all bool unless noted): death, serious_injury,
+    service_disruption, fundamental_rights_violation, property_damage,
+    broad_societal_impact, and affected_count (int | None).
     """
     is_serious = any([
         harm_indicators.get("death"),
         harm_indicators.get("serious_injury"),
         harm_indicators.get("fundamental_rights_violation"),
     ])
-    is_systemic = harm_indicators.get("broad_societal_impact")
+    is_systemic = bool(harm_indicators.get("broad_societal_impact"))
 
+    # NOTE: the two regimes are not mutually exclusive. `severity` records the
+    # highest escalation tier, but `art73_serious` is carried separately so the
+    # national notification still fires for a SYSTEMIC-labelled incident.
     if is_systemic:
         severity = IncidentSeverity.SYSTEMIC
     elif is_serious:
@@ -632,6 +647,7 @@ def triage_incident(
         ongoing=True,
         detected_by="automated_monitor",
         assigned_to="ai-safety-team@example.com",
+        art73_serious=is_serious,
     )
 
 
@@ -656,6 +672,9 @@ def notify_authority(
     when one is published.
     Deadline: SYSTEMIC ~2 days (Code of Practice); SERIOUS <=15 days
     (Art. 73; tighter for deaths and critical-infrastructure disruption).
+    Call this once PER RECIPIENT: a report with severity == SYSTEMIC and
+    art73_serious == True owes the AI Office *and* the national market
+    surveillance authority, on their two separate clocks.
     """
     body = json.dumps(asdict(report), indent=2, default=str)
     msg = MIMEText(body, "plain", "utf-8")
@@ -1031,7 +1050,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
     - The **Article 53(2) open-source carve-out** drops the technical-documentation and downstream-provider duties for genuinely open-weight releases, but never drops the copyright policy or the public training-data summary, and disappears entirely once a model crosses the systemic-risk threshold.
     - **Article 50** turns the "limited-risk" tier into real work from Aug 2026: disclose the AI, and mark synthetic output in a machine-readable way (C2PA content credentials plus text watermarking are the two practical layers).
     - **Compliance artefacts** — model cards, training-data summaries, rights registers, eval reports, and audit logs — should be generated automatically from metadata captured during training and evaluation, not reconstructed after the fact.
-    - **Audit logs** for high-risk deployments must include input references, output text, invoker identity, and timestamps; use append-only or immutable storage.
+    - **Audit logs** for high-risk deployments must give traceability appropriate to the intended purpose (Art. 12(1)–(2)); the enumerated minimum field list in Art. 12(3) binds only Annex III point 1(a) biometric-ID systems. In practice log input references, output text, invoker identity and timestamps, on append-only or immutable storage.
     - **Serious-incident reporting** is triggered by harm to people, not system outages; build a separate triage pipeline distinct from general SRE incident response.
     - The **NIST AI RMF** (GOVERN/MAP/MEASURE/MANAGE) and **ISO/IEC 42001** are complementary: the RMF gives the risk vocabulary and workflow; ISO 42001 gives the auditable management-system scaffold; the EU AI Act sets the legal floor.
     - **Copyright compliance** requires checking TDM opt-out signals at crawl time (`robots.txt`, TDM reservation headers), maintaining a rights register, and retaining timestamped evidence of those checks.
@@ -1111,7 +1130,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
       = 9.6 \times 10^{24} \text{ FLOPs}
     $$
 
-    **(b)** $9.6 \times 10^{24} < 10^{25}$, so the model is **below** the systemic-risk threshold. It is still a GPAI model (self-supervised, broad generality) and therefore carries the Article 53 base obligations — technical documentation, training-data summary, copyright policy, downstream-deployer information — but it does *not* trigger the Article 55 systemic-risk obligations (adversarial testing, two-day incident reporting, cybersecurity, energy disclosure). It sits close to the bar, so the FlopTracker's 80% warning would already have fired.
+    **(b)** $9.6 \times 10^{24} < 10^{25}$, so the model is **below** the systemic-risk threshold. It is still a GPAI model (self-supervised, broad generality) and therefore carries the Article 53 base obligations — technical documentation, training-data summary, copyright policy, downstream-deployer information — but it does *not* trigger the Article 55 systemic-risk obligations (model evaluation including adversarial testing, systemic-risk assessment and mitigation, incident reporting to the AI Office without undue delay — the concrete day counts live in the GPAI Code of Practice, not in Article 55 — and cybersecurity). Note the trap: the energy-consumption disclosure is *not* one of the obligations you escape. It is an Annex XI item attached to the Article 53(1)(a) technical documentation, so it is still owed. It sits close to the bar, so the FlopTracker's 80% warning would already have fired.
 
     **(c)** Solve for the token count $D^{*}$ that hits the threshold with $N$ fixed:
 
@@ -1123,7 +1142,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     Additional tokens needed: $8.33 \times 10^{12} - 8 \times 10^{12} \approx 3.3 \times 10^{11}$, i.e. roughly **330 billion more tokens**. A modest extension of the run would tip the model across the line and pull in the full Article 55 regime.
 
-**3.** The EU AI Act caps fines as the *higher* of a fixed euro amount or a percentage of global annual turnover: EUR 35 M / 7% for prohibited practices, EUR 15 M / 3% for other violations, EUR 7.5 M / 1.5% for supplying incorrect information. Compute the maximum fine for each violation category for (a) a large provider with EUR 2 billion global annual turnover, and (b) a startup with EUR 100 million turnover. Which company is bound by the fixed cap rather than the percentage, and for which categories?
+**3.** The EU AI Act caps fines as the *higher* of a fixed euro amount or a percentage of global annual turnover: EUR 35 M / 7% for prohibited practices, EUR 15 M / 3% for other violations, EUR 7.5 M / 1% for supplying incorrect information. Compute the maximum fine for each violation category for (a) a large provider with EUR 2 billion global annual turnover, and (b) a startup with EUR 100 million turnover. Which company is bound by the fixed cap rather than the percentage, and for which categories?
 
 ??? note "Solution"
 
@@ -1133,7 +1152,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     - Prohibited: $\max(35\text{M},\ 0.07 \times 2\text{B}) = \max(35\text{M},\ 140\text{M}) = \textbf{EUR 140 M}$.
     - Other violations: $\max(15\text{M},\ 0.03 \times 2\text{B}) = \max(15\text{M},\ 60\text{M}) = \textbf{EUR 60 M}$.
-    - Incorrect information: $\max(7.5\text{M},\ 0.015 \times 2\text{B}) = \max(7.5\text{M},\ 30\text{M}) = \textbf{EUR 30 M}$.
+    - Incorrect information: $\max(7.5\text{M},\ 0.01 \times 2\text{B}) = \max(7.5\text{M},\ 20\text{M}) = \textbf{EUR 20 M}$.
 
     For the large provider the **percentage term dominates in every category** — the euro caps are irrelevant to it.
 
@@ -1141,7 +1160,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     - Prohibited: $\max(35\text{M},\ 0.07 \times 100\text{M}) = \max(35\text{M},\ 7\text{M}) = \textbf{EUR 35 M}$ (fixed cap).
     - Other violations: $\max(15\text{M},\ 0.03 \times 100\text{M}) = \max(15\text{M},\ 3\text{M}) = \textbf{EUR 15 M}$ (fixed cap).
-    - Incorrect information: $\max(7.5\text{M},\ 0.015 \times 100\text{M}) = \max(7.5\text{M},\ 1.5\text{M}) = \textbf{EUR 7.5 M}$ (fixed cap).
+    - Incorrect information: $\max(7.5\text{M},\ 0.01 \times 100\text{M}) = \max(7.5\text{M},\ 1\text{M}) = \textbf{EUR 7.5 M}$ (fixed cap).
 
     The **startup is bound by the fixed euro caps in all three categories**, because 7% of its turnover (EUR 7 M) is smaller than the EUR 35 M fixed floor, and likewise for the other rows. The "higher of" rule is what makes the euro caps bite hardest on smaller firms while the percentage bites hardest on large ones — a prohibited-practice fine of EUR 35 M is 35% of the startup's turnover but only 1.75% of the large provider's.
 

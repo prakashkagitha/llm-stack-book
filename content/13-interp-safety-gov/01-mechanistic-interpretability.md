@@ -51,7 +51,7 @@ If features were *orthogonal* directions, life would be easy: $d_\text{model}$ d
 
 A transformer "wants" to represent far more features than it has dimensions. A language model plausibly tracks tens or hundreds of thousands of distinct features — specific entities, syntactic roles, topics, code constructs — but $d_\text{model}$ is only a few thousand. The resolution, demonstrated cleanly in Anthropic's "Toy Models of Superposition" (Elhage et al., 2022), is **superposition**: the network packs $n \gg d_\text{model}$ features into $d_\text{model}$ dimensions by representing them as *non-orthogonal* directions, exploiting the fact that real features are **sparse** — only a handful are active on any given token.
 
-The geometry is the Johnson–Lindenstrauss insight: in high dimensions you can fit exponentially many *almost*-orthogonal unit vectors. With pairwise interference bounded by $\langle v_i, v_j\rangle \le \epsilon$, the number of features you can pack grows roughly like $\exp(\epsilon^2 d_\text{model})$. The price is **interference**: each feature reads a little noise from every other co-active feature. Sparsity keeps that noise manageable — if only $k$ of $n$ features fire at once, the expected squared interference scales with $k$, not $n$.
+The geometry is the Johnson–Lindenstrauss insight: in high dimensions you can fit exponentially many *almost*-orthogonal unit vectors. With pairwise interference bounded by $\langle v_i, v_j\rangle \le \epsilon$, the number of features you can pack grows like $n \sim \exp(c\,\epsilon^2 d_\text{model})$ for an unspecified constant $c$. Treat that as a *scaling law*, not an absolute count — the constant is what JL-style bounds leave loose, and the capacity is of course never below $d_\text{model}$, since an exactly orthogonal basis is always available. The content of the law is that tolerating a little more interference buys exponentially more features. The price is **interference**: each feature reads a little noise from every other co-active feature. Sparsity keeps that noise manageable — if only $k$ of $n$ features fire at once, the expected squared interference scales with $k$, not $n$.
 
 {{fig:mechinterp-superposition-geometry}}
 
@@ -132,13 +132,17 @@ tok = GPT2TokenizerFast.from_pretrained("gpt2")
 model = GPT2LMHeadModel.from_pretrained("gpt2").to(device).eval()
 
 # ── 1. Hook every transformer block to capture its residual-stream OUTPUT. ──────────
-# In GPT2, model.transformer.h[i] outputs (hidden_states, ...); hidden_states is the
-# residual stream AFTER block i, i.e. x_{i+1}. We stash one per layer.
+# In GPT2, model.transformer.h[i] emits the residual stream AFTER block i, i.e. x_{i+1}.
+# Recent transformers returns that hidden-state tensor bare; older versions wrapped it
+# in a tuple (hidden_states, ...). Handle both. We stash one tensor per layer.
 resid_by_layer = {}
+def resid_of(out):
+    # -> residual stream of shape (batch, seq, d_model)
+    return out[0] if isinstance(out, tuple) else out
+
 def make_hook(idx):
     def hook(_module, _inp, out):
-        # out is a tuple; out[0] = residual stream of shape (batch, seq, d_model)
-        resid_by_layer[idx] = out[0].detach()
+        resid_by_layer[idx] = resid_of(out).detach()
     return hook
 
 handles = [blk.register_forward_hook(make_hook(i))
@@ -176,15 +180,15 @@ prompt: 'The Eiffel Tower is located in the city of'
 
 layer | top-1 token    | prob   | rank of ' Paris'
 --------------------------------------------------
-    0 | ' the'         | 0.04   | 8122
-    3 | ' a'           | 0.05   | 1190
-    6 | ' London'      | 0.07   | 14
-    8 | ' Paris'       | 0.10   | 0
-   10 | ' Paris'       | 0.31   | 0
-   11 | ' Paris'       | 0.58   | 0
+    0 | ' the'         | 0.707 | 6059
+    3 | ' the'         | 0.660 | 837
+    6 | ' East'        | 0.064 | 144
+    8 | ' Rome'        | 0.168 | 12
+   10 | ' Paris'       | 0.165 | 0
+   11 | ' Paris'       | 0.064 | 0
 ```
 
-The exact numbers depend on the GPT-2 checkpoint, but the *shape* is the lesson and it reproduces reliably: the gold token ` Paris` is buried near rank 8000 at the embedding, climbs as middle layers retrieve the association, and by the last layers dominates the distribution. You have just watched a fact get *recalled* layer by layer — and we will now localize exactly *where* that recall happens.
+(Rows for the other layers are elided.) The exact numbers depend on the GPT-2 checkpoint, but the *shape* is the lesson and it reproduces reliably: the gold token ` Paris` sits near rank 6000 after the first block, climbs steadily as middle layers retrieve the association — passing through plausible-but-wrong cities like ` Rome` on the way — and takes the top slot in the last layers. You have just watched a fact get *recalled* layer by layer — and we will now localize exactly *where* that recall happens.
 
 ---
 
@@ -204,10 +208,10 @@ Run the model on the corrupted input, but **patch in** one activation (a specifi
 We quantify recovery with a metric — typically the logit difference between the two candidate answers, or the log-prob of the gold token:
 
 $$
-\text{recovery}(\text{component } c) = \frac{m_\text{patched}(c) - m_\text{corrupt}}{m_\text{clean} - m_\text{corrupt}} \in [0, 1],
+\text{recovery}(\text{component } c) = \frac{m_\text{patched}(c) - m_\text{corrupt}}{m_\text{clean} - m_\text{corrupt}},
 $$
 
-where $m$ is, e.g., $\log p(\text{Paris}) - \log p(\text{Rome})$. A recovery of $1.0$ means patching $c$ fully restores the clean behavior; $0$ means it does nothing. Sweep $c$ over (layer × position × component) and you get a **causal heatmap** localizing the computation.
+where $m$ is, e.g., $\log p(\text{Paris}) - \log p(\text{Rome})$. The normalization puts the two endpoints at $0$ and $1$: a recovery of $1.0$ means patching $c$ fully restores the clean behavior; $0$ means it does nothing. Nothing *constrains* the value to $[0,1]$, though — patching can overshoot ($>1$) or push the metric the wrong way ($<0$), and both are informative rather than a bug in your code (Exercise 2). Sweep $c$ over (layer × position × component) and you get a **causal heatmap** localizing the computation.
 
 ### 4.2 Noising vs. denoising, and why direction matters
 
@@ -237,7 +241,8 @@ model = GPT2LMHeadModel.from_pretrained("gpt2").to(device).eval()
 
 # Same-length prompts so positions align token-for-token.
 clean_text     = "The Eiffel Tower is in the city of"
-corrupt_text   = "The Colosseum  is in the city of"   # crafted to tokenize to equal length
+corrupt_text   = "The Colosseum is in the city of"    # verified: both are 10 GPT-2 tokens
+# (' E','iff','el',' Tower') and (' Col','os','se','um') are both 4 tokens, so positions align.
 clean_ids   = tok(clean_text,   return_tensors="pt").input_ids.to(device)
 corrupt_ids = tok(corrupt_text, return_tensors="pt").input_ids.to(device)
 assert clean_ids.shape == corrupt_ids.shape, "prompts must align; adjust spacing/tokens"
@@ -252,10 +257,18 @@ def logit_diff(logits):
     return (logits[paris] - logits[rome]).item()
 
 # ── 1. Cache the CLEAN residual stream after every block, at every position. ────────
+# A block emits the residual stream bare in recent transformers, wrapped in a tuple in
+# older ones; these two helpers make every hook below work either way.
+def resid_of(out):
+    return out[0] if isinstance(out, tuple) else out
+
+def repack(out, h):
+    return ((h,) + tuple(out[1:])) if isinstance(out, tuple) else h
+
 clean_cache = {}
 def cache_hook(idx):
     def hook(_m, _i, out):
-        clean_cache[idx] = out[0].detach().clone()   # (1, seq, d_model)
+        clean_cache[idx] = resid_of(out).detach().clone()   # (1, seq, d_model)
     return hook
 handles = [blk.register_forward_hook(cache_hook(i)) for i, blk in enumerate(model.transformer.h)]
 with torch.no_grad():
@@ -274,9 +287,9 @@ print(f"corrupt logit-diff (Paris-Rome): {m_corrupt:+.2f}\n")
 #       clean one at that single site, run forward, measure recovery. ───────────────
 def patch_hook(layer_idx, pos):
     def hook(_m, _i, out):
-        h = out[0]
+        h = resid_of(out)
         h[:, pos, :] = clean_cache[layer_idx][:, pos, :]   # denoising: inject clean info
-        return (h,) + tuple(out[1:])
+        return repack(out, h)
     return hook
 
 recovery = torch.zeros(n_layer, seq_len)
@@ -289,7 +302,9 @@ for layer in range(n_layer):
         recovery[layer, pos] = (m_patched - m_corrupt) / (m_clean - m_corrupt + 1e-9)
 
 # ── 4. Print the (layer × position) recovery heatmap as text. ──────────────────────
-toks = [tok.decode([t]) for t in corrupt_ids[0].tolist()]
+# Positions align by construction, so we label the columns with the CLEAN prompt's
+# tokens (the corrupted run has 'Col os se um' where the clean run has ' E iff el Tower').
+toks = [tok.decode([t]) for t in clean_ids[0].tolist()]
 print("recovery of Paris-Rome logit diff (1.0 = clean fully restored):\n")
 print("layer\\pos " + " ".join(f"{t.strip()[:6]:>7}" for t in toks))
 for layer in range(n_layer):
@@ -301,7 +316,7 @@ for layer in range(n_layer):
 {{fig:mechinterp-patching-recovery-heatmap}}
 
 
-The numbers are illustrative but the structure is the well-replicated **two-bump pattern** of factual recall (this is exactly the "early-site / late-site" signature ROME identified). Patching is most effective at the **subject token** ("Tower") in the **early-middle MLP layers** (here L5) — that is where the entity's attributes are looked up and written into the residual stream. Then effectiveness migrates to the **final position** ("of") in **later layers** (L9–L11), where attention has *moved* the recalled fact to the position that produces the next token. You have just causally localized a fact to a *layer and a token*, which is precisely the handle that knowledge-editing methods like ROME and MEMIT grab — see [Knowledge Editing & Machine Unlearning](../13-interp-safety-gov/02-knowledge-editing-unlearning.html).
+The numbers are illustrative but the structure is the well-replicated **two-bump pattern** of factual recall (this is exactly the "early-site / late-site" signature ROME identified). Patching is most effective at the **last subject token** (the ` Tower` column, which is `um` in the corrupted run) in the **early-middle layers** (here L2–L5) — that is where the entity's attributes are looked up and written into the residual stream. (ROME attributes that lookup specifically to the *MLPs*; our sweep patches whole-block residual outputs, so it localizes the layer and position but cannot separate attention from MLP — patch `model.transformer.h[L].mlp` outputs instead if you want that split.) Then effectiveness migrates to the **final position** ("of") in **later layers** (L9–L11), where attention has *moved* the recalled fact to the position that produces the next token. You have just causally localized a fact to a *layer and a token*, which is precisely the handle that knowledge-editing methods like ROME and MEMIT grab — see [Knowledge Editing & Machine Unlearning](../13-interp-safety-gov/02-knowledge-editing-unlearning.html).
 
 !!! example "Worked example: reading the recovery metric"
     Suppose at $(L5,\ \text{Tower})$ the patched logit difference is $m_\text{patched} = +4.10$. With $m_\text{clean} = +6.40$ and $m_\text{corrupt} = -4.10$, recovery is
@@ -321,7 +336,7 @@ from transformer_lens import HookedTransformer, utils
 
 model = HookedTransformer.from_pretrained("gpt2-small")     # LN folded, activations named
 clean_tokens   = model.to_tokens("The Eiffel Tower is in the city of")
-corrupt_tokens = model.to_tokens("The Colosseum  is in the city of")
+corrupt_tokens = model.to_tokens("The Colosseum is in the city of")
 assert clean_tokens.shape == corrupt_tokens.shape
 paris, rome = model.to_single_token(" Paris"), model.to_single_token(" Rome")
 
@@ -434,7 +449,7 @@ $$
 
 The $\ell_1$ penalty forces the code $f$ to be sparse — only a few of the thousands of features fire per token. The columns of $W_\text{dec}$ are the **feature directions** in residual-stream space; the rows of $W_\text{enc}$ detect them. The bet, vindicated by Anthropic's "Towards Monosemanticity" (Bricken et al., 2023) and "Scaling Monosemanticity" (Templeton et al., 2024) and by Cunningham et al. (2023), is that the learned features are dramatically **more monosemantic** than neurons: individual features correspond to crisp concepts — "the Golden Gate Bridge," "DNA sequences," "code that is buggy," "deception," "sycophancy" — and they activate exactly where you'd expect.
 
-The $\ell_1$ penalty has a known flaw: it penalizes feature *magnitude*, shrinking activations and biasing reconstruction. Two important fixes: **gated SAEs** (Rajamanoharan et al., 2024) split the "which features fire" decision from "how much," and **TopK / JumpReLU SAEs** enforce sparsity directly — TopK keeps the $k$ largest activations per token (no magnitude penalty at all), giving a cleaner reconstruction–sparsity frontier. **Transcoders** generalize the idea: instead of reconstructing one layer's activations, a transcoder learns a sparse, interpretable *replacement for the MLP* — it reads the MLP's input and predicts its output through a sparse feature bottleneck, making the MLP's computation itself legible and enabling cross-layer circuit analysis in feature space ("sparse feature circuits," Marks et al., 2024). This line matured in 2025 into **cross-layer transcoders (CLTs)**, which read from and write to *all* downstream layers at once; swapping a model's MLPs for CLTs and tracing the feature interactions yields the **attribution graphs** of Anthropic's *Circuit Tracing* / *On the Biology of a Large Language Model* (Ameisen, Lindsey et al., 2025) — the first automated circuit maps of a production model (Claude 3.5 Haiku), surfacing multi-step reasoning, forward planning, and shared multilingual circuits. The tooling was open-sourced with an interactive Neuronpedia frontend, so you can generate attribution graphs on open-weights models yourself.
+The $\ell_1$ penalty has a known flaw: it penalizes feature *magnitude*, shrinking activations and biasing reconstruction. Two important fixes: **gated SAEs** (Rajamanoharan et al., 2024) split the "which features fire" decision from "how much," and **TopK / JumpReLU SAEs** enforce sparsity directly — TopK keeps the $k$ largest activations per token (no magnitude penalty at all), giving a cleaner reconstruction–sparsity frontier. **Transcoders** generalize the idea: instead of reconstructing one layer's activations, a transcoder learns a sparse, interpretable *replacement for the MLP* — it reads the MLP's input and predicts its output through a sparse feature bottleneck, making the MLP's computation itself legible and enabling cross-layer circuit analysis in feature space ("sparse feature circuits," Marks et al., 2024). This line matured in 2025 into **cross-layer transcoders (CLTs)**, whose features read the residual stream at *one* layer but write their output into that layer and *all subsequent* layers at once; swapping a model's MLPs for CLTs and tracing the feature interactions yields the **attribution graphs** of Anthropic's *Circuit Tracing* / *On the Biology of a Large Language Model* (Ameisen, Lindsey et al., 2025) — the first automated circuit maps of a production model (Claude 3.5 Haiku), surfacing multi-step reasoning, forward planning, and shared multilingual circuits. The tooling was open-sourced with an interactive Neuronpedia frontend, so you can generate attribution graphs on open-weights models yourself.
 
 ```python
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -526,12 +541,13 @@ How to get $v$? Three common routes: (1) **contrastive / difference-of-means** �
 
 ```python
 # Steering by adding a precomputed direction `v` (unit norm) to the residual stream.
+# A block emits the residual bare in recent transformers, tuple-wrapped in older ones.
 def steering_hook(v, alpha, positions=slice(None)):
     v = v.to(dtype=torch.float32)
     def hook(_m, _i, out):
-        h = out[0]
+        h = out[0] if isinstance(out, tuple) else out
         h[:, positions, :] = h[:, positions, :] + alpha * v   # broadcast add along d_model
-        return (h,) + tuple(out[1:])
+        return ((h,) + tuple(out[1:])) if isinstance(out, tuple) else h
     return hook
 
 # h = model.transformer.h[LAYER].register_forward_hook(steering_hook(v, alpha=+8.0))
@@ -550,13 +566,13 @@ Interpretability promises a monitoring layer that watches *internal* state, not 
 
 ### 7.3 Debugging workflows
 
-Day-to-day, the techniques compose into a debugging discipline. Model emits a surprising token? **Direct logit attribution** (DLA) tells you which heads/MLPs pushed it. The mechanism is just §1.1's linearity: the final logit for token $t$ is $W_U[t]^\top \operatorname{LN}_f(x_L)$, and $x_L$ is a *sum* of component outputs, so freezing the LN scale $\sigma$ at its observed value makes the logit decompose exactly,
+Day-to-day, the techniques compose into a debugging discipline. Model emits a surprising token? **Direct logit attribution** (DLA) tells you which heads/MLPs pushed it. The mechanism is just §1.1's linearity: the final logit for token $t$ is $W_U[t]^\top \operatorname{LN}_f(x_L)$, and $x_L$ is a *sum* of component outputs, so freezing the LN scale $\sigma$ at its observed value makes the logit decompose exactly, up to one component-independent constant:
 
 $$
-\text{logit}_t \;=\; \sum_{c \,\in\, \{\text{embed}\} \cup \{\text{heads}\} \cup \{\text{MLPs}\}} \frac{1}{\sigma}\,\big\langle W_U[t],\; \text{out}_c \big\rangle ,
+\text{logit}_t \;=\; \sum_{c \,\in\, \{\text{embed}\} \cup \{\text{heads}\} \cup \{\text{MLPs}\}} \frac{1}{\sigma}\,\big\langle W_U[t],\; \text{out}_c \big\rangle \;+\; \underbrace{\big\langle W_U[t],\, \beta_f \big\rangle + b_U[t]}_{\text{constant in } c} ,
 $$
 
-one scalar per component — and per *head*, not just per layer, since a layer's attention output is itself a sum over heads. Sort those scalars and you have a ranked list of who is responsible for the token, with no intervention required (TransformerLens' LN folding is what makes the $1/\sigma$ bookkeeping honest). A prompt that should trigger a behavior doesn't? **Logit lens** shows at which layer the prediction diverges from expectation. A backdoor or spurious trigger suspected? **Activation patching** between triggered and clean inputs localizes the responsible component. A fine-tune that regressed? Compare logit-lens trajectories or probe accuracies before/after to see *where* the representation changed.
+one scalar per component (folding the final LN's *gain* $\gamma$ into $W_U$ and centring the writing weights is what lets $\gamma$ and the mean-subtraction disappear into the sum; the LN *bias* $\beta_f$ and any unembed bias $b_U$ cannot be attributed to any component, which is one more reason DLA is normally reported on a logit **difference**, where the constant cancels) — and per *head*, not just per layer, since a layer's attention output is itself a sum over heads. Sort those scalars and you have a ranked list of who is responsible for the token, with no intervention required (TransformerLens' LN folding is what makes the $1/\sigma$ bookkeeping honest). A prompt that should trigger a behavior doesn't? **Logit lens** shows at which layer the prediction diverges from expectation. A backdoor or spurious trigger suspected? **Activation patching** between triggered and clean inputs localizes the responsible component. A fine-tune that regressed? Compare logit-lens trajectories or probe accuracies before/after to see *where* the representation changed.
 
 ### 7.4 Tooling
 
@@ -664,15 +680,17 @@ None of this is a reason for cynicism. The trajectory — from word2vec analogie
     - Site B: $\dfrac{5.6 - (-3.0)}{8.0} = \dfrac{8.6}{8.0} = 1.075$ — recovery **above 1.0**: patching *overshoots* the clean behavior, pushing the model even more toward `Paris` than the clean run did (the site carries more than the full distinguishing signal in this direction).
     - Site C: $\dfrac{-4.0 - (-3.0)}{8.0} = \dfrac{-1.0}{8.0} = -0.125$ — **negative** recovery: injecting the clean activation here moved the output slightly *away* from the clean answer rather than toward it, so this site does not carry the recall in the helpful direction.
 
-**3.** *(Quantitative.)* The chapter states that with pairwise interference bounded by $\langle v_i, v_j\rangle \le \epsilon$, the number of almost-orthogonal features you can pack grows roughly like $\exp(\epsilon^2 d_\text{model})$. Take $d_\text{model} = 512$. (a) Estimate the packing capacity at $\epsilon = 0.1$ and at $\epsilon = 0.2$. (b) What does the ratio tell you about the model's design pressure? (c) The chapter also says interference noise scales with the number of *co-active* features $k$, not the total $n$. If a token activates $k = 20$ features instead of $k = 5$, by what factor does expected squared interference grow, and why does sparsity matter?
+**3.** *(Quantitative.)* The chapter states that with pairwise interference bounded by $\langle v_i, v_j\rangle \le \epsilon$, the number of almost-orthogonal features you can pack scales like $n \sim \exp(c\,\epsilon^2 d_\text{model})$. Take $d_\text{model} = 512$ and, since $c$ is unspecified, set $c = 1$ for the arithmetic. (a) Evaluate the exponent $\epsilon^2 d_\text{model}$ at $\epsilon = 0.1$ and at $\epsilon = 0.2$, and say why the resulting number at $\epsilon = 0.1$ must *not* be read as a literal feature count. (b) What does the *ratio* of the two capacities tell you about the model's design pressure? (c) The chapter also says interference noise scales with the number of *co-active* features $k$, not the total $n$. If a token activates $k = 20$ features instead of $k = 5$, by what factor does expected squared interference grow, and why does sparsity matter?
 
 ??? note "Solution"
-    (a) Capacity $\approx \exp(\epsilon^2 d_\text{model})$.
+    (a) With $c = 1$, capacity $\sim \exp(\epsilon^2 d_\text{model})$.
 
-    - $\epsilon = 0.1$: exponent $= (0.1)^2 \cdot 512 = 0.01 \cdot 512 = 5.12$, so capacity $\approx e^{5.12} \approx 167$ features.
-    - $\epsilon = 0.2$: exponent $= (0.2)^2 \cdot 512 = 0.04 \cdot 512 = 20.48$, so capacity $\approx e^{20.48} \approx 7.9 \times 10^{8}$ features.
+    - $\epsilon = 0.1$: exponent $= (0.1)^2 \cdot 512 = 0.01 \cdot 512 = 5.12$, giving $e^{5.12} \approx 167$.
+    - $\epsilon = 0.2$: exponent $= (0.2)^2 \cdot 512 = 0.04 \cdot 512 = 20.48$, giving $e^{20.48} \approx 7.9 \times 10^{8}$.
 
-    (b) Doubling the tolerated interference $\epsilon$ from $0.1$ to $0.2$ raised capacity from a couple hundred to nearly a billion — a factor of about $e^{20.48 - 5.12} = e^{15.36} \approx 4.7 \times 10^{6}$. The relationship is *exponential in $\epsilon^2 d_\text{model}$*, so the model has enormous incentive to tolerate a little more interference in exchange for representing vastly more features. This is exactly the design pressure that produces superposition rather than a clean orthogonal code.
+    The $\epsilon = 0.1$ number is the reason you must not read these as literal counts: $167 < 512 = d_\text{model}$, yet $512$ *exactly* orthogonal directions (interference $0 \le 0.1$) always exist. The missing constant $c$ — which JL-style bounds leave loose — is doing the work; the formula is only a statement about how capacity *scales*, and the true capacity is never below $d_\text{model}$.
+
+    (b) The ratio is the constant-free content (as long as $c$ is the same at both $\epsilon$): doubling the tolerated interference multiplies capacity by about $e^{c(20.48 - 5.12)} = e^{15.36} \approx 4.7 \times 10^{6}$ at $c = 1$. The relationship is *exponential in $\epsilon^2 d_\text{model}$*, so the model has enormous incentive to tolerate a little more interference in exchange for representing vastly more features. This is exactly the design pressure that produces superposition rather than a clean orthogonal code.
 
     (c) Expected squared interference scales with $k$, so going from $k = 5$ to $k = 20$ multiplies it by $20/5 = 4\times$. Sparsity matters because the noise each feature reads from co-active others is governed by how many fire *at once*, not by the total dictionary size $n$: keeping only a handful active per token holds interference manageable even when $n \gg d_\text{model}$. That is why superposition is viable only for sparse features.
 
@@ -698,8 +716,10 @@ None of this is a reason for cynicism. The trajectory — from word2vec analogie
         captured = {}
 
         def hook(_m, _i, out):
-            # out[0]: (batch, seq, d_model) residual stream AFTER block `layer`
-            captured["resid"] = out[0].detach()
+            # (batch, seq, d_model) residual stream AFTER block `layer`; recent
+            # transformers hands it over bare, older versions tuple-wrapped.
+            resid = out[0] if isinstance(out, tuple) else out
+            captured["resid"] = resid.detach()
 
         def last_token_means(prompts):
             acc = []
@@ -746,7 +766,7 @@ None of this is a reason for cynicism. The trajectory — from word2vec analogie
     model = GPT2LMHeadModel.from_pretrained("gpt2").to(device).eval()
 
     clean_ids   = tok("The Eiffel Tower is in the city of", return_tensors="pt").input_ids.to(device)
-    corrupt_ids = tok("The Colosseum  is in the city of",   return_tensors="pt").input_ids.to(device)
+    corrupt_ids = tok("The Colosseum is in the city of",    return_tensors="pt").input_ids.to(device)
     assert clean_ids.shape == corrupt_ids.shape
 
     paris = tok(" Paris").input_ids[0]
@@ -754,10 +774,14 @@ None of this is a reason for cynicism. The trajectory — from word2vec analogie
     n_layer = model.config.n_layer
 
     # ---- 1. Cache CLEAN residual per layer (no grad needed). ----
+    # Block output: bare tensor in recent transformers, tuple in older ones.
+    def resid_of(out):
+        return out[0] if isinstance(out, tuple) else out
+
     clean_cache = {}
     def cache_hook(idx):
         def hook(_m, _i, out):
-            clean_cache[idx] = out[0].detach()
+            clean_cache[idx] = resid_of(out).detach()
         return hook
     hs = [blk.register_forward_hook(cache_hook(i)) for i, blk in enumerate(model.transformer.h)]
     with torch.no_grad():
@@ -768,7 +792,7 @@ None of this is a reason for cynicism. The trajectory — from word2vec analogie
     corrupt_act, grads = {}, {}
     def grab_hook(idx):
         def hook(_m, _i, out):
-            a = out[0]
+            a = resid_of(out)
             a.retain_grad()          # keep grad on this non-leaf activation
             corrupt_act[idx] = a
             return out

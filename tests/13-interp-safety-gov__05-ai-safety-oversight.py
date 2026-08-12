@@ -114,7 +114,7 @@ def block_debate():
 # Block #2 (line ~126): weak-to-strong generalization loss + PGR metric
 # ---------------------------------------------------------------------------
 def block_weak_to_strong():
-    def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=0.0,
+    def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=0.5,
                             aux_weight=0.5):
         """Burns et al. found a key trick: an *auxiliary confidence loss* that
         lets the strong model disagree with weak labels when it is internally
@@ -125,10 +125,13 @@ def block_weak_to_strong():
         # (2) auxiliary term: push the strong model toward its OWN confident
         #     prediction (a hardened version of its current belief), which
         #     encodes "trust yourself when you strongly disagree".
-        p = F.softmax(strong_logits, dim=-1)
-        hardened = (p > conf_threshold).float()
-        hardened = hardened / hardened.sum(dim=-1, keepdim=True).clamp_min(1e-9)
-        conf_loss = F.cross_entropy(strong_logits, hardened.argmax(dim=-1))
+        p = F.softmax(strong_logits, dim=-1).detach()   # target, not a gradient path
+        conf, hardened = p.max(dim=-1)                  # hardened self-label = argmax
+        per_sample = F.cross_entropy(strong_logits, hardened, reduction="none")
+        # Only trust the self-label on rows the model is actually confident about;
+        # unconfident rows contribute nothing rather than a spurious target.
+        gate = (conf > conf_threshold).float()
+        conf_loss = (gate * per_sample).sum() / gate.sum().clamp_min(1.0)
 
         return (1 - aux_weight) * ce + aux_weight * conf_loss
 
@@ -155,6 +158,15 @@ def block_weak_to_strong():
     assert torch.isfinite(loss)
     assert strong_logits.grad is not None
     assert strong_logits.grad.shape == strong_logits.shape
+
+    # The auxiliary target must be the model's OWN prediction, not a constant
+    # class (the failure mode when the "hardened" belief is renormalized into
+    # a distribution and then argmax'd).
+    with torch.no_grad():
+        probs = F.softmax(strong_logits, dim=-1)
+        _, hardened = probs.max(dim=-1)
+    assert torch.equal(hardened, strong_logits.argmax(dim=-1))
+    assert hardened.unique().numel() > 1  # not collapsed onto a single class
 
     # worked numerical example from the chapter's "Worked numerical example" box
     pgr = recovered_gap(weak_acc=0.62, w2s_acc=0.79, strong_ceiling_acc=0.90)
@@ -249,10 +261,11 @@ def block_sandbagging():
 def block_control_protocol():
     def trusted_monitoring_protocol(untrusted_action, trusted_monitor,
                                     audit_threshold, trusted_fallback,
-                                    audit_budget_remaining):
+                                    audit_budget_remaining, human_audit):
         """One step of a control protocol. The trusted (weak, safe) model scores
         the untrusted (strong, maybe-scheming) model's proposed action; we audit
-        the most suspicious actions while the budget lasts, else defer to trusted."""
+        the most suspicious actions while the budget lasts, else defer to trusted.
+        `human_audit(action) -> 'safe' | 'BACKDOOR'` is the expensive reviewer."""
         suspicion = trusted_monitor.suspicion_score(untrusted_action)  # in [0,1]
 
         if suspicion >= audit_threshold and audit_budget_remaining > 0:
@@ -275,10 +288,10 @@ def block_control_protocol():
         total_backdoors = flags.sum()
         return caught / total_backdoors if total_backdoors else 1.0
 
-    # --- minimal glue: the chapter abstracts `trusted_monitor` and
-    # `human_audit` as callables (same style as the debater callables in
-    # block #0); supply tiny concrete stand-ins to exercise all three
-    # branches of the protocol.
+    # --- minimal glue: the chapter takes `trusted_monitor` and `human_audit`
+    # as callables (same style as the debater callables in block #0);
+    # supply tiny concrete stand-ins to exercise all three branches of the
+    # protocol.
     def human_audit(action):
         return "BACKDOOR" if action.get("malicious") else "safe"
 
@@ -292,14 +305,16 @@ def block_control_protocol():
     action_hi = {"suspicion": 0.95, "malicious": True}
     out1 = trusted_monitoring_protocol(action_hi, monitor, audit_threshold=0.8,
                                        trusted_fallback="SAFE_DEFAULT",
-                                       audit_budget_remaining=1)
+                                       audit_budget_remaining=1,
+                                       human_audit=human_audit)
     print(out1)
     assert out1 == ("audited", "BACKDOOR", 0)
 
     # Branch 2: high suspicion, budget exhausted -> deferred to trusted.
     out2 = trusted_monitoring_protocol(action_hi, monitor, audit_threshold=0.8,
                                        trusted_fallback="SAFE_DEFAULT",
-                                       audit_budget_remaining=0)
+                                       audit_budget_remaining=0,
+                                       human_audit=human_audit)
     print(out2)
     assert out2 == ("deferred_to_trusted", "SAFE_DEFAULT", 0)
 
@@ -307,7 +322,8 @@ def block_control_protocol():
     action_lo = {"suspicion": 0.1, "malicious": False}
     out3 = trusted_monitoring_protocol(action_lo, monitor, audit_threshold=0.8,
                                        trusted_fallback="SAFE_DEFAULT",
-                                       audit_budget_remaining=1)
+                                       audit_budget_remaining=1,
+                                       human_audit=human_audit)
     print(out3)
     assert out3 == ("accepted_untrusted", action_lo, 1)
 

@@ -85,7 +85,7 @@ $$
 {{fig:kedit-rank-one-associative-memory}}
 
 
-This is **rank one** — an outer product of two vectors — so it costs $d \times d_{\text{mlp}}$ extra storage at most and is trivially invertible (subtract it to undo the edit). The numerator's left factor $(v_* - W_0 k_*)$ is the *residual* we need to add at the key; the right factor $C^{-1} k_*$ steers the update along the direction that is least used by other keys (it is large where $C$ is small), which is precisely what minimizes collateral damage.
+This is **rank one** — an outer product of two vectors — so storing it costs only $d + d_{\text{mlp}}$ numbers (the two vectors) rather than the full $d \times d_{\text{mlp}}$ matrix, and it is trivially invertible (subtract it to undo the edit). The numerator's left factor $(v_* - W_0 k_*)$ is the *residual* we need to add at the key; the right factor $C^{-1} k_*$ steers the update along the direction that is least used by other keys (it is large where $C$ is small), which is precisely what minimizes collateral damage.
 
 ??? note "Optional: deriving the rank-one solution"
     Write the edit as $\Delta = W - W_0$ and take the preserved targets to be what the layer already produces, $V = W_0 K$. Then the objective is $\lVert WK - V\rVert_F^2 = \lVert \Delta K\rVert_F^2 = \operatorname{tr}\!\big(\Delta\,C\,\Delta^\top\big)$ with $C = KK^\top$, and the constraint $W k_* = v_*$ becomes $\Delta k_* = r$, where $r = v_* - W_0 k_*$ is the residual. With a Lagrange multiplier vector $\lambda$,
@@ -100,12 +100,12 @@ This is **rank one** — an outer product of two vectors — so it costs $d \tim
     \Delta = \frac{r\,\big(C^{-1}k_*\big)^\top}{k_*^\top C^{-1} k_*},
     $$
 
-    which is the boxed formula. The denominator is a quadratic form in a positive-definite matrix, so it is strictly positive whenever $k_* \neq 0$ — the solve never divides by zero. The same argument with a *matrix* of constraints $\Delta K_1 = R$ instead of a single vector yields MEMIT's Section 3.1 formula.
+    which is the boxed formula. The denominator is a quadratic form in a positive-definite matrix, so it is strictly positive whenever $k_* \neq 0$ — the solve never divides by zero. The same argument with a *matrix* of hard constraints $\Delta K_1 = R$ instead of a single vector gives $\Delta = R\big(K_1^\top C^{-1} K_1\big)^{-1} K_1^\top C^{-1}$, which reduces to the boxed formula at $n = 1$. MEMIT instead *relaxes* the constraint into a penalty — minimizing $\lVert \Delta K\rVert_F^2 + \lVert \Delta K_1 - R\rVert_F^2$ — whose stationary point $\Delta\big(C + K_1K_1^\top\big) = R K_1^\top$ is the Section 3.1 formula. That is why MEMIT's new facts are fit *approximately* rather than exactly (Exercise 6(b)).
 
 !!! example "Worked example: the magnitudes of one edit"
     Take GPT-J (6B), where the MLP hidden width is $d_{\text{mlp}} = 16384$ and the model width is $d = 4096$. ROME edits a single layer's $W_{\text{down}} \in \mathbb{R}^{4096 \times 16384}$ — about 67M parameters, but the *update* $\Delta$ is rank one, so its "size" is just the two vectors: $4096 + 16384 = 20480$ numbers, roughly **0.03%** of that one matrix and about **0.0003%** of the model's 6B parameters.
 
-    The covariance $C = KK^\top$ is $16384 \times 16384 \approx 2.7\times 10^8$ entries; inverting it once costs $O(d_{\text{mlp}}^3) \approx 4.4\times10^{12}$ FLOPs — a few seconds on a GPU, amortized across *all* future edits to that layer because $C$ is fact-independent. The per-edit cost is then dominated by the ~25-step Adam optimization of $v_*$: ~25 forward/backward passes through the model on a handful of short prompts, i.e. **single-digit seconds**. Contrast with retraining GPT-J: thousands of GPU-hours. The asymmetry — milliseconds of linear algebra vs. weeks of training — is the whole reason the field exists.
+    The covariance $C = KK^\top$ is $16384 \times 16384 \approx 2.7\times 10^8$ entries; inverting it once costs $O(d_{\text{mlp}}^3) \approx 4.4\times10^{12}$ FLOPs — a few seconds on a GPU, amortized across *all* future edits to that layer because $C$ is fact-independent. The per-edit cost is then dominated by the ~25-step Adam optimization of $v_*$: ~25 forward/backward passes through the model on a handful of short prompts, i.e. **single-digit seconds**. Contrast with retraining GPT-J: at $6ND \approx 6 \cdot 6\times10^{9} \cdot 4\times10^{11} \approx 1.4\times10^{22}$ FLOPs and a realistic $\sim\!1.3\times10^{14}$ FLOP/s of effective throughput, that is **tens of thousands** of GPU-hours. The asymmetry — seconds of optimization and linear algebra vs. weeks of training — is the whole reason the field exists.
 
 The whole pipeline — causal tracing to find the site, the Adam solve for $v_*$, the $C^{-1}$-steered rank-one update, and the reliability/generalization/locality scorecard — runs end to end in the widget below on a toy transformer small enough to compute in a browser but built so that the locate-then-edit hypothesis actually holds. The damping slider is the one to play with: it interpolates between the true covariance and the identity approximation, and shows you exactly what the statistics are buying.
 
@@ -139,10 +139,10 @@ $$
 \Delta\,K_{\text{preserved}} \approx 0.
 $$
 
-Concretely, let $P$ be the projector onto the null space of $C_{\text{preserved}} = K_p K_p^\top$ (computed from the SVD: keep the directions with near-zero singular values). Apply the MEMIT-style solve, then left-multiply by $P$:
+Concretely, let $P$ be the projector onto the null space of $C_{\text{preserved}} = K_p K_p^\top$ (computed from the SVD: keep the directions with near-zero singular values). Apply the MEMIT-style solve, then right-multiply by $P$ (with $\Delta \in \mathbb{R}^{d \times d_{\text{mlp}}}$ and $P \in \mathbb{R}^{d_{\text{mlp}} \times d_{\text{mlp}}}$, this is the side that makes the shapes work *and* kills the preserved keys, since $P K_p = 0$):
 
 $$
-\Delta_{\text{AlphaEdit}} = P \,\Delta_{\text{MEMIT}}.
+\Delta_{\text{AlphaEdit}} = \Delta_{\text{MEMIT}}\,P .
 $$
 
 Because $\Delta$ now lives in directions orthogonal to what preserved keys excite, applying it leaves their outputs (almost) exactly unchanged — the update "doesn't talk to" old facts. Empirically this dramatically reduces the catastrophic forgetting that plagues long sequential editing runs, letting the same matrix absorb far more edits before collapse.
@@ -250,7 +250,7 @@ The *exact* definition of unlearning is operational: a model has unlearned a "fo
 The simplest recipe: do gradient **ascent** on the forget set — maximize loss on the data you want gone — usually balanced by gradient **descent** on a retain set to preserve utility:
 
 $$
-\mathcal{L}_{\text{unlearn}} = \underbrace{-\,\mathbb{E}_{x \sim D_f}\big[\log P_\theta(x)\big]}_{\text{push forget-set down}} \;+\; \lambda\,\underbrace{\mathbb{E}_{x \sim D_r}\big[-\log P_\theta(x)\big]}_{\text{keep retain-set up}}.
+\mathcal{L}_{\text{unlearn}} = \underbrace{+\,\mathbb{E}_{x \sim D_f}\big[\log P_\theta(x)\big]}_{\text{push forget-set down}} \;+\; \lambda\,\underbrace{\mathbb{E}_{x \sim D_r}\big[-\log P_\theta(x)\big]}_{\text{keep retain-set up}}.
 $$
 
 Naively ascending loss is unstable — it diverges, blows up perplexity, and damages unrelated capabilities (the ascent gradient has no natural floor). Practical variants tame it:
@@ -416,14 +416,17 @@ with torch.no_grad():
 
 # ---------------------------------------------------------------------------
 # 3) Closed-form RANK-ONE update of W_down.
-#    Conv1D weight is [d_mlp, d_model] and computes h @ W, so W maps k* (d_mlp)
-#    to an output of size d_model via  out = k*^T W.  We want  k*^T (W+Δ) = v*.
+#    Conv1D weight is [d_mlp, d_model] and computes h @ W + b, so W maps k* (d_mlp)
+#    to an output of size d_model via  out = k*^T W + b.  We want k*^T (W+Δ) + b = v*.
 #    With C ≈ (covariance), use the ROME solution Δ = (C^{-1} k*) (v* - W^T k*)^T
 #    / ((C^{-1} k*)·k*).  We approximate C^{-1} ≈ I / (||k*||^2-scale).
 # ---------------------------------------------------------------------------
 with torch.no_grad():
     Cinv_k = k_star / (k_star.dot(k_star) + 1e-4)        # I-approx of C^{-1} k*
-    Wk = W_down.t() @ k_star                             # current output for k*  [d_model]
+    # NOTE: v* was captured from the c_proj *module output*, which includes its bias,
+    # so the "current output" must include the bias too — otherwise the rank-one
+    # update installs v* + bias and overshoots the optimized target.
+    Wk = W_down.t() @ k_star + mlp.c_proj.bias           # current output for k*  [d_model]
     residual = v_star - Wk                               # what we must add        [d_model]
     denom = Cinv_k.dot(k_star)                           # scalar
     update = torch.outer(Cinv_k, residual) / denom       # [d_mlp, d_model], rank 1
@@ -549,7 +552,7 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
     - [Fang et al., *AlphaEdit: Null-Space Constrained Knowledge Editing for Language Models* (ICLR 2025, oral)](https://arxiv.org/abs/2410.02355) — projects weight updates onto the null space of preserved-knowledge keys (one extra line of code), dramatically reducing drift under long sequential editing; validated up to LLaMA-3-scale.
     - [Li et al., *The WMDP Benchmark: Measuring and Reducing Malicious Use With Unlearning* (ICML 2024)](https://arxiv.org/abs/2403.03218) — benchmark for hazardous-capability removal and source of the RMU representation-misdirection unlearning method.
     - [Maini et al., *TOFU: A Task of Fictitious Unlearning for LLMs* (2024)](https://arxiv.org/abs/2401.06121) — clean-room unlearning benchmark using synthetic author biographies with retrained-from-scratch gold standard.
-    - [Shi et al., *MUSE: Machine Unlearning Six-Way Evaluation for Language Models* (ICML 2024)](https://arxiv.org/abs/2407.06460) — six-desiderata evaluation (verbatim memorization, knowledge memorization, privacy, utility, scalability, sequential robustness) on realistic corpora.
+    - [Shi et al., *MUSE: Machine Unlearning Six-Way Evaluation for Language Models* (ICLR 2025)](https://arxiv.org/abs/2407.06460) — six-desiderata evaluation (verbatim memorization, knowledge memorization, privacy, utility, scalability, sequential robustness) on realistic corpora.
 
     **Open-source & tools**
 
@@ -633,7 +636,7 @@ $$
 
     (b) The closed-form update depends on the preserved-key covariance $C$ (and, in the batch solve, on all keys jointly). A **batch** solve sees every key at once and balances them. In **sequential** editing each rank-one bump changes $W_0$ — and thus the key distribution / statistics that the *next* edit's solve assumed. Early edits corrupt the covariance that later edits rely on; the preserved knowledge **drifts**, and after enough steps the model can collapse into incoherence.
 
-    (c) AlphaEdit computes the projector $P$ onto the **null space** of the preserved-key covariance $C_{\text{preserved}} = K_p K_p^\top$ (via SVD, keeping near-zero-singular-value directions) and applies $\Delta_{\text{AlphaEdit}} = P\,\Delta_{\text{MEMIT}}$. Because the projected update lives in directions orthogonal to what preserved keys excite, $\Delta K_{\text{preserved}} \approx 0$ — the update "doesn't talk to" old facts, so their outputs stay put and drift is dramatically reduced across long sequential runs.
+    (c) AlphaEdit computes the projector $P$ onto the **null space** of the preserved-key covariance $C_{\text{preserved}} = K_p K_p^\top$ (via SVD, keeping near-zero-singular-value directions) and applies $\Delta_{\text{AlphaEdit}} = \Delta_{\text{MEMIT}}\,P$ (right-multiplication, so that $\Delta K_p = \Delta_{\text{MEMIT}} P K_p = 0$). Because the projected update lives in directions orthogonal to what preserved keys excite, $\Delta K_{\text{preserved}} \approx 0$ — the update "doesn't talk to" old facts, so their outputs stay put and drift is dramatically reduced across long sequential runs.
 
 **5.** The `minimal_rome.py` listing in Section 7 has a deliberately weak locality check: its `[locality]` line probes "The Colosseum is located in the city of", but the injected target was " Rome" and the Colosseum is *already* in Rome — so the probe cannot detect a locality violation. (a) Explain precisely why this probe is uninformative. (b) Rewrite the verification block so it uses an unrelated subject whose correct answer differs from the injected object, and add a second, differently-phrased locality probe, printing a clear PASS/FAIL by checking whether the injected object leaked into the output.
 

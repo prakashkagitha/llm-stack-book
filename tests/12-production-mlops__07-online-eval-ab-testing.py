@@ -23,8 +23,8 @@ individually if it is not.
 
 Real bugs found & fixed in the book's source (mirrored here):
   1. The interleaving block used `scipy.stats.binom_test`, which was
-     deprecated in SciPy 1.7 and removed entirely in SciPy 1.12+. Fixed to
-     use `scipy.stats.binomtest(...).pvalue`.
+     superseded by `binomtest` in SciPy 1.7, deprecated in 1.10 and removed
+     entirely in 1.12. Fixed to use `scipy.stats.binomtest(...).pvalue`.
   2. The `should_rollback` worked example used
      canary_metrics["latency_p99_ms"]=1850 vs baseline=1420, a relative
      increase of 30.28% against a 0.30 (30%) threshold with a strict `>`
@@ -73,7 +73,9 @@ def assign_variant(
     digest = hashlib.sha256(
         f"{experiment.experiment_id}:{user_id}".encode()
     ).hexdigest()
-    bucket = int(digest[:8], 16) / 0xFFFFFFFF  # uniform [0, 1)
+    # Divide by 2**32, not 0xFFFFFFFF: the 32-bit integer ranges over
+    # [0, 2**32 - 1], so 2**32 is what makes the result uniform on [0, 1).
+    bucket = int(digest[:8], 16) / 2**32  # uniform [0, 1)
 
     if bucket >= experiment.traffic_fraction:
         return "holdout"
@@ -83,7 +85,7 @@ def assign_variant(
     digest2 = hashlib.sha256(
         f"{experiment.experiment_id}:assign:{user_id}".encode()
     ).hexdigest()
-    bucket2 = int(digest2[:8], 16) / 0xFFFFFFFF
+    bucket2 = int(digest2[:8], 16) / 2**32
 
     return "treatment" if bucket2 < experiment.treatment_fraction else "control"
 
@@ -176,8 +178,9 @@ def compute_interleaving_win_rate(
     win_rate = wins_treatment / n
 
     # Under H0: win_rate = 0.5; use binomial test
-    # (scipy.stats.binom_test was deprecated in SciPy 1.7 and removed in 1.12+;
-    # use the modern binomtest API, which returns a result object.)
+    # (scipy.stats.binom_test was superseded by binomtest in SciPy 1.7,
+    # deprecated in 1.10 and removed in 1.12; use the modern binomtest API,
+    # which returns a result object.)
     p_value = stats.binomtest(wins_treatment, n, p=0.5, alternative="two-sided").pvalue
 
     return {
@@ -259,19 +262,26 @@ def cuped_estimate(
 
 
 if stats is not None:
-    # Simulate: 500 users per arm, thumbs-up rate 0.40 control / 0.42 treatment
+    # Simulate 500 users per arm; per-user thumbs-up rate over ~20 messages,
+    # true rates 0.40 control / 0.42 treatment.
     rng = np.random.default_rng(42)
-    n = 500
-    x_c = rng.binomial(1, 0.40, n).astype(float)  # pre-exp covariate
-    x_t = rng.binomial(1, 0.40, n).astype(float)
-    # In-experiment: add treatment effect + correlation with pre-exp
-    y_c = np.clip(x_c * 0.7 + rng.binomial(1, 0.12, n), 0, 1)
-    y_t = np.clip(x_t * 0.7 + rng.binomial(1, 0.14, n), 0, 1)
+    n, msgs = 500, 20
+    p_user_c = rng.beta(4, 6, n)   # per-user propensity, mean 0.40
+    p_user_t = rng.beta(4, 6, n)
+
+    x_c = rng.binomial(msgs, p_user_c) / msgs           # pre-experiment covariate
+    x_t = rng.binomial(msgs, p_user_t) / msgs
+    y_c = rng.binomial(msgs, p_user_c) / msgs           # in-experiment, control
+    y_t = rng.binomial(msgs, np.clip(p_user_t + 0.02, 0, 1)) / msgs   # treatment
 
     cuped_result = cuped_estimate(y_c, y_t, x_c, x_t)
     print(f"Delta: {cuped_result['delta']:.4f}, p={cuped_result['p_value']:.4f}, "
           f"variance reduction: {cuped_result['variance_reduction_fraction']:.1%}")
     assert 0.0 <= cuped_result["variance_reduction_fraction"] <= 1.0
+    # Book claims Delta: 0.0137, p=0.0972, variance reduction: 46.3%
+    assert abs(cuped_result["delta"] - 0.0137) < 5e-4
+    assert abs(cuped_result["p_value"] - 0.0972) < 5e-4
+    assert abs(cuped_result["variance_reduction_fraction"] - 0.463) < 5e-3
 else:
     print("SKIP(no scipy): block #2 cuped_estimate call skipped")
 

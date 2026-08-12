@@ -92,8 +92,12 @@ All three must be present simultaneously for a complete exfiltration attack. Eac
 
     **Why this works in numbers**: Modern LLMs have context windows of 128K–1M tokens.
     An average email is roughly 300–500 tokens. An attacker can therefore exfiltrate
-    on the order of 100–200 emails in a single injection event. At 200 bytes per email
-    URL-encoded, that is roughly 40 KB of data per request — well within HTTP limits.
+    on the order of 100–200 emails in a single injection event. Even at a compact
+    200-byte digest per email (sender, subject, one key line) once URL-encoded — a full
+    email body would be closer to 2 KB — that is roughly 40 KB of data, more than a
+    single URL can carry, since server request-line caps are commonly ~8 KB. So the
+    attacker chunks the payload across a handful of image fetches (Exercise 2 works
+    the arithmetic out).
 
 ---
 
@@ -124,11 +128,11 @@ $$
 \mathcal{L}(\mathbf{x}) = -\log p_\theta(\text{target tokens} \mid \mathbf{x}_{\text{prefix}}, \mathbf{x}_{\text{adv}})
 $$
 
-where $\mathbf{x}_{\text{adv}}$ is a suffix of $k$ tokens being optimized, $\mathbf{x}_{\text{prefix}}$ is the harmful instruction, and the target tokens are the beginning of a compliant response (e.g., "Sure, here is how to…"). The optimization iterates:
+where $\mathbf{x}_{\text{adv}}$ is a suffix of $m$ tokens being optimized, $\mathbf{x}_{\text{prefix}}$ is the harmful instruction, and the target tokens are the beginning of a compliant response (e.g., "Sure, here is how to…"). The optimization iterates:
 
 1. Compute token-level gradients with respect to the one-hot input embeddings.
-2. For each position $i$ in the suffix, find the top-$B$ token substitutions that most reduce loss.
-3. Sample a candidate from the top-$B$ per position, evaluate, keep the best.
+2. For each position $i$ in the suffix, take the top-$k$ token substitutions by most-negative gradient (the linearized estimate of which swaps most reduce loss).
+3. Sample $B$ candidate suffixes, each replacing one uniformly chosen position with a uniformly chosen token from that position's top-$k$ set; evaluate all $B$ in one batch and keep the lowest-loss one.
 
 The attack transfers across models trained on similar data, meaning a suffix found on an open-weight model can sometimes work on closed-weight models. This is a sobering result: white-box attacks generalize to black-box deployment.
 
@@ -421,16 +425,22 @@ Break that leg at the container boundary, not in Python — a `requests` monkeyp
 # Minimum viable sandbox for an agent's code-execution tool.
 #   --network none          no egress at all: the exfiltration leg is gone
 #   --read-only + --tmpfs   writes confined to a 64 MB scratch mount
+#   -v ...:ro               the task code is mounted read-only at /app, NOT into
+#                           /scratch: a --tmpfs mount always starts empty and
+#                           shadows whatever the image had at that path (and is
+#                           mounted noexec by default)
 #   --cap-drop ALL          no CAP_NET_RAW, no CAP_SYS_ADMIN
 #   --pids-limit/--memory   denial-of-service containment
 docker run --rm \
   --network none \
   --read-only \
+  -v "$PWD/task.py:/app/task.py:ro" \
   --tmpfs /scratch:size=64m \
   --cap-drop ALL \
   --security-opt no-new-privileges \
   --pids-limit 64 --memory 512m --cpus 1 \
-  agent-sandbox:latest python /scratch/task.py
+  -w /scratch \
+  agent-sandbox:latest python /app/task.py
 ```
 
 For kernel-level isolation against container escapes, run the same image under gVisor (`--runtime=runsc`) or a Firecracker microVM; hosted equivalents used by agent frameworks include E2B and Modal sandboxes. When the task genuinely needs network, give the sandbox no default route and force all traffic through an egress proxy that enforces a domain allowlist, so the allowlist is a property of the network namespace rather than of the model's good behavior.
@@ -577,7 +587,7 @@ See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-ll
 
 One underappreciated defense is **schema-constrained generation**. When the model must output a JSON object matching a predefined schema, the space of possible outputs is dramatically reduced. An injection cannot cause the model to make an arbitrary HTTP call if the only action the model can take is to fill in fields of a structured form.
 
-The mathematics: a model generating free-form text over vocabulary $V$ has $|V|^n$ possible outputs of length $n$. A model generating JSON with a schema that allows $k$ string fields each capped at $L$ characters has at most $|V|^{kL}$ possibilities — but crucially, structured generation ensures the output is parsed by application code before executing any action, introducing a semantic gap that injected instructions must bridge. See [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html) for implementation details.
+The mathematics: a model generating free-form text over vocabulary $V$ has $|V|^n$ possible outputs of length $n$. A model generating JSON with a schema that allows $k$ string fields each capped at $L$ characters has at most $A^{kL}$ possibilities, where $A$ is the size of the character alphabet the fields may draw from (order $10^2$ for printable ASCII). Keep the units straight — $L$ counts characters, $n$ counts tokens — and the reduction is real whenever $kL \log A \ll n \log |V|$, which is the usual case, since schema caps run to tens of characters per field while free generation runs to thousands of tokens. But crucially, structured generation ensures the output is parsed by application code before executing any action, introducing a semantic gap that injected instructions must bridge. See [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html) for implementation details.
 
 The practical rule: **never pass raw model text directly to an interpreter, system call, or network socket.** Always extract structured fields first.
 
@@ -704,7 +714,7 @@ See [Red-Teaming, Safety & Robustness Evaluation](../11-evaluation/05-redteaming
     Fourth, I would insert a canary token in the system prompt and monitor all outbound
     emails for it. Any leak indicates a prompt-injection-driven exfiltration attempt.
 
-    I would also make "send" a yellow-zone action requiring user confirmation in the UI,
+    I would also make "send" a red-zone action requiring explicit user approval in the UI,
     so even a successful injection attack requires the user to unknowingly click "approve"
     on an email they did not write.
 
@@ -812,7 +822,8 @@ Red-teaming
       weight and plugin as potentially adversarial.
 
     - **Defense layers multiply.** Five imperfect defenses, each blocking 60–90% of
-      attacks, can reduce successful attack rates by 3–5 orders of magnitude. No
+      attacks, can reduce successful attack rates by 2–5 orders of magnitude
+      ($0.4^5 \approx 10^{-2}$ at the low end, $0.1^5 = 10^{-5}$ at the high end). No
       single layer is sufficient; all five are necessary.
 
     - **You can also train the defense in.** Instruction-hierarchy data and

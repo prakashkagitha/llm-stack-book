@@ -24,7 +24,7 @@ Every TRL trainer is a subclass of `transformers.Trainer`. That single fact expl
 | Stage | Our from-scratch code (Ch. 14.9) | TRL object | What TRL owns that we hand-wrote |
 |---|---|---|---|
 | SFT | `post/sft.py`: manual loss mask, LR lambda, accum loop | `SFTTrainer` + `SFTConfig` | Chat-template application, assistant-only masking, packing with a boundary-aware collator, the whole training loop |
-| DPO | `post/dpo.py`: 4 forwards, log-ratio loss | `DPOTrainer` + `DPOConfig` | Reference-logprob precompute+cache, 12+ loss variants (`sigmoid`, `ipo`, `cpo`, …), length-normalization flags |
+| DPO | `post/dpo.py`: 4 forwards, log-ratio loss | `DPOTrainer` + `DPOConfig` | Reference-logprob precompute+cache, 12+ loss variants (`sigmoid`, `hinge`, `ipo`, …), length-normalization flags |
 | GRPO | `post/grpo.py`: generate → reward → group-normalize → policy-grad | `GRPOTrainer` + `GRPOConfig` | vLLM-backed rollouts, group advantage, KL-to-ref, async generation/weight-sync |
 | Recipe | argparse defaults | **alignment-handbook** YAML + `accelerate launch` | Reproducible configs, multi-GPU DeepSpeed/FSDP recipes |
 | Gate | our tiny probe suite | **lm-evaluation-harness** | Standardized tasks, few-shot templating, stderr/CI on every metric |
@@ -61,14 +61,20 @@ def stacklm_to_llama(stack_model, tokenizer_len=32768):
         num_key_value_heads=2,       # GQA 4:1
         head_dim=64,
         max_position_embeddings=8192,
-        rope_theta=10000.0,
+        rope_theta=41830.0,          # the NTK-rescaled base mid-training left in the
+                                     # checkpoint (Ch. 14.8), NOT the pretrain 10000 —
+                                     # read rope_theta/max_seq_len off the saved config
+                                     # rather than retyping defaults, or the export
+                                     # silently rotates positions at the wrong rate.
         rms_norm_eps=1e-5,
         tie_word_embeddings=True,    # Press & Wolf, saves 16.8M params
     )
     hf = LlamaForCausalLM(cfg)
     # copy_state_dict maps our parameter names → HF names; ~40 lines of renames,
     # verified by asserting logits match on a fixed batch to < 1e-4 before trusting it.
-    hf.load_state_dict(remap_state_dict(stack_model.state_dict()), strict=True)
+    # (with tie_word_embeddings=True, `lm_head.weight` is tied to `model.embed_tokens.weight`
+    #  — emit it in the remapped dict, or load with strict=False and re-tie after.)
+    hf.load_state_dict(copy_state_dict(stack_model.state_dict()), strict=True)
     return hf
 ```
 
@@ -162,7 +168,7 @@ trainer.save_model()                 # writes a HF checkpoint you can serve with
 
 ### What the collator actually hands the model
 
-It is worth seeing the tensor `SFTTrainer` builds, because it is exactly the object our `post/sft.py` assembled by hand — just produced by a battle-tested collator instead. For the two-turn example above, the collator emits `input_ids`, a `labels` tensor that is `input_ids` shifted by one with **prompt/user positions set to `-100`** (the ignore index PyTorch's cross-entropy skips), and, under packing with flash-attention, the block-diagonal attention metadata:
+It is worth seeing the tensor `SFTTrainer` builds, because it is exactly the object our `post/sft.py` assembled by hand — just produced by a battle-tested collator instead. For the two-turn example above, the collator emits `input_ids`, a `labels` tensor that is a *copy* of `input_ids` — same length, same alignment, since the causal LM shifts internally when it computes the loss — with **prompt/user positions set to `-100`** (the ignore index PyTorch's cross-entropy skips), and, under packing with flash-attention, the block-diagonal attention metadata:
 
 ```python
 # Conceptually what SFTTrainer's collator produces for assistant_only_loss=True.
@@ -194,7 +200,9 @@ Two subtleties the library gets right that are easy to get wrong by hand. First,
 At 100M we full-fine-tune — the model fits on any GPU and there is no multi-adapter serving reason to keep LoRA weights separate ([Ch. 5.3](../05-posttraining-alignment/03-peft-lora-qlora.html) explains when LoRA is the right call: 7B+ bases, or many task-specialized variants served off one frozen base as in [Ch. 7.14](../07-inference-serving/14-multi-tenant-lora-serving.html)). But you will use adapters constantly at work, and TRL wires to `peft` in one argument: pass a `LoraConfig` and `SFTTrainer` wraps the model for you.
 
 ```python
-# LoRA-SFT: identical trainer, one extra arg. Trains ~0.5% of parameters.
+# LoRA-SFT: identical trainer, one extra arg. At Stack-100M's width this trains
+# ~4% of parameters (r=16 against d_model=512 is a *fat* adapter); the familiar
+# ~0.1-0.5% figure is a 7B+ number, where r/d_model is an order of magnitude smaller.
 from peft import LoraConfig
 peft_cfg = LoraConfig(
     r=16, lora_alpha=32, lora_dropout=0.05,
@@ -231,9 +239,11 @@ args = DPOConfig(
     beta=0.1,                          # KL strength; 0.1 is the common default
     loss_type="sigmoid",              # the original DPO loss; see menu below
     max_length=1024,
-    max_prompt_length=512,
+    truncation_mode="keep_start",     # prompt+completion truncation lives in max_length now;
+                                      #   older TRL had a separate max_prompt_length field
     # Precompute & CACHE the frozen reference logprobs once, then drop the ref model
-    # from the loop entirely — halves memory and removes 2 of every 4 forwards.
+    # from the loop entirely — reclaims the reference weights (2 bytes/param) and
+    # removes 2 of every 4 forwards.
     precompute_ref_log_probs=True,
     per_device_train_batch_size=8,
     gradient_accumulation_steps=4,
@@ -259,9 +269,9 @@ Three things the library owns that our hand-roll left on the table:
 
 - **Reference-logprob caching.** With `precompute_ref_log_probs=True`, TRL runs one pass over the dataset to store $\log\pi_{\text{ref}}(y_w\mid x)$ and $\log\pi_{\text{ref}}(y_l\mid x)$, then trains with the reference model *removed from memory*. Our version kept the ref model resident and paid two extra forwards every step. This matters more as the base grows: at 7B the reference is 14GB you get to reclaim.
 - **LoRA-as-reference.** When training a LoRA-DPO run, you do not need a separate reference model at all — TRL gets $\pi_{\text{ref}}$ by *disabling the adapter* (the base weights are the reference by construction). One model, two behaviors. This is a genuinely clever memory win that is annoying to implement by hand.
-- **The loss-variant menu.** `loss_type` selects among a family that all share the DPO scaffolding but change the objective's shape: `"sigmoid"` (original), `"ipo"` (Azar et al., replaces the logistic loss with a squared-error target on the log-ratio margin to fight the DPO over-optimization discussed in [Ch. 5.13](../05-posttraining-alignment/13-reward-hacking-failures.html)), `"cpo"`, `"robust"`, and others. Switching is a one-string change; deriving each from scratch is a chapter.
+- **The loss-variant menu.** `loss_type` selects among a family that all share the DPO scaffolding but change the objective's shape: `"sigmoid"` (original), `"ipo"` (Azar et al., replaces the logistic loss with a squared-error target on the log-ratio margin to fight the DPO over-optimization discussed in [Ch. 5.13](../05-posttraining-alignment/13-reward-hacking-failures.html)), `"hinge"`, `"robust"`, `"apo_zero"`, and others. Switching is a one-string change; deriving each from scratch is a chapter. Note that not every DPO-adjacent objective is a `DPOConfig` loss variant: CPO and SimPO are their own objectives with their own trainers, so `loss_type="cpo"` is *not* a legal value and raises rather than switching objectives. Print `DPOConfig.__dataclass_fields__["loss_type"].metadata["help"]` for the exact list your version accepts before assuming a variant is one string away.
 
-There is also a **length-bias trap** DPO practitioners hit constantly: because the loss sums token log-probabilities, a longer `chosen` response accrues more negative log-prob and the optimizer can "win" the margin simply by making the policy prefer *longer* text — reward-hacking length rather than quality. TRL exposes flags to counter this (a length normalization / the SimPO-style average-log-prob objective via the appropriate `loss_type`); the honest move is to log mean chosen/rejected token lengths alongside `rewards/margins` and watch for the policy drifting long. This is the concrete, in-the-trainer face of the over-optimization theory in [Ch. 5.13](../05-posttraining-alignment/13-reward-hacking-failures.html).
+There is also a **length-bias trap** DPO practitioners hit constantly: because the loss sums token log-probabilities, a longer `chosen` response accrues more negative log-prob and the optimizer can "win" the margin simply by making the policy prefer *longer* text — reward-hacking length rather than quality. TRL exposes a length-normalized variant to counter this (`loss_type="sigmoid_norm"`, which divides each completion's score by its token count before the logistic loss — the SimPO-style average-log-prob idea); the honest move is to log mean chosen/rejected token lengths alongside `rewards/margins` and watch for the policy drifting long. This is the concrete, in-the-trainer face of the over-optimization theory in [Ch. 5.13](../05-posttraining-alignment/13-reward-hacking-failures.html).
 
 The metrics TRL logs are your only window into whether preference optimization is healthy. The ones to watch:
 
@@ -329,8 +339,8 @@ ds = load_dataset("json", data_files="data/rlvr/arith.jsonl", split="train")
 args = GRPOConfig(
     output_dir="ckpts/stack-100m-grpo",
     num_generations=8,                 # group size G — the baseline is the group mean
-    max_prompt_length=256,
-    max_completion_length=256,
+    max_completion_length=256,         # (prompt-side truncation was `max_prompt_length` in
+                                       #  older TRL; current releases dropped that field)
     temperature=1.0,                   # exploration: too low ⇒ no reward variance ⇒ no signal
     beta=0.04,                         # KL-to-reference coefficient
     # --- offload rollouts to vLLM (Ch. 7.3) — the reason this scales ---
@@ -369,7 +379,7 @@ The `vllm_mode` choice is the crux of RL-for-LLM systems ([Ch. 6.2](../06-rl-inf
 - **`"colocate"`** runs vLLM in the same process, sharing GPU memory with the trainer. Simplest to launch; you split VRAM between the training model and the KV cache. Good for a single node — including our single-A100 flagship.
 - **`"server"`** runs a standalone, persistent inference server you start separately with `trl vllm-serve --model ...`; the trainer streams prompts to it over HTTP and syncs updated weights after each optimizer step. This is the disaggregated pattern that scales to many GPUs, at the cost of a weight-synchronization path (the trainer must push its new weights into the server's model between steps — the exact race-prone machinery [Ch. 6.7](../06-rl-infra/07-colocated-vs-disaggregated.html) dissects).
 
-Either way, TRL replaces our slow cacheless `model.generate` with vLLM's PagedAttention + continuous batching ([Ch. 4.6](../04-kernels-efficiency/06-paged-attention-kv.html), [Ch. 7.3](../07-inference-serving/03-vllm-internals.html)), which is where essentially all of GRPO's wall-clock goes. There is one correctness subtlety the colocate mode forces you to confront: **the sampling engine (vLLM) and the training engine (transformers) must agree on the policy's probabilities**, or the importance ratios are computed against a distribution the model never sampled from. TRL syncs the trainer's updated weights into the vLLM worker after each optimizer step; if that sync is stale, or if vLLM's kernels produce logits that differ from the training forward pass by more than rounding, you get a subtle *off-policy* bias. This is exactly the rollout/train mismatch that [Ch. 6.7](../06-rl-infra/07-colocated-vs-disaggregated.html) treats as a first-class systems problem, and it is the main reason you sanity-check a GRPO run by confirming that the mean importance ratio at $\mu=1$ sits at essentially 1.0. Launch a colocated run with `accelerate`:
+Either way, TRL replaces our slow cacheless `model.generate` with vLLM's PagedAttention + continuous batching ([Ch. 4.6](../04-kernels-efficiency/06-paged-attention-kv.html), [Ch. 7.3](../07-inference-serving/03-vllm-internals.html)), which is where essentially all of GRPO's wall-clock goes. There is one correctness subtlety the colocate mode forces you to confront: **the sampling engine (vLLM) and the training engine (transformers) must agree on the policy's probabilities**, or the importance ratios are computed against a distribution the model never sampled from. TRL syncs the trainer's updated weights into the vLLM worker after each optimizer step; if that sync is stale, or if vLLM's kernels produce logits that differ from the training forward pass by more than rounding, you get a subtle *off-policy* bias. This is exactly the rollout/train mismatch that [Ch. 6.7](../06-rl-infra/07-colocated-vs-disaggregated.html) treats as a first-class systems problem, and it is the reason TRL ships a *sampler-vs-trainer* diagnostic. Do not look at the policy ratio for this: at $\mu=1$, $\pi_{\theta_\text{old}}$ *is* $\pi_\theta$ (TRL reuses the training forward's own logprobs), so $\rho\equiv1$ by construction and tells you nothing. The quantity that actually measures the mismatch is the ratio between vLLM's returned logprobs and the trainer's forward on those same tokens — turn on `vllm_importance_sampling_correction=True` and watch the logged `sampling/importance_sampling_ratio/{min,mean,max}`: a mean near 1.0 with tight tails means the two engines agree; heavy tails mean your gradients are being computed against a distribution the sampler never used. Launch a colocated run with `accelerate`:
 
 ```bash
 # Single node. For the server split, first: trl vllm-serve --model ./stack-100m-sft
@@ -392,7 +402,7 @@ accelerate launch --config_file recipes/accelerate/single_gpu.yaml \
     | 7 | ✓ | 1.2 |
     | 8 | ✗ | 0.2 |
 
-    Mean $\bar r = (1.2\cdot4 + 0.2\cdot3 + 0.0)/8 = 5.4/8 = 0.675$. Population std $\approx 0.520$. The normalized advantages $A_i = (r_i - 0.675)/0.520$ are $\approx +1.01$ for the four correct completions, $\approx -0.91$ for the three format-but-wrong ones, and $\approx -1.30$ for the completely-unformatted one. Every **token** of a correct completion is pushed *up* by $\approx1.01$; every token of the worst one is pushed *down* by $\approx1.30$ — no value network anywhere, the group is its own baseline.
+    Mean $\bar r = (1.2\cdot4 + 0.2\cdot3 + 0.0)/8 = 5.4/8 = 0.675$. The squared deviations sum to $4(0.525)^2 + 3(0.475)^2 + (0.675)^2 = 2.235$, so the *population* std is $\sqrt{2.235/8}\approx0.529$ — but TRL's `nanstd` applies Bessel's correction, so what `GRPOTrainer` divides by is $\sqrt{2.235/7}\approx0.565$. The normalized advantages $A_i = (r_i - 0.675)/0.565$ are $\approx +0.93$ for the four correct completions, $\approx -0.84$ for the three format-but-wrong ones, and $\approx -1.19$ for the completely-unformatted one. Every **token** of a correct completion is pushed *up* by $\approx0.93$; every token of the worst one is pushed *down* by $\approx1.19$ — no value network anywhere, the group is its own baseline. (The $n$ vs $n-1$ convention shifts every advantage by $\sqrt{(G-1)/G}$, a uniform $\approx7\%$ at $G=8$; it rescales the effective step size, not the ranking.)
 
     The failure mode this makes visible: if all eight completions were correct, $\operatorname{std}=0$, every $A_i=0$, and the batch contributes **zero gradient** (the $\varepsilon$ just prevents a divide-by-zero). GRPO learns only from prompts where the model *sometimes* succeeds and *sometimes* fails — which is exactly why RLVR needs a curriculum pitched at the edge of the model's competence ([Ch. 6.12](../06-rl-infra/12-rl-data-curriculum-replay.html)), and why it works at 100M **only** on narrow tasks the base model already solves part of the time.
 
@@ -493,7 +503,7 @@ Wire this into CI as a **gate**: a stage promotes only if its eval clears the pr
 
     **Q:** Your team fine-tunes a chat model with TRL's `SFTTrainer` on multi-turn conversational data, but at inference it keeps generating the *user's* next turn instead of stopping after its answer. Walk me through the likely causes and fixes.
 
-    **A:** This is almost always a **loss-masking or template bug**, in one of three places. (1) `assistant_only_loss` was left `False` (or the chat template has no `{% generation %}` block, so the assistant mask is empty and the flag silently no-ops) — the model trained on *predicting user turns too*, so it learned to continue the conversation as a user. Verify with `apply_chat_template(..., return_assistant_tokens_mask=True)` and assert the mask is nonzero. (2) The **turn-terminator token isn't being learned as a stop**: if `<|end|>`/`<|eos|>` weren't consistently emitted after assistant turns in training, or the generation config's `eos_token_id` doesn't include the turn terminator, decoding runs past the boundary. (3) **Packing crossed document boundaries**: if short conversations were concatenated without a boundary-aware packer and cross-document attention mask, the model saw "assistant turn → next user turn" as an in-context continuation and learned exactly that. The fixes, in order: turn on `assistant_only_loss` and confirm the mask, ensure the eval uses the same chat template with the terminator as a stop token, and use TRL's `bfd` packing (or `packing=False`) so joins are respected. The deeper point: SFT format bugs are usually *masking* bugs, and they're invisible in the training loss curve — you catch them only by inspecting the mask and by evaluating with the production template.
+    **A:** This is almost always a **loss-masking or template bug**, in one of three places. (1) `assistant_only_loss` was left `False` — the model trained on *predicting user turns too*, so it learned to continue the conversation as a user. Verify with `apply_chat_template(..., return_assistant_tokens_mask=True)` and assert the mask is nonzero. (A missing `{% generation %}` block used to fail *silently* here, producing an empty mask; current TRL either substitutes a generation-marked training template or raises a `RuntimeError` when an example has no assistant tokens. The version of this bug that is still quiet is a template whose end-of-turn token falls *outside* the `{% generation %}` span — TRL only warns, and the model never learns to stop.) (2) The **turn-terminator token isn't being learned as a stop**: if `<|end|>`/`<|eos|>` weren't consistently emitted after assistant turns in training, or the generation config's `eos_token_id` doesn't include the turn terminator, decoding runs past the boundary. (3) **Packing crossed document boundaries**: if short conversations were concatenated without a boundary-aware packer and cross-document attention mask, the model saw "assistant turn → next user turn" as an in-context continuation and learned exactly that. The fixes, in order: turn on `assistant_only_loss` and confirm the mask, ensure the eval uses the same chat template with the terminator as a stop token, and use TRL's `bfd` packing (or `packing=False`) so joins are respected. The deeper point: SFT format bugs are usually *masking* bugs, and they're invisible in the training loss curve — you catch them only by inspecting the mask and by evaluating with the production template.
 
 !!! key "Key Takeaways"
 

@@ -165,12 +165,13 @@ assert losses[-1] < losses[0], f"expected reconstruction loss to decrease, got {
 # ============================================================================
 
 # Steering by adding a precomputed direction `v` (unit norm) to the residual stream.
+# A block emits the residual bare in recent transformers, tuple-wrapped in older ones.
 def steering_hook(v, alpha, positions=slice(None)):
     v = v.to(dtype=torch.float32)
     def hook(_m, _i, out):
-        h = out[0]
+        h = out[0] if isinstance(out, tuple) else out
         h[:, positions, :] = h[:, positions, :] + alpha * v   # broadcast add along d_model
-        return (h,) + tuple(out[1:])
+        return ((h,) + tuple(out[1:])) if isinstance(out, tuple) else h
     return hook
 
 # h = model.transformer.h[LAYER].register_forward_hook(steering_hook(v, alpha=+8.0))

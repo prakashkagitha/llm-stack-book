@@ -279,6 +279,13 @@ dataset = rg.Dataset(
             rg.LabelQuestion(name="preference", labels=["a", "b", "tie"]),
             rg.TextQuestion(name="reason", required=False),
         ],
+        # Metadata must be DECLARED: Settings defaults to
+        # allow_extra_metadata=False, so undeclared keys on a record are
+        # rejected rather than silently attached.
+        metadata=[
+            rg.TermsMetadataProperty(name="request_id"),
+            rg.FloatMetadataProperty(name="rm_margin"),
+        ],
     ),
 )
 dataset.create()
@@ -316,7 +323,7 @@ This is just the average negative log-probability per token, i.e. the per-token 
 
 ### Core-set / diversity sampling
 
-Uncertainty sampling alone leads to annotation of many near-duplicate examples (the model is uncertain in a cluster around the same concept). Add a diversity constraint: after computing uncertainty scores, run k-medoids clustering on the prompt embeddings, then sample the highest-uncertainty example from each cluster.
+Uncertainty sampling alone leads to annotation of many near-duplicate examples (the model is uncertain in a cluster around the same concept). Add a diversity constraint: run greedy farthest-first traversal (the k-center / core-set greedy) over the prompt embeddings to pick a set of maximally spread-out anchors, then spend the rest of the budget on the highest-uncertainty examples that the anchor step did not already claim. That two-stage split — half diversity, half uncertainty — is what the code below implements. Note that farthest-first deliberately returns *extreme*, mutually distant points, which is the opposite of what a k-medoids fit would give you (medoids are cluster-*central* representatives); for annotation coverage the extremes are the point.
 
 The embeddings come from an off-the-shelf encoder — `sentence-transformers` (a small model such as `all-MiniLM-L6-v2` is plenty for clustering prompts) — and at production scale the nearest-center lookups go through **FAISS**, the same index you would use for RAG retrieval ([Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html)). Nothing here needs a bespoke system.
 
@@ -334,7 +341,7 @@ from typing import Optional
 import numpy as np
 
 
-def greedy_k_medoids_indices(
+def greedy_coreset_indices(
     embeddings: np.ndarray,  # (N, D) float32
     k: int,
     seed: int = 42,
@@ -378,7 +385,7 @@ def active_learning_sample(
     n_diverse = int(budget * diversity_fraction)
     n_uncertain = budget - n_diverse
 
-    diverse_idx = greedy_k_medoids_indices(embeddings, n_diverse)
+    diverse_idx = greedy_coreset_indices(embeddings, n_diverse)
     diverse_set = set(diverse_idx)
 
     # Remaining examples ranked by uncertainty
@@ -400,7 +407,7 @@ A special case of active learning: examples where the model confidently produced
 !!! example "Worked example: budget allocation"
     Suppose you have 10,000 unlabeled examples from one day's traffic and a budget of 500 human labels.
 
-    - Your reward model gives average per-token logprob scores; you compute the bottom 2,000 by score (most uncertain).
+    - Your serving logs already carry the average per-token logprob of every output under the *policy* (the $H(\text{output})$ proxy above — not a reward-model score, which is a single scalar per response and says nothing about token-level uncertainty); you take the bottom 2,000 by that value (lowest average logprob = most uncertain).
     - You embed all 2,000 with a 100M sentence encoder (takes ~30 seconds on a single A100).
     - Core-set sampling selects 250 diverse examples from this uncertain pool.
     - An additional 250 are selected from hard negatives: code examples where the generated code failed the unit tests (you run the code in a sandbox for every coding request).
@@ -416,7 +423,7 @@ Beyond labeling for reward models and SFT, you can use production traffic to dis
 
 Classic KD (Hinton et al.) trains a student on the teacher's soft probability distribution over tokens. For LLMs at scale you cannot store the full vocabulary distribution for every token of every production request. Two practical alternatives:
 
-1. **Top-k logit storage.** Log the top-32 token IDs and their logprobs for each output position. This is ~5x more data than the text alone but gives a useful soft target.
+1. **Top-k logit storage.** Log the top-$k$ token IDs and their logprobs for each output position. Budget it honestly: a uint32 ID plus an fp16 logprob is 6 bytes per entry, so $k = 32$ costs ~192 bytes per position against the ~4 bytes of UTF-8 the emitted token itself costs — roughly a 50x blowup, not a rounding error. Dropping to $k = 4$ costs ~6x and keeps most of the soft-target signal, which is why production pipelines log a small $k$ (and compress) rather than a full top-32.
 2. **Speculative pseudo-labels.** Run the teacher model on the sampled output and record whether it would have chosen the same token. Use this agreement signal as a binary label for on-policy distillation.
 
 ### On-policy distillation pipeline
@@ -499,19 +506,32 @@ def distillation_loss(
     L = alpha * L_CE(student, labels) + (1 - alpha) * L_KL(student, teacher)
 
     alpha=1.0 degrades to standard SFT; alpha=0.0 is pure distillation.
+
+    `labels` follows the book's SFT convention: the FULL input_ids with
+    -100 on prompt/pad positions.  The next-token shift therefore happens
+    here (HF does it inside `forward`; we call F.cross_entropy directly).
     """
+    V = student_logits.shape[-1]
+
+    # Position t predicts token t+1, so align logits[:, :-1] with labels[:, 1:].
+    shift_logits = student_logits[:, :-1, :]   # (B, T-1, V)
+    shift_labels = labels[:, 1:]               # (B, T-1)
+
     # Standard cross-entropy on hard labels
-    B, T, V = student_logits.shape
     ce_loss = F.cross_entropy(
-        student_logits.view(B * T, V),
-        labels.view(B * T),
+        shift_logits.reshape(-1, V),
+        shift_labels.reshape(-1),
         ignore_index=-100,
     )
 
-    # KL from teacher soft labels, over supervised positions only
+    # KL from teacher soft labels, over supervised positions only.
+    # The teacher's top-k at position t is its distribution over token
+    # t+1, so it lines up with exactly the same shifted slice.
     kl_loss = top_k_kl_loss(
-        student_logits, teacher_top_k_ids, teacher_top_k_logprobs,
-        loss_mask=(labels != -100), temperature=temperature,
+        shift_logits,
+        teacher_top_k_ids[:, :-1],
+        teacher_top_k_logprobs[:, :-1],
+        loss_mask=(shift_labels != -100), temperature=temperature,
     )
 
     return alpha * ce_loss + (1.0 - alpha) * (temperature ** 2) * kl_loss
@@ -519,7 +539,7 @@ def distillation_loss(
 
 The $T^2$ factor in the combined loss corrects for the fact that temperature scaling shrinks the *gradients* of the soft-target term. Differentiating the softened KL with respect to a student logit $z_i$ gives $\frac{\partial \mathcal{L}_{KL}}{\partial z_i} = \frac{1}{T}\left(q_i - p_i\right)$, where $q$ and $p$ are the temperature-softened student and teacher distributions. In the high-temperature limit both distributions flatten toward uniform, and expanding the softmax to first order shows the difference $q_i - p_i$ itself scales like $1/T$ — so the gradient falls off as $1/T^2$. Multiplying the KL term by $T^2$ restores it, which is exactly why Hinton et al. (2015) recommend the correction: it keeps the relative weight of the hard-label and soft-label terms roughly constant as you tune $T$, rather than silently turning up $T$ into turning off distillation.
 
-Note also the `labels != -100` masking in the KL term above. Prompt positions and padding carry no distillation signal, and averaging over them dilutes the loss by a factor that changes with your batch's prompt/response ratio — a subtle bug that makes runs irreproducible across data mixes.
+Note also the `shift_labels != -100` masking in the KL term above. Prompt positions and padding carry no distillation signal, and averaging over them dilutes the loss by a factor that changes with your batch's prompt/response ratio — a subtle bug that makes runs irreproducible across data mixes.
 
 ### On-policy distillation and the library that implements it
 
@@ -631,12 +651,19 @@ where $k$ indexes the set of evaluation dimensions and $\tau_k$ is the minimum a
 The gate itself is glue; the harnesses it calls should be off-the-shelf. For static capability benchmarks the standard is EleutherAI's **lm-evaluation-harness**, which the gate can shell out to and whose JSON output it parses:
 
 ```bash
+# `--model hf` hands `pretrained` straight to transformers'
+# `from_pretrained`, which resolves a Hub repo id or a LOCAL path -- it has
+# no object-store loader, so stage the candidate down first.
+gcloud storage cp -r gs://my-models/dpo-candidate /tmp/dpo-candidate
+
 lm_eval --model hf \
-  --model_args pretrained=gs://my-models/dpo-candidate,dtype=bfloat16 \
+  --model_args pretrained=/tmp/dpo-candidate,dtype=bfloat16 \
   --tasks gsm8k,arc_challenge,hellaswag \
   --batch_size auto \
   --output_path results/dpo-candidate/
 ```
+
+(If the candidate lives in the Hub-backed registry instead, `pretrained=my-org/dpo-candidate,revision=<sha>` is the better form — it pins the exact commit, which is what the reproducibility rule below asks for anyway.)
 
 That JSON carries a bootstrap `stderr` alongside every metric — feed it into the gate, not just the point estimate. For agentic or tool-using tasks, the UK AI Safety Institute's **Inspect AI** is the equivalent (it models an eval as a dataset plus a solver plus a scorer, and handles sandboxed tool execution); for safety scans, **garak** is the open-source probe suite. The harness-building details are in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). The gate below is deliberately harness-agnostic: it invokes a named harness, parses metrics, and compares them to thresholds.
 
@@ -677,11 +704,20 @@ class EvalResult:
         return EvalResult(metric_name, value, threshold, comparator, passed)
 
 
-def run_eval_harness(model_path: str, harness_name: str, config: dict) -> dict[str, float]:
+def run_eval_harness(
+    model_path: str,
+    harness_name: str,
+    config: dict,
+    reference_model_path: Optional[str] = None,
+) -> dict[str, float]:
     """
     Calls an external eval harness binary / Python script and parses
     its JSON output.  In production this would be a gRPC call to an
     eval service.  Here we invoke a CLI for illustration.
+
+    `reference_model_path` is what makes *relative* metrics possible: a
+    win-rate harness needs both sides of the comparison inside one run,
+    so pass the production model here rather than scoring it separately.
     """
     cmd = [
         "python", "-m", f"evals.{harness_name}",
@@ -689,6 +725,8 @@ def run_eval_harness(model_path: str, harness_name: str, config: dict) -> dict[s
         "--config", json.dumps(config),
         "--output-format", "json",
     ]
+    if reference_model_path is not None:
+        cmd += ["--reference-model-path", reference_model_path]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
     if result.returncode != 0:
         raise RuntimeError(f"Eval harness failed:\n{result.stderr}")
@@ -719,34 +757,47 @@ def eval_gate(
     }
     """
     all_results: list[EvalResult] = []
+    matched: set[str] = set()
 
     for harness_key, harness_spec in gate_config["harnesses"].items():
+        # The production model goes in as the *reference* so relative
+        # metrics (win rate vs. production) are computed inside the
+        # harness -- one run per harness, not two.
         scores = run_eval_harness(
             candidate_model_path,
             harness_spec["harness"],
             harness_spec.get("config", {}),
-        )
-        # Also run on production model for relative metrics
-        prod_scores = run_eval_harness(
-            production_model_path,
-            harness_spec["harness"],
-            harness_spec.get("config", {}),
+            reference_model_path=production_model_path,
         )
 
         for metric_key, thresh_spec in gate_config["thresholds"].items():
             h_key, m_name = metric_key.split(".", 1)
             if h_key != harness_key:
                 continue
-            value = scores.get(m_name, 0.0)
+            if m_name not in scores:
+                # Fail CLOSED.  Defaulting a missing metric to 0.0 would
+                # silently pass every "<=" threshold (e.g. a renamed
+                # `regression.failures` key becomes "0 failures").
+                raise KeyError(
+                    f"harness {harness_key!r} did not emit metric {m_name!r}; "
+                    f"got {sorted(scores)}"
+                )
+            matched.add(metric_key)
             result = EvalResult.evaluate(
                 metric_name=metric_key,
-                value=value,
+                value=scores[m_name],
                 threshold=thresh_spec["value"],
                 comparator=thresh_spec["comparator"],
             )
             all_results.append(result)
 
-    passed = all(r.passed for r in all_results)
+    unmatched = set(gate_config["thresholds"]) - matched
+    if unmatched:
+        # A threshold whose prefix matches no harness is never checked.
+        raise KeyError(f"thresholds with no matching harness: {sorted(unmatched)}")
+
+    # `all([])` is True, so an empty gate must not report PASS.
+    passed = bool(all_results) and all(r.passed for r in all_results)
     return passed, all_results
 
 
@@ -775,6 +826,8 @@ if __name__ == "__main__":
         sys.exit(0)
 ```
 
+Note the three fail-closed checks in that loop. A gate is an assertion, and the failure mode nobody notices is the *vacuous* one: a harness that renamed a metric, a threshold key that matches no harness, or a config with no thresholds at all will otherwise sail through as "PASS" while checking nothing. A missing metric and an orphaned threshold both raise; an empty result set returns `False` rather than riding on `all([]) == True`.
+
 ### The win-rate judge
 
 The most commonly used gate metric for open-ended generation quality is the **win rate against production**: an LLM judge (a frontier model such as GPT-5.1 or Claude Opus 4.5, or an internal judge model) evaluates 500–1,000 prompt/response pairs and decides which of candidate vs. production is better. A win rate $\geq 0.52$ is a typical *target*, but be careful — that threshold is only meaningful with enough comparisons behind it.
@@ -801,7 +854,7 @@ $$
 \frac{N_{10}}{N_0} \approx \prod_{k=0}^{9} (1 + \alpha \cdot \Delta Q_k)
 $$
 
-The product is super-linear in the number of rounds because $\Delta Q_k$ is driven by $\log$ data growth, but user growth is multiplicative. A new entrant starting at round 10 with the same initial model but no training data faces a gap that is essentially impossible to close through model architecture improvements alone.
+Work out what that product actually equals. The quality increments telescope — $\sum_{k} \Delta Q_k = Q_{10} - Q_0 = \beta \log(D_{10}/D_0)$ — so for small increments $\prod_k (1 + \alpha \Delta Q_k) \approx \exp(\alpha \sum_k \Delta Q_k) = (D_{10}/D_0)^{\alpha\beta}$: a *weak power law*, not runaway growth. With these parameters $\alpha\beta = 0.005$, and ten rounds buy only about $1.2\%$ user growth (Exercise 5 simulates the recurrences exactly and gets $N_{10}/N_0 \approx 1.0121$). The compounding *user* multiplier is not the moat. What the incumbent actually accumulates is $D_{10}$ itself — here an $11\times$ larger corpus, and one whose extra examples are precisely the long-tail cases its own users hit. A new entrant starting at round 10 with the same initial model but no training data faces a distributional gap that is essentially impossible to close through model architecture improvements alone.
 
 {{fig:compounding-flywheel-moat}}
 

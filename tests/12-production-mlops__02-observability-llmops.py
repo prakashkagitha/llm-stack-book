@@ -49,12 +49,13 @@ def report(block_id, status, note=""):
 # ---------------------------------------------------------------------------
 try:
     from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
     OTEL_AVAILABLE = True
 except Exception:
-    trace = TracerProvider = BatchSpanProcessor = OTLPSpanExporter = None
+    trace = Resource = TracerProvider = BatchSpanProcessor = OTLPSpanExporter = None
     OTEL_AVAILABLE = False
 
 try:
@@ -85,7 +86,12 @@ if OTEL_AVAILABLE:
         Compatible backends include: Langfuse (via proxy), Jaeger, Grafana Tempo,
         Google Cloud Trace, Honeycomb, and Datadog.
         """
-        provider = TracerProvider()
+        # The Resource carries `service.name`, which is what every backend keys its
+        # service list on. Without it the SDK falls back to the literal string
+        # "unknown_service" and all your spans land in one anonymous bucket —
+        # passing service_name to get_tracer() below only names the *instrumentation
+        # scope*, not the service.
+        provider = TracerProvider(resource=Resource.create({"service.name": service_name}))
         exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
         # BatchSpanProcessor buffers spans and sends them asynchronously
         # to avoid adding latency to the critical path.
@@ -98,6 +104,8 @@ if OTEL_AVAILABLE:
     # so this is safe to execute on CPU without network access.
     TRACER = setup_tracing("llm-chat-service")
     assert TRACER is not None
+    assert (trace.get_tracer_provider().resource.attributes.get("service.name")
+            == "llm-chat-service")
     with TRACER.start_as_current_span("smoke_span") as span:
         span.set_attribute("test", True)
     report(0, "RAN", "setup_tracing() built a TracerProvider and emitted a span")
@@ -158,7 +166,7 @@ if PROMETHEUS_AVAILABLE:
     # Pricing table (USD per 1M tokens); update as providers change rates
     PRICING = {
         "gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
-        "gpt-4o":      {"prompt": 5.00, "completion": 15.0},
+        "gpt-4o":      {"prompt": 2.50, "completion": 10.0},
     }
 
     def record_llm_call(model: str, prompt_tokens: int, completion_tokens: int,
@@ -176,7 +184,7 @@ if PROMETHEUS_AVAILABLE:
                     + completion_tokens / 1e6 * PRICING[model]["completion"])
             COST_HISTOGRAM.labels(model=model).observe(cost)
 
-    # NOTE: the book's `if __name__ == "__main__": start_http_server(9090)`
+    # NOTE: the book's `if __name__ == "__main__": start_http_server(8001)`
     # entry point is intentionally NOT invoked here -- it binds a real
     # network port, which is out of scope for a CPU logic test and was
     # already guarded behind `__main__` in the source (i.e. import-safe).
@@ -297,8 +305,13 @@ def should_evaluate(record: dict, policy: SamplingPolicy) -> bool:
     # Evaluate new prompt versions at higher rate to catch regressions early
     if record.get("is_new_prompt_version", False):
         return random.random() < policy.new_prompt_rate
-    # Evaluate previously low-scoring records (detected drift)
-    if record.get("auto_eval_score", 1.0) < 0.5:
+    # Evaluate previously low-scoring records (detected drift).
+    # Note `.get(key, default)` returns the STORED value when the key exists, so a
+    # freshly-logged record carrying `auto_eval_score: None` (the schema's default,
+    # filled in later by the async judge) would blow up on the comparison. Treat a
+    # missing *or* null score as "not yet evaluated" and fall through to the baseline.
+    score = record.get("auto_eval_score")
+    if score is not None and score < 0.5:
         return random.random() < policy.low_score_rate
     # Baseline random sample for steady-state tracking
     return random.random() < policy.base_rate
@@ -318,6 +331,9 @@ assert should_evaluate({"finish_reason": "content_filter"}, POLICY) is True
 never_policy = SamplingPolicy(base_rate=0.0, failure_rate=0.0, new_prompt_rate=0.0, low_score_rate=0.0)
 assert should_evaluate({"finish_reason": "stop", "auto_eval_score": 0.2}, never_policy) is False
 assert should_evaluate({"finish_reason": "stop", "auto_eval_score": 0.9}, never_policy) is False
+# A not-yet-judged record stores auto_eval_score=None (the log schema's default);
+# it must fall through to the baseline branch, not raise TypeError.
+assert should_evaluate({"finish_reason": "stop", "auto_eval_score": None}, never_policy) is False
 sampled = sum(should_evaluate({"finish_reason": "stop"}, POLICY) for _ in range(2000))
 # base_rate=0.05 over 2000 draws should land in a sane band around 100
 assert 40 < sampled < 200, f"unexpected sample count: {sampled}"
@@ -343,13 +359,21 @@ def compute_psi(reference: np.ndarray, current: np.ndarray, n_bins: int = 10) ->
     Typical usage: call this on the first principal component of prompt embeddings,
     comparing a rolling 24-hour window against the previous 7-day baseline.
     """
-    # Use reference distribution to define bin edges (important: same bins for both)
-    min_val = min(reference.min(), current.min())
-    max_val = max(reference.max(), current.max())
-    bins = np.linspace(min_val, max_val, n_bins + 1)
+    # Bin edges come from the REFERENCE ONLY, and the outer edges are infinite.
+    # Both details matter. Deriving edges from reference ∪ current instead would
+    # (a) re-grid on every call, so PSI from different windows could not be
+    # compared against the fixed 0.1/0.25 thresholds, and (b) let a single
+    # outlier in `current` stretch the grid until nearly all mass collapses into
+    # one bin — *lowering* PSI exactly when something anomalous appeared.
+    # Reference quantiles give roughly equal-mass bins (the standard choice).
+    edges = np.unique(np.quantile(reference, np.linspace(0, 1, n_bins + 1)))
+    if edges.size < 2:          # degenerate reference (all values identical)
+        return 0.0
+    edges[0], edges[-1] = -np.inf, np.inf   # tails absorb out-of-range values
+    n_bins = len(edges) - 1                 # ties may have collapsed some bins
 
-    ref_counts, _ = np.histogram(reference, bins=bins)
-    cur_counts, _ = np.histogram(current,   bins=bins)
+    ref_counts, _ = np.histogram(reference, bins=edges)
+    cur_counts, _ = np.histogram(current,   bins=edges)
 
     # Add small epsilon to avoid division by zero or log(0)
     eps = 1e-6
@@ -387,6 +411,13 @@ cur_embeddings_shifted = rng.normal(loc=2.5, scale=1.0, size=(150, 16)).astype(n
 psi_same = compute_psi(ref_embeddings[:, 0], cur_embeddings_same[:, 0])
 psi_shifted = compute_psi(ref_embeddings[:, 0], cur_embeddings_shifted[:, 0])
 assert psi_same < psi_shifted, (psi_same, psi_shifted)
+
+# Reference-only bin edges must be robust to an outlier in the current window:
+# a single extreme value must not *suppress* a genuine drift signal.
+psi_shifted_outlier = compute_psi(
+    ref_embeddings[:, 0], np.append(cur_embeddings_shifted[:, 0], 1e3).astype(np.float32)
+)
+assert psi_shifted_outlier > psi_same, (psi_shifted_outlier, psi_same)
 
 drift_same = monitor_embedding_drift(ref_embeddings, cur_embeddings_same, n_components=5)
 drift_shifted = monitor_embedding_drift(ref_embeddings, cur_embeddings_shifted, n_components=5)

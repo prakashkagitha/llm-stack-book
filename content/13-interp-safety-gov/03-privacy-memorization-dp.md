@@ -118,7 +118,7 @@ Exposure is wonderful because it is a *continuous, calibrated* signal — you do
 
     - **Case A — not memorized:** true body lands at rank $\approx 5\times10^8$. Exposure $= 29.9 - \log_2(5\times10^8) = 29.9 - 28.9 = 1.0$ bit. Safe.
     - **Case B — partial:** rank $= 1000$. Exposure $= 29.9 - \log_2(1000) = 29.9 - 9.97 = 19.9$ bits. An attacker who can make $1000$ guesses extracts it. Alarming.
-    - **Case C — full:** rank $= 1$. Exposure $= 29.9$ bits. Greedy decoding emits the secret. Breach.
+    - **Case C — full:** rank $= 1$. Exposure $= 29.9$ bits. The true body is the single most likely candidate in $R$, so an attacker who knows the format recovers it in **one guess**. Breach. (Rank is a ranking over $R$, not a statement about greedy decoding — greedy argmax runs over the whole vocabulary and need not emit the top-ranked member of $R$.)
 
     Now the duplication knob: insert the same canary **once** vs. **nine times**. In the original Secret Sharer experiments, inserting a canary a handful of times in a large corpus already pushed exposure from $\approx 1$ bit toward the full $\log_2|R|$, while a single insertion in a well-deduplicated corpus often stayed near baseline. This is the empirical core of "dedup is your best cheap defense."
 
@@ -311,10 +311,10 @@ The noise multiplier $\sigma$ together with the **sampling rate** $q = B/N$ and 
         a = T / (2.0 * sigma ** 2)                      # RDP epsilon per unit alpha
         return a + 2.0 * math.sqrt(a * math.log(1.0 / delta))
 
-    print(round(eps_no_subsampling(T=1465, sigma=0.8, delta=1e-6)))   # ~1396
+    print(round(eps_no_subsampling(T=1465, sigma=0.8, delta=1e-7)))   # ~1416
     ```
 
-    An $\varepsilon$ of ~1400 is meaningless — and that is exactly the point. Essentially *all* of DP-SGD's usable privacy comes from **amplification by subsampling**: when each example participates only with probability $q$, the per-step RDP drops from $O(\alpha/\sigma^2)$ to roughly $O(q^2\alpha/\sigma^2)$, a factor of order $q^2$ cheaper. The subsampled Gaussian has no clean closed form, so libraries evaluate it numerically: Opacus's `rdp` accountant integrates the Mironov et al. bound, while its `prv` accountant convolves the privacy-loss random variables directly and is typically tighter (Google's `dp_accounting` library implements the same family). That $q^2$ is why the worked example below lands at $\varepsilon\approx1.9$ with $q\approx2\times10^{-3}$ instead of at four digits — and why "just use a bigger batch" is not free: raising $B$ raises $q$ too.
+    An $\varepsilon$ of ~1400 is meaningless — and that is exactly the point. Essentially *all* of DP-SGD's usable privacy comes from **amplification by subsampling**: when each example participates only with probability $q$, the per-step RDP drops from $O(\alpha/\sigma^2)$ to roughly $O(q^2\alpha/\sigma^2)$, a factor of order $q^2$ cheaper. The subsampled Gaussian has no clean closed form, so libraries evaluate it numerically: Opacus's `rdp` accountant integrates the Mironov et al. bound, while its `prv` accountant convolves the privacy-loss random variables directly and is typically tighter (Google's `dp_accounting` library implements the same family). That $q^2$ is why the worked example below lands at $\varepsilon\approx2.3$ with $q\approx2\times10^{-3}$ instead of at four digits — and why "just use a bigger batch" is not free: raising $B$ raises $q$ too.
 
 ```python
 import torch
@@ -392,9 +392,9 @@ DP-SGD is not free. Three taxes:
 The pragmatic finding that makes DP usable for LLMs: **DP fine-tuning works far better than DP pretraining.** Pretrain non-privately on public/web data, then *fine-tune with DP-SGD on the sensitive dataset*. The public pretraining gives a strong prior so the private phase only needs a small, noisy nudge — DP fine-tuning of large models recovers most of the non-private accuracy at $\varepsilon$ in the single digits, whereas DP *pretraining* from scratch is brutally lossy. Parameter-efficient methods (LoRA, prompt tuning — see [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html)) pair especially well with DP because there are fewer parameters to noise.
 
 !!! example "Worked example: reading a privacy budget"
-    You DP-fine-tune with batch $B = 4096$, dataset $N = 2{,}000{,}000$ (so sampling rate $q = B/N = 2.048\times10^{-3}$), noise multiplier $\sigma = 0.8$, for $T = 3$ epochs $\approx 1465$ steps, targeting $\delta = 10^{-6}$. Feed $(q, \sigma, T, \delta)$ to a PRV/RDP accountant (e.g. Opacus `get_epsilon`) and it returns $\varepsilon \approx 1.9$ (the RDP bound, at optimal order $\alpha = 7$; the PRV accountant is a shade tighter).
+    You DP-fine-tune with batch $B = 4096$, dataset $N = 2{,}000{,}000$ (so sampling rate $q = B/N = 2.048\times10^{-3}$), noise multiplier $\sigma = 0.8$, for $T = 3$ epochs $\approx 1465$ steps, targeting $\delta = 10^{-7}$ (comfortably below $1/N = 5\times10^{-7}$, as the rule of thumb demands). Feed $(q, \sigma, T, \delta)$ to a PRV/RDP accountant (e.g. Opacus `get_epsilon`) and it returns $\varepsilon \approx 2.3$ (the RDP bound, at optimal order $\alpha = 7$; the PRV accountant is a shade tighter).
 
-    Interpretation: an attacker's posterior odds that any given record was a member can shift by at most a factor of $e^{1.9} \approx 6.7$. That is a genuinely strong bound, and it holds in the *worst case over all adversaries and all records*; empirically the strongest MIA against such a model gets TPR @ 1% FPR only marginally above chance. Want $\varepsilon \approx 1$? Push $\sigma$ to $1.0$ (more noise, lower utility) or cut steps — at the same $q$ and $T$ that lands at $\varepsilon \approx 1.05$. The dial is explicit: **privacy, utility, compute — pick two, and the accountant tells you the exchange rate.** One caveat the number hides: this $\varepsilon$ is *per example*. A secret duplicated $r$ times in the corpus only gets group privacy of roughly $r\varepsilon$, which is why deduplication (§4.1) is a prerequisite for the budget to mean what you think it means, not an alternative to it.
+    Interpretation: an attacker's posterior odds that any given record was a member can shift by at most a factor of $e^{2.3} \approx 10$. That is a genuinely strong bound, and it holds in the *worst case over all adversaries and all records*; empirically the strongest MIA against such a model gets TPR @ 1% FPR only marginally above chance. Want $\varepsilon \approx 1$? Push $\sigma$ to $1.1$ (more noise, lower utility) or cut steps — at the same $q$ and $T$ that lands at $\varepsilon \approx 1.0$. The dial is explicit: **privacy, utility, compute — pick two, and the accountant tells you the exchange rate.** One caveat the number hides: this $\varepsilon$ is *per example*. A secret duplicated $r$ times in the corpus only gets group privacy of roughly $r\varepsilon$, which is why deduplication (§4.1) is a prerequisite for the budget to mean what you think it means, not an alternative to it.
 
 {{tool:dp-sgd-privacy}}
 
@@ -403,7 +403,7 @@ The pragmatic finding that makes DP usable for LLMs: **DP fine-tuning works far 
 When you cannot retrain (the weights already memorized), you defend at serving time. These are *mitigations*, not guarantees — they raise the cost of an attack without bounding it:
 
 - **Output filtering / memorization detection.** Run generated text against a Bloom filter or n-gram index of known-sensitive strings (or the training corpus itself) and block verbatim emissions. Cheap and effective against *exact* extraction; defeated by paraphrase.
-- **MEMFREE / "min-$k$" decoding.** Constrain decoding so the model cannot emit a span that exactly matches a forbidden n-gram, forcing a divergent token whenever a memorized continuation is about to be produced.
+- **MemFree decoding** (Ippolito et al., 2023). Constrain decoding so the model cannot emit a span that exactly matches a forbidden n-gram (checked against a Bloom filter of the training corpus), forcing a divergent token whenever a memorized continuation is about to be produced. Do not confuse this with min-$k$% probability from §2.2, which is a *membership-inference score*, not a decoding rule.
 - **PII output guardrails.** The same Presidio-style detect-and-redact stack on the *output* side ([Safety, Guardrails & Content Moderation](../12-production-mlops/04-safety-guardrails.html)).
 - **Refusal / rate-limiting on extraction-shaped prompts.** Detect the "repeat the word X forever" divergence attack and the long-prefix-completion pattern, and refuse or rate-limit.
 - **Sampling temperature.** Greedy decoding maximizes verbatim emission; higher temperature reduces exact extraction but does not prevent a determined attacker who samples many times and ranks.
@@ -512,7 +512,9 @@ def extract_canary(model, tokenizer, template, true_body, n_digits, device="cuda
     """
     Enumerate (a sample of) the body space, rank candidates by model log-prob,
     and report the rank of the TRUE body + exposure. If rank==1 the secret is
-    greedily extractable. For tiny spaces (<= max_enum) we enumerate exactly.
+    the top-ranked candidate in R, i.e. recoverable in a SINGLE guess by an
+    attacker who knows the format. For tiny spaces (<= max_enum) we enumerate
+    exactly.
     """
     space = 10 ** n_digits
     def body_lp(body):
@@ -752,7 +754,7 @@ The engineering upshot is a single sentence you can take to a design review: **d
 
     So at $\varepsilon = 8$ an attacker's membership odds can move by up to ~$2981\times$ in the worst case, versus only ~$2.7\times$ at $\varepsilon = 1$. The chapter's rules of thumb: $\varepsilon \le 1$ is strong, $\varepsilon \approx 8$ is "meaningful but loose," $\varepsilon \gg 50$ is mostly cosmetic.
 
-    **(b)** The rule of thumb is $\delta \ll 1/N$. Here $1/N = 1/(2\times10^6) = 5\times10^{-7}$. The chosen $\delta = 10^{-6}$ is *larger* than $1/N$, so it is **not** comfortably below the threshold — you would want $\delta$ at least an order of magnitude under $5\times10^{-7}$ (say $10^{-7}$ or smaller). A $\delta$ above $1/N$ is dangerous because the $+\delta$ slack can, in principle, permit leaking a whole record.
+    **(b)** The rule of thumb is $\delta \ll 1/N$. Here $1/N = 1/(2\times10^6) = 5\times10^{-7}$. The chosen $\delta = 10^{-6}$ is *larger* than $1/N$, so it is **not** comfortably below the threshold — you would want $\delta$ comfortably under $5\times10^{-7}$ (say $10^{-7}$ or smaller, as in the §4.2 worked example). A $\delta$ above $1/N$ is dangerous because the $+\delta$ slack can, in principle, permit leaking a whole record.
 
     **(c) Rebuttal, two parts.** (i) $e^\varepsilon$ is a **worst-case bound over all adversaries, all side information, and all records simultaneously** — it is a ceiling, not the leakage of a typical attack. Empirically, the strongest membership-inference attack against a model trained to single-digit $\varepsilon$ gets TPR @ 1% FPR only marginally above chance; the realized privacy is far better than the loose bound suggests (this is exactly what tight DP auditing shows). (ii) The bound still *guarantees* that no attacker can ever do better than that ceiling — unlike scrubbing or inference guardrails, which give no guarantee at all. So $\varepsilon = 8$ is a meaningful-but-loose guarantee, not "basically not private." If a tighter guarantee is required, raise $\sigma$ (more noise) or cut steps to push toward $\varepsilon \approx 1$, at a utility cost the accountant makes explicit.
 

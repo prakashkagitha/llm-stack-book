@@ -30,8 +30,10 @@ Pin your versions. Tokenizer APIs are unusually stable release-to-release compar
 ```bash
 # As of writing (2026), the current stable line. Pin exact versions in your
 # lockfile / requirements.txt -- do not float `tokenizers` and `transformers`
-# independently, since PreTrainedTokenizerFast's Rust bindings are versioned
-# against a specific tokenizers ABI.
+# independently. transformers is pure Python, but it declares a NARROW version
+# range on `tokenizers` (both the Python API it calls and the tokenizer.json
+# schema move across tokenizers minors), so let transformers' own pin drive the
+# tokenizers version rather than picking the two separately.
 pip install "tokenizers>=0.20,<0.22" "transformers>=4.46,<4.56"
 pip install sentencepiece==0.2.0    # separate C++ library, separate release cadence
 
@@ -92,7 +94,9 @@ What changes vs. the from-scratch trainer: the merge-counting loop, the
 incremental pair-count bookkeeping, and the encode loop are now Rust, not
 Python -- see the throughput comparison at the end of this chapter.
 """
-from tokenizers import Tokenizer, Regex, decoders, pre_tokenizers, trainers, models
+from tokenizers import (
+    Tokenizer, Regex, AddedToken, decoders, pre_tokenizers, trainers, models,
+)
 
 # --- 1. The SAME regex as Chapter 14.3, unchanged. ---------------------------
 # `\p{N}{1,3}` caps digit runs so that '2026' and '2031' are segmented
@@ -112,12 +116,19 @@ SPLIT_PATTERN = (
 
 # --- 2. The SAME 9 special tokens, SAME order, so ids land at the SAME
 # positions (32759..32767) as the from-scratch tokenizer in Ch. 14.3. ---------
+# IMPORTANT: we do NOT pass these to BpeTrainer(special_tokens=...). That
+# argument allocates them FIRST, at ids 0..8, which is the opposite of the
+# layout Ch. 14.3 fixed. To put them on top we train a vocabulary of
+# VOCAB_SIZE - 9 and then append them with `add_special_tokens`, which assigns
+# ids at the current end of the vocabulary. See the "Reserving Special Tokens"
+# section below.
 SPECIAL_TOKENS = [
     "<|bos|>", "<|eos|>", "<|pad|>",
     "<|system|>", "<|user|>", "<|assistant|>", "<|end|>",
     "<|tool_call|>", "<|tool_result|>",
 ]
 VOCAB_SIZE = 32768
+BASE_VOCAB_SIZE = VOCAB_SIZE - len(SPECIAL_TOKENS)   # 32759 = 256 bytes + 32503 merges
 
 # --- 3. Assemble the pipeline. ------------------------------------------------
 tokenizer = Tokenizer(models.BPE(unk_token=None, fuse_unk=False))
@@ -136,9 +147,8 @@ tokenizer.decoder = decoders.ByteLevel()
 
 # --- 4. The trainer. ----------------------------------------------------------
 trainer = trainers.BpeTrainer(
-    vocab_size=VOCAB_SIZE,
+    vocab_size=BASE_VOCAB_SIZE,              # leave the top 9 ids free for the specials
     min_frequency=2,                         # a pair must repeat to be worth a merge id
-    special_tokens=SPECIAL_TOKENS,           # reserved BEFORE training; get the top ids
     initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),  # all 256 byte-codepoints,
                                               # so every raw byte is representable even
                                               # if it never appears in the training sample
@@ -170,6 +180,15 @@ if __name__ == "__main__":
         corpus_iterator(sample_files, byte_budget=500_000_000),  # ~500 MB sample
         trainer=trainer,
     )
+    assert tokenizer.get_vocab_size() == BASE_VOCAB_SIZE, tokenizer.get_vocab_size()
+
+    # Append the specials AFTER training -> they take ids 32759..32767.
+    # `special=True` marks them as control tokens; `normalized=False` means they
+    # must match the exact bytes, immune to any normalizer added later.
+    tokenizer.add_special_tokens(
+        [AddedToken(t, special=True, normalized=False) for t in SPECIAL_TOKENS]
+    )
+
     tokenizer.save("tokenizer/stack100m-32768-raw.json")
     print("vocab_size:", tokenizer.get_vocab_size())
 ```
@@ -283,7 +302,7 @@ print(tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True))
 
 Beyond raw throughput, three things `tokenizers` gives you that the from-scratch trainer in Chapter 14.3 had to build by hand or simply didn't have:
 
-- **`encode_batch` with real thread parallelism.** `tokenizer.encode_batch(list_of_texts, num_threads=16)` releases the GIL entirely on the Rust side — no `multiprocessing.Pool` process-spawn overhead, no pickling documents across process boundaries.
+- **`encode_batch` with real thread parallelism.** `tokenizer.encode_batch(list_of_texts)` fans the batch across a Rust (rayon) thread pool with the GIL released — no `multiprocessing.Pool` process-spawn overhead, no pickling documents across process boundaries. There is no `num_threads` argument; the pool is configured out-of-band by the `TOKENIZERS_PARALLELISM=true` and `RAYON_NUM_THREADS=16` environment variables, which must be set *before* the library is imported.
 - **Offset tracking for free.** Every `Encoding` object carries `.offsets`, the exact `(start, end)` character span each token came from — essential for building token-level loss masks, highlighting spans in a UI (see the Tokenizer Playground below), or aligning entity labels to sub-word tokens in an NER pipeline. The from-scratch encoder in Chapter 14.3 does not track this at all.
 - **Truncation and padding built in.** `tokenizer.enable_truncation(max_length=2048)` and `tokenizer.enable_padding(pad_id=..., pad_token="<|pad|>")` are one-line configuration instead of code you write and test yourself.
 
@@ -334,9 +353,12 @@ spm.SentencePieceTrainer.train(
         "<|system|>", "<|user|>", "<|assistant|>", "<|end|>",
         "<|tool_call|>", "<|tool_result|>",
     ],
-    bos_id=0, eos_id=1, pad_id=2, unk_id=3,  # SentencePiece reserves ids 0..3
-                                              # for these by default; bos/eos/pad
-                                              # text is set via *_piece below
+    bos_id=0, eos_id=1, pad_id=2, unk_id=3,  # SentencePiece's OWN defaults are
+                                              # unk_id=0, bos_id=1, eos_id=2 and
+                                              # pad_id=-1 (padding disabled), so we
+                                              # override all four explicitly -- the
+                                              # id layout is ours, not the library's.
+                                              # The piece TEXT is set via *_piece below
     bos_piece="<|bos|>", eos_piece="<|eos|>", pad_piece="<|pad|>",
     unk_piece="<unk>",
     num_threads=16,
@@ -360,11 +382,17 @@ from transformers import LlamaTokenizerFast
 # families; LlamaTokenizerFast (and T5TokenizerFast, GemmaTokenizerFast) know
 # how to read a raw .model file and convert on load. For a fully custom
 # vocabulary + special-token layout like ours, the more direct path is
-# converting the .model into a tokenizers.Tokenizer once, offline:
-from tokenizers import SentencePieceBPETokenizer
+# converting the .model into a tokenizers.Tokenizer once, offline. That goes
+# through transformers' `convert_slow_tokenizer`, which is exactly what the
+# *TokenizerFast constructors invoke under the hood:
+fast = LlamaTokenizerFast(vocab_file="tokenizer/stack100m-32768-sp.model")
+fast.backend_tokenizer.save("tokenizer/stack100m-32768-sp-converted.json")
 
-spt = SentencePieceBPETokenizer.from_spm("tokenizer/stack100m-32768-sp.model")
-spt.save("tokenizer/stack100m-32768-sp-converted.json")
+# NOTE: `tokenizers` does ship a `from_spm` helper, but ONLY on
+# SentencePieceUnigramTokenizer -- it parses the protobuf as a Unigram model, so
+# it cannot read the model_type="bpe" file trained above. There is no
+# SentencePieceBPETokenizer.from_spm. Use the conversion above for BPE, or train
+# with model_type="unigram" if you want the from_spm one-liner.
 ```
 
 ### The decision
@@ -407,11 +435,17 @@ specials = [AddedToken(t, special=True, normalized=False) for t in [
     "<|tool_call|>", "<|tool_result|>",
 ]]
 
-# Passed to BpeTrainer(special_tokens=...) BEFORE training (as in the trainer
-# script above), specials are allocated ids FIRST in `tokenizers`' internal
-# bookkeeping conceptually -- but the actual placement (top of the range,
-# ids 32759-32767) is enforced by fixing vocab_size and letting the BPE merges
-# fill everything below it. Verify this after every training run:
+# WHERE the ids land is decided by WHEN you register the tokens:
+#
+#   BpeTrainer(special_tokens=[...])  -> allocated FIRST, ids 0..8, before the
+#                                        initial alphabet and before any merge.
+#   tokenizer.add_special_tokens([..]) -> allocated at the CURRENT END of the
+#                                        vocabulary, i.e. ids 32759..32767 once
+#                                        a 32,759-entry model has been trained.
+#
+# Ch. 14.3's design puts them on top, so we use the second form -- train to
+# 32768 - 9 = 32759, then append. Verify this after every training run:
+tokenizer.add_special_tokens(specials)
 assert tokenizer.get_vocab_size() == 32768
 for i, t in enumerate(["<|bos|>","<|eos|>","<|pad|>","<|system|>","<|user|>",
                         "<|assistant|>","<|end|>","<|tool_call|>","<|tool_result|>"]):
@@ -421,7 +455,7 @@ for i, t in enumerate(["<|bos|>","<|eos|>","<|pad|>","<|system|>","<|user|>",
 ```
 
 !!! warning "Common pitfall: a short training sample under-fills the vocabulary"
-    Exactly the failure mode Chapter 14.3 calls "the shortfall guard": if your training sample is too small or too repetitive to produce 32,759 distinct merges, `BpeTrainer` will simply stop early and hand back a smaller vocabulary — `tokenizer.get_vocab_size()` will be *less* than 32768, which silently breaks `nn.Embedding(32768, 512)` downstream in [Chapter 14.4](../14-capstone/04-architecture.html)'s architecture. Unlike the from-scratch trainer, `tokenizers` does not pad with `<|unused_N|>` filler tokens for you — that guard is something you must re-implement (or, simpler, just use a training sample large enough that you never hit the limit; a few hundred megabytes of real text essentially never runs short of 32,503 distinct merges). Always assert the vocabulary size immediately after training, before you save anything.
+    Exactly the failure mode Chapter 14.3 calls "the shortfall guard": if your training sample is too small or too repetitive to produce 32,503 distinct merges, `BpeTrainer` will simply stop early and hand back a smaller vocabulary — `tokenizer.get_vocab_size()` will be *less* than 32768, which silently breaks `nn.Embedding(32768, 512)` downstream in [Chapter 14.4](../14-capstone/04-architecture.html)'s architecture. Unlike the from-scratch trainer, `tokenizers` does not pad with `<|unused_N|>` filler tokens for you — that guard is something you must re-implement (or, simpler, just use a training sample large enough that you never hit the limit; a few hundred megabytes of real text essentially never runs short of 32,503 distinct merges). Always assert the vocabulary size immediately after training, before you save anything.
 
 ## Throughput: Measuring the Library Against the From-Scratch Trainer
 
@@ -431,11 +465,11 @@ Chapter 14.3 measured its own encode paths on an 8.34 MB training split. The com
 |---|---:|---:|
 | From-scratch, `_apply_merges` per chunk, no cache (Ch. 14.3) | ~1 MB/s | many hours |
 | From-scratch, cached + `multiprocessing.Pool(16)` (Ch. 14.3) | ~50 MB/s | tens of minutes |
-| `tokenizers` `Tokenizer.encode_batch(..., num_threads=16)` | tens of MB/s, single machine | tens of minutes |
+| `tokenizers` `Tokenizer.encode_batch(...)`, `RAYON_NUM_THREADS=16` | tens of MB/s, single machine | tens of minutes |
 | `tiktoken.encode_ordinary_batch(num_threads=16)` (fastest measured in Ch. 14.3) | ~75 MB/s | ~18 minutes |
 
 !!! note "Aside: honest about the numbers"
-    Chapter 14.3's table is the one with real, measured figures — produced by running its own code on its own manuscript-derived corpus. We don't reproduce a fabricated benchmark table for the library path here; run `tokenizer.encode_batch(docs, num_threads=N)` on your own machine and your own sample and treat the result as ground truth. The order-of-magnitude claim that matters and *is* safe to state without a fresh measurement: a Rust-threaded `encode_batch` and a well-cached parallel Python path land in the same broad performance tier — both turn an 83.5 GB encoding job (Stack-100M's full ~20B-token budget at ~4.2 bytes/token) into tens of minutes rather than tens of hours. The engineering lesson from Chapter 14.3 — cache aggressively, parallelize over documents, never rescan the whole corpus per merge — is exactly what both the from-scratch trainer's optimized path *and* the library implement; the library just gets there without you writing or maintaining the code.
+    Chapter 14.3's table is the one with real, measured figures — produced by running its own code on its own manuscript-derived corpus. We don't reproduce a fabricated benchmark table for the library path here; run `tokenizer.encode_batch(docs)` under `RAYON_NUM_THREADS=N` on your own machine and your own sample and treat the result as ground truth. The order-of-magnitude claim that matters and *is* safe to state without a fresh measurement: a Rust-threaded `encode_batch` and a well-cached parallel Python path land in the same broad performance tier — both turn an 83.5 GB encoding job (Stack-100M's full ~20B-token budget at ~4.2 bytes/token) into tens of minutes rather than tens of hours. The engineering lesson from Chapter 14.3 — cache aggressively, parallelize over documents, never rescan the whole corpus per merge — is exactly what both the from-scratch trainer's optimized path *and* the library implement; the library just gets there without you writing or maintaining the code.
 
 ## Wiring the Real Tokenizer Into the Rest of the Production Stack
 
@@ -490,7 +524,7 @@ The [Tokenizer Playground](../02-transformer/01-tokenization.html) lets you past
 !!! interview "Interview Corner"
     **Q:** You're handed a `tokenizer.json` trained with Hugging Face `tokenizers` and told "make sure a user can never smuggle a `<|assistant|>` role token into their prompt." What's the actual fix, and why doesn't `add_special_tokens=False` solve it?
 
-    **A:** `add_special_tokens=False` only controls the tokenizer's automatic post-processing step — the part that would otherwise wrap your input in a BOS/EOS pair. It does *not* disable `AddedVocabulary` extraction, which runs unconditionally over the raw string before the pre-tokenizer even sees it, and will happily match a literal `<|assistant|>` substring in untrusted user text and turn it into the real role-boundary token id. The actual control is `split_special_tokens=True` (on `PreTrainedTokenizerFast`/`AutoTokenizer`) or the equivalent `tokenizer.encode_special_tokens = False` on a raw `tokenizers.Tokenizer` — both force added tokens to be encoded as ordinary bytes rather than recognized as control tokens. The operational rule: any code path that tokenizes content you don't fully control — a user message, a retrieved document, a tool's returned observation — should always pass `split_special_tokens=True`; only your own chat-template renderer, operating on a conversation structure you built, should tokenize with extraction on. This is structurally identical to a SQL-injection defense: never let untrusted input be interpreted as control syntax, always as data.
+    **A:** `add_special_tokens=False` only controls the tokenizer's automatic post-processing step — the part that would otherwise wrap your input in a BOS/EOS pair. It does *not* disable `AddedVocabulary` extraction, which runs unconditionally over the raw string before the pre-tokenizer even sees it, and will happily match a literal `<|assistant|>` substring in untrusted user text and turn it into the real role-boundary token id. The actual control is `split_special_tokens=True` (on `PreTrainedTokenizerFast`/`AutoTokenizer`) or the equivalent `tokenizer.encode_special_tokens = True` on a raw `tokenizers.Tokenizer` (transformers literally assigns one to the other: `self._tokenizer.encode_special_tokens = self.split_special_tokens`; the default is `False`, i.e. extraction *on*, which is the vulnerable setting) — both force added tokens to be encoded as ordinary bytes rather than recognized as control tokens. The operational rule: any code path that tokenizes content you don't fully control — a user message, a retrieved document, a tool's returned observation — should always pass `split_special_tokens=True`; only your own chat-template renderer, operating on a conversation structure you built, should tokenize with extraction on. This is structurally identical to a SQL-injection defense: never let untrusted input be interpreted as control syntax, always as data.
 
 ## Key Takeaways
 
@@ -502,7 +536,7 @@ The [Tokenizer Playground](../02-transformer/01-tokenization.html) lets you past
     - Wrap the trained `Tokenizer` in `PreTrainedTokenizerFast` with the special tokens and the chat template baked in via `save_pretrained` — this is the artifact every later Part XV chapter (`torchtitan`/`nanotron` pretraining, TRL post-training, `vllm serve`) loads with a single `AutoTokenizer.from_pretrained`.
     - `add_special_tokens=False` does **not** stop special-string injection from untrusted text — that guard is `split_special_tokens=True`, and it must be applied at every call site that tokenizes content you don't control.
     - `sentencepiece` takes a different stance (raw character stream, whitespace as content via `▁`, optional Unigram/EM segmentation with subword regularization) and remains the right default for multilingual and CJK-heavy corpora; for Stack-100M's English-and-code-dominant mix, the regex-driven `tokenizers` path is the correct choice, exactly as Chapter 14.3 argued from first principles.
-    - Version-pin `tokenizers` and `transformers` together — `PreTrainedTokenizerFast`'s Rust bindings are versioned against a specific `tokenizers` ABI, and flags (like the `split_special_tokens` behavior) have shifted across releases; always check the artifact loads and passes an equivalence test before trusting it in a real run.
+    - Version-pin `tokenizers` and `transformers` together — `transformers` declares a narrow version range on `tokenizers` because both its Python API and the `tokenizer.json` schema shift across minors, and flags (like the `split_special_tokens` behavior) have shifted across releases; always check the artifact loads and passes an equivalence test before trusting it in a real run.
     - Re-run Chapter 14.3's equivalence test against the library-trained artifact before wiring it into pretraining: assert the vocabulary size, the special-token ids, the injection guard, and a decode round trip, exactly as shown here.
 
 ## Further reading

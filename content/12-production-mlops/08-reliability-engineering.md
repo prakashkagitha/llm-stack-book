@@ -45,10 +45,10 @@ $$
 With 10,000 requests per hour, a 30-minute window gives $n = 5{,}000$ samples; at $p = 0.95$ that is $\operatorname{SE} = \sqrt{0.95 \times 0.05 / 5000} \approx 0.0031$, i.e. 0.31 percentage points. A 2-percentage-point drop is therefore about $6\sigma$ of window noise — detectable at a glance. Going the other way, to detect a drop of size $\delta$ against a known baseline at 95% confidence and 80% power you need roughly
 
 $$
-n \approx \frac{(z_{0.975} + z_{0.80})^2 \cdot 2p(1-p)}{\delta^2} = \frac{(1.96 + 0.84)^2 \cdot 2(0.95)(0.05)}{\delta^2}
+n \approx \frac{(z_{0.975} + z_{0.80})^2 \cdot p(1-p)}{\delta^2} = \frac{(1.96 + 0.84)^2 (0.95)(0.05)}{\delta^2}
 $$
 
-which for $\delta = 0.02$ is $\approx 1{,}900$ judged samples per window. Below that, your window is too narrow to distinguish a regression from noise and you will page on nothing. With 100 requests per hour, no short window can reach 1,900 samples: use a 6-hour window, sample-judge aggressively (judge 100% of traffic rather than 1%), and supplement with a daily offline eval suite. This sample-size arithmetic is the same one behind canary sizing in [Online Evaluation: A/B Testing, Canaries & Guardrail Metrics](../12-production-mlops/07-online-eval-ab-testing.html).
+which for $\delta = 0.02$ is $\approx 930$ judged samples per window. (This is the one-sample form, appropriate because the baseline $p$ comes from the SLO definition and carries no sampling error of its own. If instead you compare two equally-sized windows against each other, both are noisy and you need $2\times$ that — $\approx 1{,}900$ per window.) Below that, your window is too narrow to distinguish a regression from noise and you will page on nothing. With 100 requests per hour you cannot reach 930 in a short window: judge 100% of traffic rather than 1%, and note the arithmetic honestly — a 6-hour window then yields only 600 samples, enough to resolve $\delta \approx 0.025$ but not $0.02$, and 930 takes ~9.3 hours of traffic. At that volume, use the wide online window for large regressions and supplement with a daily offline eval suite for small ones. This sample-size arithmetic is the same one behind canary sizing in [Online Evaluation: A/B Testing, Canaries & Guardrail Metrics](../12-production-mlops/07-online-eval-ab-testing.html).
 
 ### Latency tail budgets
 
@@ -71,8 +71,8 @@ If you serve the model yourself, do not re-derive these SLIs from application ti
     - Allowed downtime: $43{,}200 \times 0.001 = 43.2$ minutes.
     - Your quality SLO is 95% (judged-good) on a per-hour window.
     - With 2,000 requests/hour, a quality SLO burn of 1× means $2{,}000 \times 0.05 = 100$ bad responses per hour.
-    - A provider regression that drops quality to 80% burns $2{,}000 \times (0.95 - 0.80) = 300$ extra bad responses per hour, or $300/100 = 3\times$ your error budget rate.
-    - At that rate, your 30-day quality error budget (assuming budget = 5% × total requests) is exhausted in $30/3 = 10$ days — a clear threshold to trigger incident escalation.
+    - A provider regression that drops quality to 80% produces $2{,}000 \times 0.20 = 400$ bad responses per hour, of which $2{,}000 \times (0.95 - 0.80) = 300$ are *extra* — 3× the budgeted rate on top of the 1× you had already planned for.
+    - The budget drains at the *total* bad-response rate, not the excess, so the burn multiple is $400/100 = 4\times$ (equivalently $\frac{1 - 0.80}{1 - 0.95} = 4$). Your 30-day quality budget — assuming budget = 5% × total requests $= 0.05 \times 2{,}000 \times 720 = 72{,}000$ bad responses — is exhausted in $72{,}000/400 = 180$ hours, i.e. $30/4 = 7.5$ days — a clear threshold to trigger incident escalation.
 
 ### The "gradual silent collapse" failure mode
 
@@ -127,8 +127,13 @@ from typing import Optional
 PROVIDER_STATUS_URLS = {
     "openai": "https://status.openai.com/api/v2/status.json",
     "anthropic": "https://status.anthropic.com/api/v2/status.json",
-    "google": "https://status.cloud.google.com/incidents.json",
 }
+# Not every provider is on Statuspage. Google Cloud's
+# https://status.cloud.google.com/incidents.json returns a JSON *array* of
+# incident objects, not an object with a "status" key, so it needs its own
+# parser — dropping it into the dict above would make every check raise
+# AttributeError inside the broad `except` and silently report "unknown"
+# forever, which is exactly the failure this code exists to detect.
 
 def _utcnow() -> datetime.datetime:
     # datetime.utcnow() is deprecated since Python 3.12: it returns a naive
@@ -155,6 +160,13 @@ async def check_provider_status(provider: str) -> ProviderHealth:
             data = r.json()
         # Statuspage.io v2 format: data["status"]["indicator"]
         # values: "none" | "minor" | "major" | "critical"
+        if not isinstance(data, dict):
+            # Fail loudly on a non-Statuspage payload instead of letting the
+            # broad `except` below turn it into a permanent "unknown".
+            return ProviderHealth(
+                provider=provider, status="unknown", indicator="unsupported-schema",
+                error=f"expected a Statuspage v2 object, got {type(data).__name__}",
+            )
         indicator = data.get("status", {}).get("indicator", "unknown")
         status = (
             "operational" if indicator == "none"
@@ -266,7 +278,15 @@ class PromptRegistry:
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
     def deploy(self, v: PromptVersion) -> None:
-        """Atomically deploy a new prompt version, saving previous for rollback."""
+        """
+        Deploy a new prompt version, saving the previous one for rollback.
+
+        The writes execute atomically (MULTI/EXEC), but the read below sits
+        *outside* the transaction, so this is not an isolated read-modify-write:
+        two concurrent deploys can read the same `prev_json` and clobber each
+        other's rollback target. If that is possible in your deployment path,
+        wrap the get/set pair in a WATCH-based `self.r.transaction(fn, key)`.
+        """
         key = f"prompt:{v.template_id}:current"
         prev_json = self.r.get(key)
         pipe = self.r.pipeline(transaction=True)
@@ -282,16 +302,22 @@ class PromptRegistry:
         print(f"Deployed {v.template_id}@{v.version} (sha={v.sha256})")
 
     def rollback(self, template_id: str) -> Optional[PromptVersion]:
-        """Atomically revert to the previous prompt version."""
+        """Revert to the previous prompt version, keeping the swap reversible."""
         prev_json = self.r.get(f"prompt:{template_id}:previous")
         if not prev_json:
             print(f"No previous version found for {template_id}")
             return None
+        cur_json = self.r.get(f"prompt:{template_id}:current")
         prev_data = json.loads(prev_json)
         prev = PromptVersion(**prev_data)
-        # Swap current ← previous
+        # Genuinely *swap* current ↔ previous. Overwriting only `:current` would
+        # leave both keys holding the same version: a second rollback would then
+        # be a silent no-op reporting success, and the version you just backed
+        # out of would be unrecoverable.
         pipe = self.r.pipeline(transaction=True)
         pipe.set(f"prompt:{template_id}:current", prev_json)
+        if cur_json:
+            pipe.set(f"prompt:{template_id}:previous", cur_json)
         pipe.lpush(
             f"prompt:{template_id}:history",
             json.dumps({"event": "rollback", "to": prev.version, "at": time.time()}),
@@ -442,7 +468,7 @@ Review date: 2026-06-06
    Affected trace sample (earliest detection):
      trace_id: a3f1b2c4-7e9d-...
      retrieval.chunks[0].score: 0.43  (normal: >0.75)
-     quality_judge.score: 0.61        (SLO: >=0.95)
+     quality_judge.score: 0.61        (per-response pass bar: >=0.85)
      quality_judge.flags: ["off-topic-context"]
 
 5. ACTION ITEMS
@@ -450,9 +476,14 @@ Review date: 2026-06-06
    [ ] Alert if post-index doc count drops >5% vs pre-index count
    [ ] Add retrieval MRR to real-time SLI dashboard (was offline-only)
    [ ] Document re-index runbook in incident wiki
+   [ ] Cut MTTD: fault began 07:00, alert fired 09:12 (2h 12m). The canary eval
+       runs every 15 min and pages only after two consecutive bad windows, so
+       ~30 min is the floor; the remaining 1h 40m is the job's own silent
+       failure. A direct index-freshness check would have caught it at 07:00.
 
 6. WHAT WENT WELL
-   - Canary eval detected the issue within 10 min of corpus failure
+   - Canary eval caught a purely semantic regression that produced zero HTTP
+     errors and no latency signal — the quality SLO was the only alert that fired
    - Diagnosis tree narrowed root cause to retrieval in <25 min
 ```
 
@@ -517,11 +548,17 @@ class QualityRecord(NamedTuple):
 
 def segment_quality_report(
     records: list[QualityRecord],
-    slo_threshold: float = 0.95,
+    score_threshold: float = 0.85,   # theta: per-response judge bar for "good"
+    slo_pass_rate: float = 0.95,     # SLO: required fraction of good responses
 ) -> dict:
     """
     Compute per-segment quality pass rates and flag segments breaching SLO.
-    Returns a dict: segment_key -> {pass_rate, count, breaching}.
+    Returns a dict: segment_key -> {pass_rate, mean_score, count, breaching}.
+
+    The two thresholds are different quantities and must stay separate: a
+    single knob would mean that raising the SLO target also raises the bar an
+    individual response has to clear, moving the pass rate and the breach test
+    in opposite directions.
     """
     buckets: dict[tuple, list[float]] = defaultdict(list)
     for r in records:
@@ -530,12 +567,12 @@ def segment_quality_report(
 
     report = {}
     for key, scores in buckets.items():
-        pass_rate = sum(1 for s in scores if s >= slo_threshold) / len(scores)
+        pass_rate = sum(1 for s in scores if s >= score_threshold) / len(scores)
         report[key] = {
             "pass_rate": pass_rate,
             "mean_score": statistics.mean(scores),
             "count": len(scores),
-            "breaching": pass_rate < slo_threshold,
+            "breaching": pass_rate < slo_pass_rate,
         }
     # Sort by pass_rate ascending so worst segments are first
     return dict(sorted(report.items(), key=lambda x: x[1]["pass_rate"]))
@@ -578,12 +615,15 @@ class DegradationController:
     """
     Thread-safe degradation controller.
     Advances or retreats degradation level based on SLI measurements.
-    Uses exponential backoff before attempting recovery.
+    Every level change — up *or* down — restarts a minimum dwell timer, so
+    recovery walks back one rung per `recovery_probe_interval` instead of
+    sprinting to NORMAL the instant a monitoring loop calls `recover()` twice.
+    That dwell time is what prevents flapping.
     """
     def __init__(self, recovery_probe_interval: float = 60.0):
         self._level = DegradationLevel.NORMAL
         self._lock = threading.Lock()
-        self._last_degraded_at: Optional[float] = None
+        self._last_transition_at: Optional[float] = None
         self._recovery_probe_interval = recovery_probe_interval  # seconds
 
     @property
@@ -595,7 +635,7 @@ class DegradationController:
         with self._lock:
             if self._level < DegradationLevel.GRACEFUL_ERROR:
                 self._level = DegradationLevel(self._level + 1)
-                self._last_degraded_at = time.monotonic()
+                self._last_transition_at = time.monotonic()
                 print(f"[DEGRADATION] Level → {self._level.name}: {reason}")
         return self._level
 
@@ -604,10 +644,15 @@ class DegradationController:
         with self._lock:
             if self._level > DegradationLevel.NORMAL:
                 # Enforce minimum dwell time before recovery attempt
-                if (self._last_degraded_at is not None and
-                        time.monotonic() - self._last_degraded_at < self._recovery_probe_interval):
+                now = time.monotonic()
+                if (self._last_transition_at is not None and
+                        now - self._last_transition_at < self._recovery_probe_interval):
                     return self._level
                 self._level = DegradationLevel(self._level - 1)
+                # Restart the dwell timer: each rung must serve its own interval,
+                # otherwise a tight monitoring loop unwinds the whole ladder in
+                # microseconds and you get exactly the flapping this guards against.
+                self._last_transition_at = now
                 print(f"[RECOVERY] Level → {self._level.name}")
         return self._level
 
@@ -615,6 +660,7 @@ class DegradationController:
         """Force reset to NORMAL (use only in manual incident resolution)."""
         with self._lock:
             self._level = DegradationLevel.NORMAL
+            self._last_transition_at = time.monotonic()
             print("[RESET] Degradation level reset to NORMAL")
 
 # Usage pattern: call from your SLI monitoring loop
@@ -840,22 +886,29 @@ async def retry_with_backoff(
     call_fn,
     max_retries: int = 4,
     base_delay: float = 1.0,
-    jitter: float = 0.5,
+    max_delay: float = 60.0,
 ) -> dict:
     """
-    Exponential backoff with full jitter for rate-limited LLM calls.
-    Jitter prevents the thundering-herd problem when many workers back off simultaneously.
+    Exponential backoff with *full* jitter for rate-limited LLM calls.
+    Full jitter (the AWS formulation) randomizes the entire delay --
+    uniform(0, base * 2**attempt) -- rather than adding a small noise term to a
+    deterministic schedule. That distinction matters: adding +/-0.5 s to a fixed
+    1/2/4/8 s ladder leaves a herd of workers that were throttled at the same
+    instant still retrying in near-lockstep, which is the thundering herd this is
+    supposed to prevent. Randomizing the whole interval desynchronizes them.
     """
     for attempt in range(max_retries):
         try:
             return await call_fn()
         except httpx.HTTPStatusError as e:
-            if e.response.status_code == 429:
-                delay = base_delay * (2 ** attempt) + random.uniform(0, jitter)
-                print(f"Rate limited (attempt {attempt+1}/{max_retries}), retrying in {delay:.2f}s")
-                await asyncio.sleep(delay)
-            else:
+            if e.response.status_code != 429:
                 raise  # Non-rate-limit errors: don't retry here, propagate
+            if attempt == max_retries - 1:
+                break  # Last attempt: fail now rather than sleep and then fail
+            ceiling = min(max_delay, base_delay * (2 ** attempt))
+            delay = random.uniform(0, ceiling)
+            print(f"Rate limited (attempt {attempt+1}/{max_retries}), retrying in {delay:.2f}s")
+            await asyncio.sleep(delay)
     raise RuntimeError(f"Exhausted {max_retries} retries due to rate limiting")
 ```
 
@@ -1051,7 +1104,7 @@ War Room Checklist
 (a) How many minutes of downtime does the availability error budget permit over the 30-day window?
 (b) At the baseline 95% target, how many bad responses per hour constitute one error-budget-rate ("1x burn") of quality?
 (c) How many *extra* bad responses per hour does the regression to 0.83 produce, and what is the burn multiple relative to the 1x rate?
-(d) Treating the monthly quality budget as `5% x total requests`, in how many days is it exhausted at that burn rate?
+(d) Treating the monthly quality budget as `5% x total requests`, in how many days is it exhausted? (Careful: the budget drains at the *total* bad-response rate, not at the excess over baseline.)
 
 ??? note "Solution"
     Follow the chapter's "error budget arithmetic" worked example, substituting the new numbers.
@@ -1064,7 +1117,7 @@ War Room Checklist
 
     (Sanity check via the burn-rate formula: $\frac{1 - \text{SLI}}{1 - \text{SLO}} = \frac{1 - 0.83}{1 - 0.95} = \frac{0.17}{0.05} = 3.4\times$ total burn. The *extra* burn above the 1x baseline is $3.4 - 1.0 = 2.4\times$, matching part (c).)
 
-    (d) The 30-day budget is consumed $2.4\times$ faster than planned, so it is exhausted in $30 / 2.4 = 12.5$ days — a clear threshold to trigger incident escalation.
+    (d) The budget is $0.05 \times 3{,}000 \times 720 = 108{,}000$ bad responses, and the regression emits $(1 - 0.83) \times 3{,}000 = 510$ bad responses/hour. It is therefore exhausted in $108{,}000 / 510 \approx 212$ hours $\approx 8.8$ days. Equivalently $30 / 3.4$: the depletion rate is the *total* burn multiple from the sanity check in (c), not the $2.4\times$ excess — the baseline $1\times$ is spending budget too.
 
 **3.** The chapter recommends alerting on quality *drift* — a shift in the mean automated score — as a leading indicator, using the heuristic $\epsilon = 2\sigma_{\text{historical}}$. Suppose the historical mean quality score is $\bar{s} = 0.91$ with standard deviation $\sigma_{\text{historical}} = 0.015$, and your quality SLO pass threshold is $\theta = 0.85$ (a response counts as good if its score $\geq \theta$).
 

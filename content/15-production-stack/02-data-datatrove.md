@@ -29,9 +29,10 @@ The last row matters enough to say up front: there is no library call that produ
 """
 Stream the Stack-100M mix directly from the Hub, in production.
 
-pip install "datasets>=2.19,<4" huggingface_hub
-(the streaming/interleave API here has been stable since datasets 2.x;
-pin a version in your lockfile rather than trusting "latest")
+pip install "datasets>=2.19" huggingface_hub
+(the streaming/interleave API used here has been stable since datasets 2.x
+and still works on the 5.x line; pin one exact version in your lockfile --
+e.g. datasets==5.0.0 -- rather than trusting a bare "latest")
 """
 from datasets import load_dataset, interleave_datasets
 
@@ -90,7 +91,7 @@ mix = mix.shuffle(seed=1337, buffer_size=100_000)  # reservoir shuffle, streamin
 
 !!! warning "`stopping_strategy` changes what "70/15/10/5" actually means"
 
-    `interleave_datasets` supports two stopping strategies, and the choice silently changes the realized mix over a long stream. `"first_exhausted"` (the default) stops the *entire* interleaved stream the moment any one source runs dry — with FineMath (the smallest source at 5% weight and the fewest raw rows) this can truncate the whole 20B-token run early, well before FineWeb-Edu's much larger pool is touched. `"all_exhausted"` instead keeps going until every source is exhausted, **oversampling** — repeating — whichever sources run out first, so a source can appear more than once per "epoch" over the mix. Neither behavior matches Ch. 14.2's `interleave_budgeted`, which enforces an explicit token budget per source and *drops* a source once its budget is met rather than truncating the whole stream or oversampling. For a fixed, exact 20B-token target, wrap `interleave_datasets` output in the same kind of budget-tracking loop Ch. 14.2 uses, or accept `"all_exhausted"`'s oversampling as an acceptable approximation and monitor the realized per-source token counts in your manifest, the same way `build_corpus.py` does.
+    `interleave_datasets` supports three stopping strategies, and the choice silently changes the realized mix over a long stream. `"first_exhausted"` (the default) stops the *entire* interleaved stream the moment any one source runs dry — with FineMath (the smallest source at 5% weight and the fewest raw rows) this can truncate the whole 20B-token run early, well before FineWeb-Edu's much larger pool is touched. `"all_exhausted"` instead keeps going until every source is exhausted, **oversampling** — repeating — whichever sources run out first, so a source can appear more than once per "epoch" over the mix. `"all_exhausted_without_replacement"` — a newer addition, so confirm it exists in the version you pinned — is the middle option: it also runs until every source is exhausted, but each sample is emitted at most once, so exhausted sources simply drop out of the round-robin instead of being resampled. None of the three matches Ch. 14.2's `interleave_budgeted`, which enforces an explicit token budget per source and *drops* a source once its budget is met rather than truncating the whole stream or oversampling. For a fixed, exact 20B-token target, wrap `interleave_datasets` output in the same kind of budget-tracking loop Ch. 14.2 uses, or accept `"all_exhausted"`'s oversampling as an acceptable approximation and monitor the realized per-source token counts in your manifest, the same way `build_corpus.py` does.
 
 For multi-GPU pretraining, one more `datasets` primitive matters: **`split_dataset_by_node`**. Each data-parallel rank must see a disjoint slice of the stream — not the same shuffled stream re-read from rank 0, which would mean every GPU trains on identical data.
 
@@ -138,28 +139,34 @@ from datatrove.pipeline.filters import (
 )
 from datatrove.pipeline.writers.jsonl import JsonlWriter
 
-# A Common Crawl "segment" path -- one dump's worth of WARC file listings.
-# In production this comes from CC's published warc.paths.gz index; a real
-# run processes many segments across many crawl dates.
-CC_SEGMENT = "s3://commoncrawl/crawl-data/CC-MAIN-2025-XX/segments/.../warc.paths.gz"
+# The *segments folder* of one Common Crawl dump. WarcReader's first
+# argument is a data folder, not a file listing, and its glob is not
+# recursive -- CC lays WARCs out as segments/<segment-id>/warc/*.warc.gz,
+# so the pattern has to name that intermediate level explicitly (this is
+# exactly the glob datatrove's own FineWeb example uses). To drive the run
+# off CC's published warc.paths.gz index instead, pass it as a paths file:
+# WarcReader("s3://commoncrawl/", paths_file=".../warc.paths.gz").
+CC_SEGMENTS = "s3://commoncrawl/crawl-data/CC-MAIN-2025-XX/segments/"
 OUT_DIR = "/scratch/stack100m/fineweb_style_filtered"
 
 pipeline = [
     # 1. Read raw WARC records: HTTP response bodies as they were crawled,
     #    including headers, encoding quirks, and non-HTML content we'll
     #    never keep.
-    WarcReader(CC_SEGMENT, glob_pattern="*.warc.gz"),
+    WarcReader(CC_SEGMENTS, glob_pattern="*/warc/*.warc.gz"),
 
-    # 2. Extract the main article text out of the raw HTML, discarding
+    # 2. URL-level filtering: drop known-bad domains before spending any
+    #    more compute on a document that will be rejected anyway. Order
+    #    matters -- URLFilter is a dictionary lookup against the URL the
+    #    reader already put in doc.metadata, so it goes first, *ahead of*
+    #    the expensive extraction step.
+    URLFilter(),
+
+    # 3. Extract the main article text out of the raw HTML, discarding
     #    navigation bars, ads, and boilerplate. Trafilatura is the
     #    extractor FineWeb itself uses; it is meaningfully better at this
     #    than a naive readability heuristic, at a real CPU cost per page.
     Trafilatura(favour_precision=True),
-
-    # 3. URL-level filtering: drop known-bad domains before spending any
-    #    more compute on a document that will be rejected anyway. Order
-    #    matters -- URLFilter is cheap and goes first.
-    URLFilter(),
 
     # 4. Language ID: keep only documents fastText scores as English above
     #    threshold. Running this before the heavier quality filters avoids
@@ -198,7 +205,7 @@ Every filter in step 5–6 is a *published, citable* heuristic battery — Gophe
 
 !!! tip "Practitioner tip: order your filters cheapest-first"
 
-    `URLFilter` costs a dictionary lookup; `GopherQualityFilter` tokenizes the document and computes half a dozen statistics; `Trafilatura` extraction is the most expensive step of all, often tens of milliseconds per page. `datatrove`'s pipeline list runs top to bottom per document, so ordering matters for wall-clock even though it does not change the final filtered set: reject on URL before you pay for language ID, reject on language before you pay for the Gopher battery. The pipeline above already follows this rule; if you add a custom filter, insert it by cost, not by conceptual tidiness.
+    `URLFilter` costs a dictionary lookup; `GopherQualityFilter` tokenizes the document and computes half a dozen statistics; `Trafilatura` extraction is the most expensive step of all, often tens of milliseconds per page. `datatrove`'s pipeline list runs top to bottom per document, so ordering matters for wall-clock even though it does not change the final filtered set: reject on URL before you pay for extraction, reject on language before you pay for the Gopher battery. The pipeline above already follows this rule — `URLFilter` runs on the reader's metadata, ahead of `Trafilatura`; if you add a custom filter, insert it by cost, not by conceptual tidiness.
 
 This chapter builds directly on [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html), which covers the theory behind every one of these filters — what repetition detection is actually catching, why C4's heuristics were chosen, how language ID models are trained — in far more depth than a pipeline listing can. Treat this section as that chapter's applied, at-scale instantiation, the same relationship Ch. 14.2 has to [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html).
 
@@ -276,7 +283,7 @@ if __name__ == "__main__":
     stage4.run()  # `depends` chains the DAG; running the last stage runs all four
 ```
 
-Three properties of this design are worth naming, because each is the direct fix for a specific limitation of Ch. 14.2's hand-rolled version. **Disk-backed hand-off between stages** means a crash at hour 30 of stage 2 loses stage 2's partial work, not stages 1's signatures or the whole run — the same instinct behind sharded checkpoints in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html), applied to data engineering rather than training. `logging_dir` also doubles as a completion marker: re-running `stage4.run()` after a partial failure skips any task whose output already exists, so a crashed 64-task job resumes from task 41 rather than task 0. **Per-bucket task parallelism** in stage 2 is what removes the in-RAM ceiling entirely — there is no structure in this design analogous to `SignatureStore`'s fixed-capacity buffer, because no single process ever holds more than one bucket's signatures at once. **Global union-find clustering** in stage 3 fixes an accuracy issue, not just a scaling one: Ch. 14.2's `near_dedup_stream` decides duplicates greedily as it streams, so which member of a 5-way duplicate cluster survives depends on stream order — re-running with a different shuffle seed can keep a different copy. Union-find over the full candidate graph picks a canonical representative deterministically, independent of processing order.
+Three properties of this design are worth naming, because each is the direct fix for a specific limitation of Ch. 14.2's hand-rolled version. **Disk-backed hand-off between stages** means a crash at hour 30 of stage 2 loses stage 2's partial work, not stages 1's signatures or the whole run — the same instinct behind sharded checkpoints in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html), applied to data engineering rather than training. `logging_dir` also doubles as a completion ledger: each task that finishes touches an empty `completions/<rank>` file there, and re-running `stage4.run()` skips every rank with such a marker, so a crashed 64-task job resumes from task 41 rather than task 0 (which is also why deleting `logging_dir` — not the output — is how you force a full redo). **Per-bucket task parallelism** in stage 2 is what removes the in-RAM ceiling entirely — there is no structure in this design analogous to `SignatureStore`'s fixed-capacity buffer, because no single process ever holds more than one bucket's signatures at once. **Global union-find clustering** in stage 3 fixes an accuracy issue, not just a scaling one: Ch. 14.2's `near_dedup_stream` decides duplicates greedily as it streams, so which member of a 5-way duplicate cluster survives depends on stream order — re-running with a different shuffle seed can keep a different copy. Union-find over the full candidate graph picks a canonical representative deterministically, independent of processing order.
 
 !!! example "How long does this actually take?"
 
@@ -482,7 +489,9 @@ stage1 = SlurmPipelineExecutor(
 )
 
 if __name__ == "__main__":
-    stage1.run()  # generates an sbatch script, submits it, blocks until done
+    stage1.run()  # writes an sbatch script and submits it, then returns
+                  # immediately -- the array job runs asynchronously; chain
+                  # further stages with depends= rather than waiting here
 ```
 
 Under the hood, `SlurmPipelineExecutor.run()` writes an `sbatch` job-array script that calls back into the same Python pipeline definition once per array task, with `rank`/`world_size` set from `SLURM_ARRAY_TASK_ID`; each task processes its own slice of the input and writes to its own output file, exactly as `LocalPipelineExecutor`'s worker processes do — the only thing that changed is *which scheduler* launches those workers. Two consequences follow directly from that design, and both matter operationally:
@@ -533,13 +542,13 @@ None of these tools disagree on the underlying algorithms — Gopher/C4 heuristi
     \text{tokens to process} \approx \frac{14\times10^{9}}{0.03} \approx 4.7\times10^{11} \approx 470\text{B raw tokens.}
     $$
 
-    At a typical web document averaging on the order of 500–1000 tokens, that is roughly 500–950 million documents to run through extraction and filtering — two to three orders of magnitude more than the 20 million *kept* documents Section 4's dedup arithmetic assumed. This is the number that should set your cluster request, not the 20M-document post-filter estimate: `Trafilatura` extraction alone, at even an optimistic ~50 ms/page on one core, is
+    At a typical web document averaging on the order of 500–1000 tokens, that is roughly 500–950 million documents to run through extraction and filtering — roughly 25–50× more than the 20 million *kept* documents Section 4's dedup arithmetic assumed (which is exactly what a keep rate of $r \approx 0.03$ implies: processed/kept $= 1/r \approx 33$). This is the number that should set your cluster request, not the 20M-document post-filter estimate: `Trafilatura` extraction alone, at even an optimistic ~50 ms/page on one core, is
 
     $$
     7\times10^{8}\ \text{docs} \times 0.05\ \text{s} \approx 3.5\times10^{7}\ \text{s} \approx 9{,}700\ \text{core-hours}
     $$
 
-    for extraction before any filtering or dedup runs at all — roughly 40 core-*days* on a single 256-core allocation (`SlurmPipelineExecutor(tasks=2000)` spread across several nodes gets you well under a day). This is precisely why Section 1's table lists "raw WARC → clean text" as a capability Ch. 14.2 never needed and `datatrove` exists to provide: `Stack-100M`'s actual flagship recipe sidesteps this entire calculation by sampling the Hub's *already-extracted, already-filtered* `sample-100BT` config, which is exactly the corner NeMo Curator's GPU acceleration and a real production cluster both exist to cut through, and exactly why "just sample an existing curated dataset" is the right default unless you have a specific reason (a fresher crawl date, a different language, a bespoke filter) to redo this work yourself.
+    for extraction before any filtering or dedup runs at all — roughly 405 core-*days*, which is about 38 wall-clock hours (a day and a half) on a single 256-core allocation (`SlurmPipelineExecutor(tasks=2000)` spread across several nodes gets you well under a day). This is precisely why Section 1's table lists "raw WARC → clean text" as a capability Ch. 14.2 never needed and `datatrove` exists to provide: `Stack-100M`'s actual flagship recipe sidesteps this entire calculation by sampling the Hub's *already-extracted, already-filtered* `sample-100BT` config, which is exactly the corner NeMo Curator's GPU acceleration and a real production cluster both exist to cut through, and exactly why "just sample an existing curated dataset" is the right default unless you have a specific reason (a fresher crawl date, a different language, a bespoke filter) to redo this work yourself.
 
 ## Key Takeaways
 
