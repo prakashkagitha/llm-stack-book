@@ -7,9 +7,10 @@ Blocks tested (in chapter order):
       -> tensorrt_llm is a GPU-only package that also requires network access
          to obtain / build an engine. We guard the import and, since the
          package is unavailable in CI, substitute a tiny in-process fake
-         GenerationExecutor / GenerationRequest that reproduces the async
-         submit/aiter_tokens contract the block relies on -- so the block's
-         OWN async scheduling logic still executes, offline, on CPU.
+         GenerationExecutor / GenerationRequest / GenerationResult that
+         reproduces the real contract the block relies on -- submit() returns
+         an async-iterable result handle -- so the block's OWN async
+         scheduling logic still executes, offline, on CPU.
   - block #4 (line ~204):  TGIScheduler pseudocode class
       -> pure Python, CPU safe. Instantiated and exercised with a tiny
          Request dataclass (added to the chapter to fix a real bug -- see
@@ -46,41 +47,63 @@ import sys
 # tensorrt_llm is GPU-only and not installed in CI.
 # ---------------------------------------------------------------------------
 try:
+    from tensorrt_llm import SamplingParams
     from tensorrt_llm.executor import GenerationExecutor, GenerationRequest
 except Exception:
+    SamplingParams = None
     GenerationExecutor = None
     GenerationRequest = None
 
 if GenerationExecutor is None:
-    # Offline fake reproducing the minimal async submit / aiter_tokens
-    # contract the book's block relies on, so the block's own async
-    # request-response logic still runs on CPU without network/GPU.
+    # Offline fake reproducing the minimal contract the book's block relies
+    # on -- submit() returns an async-iterable result handle -- so the
+    # block's own async request-response logic still runs on CPU without
+    # network/GPU.
+    class SamplingParams:
+        def __init__(self, max_tokens=32, temperature=0.0):
+            self.max_tokens = max_tokens
+            self.temperature = temperature
+
     class GenerationRequest:
-        def __init__(self, input_token_ids, max_new_tokens, streaming=False):
-            self.input_token_ids = input_token_ids
-            self.max_new_tokens = max_new_tokens
+        def __init__(self, prompt_token_ids, sampling_params, streaming=False):
+            self.prompt_token_ids = prompt_token_ids
+            self.sampling_params = sampling_params
             self.streaming = streaming
 
-        async def aiter_tokens(self):
-            # Yield a handful of fake tokens, proportional to max_new_tokens,
+    class _CompletionOutput:
+        def __init__(self, text):
+            self.text = text
+
+    class _StreamChunk:
+        def __init__(self, text):
+            self.outputs = [_CompletionOutput(text)]
+
+    class GenerationResult:
+        """Handle returned by submit(); async-iterating it yields chunks."""
+
+        def __init__(self, request):
+            self.request = request
+
+        async def __aiter__(self):
+            # Yield a handful of fake chunks, proportional to max_tokens,
             # capped so the test stays fast.
-            n = min(self.max_new_tokens, 5)
+            n = min(self.request.sampling_params.max_tokens, 5)
             for i in range(n):
                 await asyncio.sleep(0)
-                yield f"tok{i}"
+                yield _StreamChunk(f"tok{i}")
 
     class GenerationExecutor:
-        def __init__(self, engine_dir, executor_config):
-            self.engine_dir = engine_dir
-            self.executor_config = executor_config
+        def __init__(self, engine):
+            self.engine = engine
             self.submitted = []
 
         @classmethod
-        def create(cls, engine_dir, executor_config):
-            return cls(engine_dir, executor_config)
+        def create(cls, engine):
+            return cls(engine)
 
         def submit(self, request):
             self.submitted.append(request)
+            return GenerationResult(request)
 
 
 # ===========================================================================
@@ -95,33 +118,29 @@ async def serve_requests():
     The Executor runs a background thread that continuously feeds the engine.
     Requests are submitted as GenerationRequest objects and picked up
     at the next scheduling interval (default: every decode step).
+
+    A GenerationRequest is only a descriptor: submit() returns the result
+    handle, and that handle -- not the request -- is what you iterate.
     """
-    executor = GenerationExecutor.create(
-        engine_dir="./llama-2-7b-engine",
-        executor_config={
-            "max_beam_width": 1,
-            "scheduler_policy": "guaranteed_no_evict",  # vs "max_utilization"
-        }
-    )
+    executor = GenerationExecutor.create(engine="./llama-2-7b-engine")
 
     # Submit two requests concurrently — they will be batched automatically
-    req_a = GenerationRequest(
-        input_token_ids=[1, 234, 567],
-        max_new_tokens=100,
+    result_a = executor.submit(GenerationRequest(
+        prompt_token_ids=[1, 234, 567],
+        sampling_params=SamplingParams(max_tokens=100),
         streaming=True,
-    )
-    req_b = GenerationRequest(
-        input_token_ids=[1, 890, 123, 456],
-        max_new_tokens=50,
+    ))
+    result_b = executor.submit(GenerationRequest(
+        prompt_token_ids=[1, 890, 123, 456],
+        sampling_params=SamplingParams(max_tokens=50),
         streaming=True,
-    )
+    ))
+    assert result_b is not None
 
-    executor.submit(req_a)
-    executor.submit(req_b)
-
-    # Stream tokens as they arrive
-    async for token in req_a.aiter_tokens():
-        print(f"A: {token}", end=" ", flush=True)
+    # Stream tokens as they arrive off the handle
+    async for output in result_a:
+        token = output.outputs[0].text
+        print(f"A: {token}", end="", flush=True)
         collected_tokens.append(token)
 
     return executor

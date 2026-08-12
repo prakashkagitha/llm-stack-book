@@ -61,14 +61,16 @@ trtllm-build \
 
 # Step 3: Run inference via the Python API
 python -c "
+import torch
 import tensorrt_llm
 from tensorrt_llm.runtime import ModelRunner
-import tensorrt as trt
 
 runner = ModelRunner.from_dir('./llama-2-7b-engine')
-# Tokenize and run — runner handles batching and KV cache internally
+# Tokenize and run — runner handles batching and KV cache internally.
+# batch_input_ids is a list of int32 torch tensors (one per sequence),
+# NOT a list of Python lists: the runner casts them with Tensor.type().
 outputs = runner.generate(
-    batch_input_ids=[[1, 2, 3, 4, 5]],
+    batch_input_ids=[torch.tensor([1, 2, 3, 4, 5], dtype=torch.int32)],
     max_new_tokens=50,
 )
 print(outputs)
@@ -110,6 +112,7 @@ TensorRT-LLM implements in-flight batching (also called continuous batching) thr
 # This illustrates the async request/response model.
 
 from tensorrt_llm.executor import GenerationExecutor, GenerationRequest
+from tensorrt_llm import SamplingParams
 import asyncio
 
 async def serve_requests():
@@ -117,36 +120,38 @@ async def serve_requests():
     The Executor runs a background thread that continuously feeds the engine.
     Requests are submitted as GenerationRequest objects and picked up
     at the next scheduling interval (default: every decode step).
+
+    Note the split: the *request* is an inert input descriptor, and
+    executor.submit() returns a *result* handle. All streaming happens on the
+    result handle, never on the request you submitted.
     """
-    executor = GenerationExecutor.create(
-        engine_dir="./llama-2-7b-engine",
-        executor_config={
-            "max_beam_width": 1,
-            "scheduler_policy": "guaranteed_no_evict",  # vs "max_utilization"
-        }
-    )
+    # The engine is the first positional argument; scheduler policy lives in an
+    # ExecutorConfig built from tensorrt_llm.bindings.executor (e.g.
+    # CapacitySchedulerPolicy.GUARANTEED_NO_EVICT vs MAX_UTILIZATION).
+    executor = GenerationExecutor.create("./llama-2-7b-engine")
 
     # Submit two requests concurrently — they will be batched automatically
-    req_a = GenerationRequest(
-        input_token_ids=[1, 234, 567],
-        max_new_tokens=100,
+    result_a = executor.submit(GenerationRequest(
+        prompt_token_ids=[1, 234, 567],
+        sampling_params=SamplingParams(max_tokens=100),
         streaming=True,
-    )
-    req_b = GenerationRequest(
-        input_token_ids=[1, 890, 123, 456],
-        max_new_tokens=50,
+    ))
+    result_b = executor.submit(GenerationRequest(
+        prompt_token_ids=[1, 890, 123, 456],
+        sampling_params=SamplingParams(max_tokens=50),
         streaming=True,
-    )
+    ))
 
-    executor.submit(req_a)
-    executor.submit(req_b)
-
-    # Stream tokens as they arrive
-    async for token in req_a.aiter_tokens():
-        print(f"A: {token}", end=" ", flush=True)
+    # Stream partial outputs as they arrive off the *result* handle
+    async for output in result_a:
+        print(f"A: {output.outputs[0].token_ids}", flush=True)
+    # result_b streams identically — iterate it in a second asyncio task to
+    # interleave the two streams; both share one in-flight batch on the GPU.
 
 asyncio.run(serve_requests())
 ```
+
+This executor surface is lower-level than the `LLM` API and its names drift between releases; check `tensorrt_llm.executor` for the version you installed. The structural point is stable, though: submitting a request hands you back a *result* handle, and that handle — not the request — is what you await or async-iterate.
 
 ### Paged KV Cache and Memory Management
 
@@ -159,9 +164,20 @@ The key parameter is `--kv_cache_free_gpu_mem_fraction` (default 0.9): the fract
 TensorRT-LLM has first-class support for INT8 weight-only quantization, INT8 SmoothQuant, FP8 (on H100/H200), NVFP4 (a 4-bit floating-point format with native tensor-core support on Blackwell B200/GB200, calibrated via NVIDIA ModelOpt), and GPTQ/AWQ. These are configured at engine build time:
 
 ```bash
-# FP8 engine for H100 — uses calibration data to determine per-tensor scales
+# Step A: calibrate. The FP8 scales come from the *quantization* step
+# (ModelOpt-based), which writes a new checkpoint whose config.json records
+# quant_algo: FP8. trtllm-build itself does not quantize anything.
+python tensorrt_llm/examples/quantization/quantize.py \
+    --model_dir ./llama-2-7b-hf \
+    --dtype bfloat16 \
+    --qformat fp8 \
+    --kv_cache_dtype fp8 \
+    --calib_size 512 \
+    --output_dir ./llama-2-7b-fp8-ckpt
+
+# Step B: build from the FP8 checkpoint — the build honours its quant config
 trtllm-build \
-    --checkpoint_dir ./llama-2-7b-trtllm \
+    --checkpoint_dir ./llama-2-7b-fp8-ckpt \
     --output_dir ./llama-2-7b-fp8-engine \
     --strongly_typed \
     --use_fp8_context_fmha enable \
@@ -176,7 +192,7 @@ For a deeper treatment of the quantization formats, see [Quantization II: INT4/I
 
 ### Multi-GPU Tensor Parallelism
 
-TensorRT-LLM supports tensor parallelism and pipeline parallelism at build time. Specify `--tp_size 4` (for 4-way tensor parallel) at the `convert_checkpoint.py` and `trtllm-build` stages; the library handles the all-reduce communication using NCCL. At inference time, the executor launches one process per GPU and co-ordinates automatically. See [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html) for the broader parallelism strategies.
+TensorRT-LLM supports tensor parallelism and pipeline parallelism at build time. Specify `--tp_size 4` (for 4-way tensor parallel, alongside `--pp_size` for pipeline parallel) at the `convert_checkpoint.py` stage — the parallel layout is written into the checkpoint's `config.json`, and `trtllm-build` reads it from there and emits one engine file per rank, so the flag is not repeated on the build command. The library handles the all-reduce communication using NCCL. At inference time, the executor launches one process per GPU and co-ordinates automatically. See [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html) for the broader parallelism strategies.
 
 ### The Triton Inference Server Integration
 
@@ -257,7 +273,11 @@ class TGIScheduler:
         New requests are added from waiting if budget permits.
         Running requests keep their slot as long as they haven't finished.
         """
-        budget_used = sum(r.current_length for r in self.running)
+        # Charge every running request its *reserved* worst case, exactly as
+        # new admissions are charged below. Billing running requests only their
+        # current_length would free phantom budget on every decode step and let
+        # the scheduler admit without bound — the OOM this budget exists to stop.
+        budget_used = sum(r.max_total_tokens for r in self.running)
         for req in list(self.waiting):
             needed = req.max_total_tokens  # pre-allocated worst case
             if budget_used + needed <= self.max_batch_total_tokens:
@@ -288,19 +308,19 @@ class TGIScheduler:
 
 Georgi Gerganov's llama.cpp (2023) proved that a quantized transformer can run usefully fast on commodity hardware — a laptop CPU, an Apple M-series chip, or a consumer GPU. The project is a single C++ codebase with no external deep-learning dependencies that achieves high throughput through:
 
-1. **GGUF quantization**: 2-bit through 8-bit per-channel integer quantization with mixed precision (Q4_K_M, Q5_K_M, etc.) that keeps key tensors at higher precision.
+1. **GGUF quantization**: 2-bit through 8-bit *block-wise* integer quantization (scales are shared by a small block of weights, not by a whole channel) with mixed precision (Q4_K_M, Q5_K_M, etc.) that keeps key tensors at higher precision.
 2. **Highly optimized BLAS routines**: AVX2/AVX-512 vectorized GEMM for x86, ARM NEON/SVE for ARM, Metal for Apple Silicon, and CUDA for NVIDIA GPUs — all in the same binary via compile-time backends.
 3. **mmap model loading**: The model file is memory-mapped, so the OS controls paging. On a machine with enough RAM, the model loads in seconds; with limited RAM, the OS pages in only the layers currently needed.
 
 ### GGUF Format
 
-GGUF (GPT-Generated Unified Format) stores model weights, tokenizer data, and metadata in a single binary file. Quantized weights use a block quantization scheme: weights are grouped into blocks of 32 values, each block stores a float32 scale factor and the quantized integers. For Q4_K_M, 4-bit integers are stored for most weights with 6-bit integers for sensitive layers (attention projections, etc.):
+GGUF (GPT-Generated Unified Format) stores model weights, tokenizer data, and metadata in a single binary file. Quantized weights use a *block* quantization scheme, and the "K-quants" (Q4_K, Q5_K, Q6_K) add a second level: 256 weights form a **superblock** made of 8 sub-blocks of 32. Each sub-block gets its own 6-bit scale and 6-bit minimum, and the superblock stores two FP16 super-scales ($d$ for the scales, $d_{\min}$ for the minima) that the 6-bit values are multiplied by. Dequantization is affine (asymmetric), with unsigned 4-bit quants:
 
 $$
-\hat{w}_i = \text{scale} \times q_i, \quad q_i \in \{-8, -7, \ldots, 7\}
+\hat{w}_i = d\,s_b \cdot q_i - d_{\min} m_b, \quad q_i \in \{0, 1, \ldots, 15\}
 $$
 
-where scale is a per-32-element float32. The storage cost for Q4_K_M is approximately $4.5$ bits per weight after accounting for the scale overhead.
+where $s_b, m_b$ are the 6-bit scale and minimum of the sub-block containing weight $i$. Count the bytes for one Q4_K superblock: $256 \times 4\ \text{bits} = 128$ bytes of quants, $12$ bytes packing the sixteen 6-bit scales/minima, and $4$ bytes for $d$ and $d_{\min}$ — $144$ bytes for 256 weights, i.e. exactly $4.5$ bits per weight. (The older Q4_0 format is the flat version: 32 weights, one FP16 scale, symmetric $q_i \in \{-8,\ldots,7\}$, $(32\times4+16)/32 = 4.5$ bits per weight but noticeably worse quality at the same size.) The "_M" in Q4_K_M is a *mixture*: most tensors are Q4_K, while sensitive ones (`attn_v`, `ffn_down`, the output projection) are promoted to Q6_K, so the file-level average lands a little above 4.5 bits per weight — close enough for sizing estimates.
 
 ```python
 # Estimate GGUF model file size from parameter count
@@ -363,11 +383,11 @@ curl http://localhost:11434/v1/chat/completions \
   }'
 ```
 
-Ollama automatically detects available hardware (CUDA, Metal, CPU) and offloads as many layers as possible to GPU. The key flag is `--num-gpu` (or `OLLAMA_NUM_GPU` in the environment), which sets how many transformer layers run on GPU versus CPU.
+Ollama automatically detects available hardware (CUDA, Metal, CPU) and offloads as many layers as possible to GPU. The key knob is the `num_gpu` *model parameter*, which sets how many transformer layers run on GPU versus CPU — there is no `--num-gpu` CLI flag. Set it with `/set parameter num_gpu 32` in the REPL, `PARAMETER num_gpu 32` in a Modelfile, or `"options": {"num_gpu": 32}` in an API request. (Server-wide behaviour is tuned by environment variables such as `OLLAMA_NUM_PARALLEL`, `OLLAMA_MAX_LOADED_MODELS`, and `OLLAMA_KEEP_ALIVE`.)
 
 ### Performance Profile
 
-On Apple M3 Max with 128 GB of unified memory, a Llama-3-70B Q4_K_M model (≈41 GB) fits entirely in unified memory and typically achieves 20–30 tokens/second — genuinely useful for local development. On a consumer NVIDIA 4090 (24 GB), the 13B Q4_K_M fits fully in VRAM and achieves 80–100 tokens/second. For anything requiring production throughput (hundreds of tokens/second, many concurrent users), llama.cpp is not the right tool.
+On Apple M3 Max with 128 GB of unified memory, a Llama-3-70B Q4_K_M model (≈41 GB) fits entirely in unified memory — but apply the roofline before believing any quoted number: that chip has roughly 400 GB/s of unified-memory bandwidth, so streaming 41 GB of weights per token caps single-stream decode near $400/41 \approx 10$ tokens/second, and measured llama.cpp rates land around 7–9 tokens/second. Slow, but genuinely useful for local development. On a consumer NVIDIA 4090 (24 GB, ~1 TB/s), the 13B Q4_K_M (≈7.7 GB) fits fully in VRAM, where the same bound gives a ~130 tok/s ceiling and real runs reach roughly 60–90 tokens/second. For anything requiring production throughput (hundreds of tokens/second, many concurrent users), llama.cpp is not the right tool.
 
 ---
 
@@ -417,20 +437,29 @@ MLC-LLM (Machine Learning Compilation for LLMs), from the MLC team led by Tianqi
 
 Where TensorRT-LLM compiles to a TensorRT engine (NVIDIA-specific), MLC compiles to TVM's intermediate representation (TIR), then lowers TIR to hardware-specific code via TVM's code generation backends. The compilation includes automatic schedule search (AutoTIR) that tunes GEMM tile sizes and memory layouts for the target device.
 
+Compilation is a three-command CLI pipeline (there is no `mlc_llm.build()` Python entry point in current releases): quantize the weights, generate a chat config, then compile a hardware-specific library.
+
+```bash
+# Compile a model for Metal (Apple Silicon) using MLC.
+# --device also accepts cuda, rocm, vulkan, webgpu, android, iphone.
+MODEL=./dist/models/Llama-3.2-3B-Instruct
+OUT=./dist/Llama-3.2-3B-Instruct-q4f16_1-MLC
+
+# 1. Quantize weights (q4f16_1 = 4-bit weights, FP16 activations)
+mlc_llm convert_weight $MODEL --quantization q4f16_1 -o $OUT
+
+# 2. Emit mlc-chat-config.json (conversation template, context length, ...)
+mlc_llm gen_config $MODEL --quantization q4f16_1 --conv-template llama-3 -o $OUT
+
+# 3. Compile the model library (.dylib on macOS, .so on Linux, .wasm for web).
+#    Slow once; subsequent loads just mmap the artifact.
+mlc_llm compile $OUT/mlc-chat-config.json --device metal -o $OUT/lib.dylib
+```
+
 ```python
-# Compile a model for Metal (Apple Silicon) using MLC
-import mlc_llm
+# Run inference — identical Python API regardless of hardware backend
 from mlc_llm import MLCEngine
 
-# mlc_llm.build() emits a compiled library (.dylib on macOS, .so on Linux)
-# This step is slow once; subsequent loads are fast.
-mlc_llm.build(
-    model="HF://meta-llama/Llama-3.2-3B-Instruct",
-    target="apple/m3-gpu",   # or "cuda", "rocm", "vulkan", "webgpu"
-    quantization="q4f16_1",  # 4-bit weights, FP16 activations
-)
-
-# Run inference — identical Python API regardless of hardware backend
 engine = MLCEngine("./dist/Llama-3.2-3B-Instruct-q4f16_1-MLC")
 response = engine.chat.completions.create(
     messages=[{"role": "user", "content": "What is PagedAttention?"}],
@@ -598,7 +627,7 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
     1. **Tensor parallelism = 8** across one node (all-reduce on NVLink, low latency). Evaluate whether a single 8-GPU node suffices before adding nodes.
     2. **FP8 quantization** (if H100 is available) or **INT8 SmoothQuant** (A100) to reduce model size and improve decode bandwidth.
     3. **INT8 KV cache** to roughly double the number of concurrent sequences that fit in KV memory.
-    4. **`max_batch_size`** should be set based on the memory budget worked out above — roughly 250–500 concurrent tokens at the 70B scale.
+    4. **`max_batch_size`** counts concurrent *sequences*, not tokens, so size it from the memory budget: redoing the worked example for 8× A100-80 GB gives $640 - 140 = 500$ GB of KV space, $500\ \text{GB}/320\ \text{KB} \approx 1.56$ M tokens, i.e. **≈760 concurrent 2048-token sequences** (≈1500 with INT8 KV). The 500-user peak therefore fits with headroom; set `max_batch_size` near that peak rather than at the memory limit, since latency, not capacity, is the binding constraint here.
     5. **Scheduler policy = `guaranteed_no_evict`** to avoid KV recomputation latency for low-TTFT guarantees; absorb load spikes via queuing in the Triton front-end.
     6. Monitor time-to-first-token and inter-token latency as SLO metrics via Triton's Prometheus metrics endpoint.
 

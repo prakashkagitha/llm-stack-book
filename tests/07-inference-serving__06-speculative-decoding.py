@@ -7,8 +7,8 @@ the book, with minimal glue (a tiny fake "base model" fixture, and a call at
 the bottom of each block) so the book's actual code executes on CPU.
 
 Blocks tested (chapter order):
-    #2 (line ~372) - MedusaHead / MedusaModel (parallel decoding heads that
-                      reuse the frozen base model's LM head)
+    #2 (line ~372) - MedusaHead / MedusaModel (parallel decoding heads, each
+                      with its own LM head initialized from the frozen base's)
     #3 (line ~438) - build_tree_attn(): tree-attention mask + position ids
                       from a parent-pointer tree
 
@@ -28,13 +28,18 @@ import torch.nn as nn
 # ---------------------------------------------------------------------------
 
 class MedusaHead(nn.Module):
-    """One Medusa head: a residual MLP block reusing the base model's LM head.
+    """One Medusa head: a residual MLP block plus its OWN vocabulary
+    projection, initialized from (not shared with) the base model's LM head.
     Predicts a token several positions ahead from the SAME hidden state."""
-    def __init__(self, hidden_size, lm_head):
+    def __init__(self, hidden_size, vocab_size, lm_head_weight):
         super().__init__()
         self.linear = nn.Linear(hidden_size, hidden_size)
+        nn.init.zeros_(self.linear.weight)   # W1 = 0 => head starts as a copy
+        nn.init.zeros_(self.linear.bias)     #           of the base LM head
         self.act = nn.SiLU()
-        self.lm_head = lm_head            # SHARED with the frozen base model
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
+        with torch.no_grad():                # INITIALIZED from the base head,
+            self.lm_head.weight.copy_(lm_head_weight)   # then trained itself
     def forward(self, h):                 # h: [B, T, hidden]
         h = h + self.act(self.linear(h))  # residual connection
         return self.lm_head(h)            # [B, T, vocab]
@@ -45,14 +50,18 @@ class MedusaModel(nn.Module):
         self.base = base_model            # frozen target
         hidden = base_model.config.hidden_size
         lm_head = base_model.get_output_embeddings()
+        vocab = lm_head.weight.shape[0]
         self.heads = nn.ModuleList(
-            MedusaHead(hidden, lm_head) for _ in range(num_heads)
+            MedusaHead(hidden, vocab, lm_head.weight) for _ in range(num_heads)
         )
-    @torch.no_grad()
     def forward(self, input_ids):
-        out = self.base(input_ids, output_hidden_states=True)
-        h_last = out.hidden_states[-1]            # [B, T, hidden]
-        base_logits = self.base.get_output_embeddings()(h_last)
+        # Only the BACKBONE is frozen. Scoping no_grad to the base call (rather
+        # than decorating forward) keeps the heads trainable: head outputs still
+        # carry grad_fn, so Medusa-1 training can call loss.backward().
+        with torch.no_grad():
+            out = self.base(input_ids, output_hidden_states=True)
+            h_last = out.hidden_states[-1]        # [B, T, hidden]
+            base_logits = self.base.get_output_embeddings()(h_last)
         # head k predicts token t+k+2; base predicts t+1.
         head_logits = [head(h_last) for head in self.heads]
         return base_logits, head_logits          # use last position to draft
@@ -113,6 +122,21 @@ def _run_medusa_smoke_test():
         assert cand.shape == (2,)
         assert (cand >= 0).all() and (cand < 32).all()
 
+    # With W1 = 0 and the LM head copied from the base, every head starts out
+    # reproducing the base model's next-token logits exactly (Cai et al.).
+    for hl in head_logits:
+        assert torch.allclose(hl, base_logits, atol=1e-5)
+
+    # Each head owns its vocabulary projection: it must NOT be the base tensor.
+    assert medusa.heads[0].lm_head.weight is not base._lm_head.weight
+
+    # The heads must be TRAINABLE (Medusa-1 freezes only the backbone), so the
+    # forward pass has to leave grad_fn on head outputs.
+    base_logits, head_logits = medusa(input_ids)
+    head_logits[0].square().mean().backward()
+    assert medusa.heads[0].linear.weight.grad is not None
+    assert medusa.heads[0].lm_head.weight.grad is not None
+
     print("Medusa smoke test OK:",
           "base logits", base_logits.shape,
           "num heads", len(head_logits))
@@ -129,9 +153,10 @@ def build_tree_attn(parents):
     parents: list where parents[i] is the index of node i's parent
              (parents[0] = -1 for the root). Nodes are in any order such
              that a parent appears before its children.
-    Returns (mask, position_ids):
+    Returns (mask, depth):
       mask[i, j] = True  iff node j is an ancestor of node i, or j == i.
-      position_ids[i] = depth of node i (root = 0).
+      depth[i]   = depth of node i (root = 0) -- the position-id OFFSET,
+                   to which the committed prefix length must be added.
     """
     n = len(parents)
     mask = torch.zeros(n, n, dtype=torch.bool)
@@ -150,9 +175,19 @@ def build_tree_attn(parents):
 # Example tree: [root, A, B, A1, A2, B1, B2] from the diagram above.
 parents = [-1, 0, 0, 1, 1, 2, 2]
 mask, pos = build_tree_attn(parents)
-print(pos.tolist())          # [0, 1, 1, 2, 2, 2, 2]  (depths)
-# Feed `mask` as the attention mask and `pos` as position_ids to the target
-# in ONE forward pass; then verify each root->leaf path with accept/reject.
+print(pos.tolist())          # [0, 1, 1, 2, 2, 2, 2]  (depth offsets)
+
+# `mask` is [n, n] over tree nodes ONLY, and `pos` holds depth offsets only.
+# To feed the tree to a target that already holds `past_len` cached positions:
+past_len = 0   # in a real step: target_cache.get_seq_length()
+n = len(parents)
+full = torch.ones(n, past_len + n, dtype=torch.bool)   # prefix fully visible
+full[:, past_len:] = mask                              # tree part: ancestors only
+attn_4d = full[None, None]                             # [1, 1, n, past_len+n]
+position_ids = (past_len + pos)[None]                  # [1, n]
+# Pass attn_4d as a 4-D additive/boolean mask (NOT as the 2-D [B, kv_len]
+# padding mask HF's `attention_mask=` expects) together with position_ids, in
+# ONE forward pass; then verify each root->leaf path with accept/reject.
 
 assert pos.tolist() == [0, 1, 1, 2, 2, 2, 2]
 assert mask.shape == (7, 7)
@@ -165,6 +200,10 @@ assert mask[6].tolist() == [True, False, True, False, False, False, True]
 # Sibling branches must not see each other: node 3 (under A) must not see node 5/6 (under B).
 assert not mask[3, 5] and not mask[3, 6]
 assert not mask[5, 3] and not mask[5, 4]
+# The packed mask handed to the model is 4-D and spans prefix + tree columns.
+assert attn_4d.shape == (1, 1, 7, past_len + 7)
+assert bool(attn_4d[0, 0, :, :past_len].all())
+assert position_ids.tolist() == [[past_len + d for d in [0, 1, 1, 2, 2, 2, 2]]]
 
 print("build_tree_attn smoke test OK")
 

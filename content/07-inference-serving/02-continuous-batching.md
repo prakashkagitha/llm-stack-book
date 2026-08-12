@@ -265,7 +265,7 @@ class Scheduler:
                 # exclude=req: a request must never be allowed to pick ITSELF as its
                 # own preemption victim (it is still a member of self.running at this
                 # point). Without the exclusion, self-preemption pushes req onto
-                # self.waiting; when the retry then succeeds, req also lands in
+                # self.waiting; when a later retry succeeds, req also lands in
                 # survivors — the same Request ends up in both collections, gets
                 # admitted a second time next iteration, and is double-counted.
                 if not self._preempt_one(exclude=req):
@@ -273,7 +273,8 @@ class Scheduler:
                 # after a preemption, free_blocks grew — retry the alloc
             else:
                 req.status = Status.RUNNING  # (re)confirm: may have been WAITING
-                survivors.append(req)        # only if THIS req was preempted+retried
+                survivors.append(req)        # reached whenever the alloc eventually
+                                             # succeeded (with or without preemption)
                 token_budget -= 1            # one decode token
                 continue
             # alloc still failed even after preemptions: drop req back to waiting
@@ -290,21 +291,22 @@ class Scheduler:
         for req in self._waiting_order():
             if len(self.running) >= MAX_NUM_SEQS:
                 break
-            # Chunked prefill: run up to `chunk` prompt tokens this iteration.
-            remaining_prompt = req.prompt_len  # (mock: prefill prompt in one shot if it fits)
-            chunk = min(remaining_prompt, token_budget)
-            if chunk <= 0:
-                break
-            want = req.blocks_needed(extra_tokens=0)   # blocks for the prompt
+            if token_budget <= 0:
+                break                        # budget exhausted; wait for next iteration
+            # NO chunking in this version: the whole prompt is prefilled in one
+            # iteration, so a long prompt OVERRUNS the budget (a 600-token prompt
+            # against MAX_BATCHED_TOKENS = 512 always does). That is precisely the
+            # pathology chunked prefill fixes — Exercise 5 implements it.
+            want = req.blocks_needed(extra_tokens=1)   # prompt + the token it emits
             if not self._alloc(req, want):
                 # not enough KV memory to even start this request; stop admitting
-                # (could also try preemption, but FCFS usually just waits)
-                continue
+                # (could also try preemption, but FCFS just waits behind the head)
+                break
             req.status = Status.RUNNING
             req.prefilled = True
             self.waiting.remove(req)
             self.running.append(req)
-            token_budget -= chunk
+            token_budget -= req.prompt_len   # debit the FULL prefill cost
 
         return self.running
 
@@ -399,7 +401,7 @@ Two scheduling philosophies address it:
 
 - **Chunked prefill / "piggybacking."** Split the long prefill into chunks of, say, 512 tokens and spread them across several iterations, *co-scheduling* each chunk alongside the ongoing decodes (the selective-batching flatten trick makes this one fused forward pass). Each iteration stays under the token budget, so decode ITL stays smooth and the prefill still completes in a few steps. This is the modern default in vLLM and SGLang and is covered in depth in [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
 
-In our toy, `MAX_BATCHED_TOKENS` is exactly the knob that would enforce chunking — extend the admission loop so a request whose `remaining_prompt > token_budget` runs a *chunk* this iteration and keeps the rest for next time (track `prefilled_tokens` per request instead of a boolean). The decode tokens of running requests are admitted first (step 1), so they always get their slice of the budget; prefill chunks backfill the remainder. That ordering — decodes first, then prefill chunks — is what keeps ITL smooth.
+In our toy, `MAX_BATCHED_TOKENS` is exactly the knob that would enforce chunking — extend the admission loop so a request whose remaining prompt exceeds `token_budget` runs a *chunk* this iteration and keeps the rest for next time (track `prefilled_tokens` per request instead of a boolean). The decode tokens of running requests are admitted first (step 1), so they always get their slice of the budget; prefill chunks backfill the remainder. That ordering — decodes first, then prefill chunks — is what keeps ITL smooth.
 
 The deepest version of this idea is **disaggregation**: run prefill on one pool of GPUs and decode on another, connected by a KV-cache transfer, so the two workloads never interfere at all. That, too, is in the disaggregation chapter; here the point is just that the *scheduler* is where prefill and decode meet, and how you interleave them is the single biggest lever on the latency/throughput trade-off.
 
@@ -520,7 +522,7 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
     **Recent advances (2023–2026)**
 
     - [Agrawal et al., *SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills* (2023)](https://arxiv.org/abs/2308.16369) — original chunked-prefill proposal; shows that splitting prefill across iterations eliminates decode stalls.
-    - [Agrawal et al., *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve* (OSDI 2024)](https://arxiv.org/abs/2403.02310) — full system integrating stall-free scheduling + chunked prefill; up to 6.9× throughput improvement over vLLM on large models.
+    - [Agrawal et al., *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve* (OSDI 2024)](https://arxiv.org/abs/2403.02310) — full system integrating stall-free scheduling + chunked prefill; 2.6× higher serving capacity for Mistral-7B on one A100 and up to 5.6× for Falcon-180B with pipeline parallelism, versus vLLM.
     - [Zhong et al., *DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving* (2024)](https://arxiv.org/abs/2401.09670) — assigns prefill and decode to separate GPU pools, eliminating interference entirely; the production direction adopted by Meta, NVIDIA Dynamo, and others.
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (NeurIPS 2024)](https://arxiv.org/abs/2312.07104) — adds RadixAttention (prefix-cache reuse via radix tree) on top of continuous batching, cutting redundant prefill for shared-prefix workloads.
 
@@ -605,7 +607,7 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
     2. set `req.status = Status.WAITING`, `req.prefilled = False`;
     3. `self.waiting.appendleft(req)`.
 
-    Control returns to the `while not self._alloc(req, want)` retry. Because blocks were just freed (its own blocks!), the alloc now **succeeds**. The `else` branch of the loop runs `req.status = Status.RUNNING` and `survivors.append(req)`.
+    Control returns to the `while not self._alloc(req, want)` retry — and it **still fails**. The request reached this path because it needed exactly one *new* block (`want = b + 1` where `b = req.blocks`) with `free_blocks == 0`; self-preemption zeroed `req.blocks` and returned its own $b$ blocks to the pool, so the retry now asks for the full `need = b + 1` against `free_blocks = b`. Freeing your own $b$ blocks can never satisfy a demand for $b+1$. So the loop calls `_preempt_one` **again**, this time evicting a genuine *other* victim; now the alloc succeeds and the `else` branch runs `req.status = Status.RUNNING` and `survivors.append(req)`. (If no other victim exists, `_preempt_one` returns False, the `break` fires, and the fall-through path appends `req` to `self.waiting` a *second* time — a duplicate in the waiting deque, the same corruption by another route.)
 
     Now the same `Request` object is in **two places at once**: it sits in `self.waiting` (pushed there by the self-preemption) *and* in `survivors`, which becomes `self.running` after the loop. Next iteration the scheduler sees it in the waiting queue and admits it again — the request is **double-counted**: it can occupy two logical slots, get two decode tokens per iteration in `step()` (inflating `req.generated` and the reported `batch` size), and its blocks accounting drifts because it was freed and re-allocated inconsistently. The concrete symptom is an inflated `mean running batch size` / `tokens/iter` in the metrics (and possibly a request that "finishes" faster than its `output_len` should allow, or `free_blocks` bookkeeping going wrong). Passing `exclude=req` forbids self-preemption: a request under pressure must evict *someone else* or stall via the `break`, never split itself across the running and waiting pools.
 
@@ -690,8 +692,10 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
             chunk = min(remaining_prompt, token_budget)
             if chunk <= 0:
                 break                      # no budget (or nothing left to prefill)
-            # blocks to hold prefilled_tokens + chunk (generated == 0 during prefill)
-            want = req.blocks_needed(extra_tokens=chunk)
+            # blocks to hold prefilled_tokens + chunk (generated == 0 during prefill),
+            # plus one slot for the token this request emits if the chunk finishes it
+            emits = 1 if chunk == remaining_prompt else 0
+            want = req.blocks_needed(extra_tokens=chunk + emits)
             if not self._alloc(req, want):
                 continue                   # not enough KV to grow this one; try next
             if is_new:

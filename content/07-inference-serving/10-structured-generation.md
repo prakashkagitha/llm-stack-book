@@ -67,22 +67,27 @@ The loop continues until an EOS token is sampled *and* the FSM is in an acceptin
 !!! example "Worked example: masking a 4-digit integer"
 
     Suppose our grammar requires exactly a 4-digit integer (regex `[0-9]{4}`).
-    The vocabulary size is 32,000 tokens (roughly Llama-3 scale).
+    The vocabulary size is 32,000 tokens (roughly Llama-2 / Mistral scale).
 
     The FSM has 5 states: $q_0$ (start, needs 4 digits), $q_1$ (1 digit seen), $q_2$ (2 digits),
     $q_3$ (3 digits), $q_4$ (accept, 4 digits). A dead state $\perp$ handles everything else.
 
     Suppose the model is at $q_0$ with logits $\ell$.  We need to allow only tokens
-    whose decoded text is a single decimal digit `0`–`9`. In a BPE vocabulary these
-    are exactly the 10 single-digit tokens (often at indices like 15, 16, ..., 24 — 
-    exact positions depend on the tokenizer).
+    whose decoded text is a run of 1–4 decimal digits. With a tokenizer that splits
+    every digit into its own token (Llama-2 / Mistral SentencePiece does exactly
+    this), those are exactly the 10 single-digit tokens (often at indices like
+    15, 16, ..., 24 — exact positions depend on the tokenizer).
 
     Out of 32,000 tokens, at most 10 are allowed: masking ratio ≈ 99.97%.
     After one digit token, we're in $q_1$; after two more we're in $q_3$.
-    At $q_3$, multi-character tokens like `"42"` or `"123"` are now *also* valid
-    (they consume 2 and 3 characters respectively and land in $q_4$ or advance
-    through intermediate states). This is why the token-level pre-computation
-    matters: character-by-character simulation handles multi-char tokens correctly.
+    With a tokenizer that *merges* digit runs (GPT-4/Llama-3-style pretokenizers
+    emit 2- and 3-digit tokens), multi-character tokens like `"42"` or `"123"` are
+    also valid at $q_0$ — they consume 2 and 3 characters and land in $q_2$ and
+    $q_3$. At $q_3$ the opposite holds: only single-digit tokens survive, because
+    $q_4$ is the accepting state and has no outgoing transitions, so a second
+    character drives the FSM into $\perp$. This is why the token-level
+    pre-computation matters: character-by-character simulation handles multi-char
+    tokens correctly, and the allowed set shrinks as the pattern nears completion.
 
 {{fig:structgen-mask-decode-loop}}
 
@@ -92,7 +97,7 @@ The loop continues until an EOS token is sampled *and* the FSM is in an acceptin
 
 For a regex with $s$ states and vocabulary size $V$:
 
-- **Naive per-step mask computation:** For each token $v$, simulate the FSM over `decode(v)` starting from the current state. Cost is $O(V \cdot L_{\max})$ per step, where $L_{\max}$ is the max token length in bytes (typically 6–8 bytes). For $V = 128{,}000$ and $L_{\max} = 8$ this is roughly 1M operations per step — acceptable for a single sequence but a bottleneck for batched serving.
+- **Naive per-step mask computation:** For each token $v$, simulate the FSM over `decode(v)` starting from the current state. Cost is $O(V \cdot L_{\max})$ per step, where $L_{\max}$ is the *longest* token in bytes — a few dozen for a 128k BPE vocabulary, though the *average* token is only 4–8 bytes and the simulation short-circuits at the first dead transition. Taking 8 bytes as the practical average, $V = 128{,}000$ gives roughly 1M operations per step — acceptable for a single sequence but a bottleneck for batched serving.
 
 - **Pre-compiled transition table:** Pre-compute the full $|Q| \times V$ mask matrix once at load time. Lookup is $O(1)$ per step. Memory cost is $|Q| \cdot V$ bits. For 50 states and $V = 128{,}000$, this is about 800 KB — completely negligible. Outlines and XGrammar both take this approach.
 
@@ -117,7 +122,7 @@ Current sub-state:      AFTER_KEY_COLON (expecting a string value for "name")
 Allowed next chars:     " (opening quote of a string)
 ```
 
-The combined state space grows, but for any fixed grammar the number of reachable (stack prefix × sub-state) combinations is bounded. In practice, for JSON with a known schema (a JSON Schema object), the grammar is further restricted and the effective state count stays manageable.
+The stack itself is unbounded — that is exactly why JSON is not regular — but the number of distinct stack *symbols* and sub-states is small, so the per-step work depends only on the top of the stack plus a bounded rule set, not on the nesting depth. In practice, a non-recursive JSON Schema also caps the achievable nesting depth, which makes the reachable (stack contents × sub-state) configuration count finite and small.
 
 {{fig:structgen-fsm-vs-pda-stack}}
 
@@ -359,7 +364,10 @@ def can_extend(pattern: str, prefix: str) -> bool:
     # Robust approach: use regex with partial matching via the `regex` library.
     try:
         import regex  # pip install regex
-        m = regex.match(pattern, prefix, flags=regex.PARTIAL)
+        # `partial=True` is a keyword argument on the match call, not a flag.
+        # It returns a match object both for a complete match and for a prefix
+        # that could still be completed (check `m.partial` to tell them apart).
+        m = regex.match(pattern, prefix, partial=True)
         return m is not None
     except ImportError:
         # Fallback: check if the full pattern matches prefix exactly
@@ -382,7 +390,7 @@ def build_token_mask(
 ) -> torch.Tensor:
     """
     Builds a boolean mask (1 = allowed, 0 = forbidden) over the vocabulary
-    for the next token, given the regex `pattern` and what has been `current_prefix`emitted.
+    for the next token, given the regex `pattern` and the `current_prefix` emitted so far.
 
     Returns a BoolTensor of shape [vocab_size].
     """
@@ -407,9 +415,13 @@ def apply_mask_to_logits(
 ) -> torch.Tensor:
     """
     Sets logits of forbidden tokens to -inf. Operates in-place on a clone.
+
+    Use masked_fill_, not boolean indexing: `masked[~mask] = -inf` would index
+    the *leading* dimension, so a [vocab_size] mask against [batch, vocab_size]
+    logits raises IndexError. masked_fill_ broadcasts over the batch correctly.
     """
     masked = logits.clone()
-    masked[~mask] = float('-inf')
+    masked.masked_fill_(~mask, float('-inf'))
     return masked
 
 
@@ -454,9 +466,15 @@ def constrained_generate(
             # Decode without special tokens; skip_special_tokens=True prevents
             # BOS/EOS from polluting the character strings.
             tok_str = tokenizer.decode([token_id], skip_special_tokens=True)
+            if not tok_str:
+                # Special tokens (BOS/EOS) decode to "" under
+                # skip_special_tokens. Keeping them would make `candidate ==
+                # current_prefix`, which is always a live prefix — i.e. EOS
+                # would be *allowed at every step*, breaking the guarantee.
+                continue
             vocab[token_id] = tok_str
         except Exception:
-            vocab[token_id] = ""   # fallback for malformed tokens
+            continue               # skip malformed / unusable token ids
 
     # Tokenize the prompt
     input_ids = tokenizer.encode(prompt, return_tensors="pt").to(dev)
@@ -502,10 +520,12 @@ def constrained_generate(
             if re.fullmatch(pattern, fsm.emitted_so_far):
                 break
             else:
-                # Force continuation: mask out EOS was already done via the
-                # grammar mask, so this branch should not be reached in
-                # a correct implementation. Include as defensive guard.
-                continue
+                # EOS is not in `vocab` (zero-length decodings were skipped), so
+                # the mask already forbids it. Reaching here means the mask was
+                # empty or a sampler ignored it — stop instead of looping
+                # forever, since `continue` would leave the state unchanged and
+                # greedy decoding would re-pick EOS every iteration.
+                break
 
         # Advance state
         next_token_str = vocab.get(next_token_id, "")
@@ -762,8 +782,10 @@ For large models where $T_{\text{model\_fwd}}$ dominates ($\gg T_{\text{mask\_co
     roughly 20–50 ms (model forward pass). XGrammar's mask computation for a
     complex JSON schema takes on the order of 0.1–1 ms on CPU. The ratio is
     20–500×, meaning the masking cost is completely hidden in the model's
-    computation. For a 7B model on a single A100, the forward pass takes
-    roughly 2–5 ms, and masking might be ~0.5 ms — still a small fraction.
+    computation. For a 7B model on a single A100, decode is memory-bandwidth
+    bound — ~14 GB of fp16 weights streamed against ~1.5–2 TB/s of HBM puts the
+    roofline near 7–9 ms — so a step takes roughly 8–15 ms in practice, and
+    masking might be ~0.5 ms — still a small fraction.
     The overhead only becomes significant for very small models or trivially fast
     custom kernels.
 
@@ -771,7 +793,7 @@ For large models where $T_{\text{model\_fwd}}$ dominates ($\gg T_{\text{mask\_co
 
 In a batched serving scenario, different requests may have different grammar constraints. XGrammar handles this by maintaining a separate automaton state per sequence. Since mask application is per-sequence (each sequence has its own logit vector), there's no cross-sequence contention. The automaton state objects are lightweight CPU structures — a few hundred bytes each for typical JSON schemas.
 
-One complication: when a batch contains a mix of constrained and unconstrained requests, the serving engine must apply masks only to the constrained ones. vLLM implements this by computing a "merged mask" that is all-ones (no restriction) for unconstrained sequences and the FSM-derived mask for constrained ones, then applying a single batched mask operation.
+One complication: when a batch contains a mix of constrained and unconstrained requests, the serving engine must apply masks only to the constrained ones. vLLM builds a bitmask containing *only* the rows for the structured-output requests and applies it to just those logit rows — XGrammar's `apply_token_bitmask_inplace` takes an explicit set of row indices for exactly this purpose — so unconstrained sequences are skipped entirely rather than being handed an all-ones mask.
 
 ## Grammar Specification Formats
 
@@ -1013,7 +1035,7 @@ For a working engineer deploying constrained generation today, the decision tree
 - **llguidance (GitHub: guidance-ai/llguidance)** — open-source Earley-parser-based constrained generation engine with a Rust core, originating at Microsoft Research.
 - **Lew et al., "Sequential Monte Carlo Steering of Large Language Models using Probabilistic Programs" (2023)** — recasts constrained decoding as posterior inference and shows why greedy local masking is only an approximation.
 - **Loula et al., "Syntactic and Semantic Control of Large Language Models via Sequential Monte Carlo" (2025)** — practical SMC-based control that recovers the correctly-conditioned distribution under grammar and semantic constraints.
-- **Peng et al., "LMQL: Programming Large Language Models" (2022)** — an early declarative constraint language for LLM queries; pioneered the idea of in-flight constraint enforcement.
+- **Beurer-Kellner, Fischer & Vechev, "Prompting Is Programming: A Query Language for Large Language Models" (LMQL, 2022)** — an early declarative constraint language for LLM queries; pioneered the idea of in-flight constraint enforcement.
 - **llama.cpp GBNF grammar specification (GitHub: ggml-org/llama.cpp, `grammars/` directory)** — practical EBNF grammar format used by the llama.cpp ecosystem, plus `examples/json_schema_to_grammar.py`; good reference for JSON/SQL grammar construction.
 - **Guidance (GitHub: guidance-ai/guidance)** — an alternative structured generation approach using a domain-specific templating language; predates Outlines and useful for understanding the design space.
 - **Koo et al., "Automata-based Constraints for Language Model Decoding" (2024)** — a theoretical treatment of the expressiveness and complexity of automaton-based constraints for LLM decoding.

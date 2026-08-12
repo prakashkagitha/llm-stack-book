@@ -131,6 +131,9 @@ def grep_search(pattern: str, path: str = ".", glob: str | None = None,
     """Search file contents with ripgrep. `-n` gives line numbers (the same
     coordinate system read_file uses), `--no-heading` gives one
     `file:line:text` record per match, which is compact and easy to scan."""
+    # NOTE: rg's -m caps matches PER FILE, not globally. It bounds the damage
+    # a single pathological file can do; the Python slice below is what
+    # actually enforces the total budget returned to the model.
     cmd = ["rg", "-n", "--no-heading", "--color=never", "-m", str(max_results)]
     if glob:
         cmd += ["--glob", glob]
@@ -169,7 +172,7 @@ Two assembly decisions dominate harness quality.
 !!! warning "Common pitfall: the context tax of careless tool outputs"
     The most common way a coding agent silently degrades is **context pollution**: a few oversized tool results (an unfiltered `find /`, a full `npm install` log, a giant file) crowd out the actual task and the recent reasoning. The model's quality drops not because it got dumber but because the signal-to-noise ratio of its context collapsed. Always cap tool output sizes and prefer targeted reads. A good rule of thumb: no single tool result should exceed a few thousand tokens without a deliberate reason.
 
-There is a direct cost dimension here too. Because the harness resends the whole transcript each turn, **prefix caching** (see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html)) is essential: the static preamble and stable transcript prefix are cached server-side so you only pay full price for the new suffix. This is why harnesses keep the system prompt and tool schemas *byte-stable* across turns — any change busts the cache and re-bills the entire prefix.
+There is a direct cost dimension here too. Because the harness resends the whole transcript each turn, **prefix caching** (see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html)) is essential: the static preamble and stable transcript prefix are cached server-side so you only pay full price for the new suffix. On some APIs (OpenAI's) this is automatic; on Anthropic's it is *opt-in* — you mark the end of the cacheable prefix with a `cache_control` breakpoint, as the loop below does. Either way the harness must keep the system prompt and tool schemas *byte-stable* across turns: the cache keys on exact prefix bytes, so any change busts it and re-bills the entire prefix.
 
 ## Anatomy III: The Agent Loop
 
@@ -195,7 +198,8 @@ TOOLS = {
 
 def agent_loop(system_prompt: str, user_task: str,
                tool_schemas: list, max_turns: int = 50,
-               token_budget: int = 500_000):
+               token_budget: int = 500_000,
+               messages: list | None = None):
     """The core control loop of a coding agent.
 
     Invariants:
@@ -203,15 +207,23 @@ def agent_loop(system_prompt: str, user_task: str,
       * The loop ends ONLY when the model emits no tool calls (it's done) or
         we hit a hard budget. We never let the model 'declare done' while a
         tool call is pending — termination is structural, not a magic phrase.
+
+    Pass `messages` to RESUME an existing transcript (see the verify gate at
+    the end of the chapter); omit it to start fresh from `user_task`.
     """
-    messages = [{"role": "user", "content": user_task}]
+    messages = list(messages) if messages else [{"role": "user",
+                                                 "content": user_task}]
     tokens_used = 0
 
     for turn in range(max_turns):
         # 1. REASON: one forward pass over the entire transcript so far.
         resp = client.messages.create(
             model=MODEL,
-            system=system_prompt,          # byte-stable -> prefix cache hit
+            # Caching is OPT-IN: the cache_control breakpoint marks the end of
+            # the prefix to cache. Byte-stability is what keeps that marked
+            # prefix VALID across turns; the marker is what makes it cached.
+            system=[{"type": "text", "text": system_prompt,
+                     "cache_control": {"type": "ephemeral"}}],
             messages=messages,
             tools=tool_schemas,
             max_tokens=4096,
@@ -233,7 +245,15 @@ def agent_loop(system_prompt: str, user_task: str,
             if fn is None:
                 out = ToolResult(f"Unknown tool {call.name}", is_error=True)
             else:
-                out = gated_execute(call.name, call.input, fn)  # permissions!
+                try:
+                    out = gated_execute(call.name, call.input, fn)  # permissions!
+                except Exception as e:
+                    # Errors are OBSERVATIONS, not exceptions: a hallucinated
+                    # argument name or a bad cwd must not kill the session.
+                    out = ToolResult(
+                        f"Tool {call.name} raised "
+                        f"{type(e).__name__}: {e}. Check the tool's schema "
+                        f"and retry with corrected arguments.", is_error=True)
             results.append({
                 "type": "tool_result",
                 "tool_use_id": call.id,
@@ -247,7 +267,11 @@ def agent_loop(system_prompt: str, user_task: str,
         # 5. BUDGET / COMPACTION guards.
         if tokens_used > token_budget:
             messages = compact(messages)     # summarize old turns (below)
-        if turn == max_turns - 1:
+            tokens_used = 0                  # RE-ARM: otherwise the threshold
+                                             # latches and we compact every turn
+        if turn == max_turns - 2:
+            # Nudge one turn EARLY so the model actually gets a turn to answer
+            # it. Appending on the last iteration would never be sent.
             messages.append({"role": "user",
                 "content": [{"type": "text",
                 "text": "Turn budget reached. Summarize progress and stop."}]})
@@ -275,17 +299,49 @@ COMPACT_PROMPT = (
     "Drop: raw file dumps, redundant tool output, superseded reasoning."
 )
 
+def render_transcript(messages: list) -> str:
+    """Flatten a transcript slice into plain text. Necessary because a RAW
+    slice cannot be sent back as `messages`: the API requires the first
+    message to be `user`, and every `tool_use` block must be followed by its
+    matching `tool_result` — a slice satisfies neither in general."""
+    out = []
+    for m in messages:
+        content = m["content"]
+        if isinstance(content, str):
+            out.append(f"{m['role']}: {content}")
+            continue
+        for b in content:
+            b = b if isinstance(b, dict) else b.model_dump()
+            if b.get("type") == "text":
+                out.append(f"{m['role']}: {b['text']}")
+            elif b.get("type") == "tool_use":
+                out.append(f"{m['role']} called {b['name']}"
+                           f"({json.dumps(b['input'])[:300]})")
+            elif b.get("type") == "tool_result":
+                out.append(f"tool result: {str(b.get('content'))[:500]}")
+    return "\n".join(out)
+
 def compact(messages: list, keep_recent: int = 6) -> list:
     """Replace the old prefix of the transcript with one summary message.
     The task (messages[0]) and the last `keep_recent` messages survive
     verbatim, so the agent never loses the thread it is currently pulling."""
     if len(messages) <= keep_recent + 1:
         return messages
-    head, tail = messages[1:-keep_recent], messages[-keep_recent:]
+    cut = len(messages) - keep_recent
+    # Never split a tool_use from its tool_result: snap the verbatim tail to
+    # an assistant message, so every tool_result it holds has its call above.
+    while cut < len(messages) and messages[cut]["role"] != "assistant":
+        cut += 1
+    if cut >= len(messages) or cut <= 1:
+        return messages                      # nothing safe to summarize
+    head, tail = messages[1:cut], messages[cut:]
     summary = client.messages.create(
         model=MODEL, max_tokens=1024,
         system=COMPACT_PROMPT,
-        messages=head + [{"role": "user", "content": "Write the summary now."}],
+        # ONE well-formed user message, not a raw slice (see render_transcript).
+        messages=[{"role": "user",
+                   "content": render_transcript(head)
+                              + "\n\nWrite the summary now."}],
     )
     text = "".join(b.text for b in summary.content if b.type == "text")
     return [messages[0],
@@ -350,7 +406,7 @@ Everything else — the edit contract, structural termination, the permission ga
 
     **Turn 4.** Model emits a final assistant message *with no tool calls* — "Fixed the format string in `src/dates.py`; the test passes." The loop terminates structurally.
 
-    Totals: 5 turns, ≈ 18,000 cumulative input tokens (because the transcript is resent each turn — turn 4's input alone is ≈ 6,700 tok), ≈ 250 output tokens. With prefix caching, the static 5,040-token preamble is billed at the cheap cached rate on turns 1–4, cutting input cost by roughly 70–80% versus no caching. This is why caching and termination discipline are not optional niceties — they are the difference between a session costing cents and costing dollars.
+    Totals: 5 turns, ≈ 30,000 cumulative input tokens (because the transcript is resent each turn — turn 4's input alone is ≈ 6,700 tok), ≈ 250 output tokens. With prefix caching, the static 5,040-token preamble is billed at the cheap cached rate on turns 1–4, cutting input cost by roughly 60% versus no caching (Exercise 3 works the arithmetic out in full). This is why caching and termination discipline are not optional niceties — they are the difference between a session costing cents and costing dollars.
 
 ## Anatomy IV: Permissions and the Execution Sandbox
 
@@ -529,13 +585,18 @@ Rules:
 
 def run_coding_agent(repo_root: str, task: str):
     system = build_system_prompt(repo_root)
-    schemas = TOOL_SCHEMAS                 # JSON schemas for the 5 tools
+    # JSON schemas for the four core tools in TOOLS, in the shape 8.1 covers.
+    schemas = TOOL_SCHEMAS
     final, messages = agent_loop(system, task, schemas)
 
     # Final verification gate: do not accept 'done' until tests pass.
     ok, messages = verify_before_done(messages)
-    while not ok:
-        final, messages = agent_loop(system, "", schemas)  # continue working
+    for _ in range(3):                     # bounded repair attempts
+        if ok:
+            break
+        # RESUME the same transcript. Re-seeding a fresh one would throw away
+        # the task, the history, AND the failure report we just appended.
+        final, messages = agent_loop(system, task, schemas, messages=messages)
         ok, messages = verify_before_done(messages)
     return final
 ```
@@ -663,7 +724,7 @@ Uncached input is billed at $3.00 per million tokens; a cache *read* is billed a
     **(d) Reduction.**
     $$\frac{0.09006 - 0.03606}{0.09006} = \frac{0.05400}{0.09006} \approx 0.60 = 60\%.$$
 
-    So caching cuts input cost by about 60% here; with a larger cached fraction of each turn (or a cheaper cache tier) you approach the 70-80% figure the chapter cites for the worked example. **Why byte-stability matters:** the cache keys on an exact prefix. If the system prompt or tool schemas change by even one byte between turns, the cached prefix is invalidated and the entire preamble is re-billed at the full uncached rate on that turn — you lose the $0.30/M reads and pay $3.00/M instead. That is why harnesses freeze the preamble across turns.
+    So caching cuts input cost by about 60% here — the same figure the chapter quotes for the worked example. The ceiling is 90% (the cached-read discount itself); you approach it as the cached fraction of each turn grows and the uncached suffix shrinks. **Why byte-stability matters:** the cache keys on an exact prefix. If the system prompt or tool schemas change by even one byte between turns, the cached prefix is invalidated and the entire preamble is re-billed at the full uncached rate on that turn — you lose the $0.30/M reads and pay $3.00/M instead. That is why harnesses freeze the preamble across turns.
 
 **4.** The chapter's `edit_file` says the read-before-edit precondition is "enforced elsewhere" but does not show the enforcement. Implement it. Add session state that records which files have been read, update `read_file` to register a successful read, and add a guard at the top of `edit_file` that returns a teaching error (in the chapter's style) if the file was never read this session. Keep the `ToolResult` interface unchanged.
 

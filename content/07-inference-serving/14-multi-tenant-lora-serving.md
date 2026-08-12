@@ -102,7 +102,7 @@ Punica distinguishes the decode and prefill regimes:
 
     **LoRA correction (per adapted projection):** shrink $B \times r \times d_\text{in} = 64\times 16\times 5120 \approx 5.2\times 10^6$ MACs, expand the same, so $\approx 1.0\times 10^7$ MACs per projection, $\approx 4.2\times 10^7$ across 4 — about **0.6%** of the base FLOPs.
 
-    But in *decode* the operation is bandwidth-bound, not FLOP-bound. The base weights for the 4 projections are $4 \times 5120 \times 5120 \times 2\,\text{bytes} \approx 210\,\text{MB}$, loaded once for the whole batch. The LoRA weights are $20\,\text{adapters} \times 4\,\text{proj} \times (B{+}A)\,\text{params} = 20 \times 4 \times (5120{\cdot}16 + 16{\cdot}5120) \times 2\,\text{bytes} \approx 52\,\text{MB}$ — about a **25% bandwidth tax** on the attention-projection matmuls, even though it is only 0.6% of the FLOPs. This is exactly why decode-time LoRA hurts more than its FLOP count suggests, and why fusing the gather (avoiding redundant reloads) matters so much.
+    But in *decode* the operation is bandwidth-bound, not FLOP-bound. The base weights for the 4 projections are $4 \times 5120 \times 5120 \times 2\,\text{bytes} \approx 210\,\text{MB}$, loaded once for the whole batch. The LoRA weights are $20\,\text{adapters} \times 4\,\text{proj} \times (B{+}A)\,\text{params} = 20 \times 4 \times (5120{\cdot}16 + 16{\cdot}5120) \times 2\,\text{bytes} \approx 26\,\text{MB}$ — about a **12.5% bandwidth tax** on the attention-projection matmuls (the closed form is $N_\text{adapters}\cdot 2r/d = 20 \cdot 32/5120$), even though it is only 0.6% of the FLOPs. This is exactly why decode-time LoRA hurts more than its FLOP count suggests, and why fusing the gather (avoiding redundant reloads) matters so much.
 
 {{fig:decode-lora-bandwidth-tax}}
 
@@ -216,7 +216,7 @@ A 13B+ base is usually served with tensor parallelism (TP), so each adapted line
 - **Column-parallel base** ($q,k,v$, `gate`/`up` — sharded along $d_\text{out}$). Every rank sees the full input $x$, so it can compute the full $v = A x$ with a **replicated** $A$, then multiply by its own shard $B^{(k)} \in \mathbb{R}^{(d_\text{out}/\text{TP}) \times r}$ to produce its slice of the correction. **No extra collective** — the LoRA path adds nothing to the communication schedule.
 - **Row-parallel base** ($o$, `down` — sharded along $d_\text{in}$). Each rank holds only a slice of $x$, so $A$ is **sharded along $d_\text{in}$** and each rank computes a *partial* $v^{(k)} = A^{(k)} x^{(k)}$. Because $B\left(\sum_k v^{(k)}\right) = \sum_k B v^{(k)}$, each rank can apply a replicated $B$ to its partial $v$ and add the result into the base layer's partial output — the correction then rides the **base's existing all-reduce**. Again no extra collective.
 
-The cost of this default is memory: the replicated matrix ($A$ for column-parallel, $B$ for row-parallel) is stored TP times over, which matters when you are holding hundreds of adapters resident. **Fully-sharded LoRA** (from S-LoRA, exposed in vLLM as `--fully-sharded-loras`) shards *both* matrices on every layer and pays a small extra collective on the rank-$r$ intermediate instead. Since $r \ll d$, that all-gather/reduce moves $O(Br)$ elements versus the base's $O(Bd)$ — typically well under 1% of the layer's traffic — so at TP $\ge 4$ with a large adapter pool it is usually the right trade: you buy back a factor of TP in adapter memory for a nearly free collective.
+The cost of this default is memory: the replicated matrix ($A$ for column-parallel, $B$ for row-parallel) is stored TP times over, which matters when you are holding hundreds of adapters resident. **Fully-sharded LoRA** (from S-LoRA, exposed in vLLM as `--fully-sharded-loras`) shards *both* matrices on every layer and pays a small extra collective on the rank-$r$ intermediate instead. Since $r \ll d$, that all-gather/reduce moves $O(Br)$ elements versus the base's $O(Bd)$ — typically well under 1% of the layer's traffic — so at TP $\ge 4$ with a large adapter pool it is usually the right trade. Be precise about the size of the win, though: only *one* of the two matrices was replicated, so per-GPU adapter memory goes from $rd(1 + 1/\text{TP})$ to $2rd/\text{TP}$ — a saving of $(\text{TP}{+}1)/2$, i.e. $2.5\times$ at TP=4 and $4.5\times$ at TP=8, roughly half of TP rather than TP itself.
 
 ### Disaggregated execution
 
@@ -231,18 +231,21 @@ For the overwhelming majority of deployments, **unified execution with tiered ad
 
 Here is a subtle and valuable interaction. Prefix caching reuses KV blocks for shared token prefixes (system prompts, few-shot headers). But KV tensors depend on the *weights*, and LoRA changes the weights — so in general two requests on *different adapters* produce *different* KV tensors for the same prefix tokens. Can they share a prefix cache?
 
-The answer hinges on **which modules the adapter touches**:
+The tempting answer is "only if the adapter leaves the $k,v$ projections alone" — and it is **wrong**. The reason is worth internalizing. At layer $\ell$ the cache holds $K_\ell = W_k h_\ell$ and $V_\ell = W_v h_\ell$, where $h_\ell$ is the *residual stream entering that layer*. A LoRA on $q$, $o$, or the MLP of any earlier layer changes that layer's output, hence changes $h_\ell$, hence changes $K_\ell$ and $V_\ell$ — even though $W_k$ and $W_v$ are untouched base weights. The KV cache depends on the whole sub-network *below* a layer, not just on the $k,v$ matrices. So the rule is:
 
-- If the LoRA does **not** adapt the $k$ and $v$ projections (e.g., it only adapts $q,o$ or the MLP), then $K$ and $V$ for the prefix are computed purely from base weights and are **identical across all such adapters**. The prefix KV cache can be shared across every tenant — a large win, since system prompts are often shared.
-- If the LoRA **does** adapt $k$ or $v$, the cached KV blocks are adapter-specific. They are still cacheable, but only reusable by requests on the *same* adapter (and only if the base prefix is the same). The cache must therefore be keyed by `(prefix_hash, adapter_id)`.
+- **In general, prefix KV blocks are adapter-specific.** Any adapted module anywhere below a layer perturbs that layer's $K,V$. The cache must be keyed by `(prefix_hash, adapter_id)`. This is exactly what production engines do: vLLM folds the LoRA request's identity into the block hash whenever a request carries an adapter, so blocks are never silently shared across different adapters.
+- **The exception is depth, not module type.** If an adapter's first adapted layer is $L$ (e.g. an adapter confined to the last few blocks), then for every $\ell < L$ the input $h_\ell$ is produced by pure base weights, so those layers' $K_\ell,V_\ell$ are identical across all adapters that agree on the sub-network below $L$ — and identical to the base model's. Those lower layers' KV blocks are genuinely shareable, as are the base-only path's blocks.
 
 ```text
   Prefix-cache key strategy:
-    adapter touches k or v  →  key = hash(prefix_tokens) ⊕ adapter_id   (per-adapter)
-    adapter leaves k,v base →  key = hash(prefix_tokens)                (shared!)
+    default (adapter anywhere in the stack) → key = hash(prefix_tokens) ⊕ adapter_id
+    base-only requests                      → key = hash(prefix_tokens)
+    layers below the first adapted layer L  → key = hash(prefix_tokens)   (shareable
+      (only for adapters that share the        across those adapters, layers ℓ < L only)
+       entire sub-network below L)
 ```
 
-Designing adapters to avoid the $k,v$ projections (when accuracy permits) is therefore not just a quality choice — it directly enables cross-tenant KV reuse. This is a concrete example of co-designing the fine-tuning recipe with the serving system. See [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html) for the trie-based cache this plugs into; the radix tree can store per-adapter subtrees off a shared base-prefix root.
+The co-design lever is therefore *where* in the stack you adapt, not *which* projection: an adapter confined to the upper blocks leaves the lower layers' KV base-computed and cross-tenant shareable, whereas an adapter that touches layer 0 makes every layer's KV adapter-specific. In practice most tenants adapt all layers, so plan on per-adapter prefix caches and size the KV pool accordingly. See [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html) for the trie-based cache this plugs into; the radix tree stores per-adapter subtrees hanging off a shared base-prefix root.
 
 !!! interview "Interview Corner"
     **Q:** "We serve 800 customer-specific LoRA adapters over a shared 13B base. Decode throughput is fine but p99 TTFT is terrible and very spiky. Walk me through the likely causes and fixes."
@@ -264,9 +267,9 @@ Designing adapters to avoid the $k,v$ projections (when accuracy permits) is the
 
 Every major open-source engine now ships production multi-LoRA support built on the Punica/S-LoRA lineage; they differ mainly in how dynamic the adapter set is allowed to be.
 
-**vLLM** exposes LoRA as a first-class serving feature. You launch with `--enable-lora`, set `--max-loras` (max distinct adapters per *batch/step*) and `--max-cpu-loras` (the CPU warm-pool size), and bound rank with `--max-lora-rank`. Adapters can be registered statically at launch (`--lora-modules name=path ...`) or **loaded dynamically at runtime** via the API, which is what makes a true multi-tenant platform possible — tenants upload adapters and route to them by name without restarting the server. Internally vLLM uses Punica-style SGMV/BGMV kernels (and Triton variants), the paged allocator holds adapter weights, and an LRU manager handles GPU↔CPU residency. Requests carry a `LoRARequest(name, id, path)` so the scheduler knows which adapter each belongs to.
+**vLLM** exposes LoRA as a first-class serving feature. You launch with `--enable-lora`, set `--max-loras` (max distinct adapters per *batch/step*) and `--max-cpu-loras` (the CPU warm-pool size), and bound rank with `--max-lora-rank`. Adapters can be registered statically at launch (`--lora-modules name=path ...`) or **loaded dynamically at runtime** via the API, which is what makes a true multi-tenant platform possible — tenants upload adapters and route to them by name without restarting the server. Internally vLLM uses Punica-style SGMV/BGMV kernels (and Triton variants), preallocates a fixed set of stacked adapter slots sized by `--max-loras`/`--max-lora-rank` — a pool *separate* from the KV block allocator, unlike S-LoRA's unified paging — and an LRU manager handles GPU↔CPU residency. Requests carry a `LoRARequest(name, id, path)` so the scheduler knows which adapter each belongs to.
 
-**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the cross-model prefix-reuse story above is native). You launch with `--lora-paths name=path ...`, cap adapter cardinality with `--max-loras-per-batch` (the knob of §7.14.4), bound rank with `--max-lora-rank`, and select the kernel backend with `--lora-backend` (a Triton SGMV implementation is the default). Adapters can also be added and removed at runtime through `/load_lora_adapter` and `/unload_lora_adapter` HTTP endpoints. Recent releases add an opt-in **overlapped adapter loading** mode that streams adapter weights on a side CUDA stream to hide cold-adapter transfer behind compute (§7.14.3), reported to cut median TTFT substantially on large-adapter workloads at the cost of occasionally fragmenting multi-adapter prefill batches — check `python -m sglang.launch_server --help` for the current flag name, since these LoRA server args are still moving. Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
+**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the per-adapter prefix-cache keying of §7.14.5 is native — adapters get their own subtrees). You launch with `--lora-paths name=path ...`, cap adapter cardinality with `--max-loras-per-batch` (the knob of §7.14.4), bound rank with `--max-lora-rank`, and select the kernel backend with `--lora-backend` (a Triton SGMV implementation is the default). Adapters can also be added and removed at runtime through `/load_lora_adapter` and `/unload_lora_adapter` HTTP endpoints. Recent releases add an opt-in **overlapped adapter loading** mode that streams adapter weights on a side CUDA stream to hide cold-adapter transfer behind compute (§7.14.3), reported to cut median TTFT substantially on large-adapter workloads at the cost of occasionally fragmenting multi-adapter prefill batches — check `python -m sglang.launch_server --help` for the current flag name, since these LoRA server args are still moving. Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
 
 **TensorRT-LLM** supports multi-LoRA too, but with an ahead-of-time twist worth internalizing: because the engine is *compiled*, the LoRA plugin, the set of target modules, and the **maximum rank** must be declared at `trtllm-build` time and are baked into the engine. Adapter *weights* are still dynamic at runtime (its LoRA manager keeps GPU and CPU adapter caches, sized like vLLM's `max_loras`/`max_cpu_loras`), but a tenant who trains a rank-128 adapter for an engine built at rank 64, or who adapts the MLP when only attention modules were compiled in, cannot be served without rebuilding. If you run a fine-tuning SaaS on TensorRT-LLM, publish the supported rank ceiling and target-module set as part of your product contract. See [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html).
 
@@ -275,7 +278,7 @@ Every major open-source engine now ships production multi-LoRA support built on 
 #   --max-loras 8       : up to 8 distinct adapters per scheduler step (§7.14.4)
 #   --max-lora-rank 64  : kernels/slots sized for ranks up to 64
 #   --max-cpu-loras 256 : CPU warm pool, 256 adapters resident off-GPU
-#   --enable-prefix-caching : share base-prefix KV where adapters allow (§7.14.5)
+#   --enable-prefix-caching : reuse prefix KV; blocks are keyed per adapter (§7.14.5)
 # NOTE: keep comments on their own lines — a `#` after a trailing `\` silently
 # breaks the line continuation and the rest of the flags become bogus commands.
 VLLM_ALLOW_RUNTIME_LORA_UPDATING=1 vllm serve meta-llama/Llama-2-13b-hf \
@@ -456,9 +459,36 @@ class AdapterRegistry:
 
     def build_index(self, request_adapter_names):
         """Map a batch's per-request adapter names to GPU slot indices,
-        ensuring each is resident first."""
-        return torch.tensor([self.ensure_resident(n) for n in request_adapter_names],
-                            dtype=torch.long, device=self.layer.device)
+        ensuring each is resident first. `"__base__"` maps to reserved slot 0.
+
+        Two things make this safe. (1) We refuse a batch that needs more
+        distinct adapters than there are GPU slots -- otherwise resolving the
+        (n_gpu_slots+1)-th adapter would evict a slot whose index is already
+        baked into `lora_idx` for earlier rows, and those rows would silently
+        read another tenant's weights. This is exactly what `max_loras`
+        (§7.14.4) caps in a real scheduler. (2) We bump `ref_count` for every
+        adapter the batch uses, so the eviction guard in `ensure_resident`
+        actually fires; call `release()` once the forward has completed.
+        """
+        distinct = {n for n in request_adapter_names if n != "__base__"}
+        if len(distinct) > self.n_gpu_slots:
+            raise RuntimeError(
+                f"batch needs {len(distinct)} distinct adapters but only "
+                f"{self.n_gpu_slots} GPU slots exist; cap adapters-per-step")
+        slots = []
+        for n in request_adapter_names:
+            if n == "__base__":
+                slots.append(0)
+                continue
+            slots.append(self.ensure_resident(n))
+            self.cpu_pool[n].ref_count += 1            # pin for this step
+        return torch.tensor(slots, dtype=torch.long, device=self.layer.device)
+
+    def release(self, request_adapter_names):
+        """Drop the batch's references once its forward pass has finished."""
+        for n in request_adapter_names:
+            if n != "__base__":
+                self.cpu_pool[n].ref_count -= 1
 
 
 # ---------------------------------------------------------------------------
@@ -486,13 +516,12 @@ if __name__ == "__main__":
                    "med-notes", "game-lore", "__base__"]
     x = torch.randn(len(batch_names), d_in)
 
-    # __base__ maps to reserved slot 0 (no correction); others get real slots.
-    def to_slot(n):
-        return 0 if n == "__base__" else reg.ensure_resident(n)
-    lora_idx = torch.tensor([to_slot(n) for n in batch_names], dtype=torch.long)
+    # Resolve names -> slots and pin them for the step ("__base__" -> slot 0).
+    lora_idx = reg.build_index(batch_names)
 
     y = layer.forward(x, lora_idx)
     y_seg = forward_segmented(layer, x, lora_idx)      # sorted path, same answer
+    reg.release(batch_names)                           # step done: unpin, now evictable
 
     # Reference: compute each row independently with merged math y = W0 x + (a/r) B A x
     y_ref = torch.empty_like(y)
@@ -510,7 +539,7 @@ if __name__ == "__main__":
     # is numerically identical to per-adapter merged math.
 ```
 
-Running this prints max errors on the order of $10^{-6}$ — float rounding — confirming that the single batched forward over a heterogeneous mix of adapters is *exactly* equivalent to merging each adapter and running it alone, but at a fraction of the cost and with one shared base in memory. The `forward_segmented` path shows the scheduler trick of sorting by adapter; the registry shows GPU-slot LRU eviction with a CPU warm pool and a reserved base-only slot.
+Running this prints max errors on the order of $10^{-6}$ — float rounding — confirming that the single batched forward over a heterogeneous mix of adapters is *exactly* equivalent to merging each adapter and running it alone, but at a fraction of the cost and with one shared base in memory. The `forward_segmented` path shows the scheduler trick of sorting by adapter; the registry shows GPU-slot LRU eviction with a CPU warm pool, a reserved base-only slot, and ref-counted pinning so a slot cannot be recycled out from under a batch that is already indexing it.
 
 ### What a tenant actually uploads: the adapter artifact
 
@@ -615,20 +644,20 @@ Multi-tenant LoRA serving is a throughput-per-dollar machine, but it is not free
 For the broader economics of latency vs. throughput vs. cost that frame these decisions, see [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html) and the system-design view in [Designing an LLM Serving System](../12-production-mlops/01-serving-system-design.html).
 
 !!! note "Scale check: does this apply to Stack-100M?"
-    The capstone model of Part XIV is ~100M parameters — about 200 MB in bf16 — and it is post-trained with several small task adapters ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)). Everything mechanical in this chapter still applies, and vLLM's `--enable-lora` path works unchanged on a 100M base, which makes it an excellent place to *learn* multi-LoRA serving cheaply: you can hold twenty adapters resident on a laptop-class GPU and watch `max_loras` move throughput. But be honest about the economics at that scale — the argument for a *shared* base is weakest here, because a full merged copy per task costs only 200 MB, so N merged models may simply be simpler and faster than one multi-LoRA deployment. Multi-tenant LoRA earns its complexity when the base is 100–1000× larger than the adapters, not 4×. See [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for how the capstone is actually served.
+    The capstone model of Part XIV is ~100M parameters — about 200 MB in bf16 — and it is post-trained with several small task adapters ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)). Everything mechanical in this chapter still applies, and vLLM's `--enable-lora` path works unchanged on a 100M base, which makes it an excellent place to *learn* multi-LoRA serving cheaply: you can hold twenty adapters resident on a laptop-class GPU and watch `max_loras` move throughput. But be honest about the economics at that scale — the argument for a *shared* base is weakest here, because a full merged copy per task costs only 200 MB, so N merged models may simply be simpler and faster than one multi-LoRA deployment. The adapters are of course still tiny relative to the base here (a rank-16 LoRA on this model is a couple of MB), but that ratio is not what decides the architecture — the *absolute* cost of a merged copy per tenant is. Multi-tenant LoRA earns its complexity when that copy is tens of gigabytes, not 200 MB. See [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html) for how the capstone is actually served.
 
 ---
 
 !!! key "Key Takeaways"
     - Merging a LoRA into the base is optimal for *one* adapter but fatal for multi-tenancy; keep the LoRA path separate so a single batch can serve many adapters at once.
     - The core kernel problem is a *grouped/segmented* matmul: one shared base GEMM plus a per-row low-rank correction where each row may use a different $A,B,r,\alpha$. Punica's SGMV (prefill) and BGMV (decode) fuse the gather with the small matmuls.
-    - In decode, the LoRA correction is bandwidth-bound: it can be ~0.6% of the FLOPs yet a 20–30% bandwidth tax because each adapter's weights must be streamed — fusing the gather to load each weight once is what makes it cheap.
+    - In decode, the LoRA correction is bandwidth-bound: it can be under 1% of the FLOPs yet a 10–20% bandwidth tax (it scales as $N_\text{adapters}\cdot 2r/d$) because each adapter's weights must be streamed — fusing the gather to load each weight once is what makes it cheap.
     - S-LoRA's Unified Paging puts adapters in the same paged DRAM pool as the KV cache; tiered storage (GPU→CPU→SSD→object store) keeps only active adapters on the GPU, with async prefetch hiding swaps behind compute.
     - The adapter registry is the control plane: name→weights mapping, residency tier, ref-counting, and LRU/LFU eviction (never evict a `ref_count>0` adapter).
     - Cold adapters create the p99 TTFT cliff; defend with a CPU warm pool, side-stream prefetch, pinned top-K adapters, and capping adapters-per-step (`max_loras`).
-    - Under tensor parallelism the LoRA path needs **no extra collective**: replicate $A$ for column-parallel layers, shard $A$ for row-parallel ones and let the partial correction ride the base's all-reduce; `--fully-sharded-loras` trades a tiny rank-$r$ collective for a factor-of-TP saving in adapter memory.
+    - Under tensor parallelism the LoRA path needs **no extra collective**: replicate $A$ for column-parallel layers, shard $A$ for row-parallel ones and let the partial correction ride the base's all-reduce; `--fully-sharded-loras` trades a tiny rank-$r$ collective for a $(\text{TP}{+}1)/2$ saving in adapter memory (about half of TP, since only one matrix per layer was replicated).
     - A tenant uploads a PEFT adapter directory (`adapter_config.json` + `adapter_model.safetensors`); validate rank ceiling, target modules, and `use_rslora` scaling at upload time, not at first request.
-    - Cross-tenant prefix-cache reuse is possible when the adapter does *not* touch the $k,v$ projections — co-design the fine-tune to keep KV base-computed and share system-prompt KV across all tenants.
+    - Prefix KV blocks are adapter-specific in general — a LoRA *anywhere* below a layer perturbs the residual stream and therefore that layer's $K,V$, even if $k,v$ themselves are base weights — so key the cache by `(prefix_hash, adapter_id)` as vLLM/SGLang do; only layers *below* an adapter's first adapted layer (and the base-only path) are cross-tenant shareable.
     - vLLM (`--enable-lora`, `--max-loras`, `--max-cpu-loras`, `/v1/load_lora_adapter`) and SGLang ship Punica/S-LoRA-style multi-LoRA with dynamic runtime adapter loading — the foundation of a real fine-tuning SaaS; TensorRT-LLM serves adapters too but bakes the rank ceiling and target modules into the compiled engine.
 
 ---
@@ -709,7 +738,7 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
 
     **If you materialize $\Delta W = \frac{\alpha}{r}BA$ instead:** building $\Delta W$ costs a $d_\text{out}\times d_\text{in}$ full matrix, and adding it produces a dense weight, so the effective per-token cost becomes another full $d_\text{in} d_\text{out} = 16{,}777{,}216$ MACs — a **100%** overhead, $64\times$ more than the parenthesized path ($16{,}777{,}216 / 262{,}144 = 64$). This is exactly why we never materialize $BA$: the parenthesization is the entire point.
 
-**3.** You run a decode step on a shared 13B-shaped model. LoRA is applied to the four attention projections $q,k,v,o$, each with $d_\text{in}=d_\text{out}=4096$ and rank $r=16$, weights in fp16 (2 bytes). The decode batch has 48 tokens drawn from **24 distinct adapters**. Because decode is memory-bandwidth bound, estimate the "bandwidth tax" the LoRA weights impose: the bytes of LoRA weights that must be streamed, as a fraction of the base attention-projection weights streamed. Contrast this with the FLOP fraction of the same correction.
+**3.** You run a decode step on a shared 7B-shaped model. LoRA is applied to the four attention projections $q,k,v,o$, each with $d_\text{in}=d_\text{out}=4096$ and rank $r=16$, weights in fp16 (2 bytes). The decode batch has 48 tokens drawn from **24 distinct adapters**. Because decode is memory-bandwidth bound, estimate the "bandwidth tax" the LoRA weights impose: the bytes of LoRA weights that must be streamed, as a fraction of the base attention-projection weights streamed. Contrast this with the FLOP fraction of the same correction.
 
 ??? note "Solution"
     **Base weights streamed** (loaded once for the whole batch, 4 projections):
@@ -738,22 +767,22 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
 
     **Contrast with FLOPs.** The base GEMM does $48 \times 4096 \times 4096 \times 4 \approx 3.22\times10^9$ MACs; the LoRA correction does $48 \times 16 \times (4096+4096) \times 4 \approx 2.52\times10^7$ MACs, i.e. about $0.78\%$ of the base FLOPs. So the correction is **under 1% of the FLOPs but nearly 19% of the streamed bytes.** In decode we are bandwidth bound, so it is the ~19% that hurts. This is precisely why (a) decode-time LoRA costs far more than its FLOP count suggests, (b) a fused gather that loads each adapter's weights *once* matters so much, and (c) capping the number of distinct adapters per step (`max_loras`) is such a powerful throughput knob — fewer distinct adapters means fewer LoRA bytes streamed per step.
 
-**4.** Prefix caching lets requests share KV-cache blocks for a common token prefix (e.g. a shared system prompt). Tenant Alpha's adapter adapts only the $q$ and $o$ projections and the MLP; Tenant Beta's adapter adapts $q,k,v,o$. Both send requests that begin with the *same* 400-token shared system prompt over the same base model. For each tenant, can the prefix KV blocks be shared with *other* tenants? State the correct cache key in each case and explain the underlying reason.
+**4.** Prefix caching lets requests share KV-cache blocks for a common token prefix (e.g. a shared system prompt). Tenant Alpha's adapter adapts only the $q$ and $o$ projections and the MLP, on **every** transformer layer; Tenant Beta's adapter adapts $q,k,v,o$ on every layer. Both send requests that begin with the *same* 400-token shared system prompt over the same base model. For each tenant, can the prefix KV blocks be shared with *other* tenants? State the correct cache key in each case and explain the underlying reason. Then state the one structural change to Alpha's adapter that *would* buy real cross-tenant sharing.
 
 ??? note "Solution"
-    The KV cache stores the $K$ and $V$ projections of the prefix tokens. Whether they can be shared across tenants depends entirely on **whether the adapter changes the $k$ or $v$ projections**, because that is what determines $K$ and $V$.
+    The trap in this question is the plausible-sounding rule "Alpha doesn't touch $k,v$, so its $K,V$ are base-computed and shareable." That rule is **false**. At layer $\ell$ the cache holds $K_\ell = W_k h_\ell$ and $V_\ell = W_v h_\ell$, where $h_\ell$ is the residual stream *entering* layer $\ell$. Alpha's LoRA on $q$/$o$/MLP at layer 0 changes layer 0's output, hence $h_1$, hence $K_1$ and $V_1$ — even though $W_k,W_v$ are untouched. The perturbation compounds up the stack. Only layer 0's $K,V$ (whose input is the unadapted embedding) are adapter-invariant, which is useless on its own.
 
-    - **Tenant Alpha (adapts $q,o$, MLP — not $k,v$):** $K$ and $V$ for the prefix are computed from the **base weights only**, so they are *identical* to what any other adapter that also leaves $k,v$ untouched would produce (and identical to the base model's). The prefix KV blocks are **shareable across all such tenants**. The correct key is
-
-        `key = hash(prefix_tokens)`
-
-        — no adapter ID needed. Since system prompts are commonly shared, this is a large cross-tenant win.
-
-    - **Tenant Beta (adapts $k$ and $v$):** the LoRA correction changes $K$ and $V$, so Beta's prefix KV blocks are **adapter-specific**. They are still cacheable, but only reusable by *other requests on Beta's own adapter* (with the same base prefix). The correct key must include the adapter identity:
+    - **Tenant Alpha (adapts $q,o$, MLP on every layer):** **not** shareable with other tenants. Every layer above the first is fed a perturbed residual stream, so its $K,V$ differ from the base model's and from any other adapter's. Correct key:
 
         `key = hash(prefix_tokens) (+) adapter_id`
 
-    **Takeaway:** designing an adapter to *avoid* the $k,v$ projections (when accuracy permits) is not merely a quality decision — it directly enables cross-tenant KV reuse, letting one cached system prompt serve every tenant. This is a concrete case of co-designing the fine-tuning recipe with the serving system.
+    - **Tenant Beta (adapts $k,v$ on every layer):** also not shareable, for the same reason *plus* the direct one — the correction changes $K,V$ at the adapted projection itself. Same key:
+
+        `key = hash(prefix_tokens) (+) adapter_id`
+
+    So both tenants get per-adapter prefix caches, which is precisely why vLLM mixes the LoRA request identity into its block hash and why SGLang's radix tree keeps per-adapter subtrees.
+
+    **The change that would help:** restrict Alpha's adapter to the *top* of the stack — say, only layers $L$ and above. Then for every layer $\ell < L$ the residual stream is produced entirely by base weights, so those layers' KV blocks are byte-identical to the base model's and shareable with every other tenant whose adapter also starts at or above $L$. The lever is the adapter's **depth**, not which projection it targets: sharing is possible only for the layers strictly below the first adapted layer.
 
 **5.** The toy `MultiLoRALinear.forward` in Section 7.14.7 uses `self.A_all[lora_idx]` and `self.B_all[lora_idx]`, which materializes a `[B, r, d_in]` gathered tensor — physically copying a popular adapter's weight once per row that uses it. The chapter's warning notes a real SGMV kernel instead loads each adapter's weight tile **once** per segment. Implement a `forward_grouped(layer, x, lora_idx)` that reproduces this: it must compute the correction by iterating over the *distinct* adapters present in the batch, loading each adapter's `A`/`B` exactly once and applying it to all of that adapter's rows with a single small GEMM. Skip the reserved base-only slot 0. Your function must be numerically equivalent to `layer.forward`.
 

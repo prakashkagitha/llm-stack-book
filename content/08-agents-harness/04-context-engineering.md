@@ -65,7 +65,13 @@ If every turn adds a constant $a$ tokens and $L_0$ is small, this is $\sum_{t=1}
 
     Input cost: $2.17 \times 3 = $ **USD 6.51**. Output adds $40 \times 400 = 16{,}000$ tokens $\to$ USD 0.24. Total ≈ **USD 6.75** for one task.
 
-    Now cap the context at $C = 20{,}000$ tokens via compaction (Section below). Once $L_t$ hits the cap it stays there, so $T_{\text{in}} \approx 12\cdot(3000+2500t)|_{\text{ramp}} + 28\cdot20000 \approx 100{,}000 + 560{,}000 = 0.66\text{M}$. Input cost drops to ≈ **USD 1.98** — a 3× saving, *before* prompt caching, which can take another 5–10× off the cacheable prefix.
+    Now cap the context at $C = 20{,}000$ tokens via compaction (Section below). The cap binds from turn $t = 7$ onward ($3000 + 2500\cdot7 = 20{,}500 > C$), so six ramp turns are followed by 34 flat ones:
+
+    $$
+    T_{\text{in}} = \sum_{t=1}^{6}(3000+2500\,t) + 34\cdot20{,}000 = 70{,}500 + 680{,}000 = 0.75\text{M tokens}
+    $$
+
+    Input cost drops to ≈ **USD 2.25** — a 2.9× saving, *before* prompt caching, which can take another 5–10× off the cacheable prefix.
 
     The lesson: the agent that thinks about its context is not just smarter, it is dramatically cheaper.
 
@@ -272,13 +278,30 @@ class ContextBuilder:
         # 2) enforce the GLOBAL ceiling: if total still too big,
         #    squeeze the largest elastic segment further.
         ceiling = self.w_eff - self.output_reserve
-        while sum(s.tokens() for s in self.segments) > ceiling:
+        prev = None
+        while (total := sum(s.tokens() for s in self.segments)) > ceiling:
+            # Progress guard: shrinking a budget does nothing once every
+            # remaining item is pinned, so stop instead of spinning forever.
+            if prev is not None and total >= prev:
+                break
+            prev = total
             big = max(self.segments, key=lambda s: s.tokens())
             big.budget = int(big.budget * 0.85)   # tighten and re-fit
             big.fit()
-            if all(s.tokens() <= 1 for s in self.segments):
-                break
-        return "\n\n".join("\n".join(s.items) for s in self.segments)
+        prompt = "\n\n".join("\n".join(s.items) for s in self.segments)
+        # 3) last resort: if everything left is pinned and still over the
+        #    ceiling, hard-truncate so we can never exceed the API limit.
+        MARK = "\n[... truncated at global ceiling ...]"
+        if ntok(prompt) > ceiling:
+            # Binary-search the cut point, measuring the FINAL string each
+            # time (tokenization is not additive, so budgeting for MARK
+            # separately would leave us a token or two over).
+            lo, hi = 0, len(prompt)
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                lo, hi = (mid, hi) if ntok(prompt[:mid] + MARK) <= ceiling else (lo, mid - 1)
+            prompt = prompt[:lo] + MARK
+        return prompt
 
 # --- usage ---------------------------------------------------------------
 cb = ContextBuilder(w_eff=32_000, output_reserve=4000)
@@ -297,7 +320,7 @@ prompt = cb.build()
 print(f"assembled {ntok(prompt)} tokens (ceiling {32_000-4000})")
 ```
 
-The key design choices: per-segment caps prevent any one source (usually tool output or history) from cannibalizing the rest; *pinning* protects the load-bearing pieces (system prompt, current task, the active file); eviction leaves an explicit breadcrumb so the model knows context was removed rather than silently hallucinating continuity; and a global ceiling backstop guarantees you never exceed the API's hard limit.
+The key design choices: per-segment caps prevent any one source (usually tool output or history) from cannibalizing the rest; *pinning* protects the load-bearing pieces (system prompt, current task, the active file); eviction leaves an explicit breadcrumb so the model knows context was removed rather than silently hallucinating continuity; and a global ceiling backstop — tighten the largest segment while that still buys anything, then hard-truncate — guarantees you never exceed the API's hard limit even when every remaining item is pinned. That last clause matters: because breadcrumbs are themselves pinned, a fully evicted segment cannot shrink any further, so the backstop needs both a progress guard (to terminate) and a final cut (to be a real guarantee).
 
 One caveat about the counting itself. `ntok` above counts raw strings, but the model never sees raw strings — it sees the *rendered chat template*, which wraps every message in role headers and turn delimiters (`<|im_start|>assistant\n`, `<|eot_id|>`, …) and serializes the tool schemas into the prompt. Count what the server will actually prefill, with the model's own tokenizer (see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html)):
 
@@ -379,6 +402,12 @@ def maybe_compact(hist_seg: "Segment", call_model, keep_recent: int = 6):
     recent `keep_recent` turns (recency is high-value; never summarize it)."""
     if hist_seg.tokens() < 0.75 * hist_seg.budget:
         return
+    if keep_recent <= 0 or len(hist_seg.items) <= keep_recent:
+        # Nothing is old enough to compact. (Note `items[:-0] == []`, so the
+        # zero case must be caught explicitly.) If the segment is over budget
+        # anyway, one recent item is oversized -- bound it at the tool
+        # boundary instead of paying for a summary of an empty history.
+        return
     old, recent = hist_seg.items[:-keep_recent], hist_seg.items[-keep_recent:]
     snapshot = compact(call_model, old)
     # Replace the old span with one pinned snapshot; keep recent verbatim.
@@ -415,7 +444,10 @@ import json, os
 class Scratchpad:
     def __init__(self, path="PLAN.md"):
         self.path = path
-        if not os.path.exists(path):
+        # The .json mirror is the source of truth every read path uses, so
+        # guard on IT -- a hand-written PLAN.md with no mirror must still
+        # initialize, or the first tool call dies with FileNotFoundError.
+        if not os.path.exists(self.path + ".json"):
             self._write({"goal": "", "todos": [], "notes": [], "done": []})
 
     def _write(self, state: dict):

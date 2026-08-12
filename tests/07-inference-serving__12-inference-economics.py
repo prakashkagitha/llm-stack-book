@@ -56,7 +56,8 @@ def decode_step_time_ms(
     size (bandwidth-bound regime). At large batch sizes the MMA units become the
     bottleneck (compute-bound regime).
     """
-    # Bytes read: all parameters once (both weight read and result write)
+    # Bytes read: the model weights, streamed once per step (activation traffic
+    # is negligible at these batch sizes and is ignored here)
     bytes_read = n_params * bytes_per_param
     # FLOPs: 2 MACs per parameter per batch element
     flops = 2 * n_params * batch_size
@@ -163,7 +164,11 @@ def autoscale_step(
             )
             + 1
         )
-        desired = min(needed, config.max_replicas)
+        # This branch may only *add* replicas: measured throughput is low
+        # precisely when the fleet is struggling, so `needed` must act as a
+        # floor, never as a target that shrinks a fleet with a growing queue.
+        needed = max(needed, state.n_replicas)
+        desired = min(max(needed, config.min_replicas), config.max_replicas)
 
     # Scale DOWN: we have spare capacity
     elif (
@@ -252,7 +257,12 @@ def classify_complexity(prompt: str, n_few_shot: int = 0) -> float:
     hard_signal = sum(1 for w in words if w in hard_keywords) / max(n_words, 1)
     length_signal = min(n_words / 200.0, 1.0)  # normalize at 200 words
 
-    return min(1.0, code_signal * 2 + hard_signal * 2 + length_signal * 0.5)
+    # Code keywords are weighted above "hard" keywords so that a single code
+    # verb in a short prompt ("Implement a red-black tree...", 9 words) clears
+    # the 0.25 threshold; at weight 2 it scores 0.24 and misroutes to the small
+    # tier. Boundary cases like this are why production routers use a trained
+    # classifier rather than hand-tuned weights.
+    return min(1.0, code_signal * 3 + hard_signal * 2 + length_signal * 0.5)
 
 
 def route_query(prompt: str, complexity_threshold: float = 0.25) -> ModelTier:

@@ -104,7 +104,7 @@ $$
 
 It is deterministic, fast, and *not* equivalent to finding the most probable sequence. The globally most probable sequence — the *maximum a posteriori* (MAP) sequence — requires an exponential search, because token choices interact: the best next token often forecloses the best continuation.
 
-In practice, greedy decoding produces repetitive, low-entropy text. Once the model writes "The cat sat on the", it assigns high probability to "mat", which then makes "mat mat mat" the greedy continuation. This is not a defect in the model; it is a consequence of choosing the locally optimal token at each step without lookahead.
+In practice, greedy decoding produces repetitive, low-entropy text. The failure is a *self-reinforcing loop* over phrases rather than over single tokens: having already seen a phrase in its own context raises the model's probability of emitting that phrase again, and with no sampling noise to break the cycle greedy re-emits it forever — "... was founded in the United States. In the United States. In the United States." Holtzman et al. show the loop's per-token probability *increasing* with each repetition. This is not a defect in the model; it is a consequence of choosing the locally optimal token at each step without lookahead.
 
 ```python
 def greedy_decode(
@@ -310,13 +310,13 @@ class TypicalProcessor:
 
 Even with good sampling, models can fall into repetitive loops. Two complementary penalties address this.
 
-**Repetition penalty** (Keskar et al., "CTRL", 2019) discounts any token that has already appeared in the context:
+**Repetition penalty** (Keskar et al., "CTRL", 2019; sign-conditional form as implemented in HuggingFace `transformers`) discounts any token that has already appeared in the context:
 
 $$
-z'_t = \begin{cases} z_t / \theta & \text{if } t \in \text{context}, \; z_t > 0 \\ z_t \cdot \theta & \text{if } t \in \text{context}, \; z_t < 0 \end{cases}
+z'_t = \begin{cases} z_t / \theta & \text{if } t \in \text{context}, \; z_t > 0 \\ z_t \cdot \theta & \text{if } t \in \text{context}, \; z_t < 0 \\ z_t & \text{otherwise} \end{cases}
 $$
 
-for penalty $\theta > 1$. This reduces the probability of repeated tokens without suppressing them entirely.
+for penalty $\theta > 1$. This reduces the probability of repeated tokens without suppressing them entirely. The sign split matters: CTRL's original formulation divides the logit by $\theta$ *regardless of sign*, which for a negative logit ($-4/1.1 = -3.64$) actually *raises* the token's score. Every mainstream implementation therefore uses the two-branch version above, and that is what `repetition_penalty` means in `transformers`, vLLM and llama.cpp.
 
 **Frequency penalty** (used in OpenAI's API) subtracts a penalty proportional to how many times the token has appeared:
 
@@ -491,23 +491,23 @@ Tokens that the expert prefers over the amateur are amplified; tokens both model
 Chuang et al. ("DoLa: Decoding by Contrasting Layers Improves Factuality in Large Language Models", 2023) push this idea inside a single model. The observation: factual knowledge is represented in the later transformer layers, while surface-level fluency is settled earlier. DoLa computes:
 
 $$
-J(t) = \text{JSD}\!\left(P_{\text{final}}(\cdot) \;\|\; P_{\text{premature}}(\cdot)\right)
+J(\ell) = \text{JSD}\!\left(P_{\text{final}}(\cdot) \;\|\; P^{(\ell)}(\cdot)\right)
 $$
 
-to select the premature layer that diverges most from the final layer, then uses:
+for each candidate layer $\ell$, selects the premature layer $\arg\max_\ell J(\ell)$ — the one that diverges most from the final layer — then uses:
 
 $$
 \text{DoLa}(t) = \log P_{\text{final}}(t) - \log P_{\text{premature}}(t)
 $$
 
-as the decoding score. This amplifies tokens the final (knowledge-rich) layers prefer over intermediate layers, reducing hallucination without an external model.
+as the decoding score, restricted — exactly as in contrastive decoding — to the *plausible* set $\{t : P_{\text{final}}(t) \ge \alpha \max_{t'} P_{\text{final}}(t')\}$ with $\alpha = 0.1$, everything else masked to $-\infty$. This amplifies tokens the final (knowledge-rich) layers prefer over intermediate layers, reducing hallucination without an external model.
 
 ```python
 def dola_logits(
     model,
     input_ids: torch.Tensor,
     premature_layer: int,         # e.g. layer 16 in a 32-layer model
-    alpha: float = 0.1,           # mixing coefficient
+    alpha: float = 0.1,           # adaptive plausibility threshold (NOT a mixing weight)
 ) -> torch.Tensor:
     """
     Compute DoLa-adjusted logits by contrasting the final layer
@@ -534,10 +534,19 @@ def dola_logits(
     premature_logits = lm_head(norm(hidden_states[premature_layer][:, -1, :]))
     final_logits     = outputs.logits[:, -1, :]
 
-    # Contrastive combination
-    dola_log_probs = (
-        F.log_softmax(final_logits, dim=-1)
-        - alpha * F.log_softmax(premature_logits, dim=-1)
+    # Contrastive score: the FULL log-prob difference, restricted to the
+    # final layer's plausible set. alpha is the adaptive plausibility
+    # threshold of Chuang et al. (0.1), not a weight on the subtraction:
+    # without the mask, a far-tail token the final layer hates can still win,
+    # because a large negative minus a larger negative is positive.
+    final_log_probs = F.log_softmax(final_logits, dim=-1)
+    premature_log_probs = F.log_softmax(premature_logits, dim=-1)
+
+    final_probs = final_log_probs.exp()
+    implausible = final_probs < alpha * final_probs.max(dim=-1, keepdim=True).values
+
+    dola_log_probs = (final_log_probs - premature_log_probs).masked_fill(
+        implausible, float('-inf')
     )
     return dola_log_probs.squeeze(0)
 ```
@@ -566,7 +575,7 @@ The ideal point depends on the task:
 | RL rollouts (exploration) | Temperature 0.9–1.2, no truncation |
 | Distillation soft targets | Temperature 2.0–5.0, no truncation |
 
-One important empirical finding: for most instruction-tuned models, the training process implicitly calibrates the output distribution for temperature around 0.7–1.0. Going significantly below 0.3 causes the model to confidently hallucinate because the distribution was not trained to be sharp; going above 1.5 on instruction models often causes grammatical collapse.
+One important empirical finding: for most instruction-tuned models, the training process implicitly calibrates the output distribution for temperature around 0.7–1.0. Going significantly below 0.3 does not make the model more accurate so much as more *committed*: it concentrates mass on the already-top-ranked token, so a mistake that was occasional becomes deterministic, and the text drifts toward the repetition and looping described in the greedy section. (That determinism is exactly why benchmarks are run greedy — you want the error to be reproducible, not averaged away by luck.) Going above 1.5 on instruction models often causes grammatical collapse.
 
 !!! tip "Practitioner tip: decoding a ~100M-parameter model"
 
@@ -692,7 +701,7 @@ Custom processors enable powerful behaviours:
 
 - **Grammar enforcement**: mask all tokens incompatible with a context-free grammar at the current parser state (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html)).
 - **Watermarking**: John Kirchenbauer et al. ("A Watermark for Large Language Models", 2023) add a small positive bias to a randomly chosen half of the vocabulary, seeded by the previous token. This creates a statistically detectable fingerprint in the output.
-- **Token healing**: vLLM's token healing re-processes the last token of the prompt to avoid boundary artefacts when the prompt ends mid-token.
+- **Token healing**: roll the last prompt token back and regenerate it under a string-prefix constraint, so a prompt that ends mid-token (a trailing `"http:` or a partial word) is not forced onto an unnatural tokenisation. It originated in Microsoft's `guidance` and is exposed in HuggingFace as `generate(..., token_healing=True, tokenizer=tok)`; vLLM has no equivalent flag, so with an OpenAI-style server you have to heal the boundary yourself.
 - **Vocabulary bias**: force specific tokens (e.g., "yes"/"no" for classification prompts) by setting all other logits to $-\infty$.
 
 ## Temperature and RL/Distillation Interactions
@@ -715,8 +724,10 @@ Hinton et al. ("Distilling the Knowledge in a Neural Network", 2015) showed that
 For LLM distillation, we match:
 
 $$
-\mathcal{L}_{\text{distill}} = \sum_t D_{\text{KL}}\!\left(P_T^{\text{teacher}}(t) \;\|\; P_T^{\text{student}}(t)\right) \cdot T^2
+\mathcal{L}_{\text{distill}} = T^2 \sum_{i=1}^{n} D_{\text{KL}}\!\left(P_T^{\text{teacher}}(\cdot \mid t_{<i}) \;\big\|\; P_T^{\text{student}}(\cdot \mid t_{<i})\right)
 $$
+
+where $i$ indexes *positions* in the sequence and each KL is taken between two full next-token distributions over the vocabulary.
 
 The $T^2$ factor re-scales the gradient to have the same magnitude regardless of temperature (since softmax gradients scale as $1/T^2$ when divided by $T$). In practice, temperatures of 2–5 are common for token-level distillation.
 
@@ -950,7 +961,7 @@ if __name__ == "__main__":
 
     $$P(BA) = 0.4 \times 0.95 = 0.38 > 0.33.$$
 
-    Greedy never even considers $BA$ because it discarded $B$ at step 1. Finding $BA$ requires lookahead — exactly what beam search (approximately) and exhaustive MAP search (exactly) provide. This is why greedy can produce sequences that are individually locally optimal yet globally suboptimal, and it is the same mechanism behind the "The cat sat on the mat mat mat" degeneration described earlier in the chapter.
+    Greedy never even considers $BA$ because it discarded $B$ at step 1. Finding $BA$ requires lookahead — exactly what beam search (approximately) and exhaustive MAP search (exactly) provide. This is why greedy can produce sequences that are individually locally optimal yet globally suboptimal — the same lack of lookahead that lets greedy walk into the self-reinforcing repetition loops described earlier in the chapter.
 
 **2.** A model emits three top logits $z = [4.0,\, 2.0,\, 1.0]$ for tokens $A, B, C$ (all other tokens are negligible). Using $e^4 \approx 54.60$, $e^2 \approx 7.389$, $e^1 \approx 2.718$, $e^8 \approx 2980.96$:
 

@@ -41,7 +41,7 @@ The score is *resolve rate* = fraction of tasks where all tests pass. Notice tha
 
 This means comparing two entries requires checking their scaffold, not just their model. See [Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html) for how this connects to multi-turn training.
 
-**Contamination.** The SWE-bench test set was constructed from issues merged before mid-2023. Models trained on data scraped after that date may have seen the solution in GitHub history. SWE-bench Verified includes a temporal split, but no benchmark fully escapes this problem for frontier models.
+**Contamination.** The SWE-bench test set was constructed from issues merged before mid-2023. Models trained on data scraped after that date may have seen the solution in GitHub history. Note that SWE-bench Verified does **not** help here: its human annotation filtered for *task quality* (is the issue well-specified? are the `FAIL_TO_PASS` tests valid and not over-specific?), not for recency, so it is drawn from exactly the same pre-mid-2023 population and inherits the same exposure. Genuinely recency-filtered or held-out successors (e.g. SWE-bench Pro's held-out split) are the contamination-resistant option, but no benchmark fully escapes this problem for frontier models.
 
 ```python
 # Minimal SWE-bench task runner (illustrative, not the official harness)
@@ -95,6 +95,7 @@ def run_swebench_task(repo_path: str, patch: str, test_cmd: str) -> bool:
 
 ```python
 # The dataset tells you exactly what the grader will check.
+import json
 from datasets import load_dataset
 
 ds = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
@@ -102,8 +103,12 @@ ex = ds[0]
 print(ex["instance_id"])         # e.g. "astropy__astropy-12907"
 print(ex["repo"], ex["base_commit"])   # checkout target: the commit BEFORE the fix
 print(ex["problem_statement"][:200])   # the GitHub issue text given to the agent
-print(ex["FAIL_TO_PASS"])              # JSON list: must flip failing -> passing
-print(ex["PASS_TO_PASS"])              # JSON list: must remain passing (regression guard)
+
+# NOTE: these two columns are JSON-encoded *strings*, not list-typed columns, so
+# decode them before iterating (otherwise you silently loop over characters).
+f2p = json.loads(ex["FAIL_TO_PASS"])   # must flip failing -> passing
+p2p = json.loads(ex["PASS_TO_PASS"])   # must remain passing (regression guard)
+print(len(f2p), len(p2p))
 
 # Your scaffold's only job is to emit one JSON object per instance:
 #   {"instance_id": "astropy__astropy-12907",
@@ -118,7 +123,9 @@ python -m swebench.harness.run_evaluation \
   --predictions_path preds.jsonl \
   --max_workers 8 \
   --run_id my-agent-v1
-# -> my-agent-v1.json with resolved_ids / unresolved_ids, plus per-instance run logs.
+# -> <model_name_or_path>.<run_id>.json in the working directory (here:
+#    my-agent-v1.my-agent-v1.json) with resolved_ids / unresolved_ids, plus
+#    per-instance logs under logs/run_evaluation/<run_id>/<model>/<instance_id>/.
 # The repo also ships `sb-cli` to run the same evaluation on hosted infrastructure
 # if you do not want tens of GB of container images on a laptop.
 ```
@@ -127,7 +134,7 @@ Note the division of labour: **the harness grades patches, it does not produce t
 
 ### WebArena
 
-WebArena (Zhou et al., 2023) measures whether an agent can complete realistic web tasks — booking travel, searching an e-commerce site, navigating a codebase on GitLab, managing a Reddit-like forum, and similar. Tasks are expressed as natural-language instructions, and the agent interacts with live web environments via a browser API.
+WebArena (Zhou et al., 2023) measures whether an agent can complete realistic web tasks — searching an e-commerce storefront, administering its back-office CMS, navigating a codebase on GitLab, managing a Reddit-like forum, planning a route on a map site, and similar. Tasks are expressed as natural-language instructions, and the agent interacts with live web environments via a browser API.
 
 **Key design decisions:**
 
@@ -147,9 +154,9 @@ GAIA (Mialon et al., 2023) — the General AI Assistants benchmark — poses que
 
 | Level | Description | Example |
 |-------|-------------|---------|
-| 1 | Simple tool use, 1–3 steps | "What is the capital of the country where X was born?" |
-| 2 | Multi-hop, 4–8 steps | Parsing a PDF, looking up a value, doing arithmetic |
-| 3 | Complex chained reasoning, 8+ steps | Cross-referencing multiple documents, code execution |
+| 1 | No tool or at most one tool, no more than ~5 steps | "What is the capital of the country where X was born?" |
+| 2 | Roughly 5–10 steps, combining several tools | Parsing a PDF, looking up a value, doing arithmetic |
+| 3 | Arbitrarily long action sequences, any number of tools — a near-perfect assistant | Cross-referencing multiple documents, code execution |
 
 GAIA is deliberately designed so that the answers are short and verifiable (a number, a name, a date), reducing ambiguity in grading. Level 3 tasks remain very hard even for frontier models.
 
@@ -431,11 +438,11 @@ task_results = [(8, random.randint(0, 3)) for _ in range(500)]
 for k in [1, 2, 4, 8]:
     score = aggregate_pass_at_k(task_results, k)
     print(f"pass@{k}: {score:.3f}")
-# Example output (will vary by random seed):
-# pass@1: 0.188
-# pass@2: 0.340
-# pass@4: 0.560
-# pass@8: 0.737
+# Output (deterministic — the seed is pinned above):
+# pass@1: 0.184
+# pass@2: 0.334
+# pass@4: 0.546
+# pass@8: 0.748
 ```
 
 {{fig:ageval-pass-at-k}}
@@ -484,7 +491,7 @@ Agent benchmarks have notoriously high variance. The main sources are:
 
 **Test suite fragility.** Some SWE-bench test suites are flaky — tests that pass and fail non-deterministically regardless of the patch. The Verified subset was curated to reduce this, but it persists in the full set.
 
-**Two variances, not one.** It is worth separating them explicitly, because they call for different fixes. *Seed variance* is the spread you get by rerunning the same agent on the same task; you shrink it by averaging more seeds per task. *Task-sampling variance* is the spread you would get if the benchmark had drawn a different 500 issues from the same population; more seeds do **not** shrink it — only more tasks do. The binomial standard error below captures only the second, and only under the assumption of exactly one draw per task. If you run $S$ seeds per task and then plug the pooled success count into that formula, you will report an interval that is too narrow by roughly $\sqrt{S}$, because your $N \times S$ observations are not $N \times S$ independent draws — they are clustered within $N$ tasks. The fix is a cluster bootstrap over tasks (`bootstrap_ci` below).
+**Two variances, not one.** It is worth separating them explicitly, because they call for different fixes. *Seed variance* is the spread you get by rerunning the same agent on the same task; you shrink it by averaging more seeds per task. *Task-sampling variance* is the spread you would get if the benchmark had drawn a different 500 issues from the same population; more seeds do **not** shrink it — only more tasks do. The binomial standard error below captures only the second, and only under the assumption of exactly one draw per task. If you run $S$ seeds per task and then plug the pooled success count into that formula, you will report an interval that is too narrow by up to $\sqrt{S}$ — precisely by $\sqrt{1 + (S-1)\rho}$, where $\rho$ is the within-task correlation of outcomes — because your $N \times S$ observations are not $N \times S$ independent draws; they are clustered within $N$ tasks. The $\sqrt{S}$ worst case is approached when per-task outcomes are near-deterministic ($\rho \to 1$), which is common for agent tasks: most tasks are solved every seed or no seed. The fix is a cluster bootstrap over tasks (`bootstrap_ci` below).
 
 ### Confidence Intervals for Agent Scores
 
@@ -544,7 +551,7 @@ def bootstrap_ci(per_task_rates: list[float],
     Resampling whole tasks (not individual rollouts) keeps the within-task
     correlation intact, so the interval reflects task-sampling variance plus the
     residual seed noise. Feeding pooled N*S rollouts to the binomial SE instead
-    would understate the width by roughly sqrt(S).
+    would understate the width by up to sqrt(S) (exactly sqrt(1 + (S-1)*rho)).
     """
     rng = np.random.default_rng(seed)
     arr = np.asarray(per_task_rates, dtype=float)
@@ -605,7 +612,7 @@ Data contamination — the presence of benchmark tasks or solutions in pretraini
 **Detection methods and their limits.**
 
 1. *N-gram overlap detection* (Membership Inference, Min-K% Prob): Check whether the test instances appear verbatim in training. Works for exact matches, fails for paraphrased or semantically equivalent content.
-2. *Temporal splits*: Only use issues filed and resolved after a model's training cutoff. SWE-bench Verified includes recency filtering, but models may still have seen the PR through commit history.
+2. *Temporal splits*: Only use issues filed and resolved after a model's training cutoff. This is what SWE-bench Verified does *not* give you — its curation targets specification clarity and test validity, not task dates — so reach for a successor with a genuinely held-out or recency-filtered split (SWE-bench Pro) if contamination is the concern.
 3. *Differential perturbation*: Create modified versions of the task (rename variables, change error message) and check if the model's solve rate drops. A large drop suggests memorization; robustness suggests generalization.
 4. *Canary insertion*: Insert synthetic "planted" tasks into the benchmark and check if any model exhibits disproportionately high solve rates on them.
 
@@ -622,7 +629,7 @@ Data contamination — the presence of benchmark tasks or solutions in pretraini
 
 Stepping back, what does the trajectory of agent benchmark scores tell us about real progress?
 
-**SWE-bench as a case study.** In mid-2023, the best published resolve rates on SWE-bench were around 3–5% (a single model without retrieval). By early 2025, leaderboard-leading entries were already reporting resolve rates past 60% on SWE-bench Verified, and by 2026 frontier systems cluster near saturation — on the order of 90% — so attention has shifted to harder, contamination-resistant successors such as SWE-bench Pro, where resolve rates remain below 25%. That is a genuine capability jump — the tasks are real software engineering problems and the evaluation is objective.
+**SWE-bench as a case study.** In late 2023, the original SWE-bench paper's headline result was a best resolve rate of **1.96%** on the full test set (Claude 2) — and that was *with* retrieval feeding the model candidate files, not without it. By early 2025, leaderboard-leading entries were already reporting resolve rates past 60% on SWE-bench Verified, and by 2026 frontier systems cluster near saturation — on the order of 90% — so attention has shifted to harder, contamination-resistant successors such as SWE-bench Pro, where resolve rates remain below 25%. That is a genuine capability jump — the tasks are real software engineering problems and the evaluation is objective.
 
 But much of the improvement came from scaffolding, not just the base model. The signal is real, but it is a *system* signal: (model + harness + compute budget) rather than model-in-isolation.
 
@@ -700,7 +707,12 @@ class EvalConfig:
 
     def fingerprint(self) -> str:
         """Stable hash of this config for deduplication."""
-        s = json.dumps(asdict(self), sort_keys=True)
+        d = asdict(self)
+        # Drop non-semantic fields, or two runs of the *same* config would hash
+        # differently (timestamp is auto-filled to the current time above) and
+        # the fingerprint would deduplicate nothing.
+        d.pop("timestamp", None)
+        s = json.dumps(d, sort_keys=True)
         return hashlib.sha256(s.encode()).hexdigest()[:12]
 
 
@@ -789,7 +801,7 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
     - Outcome scoring (binary pass/fail) is the norm; trajectory scoring provides richer diagnostics but requires annotated demonstrations or process reward models.
     - pass@k is the correct estimator when you run multiple samples: $\text{pass@}k = 1 - \binom{n-c}{k}/\binom{n}{k}$, unbiased and numerically stable.
     - Harness choices — file localization, iteration budget, tools available, context truncation — routinely shift SWE-bench scores by 10–20 percentage points, making harness disclosure mandatory for fair comparison.
-    - With 500 tasks and ~30% solve rate, a 95% CI spans about ±4 points; a 3-point improvement may be noise. Use McNemar's paired test and report CIs, not just point estimates — and when you run several seeds per task, use a cluster bootstrap over tasks, since pooling rollouts into a binomial SE understates the width by roughly $\sqrt{S}$.
+    - With 500 tasks and ~30% solve rate, a 95% CI spans about ±4 points; a 3-point improvement may be noise. Use McNemar's paired test and report CIs, not just point estimates — and when you run several seeds per task, use a cluster bootstrap over tasks, since pooling rollouts into a binomial SE understates the width by up to $\sqrt{S}$.
     - A ~100M model floors every public agent benchmark, so evaluate it on 60–120 held-out narrow tasks with programmatic checkers plus sub-outcome metrics (tool-call schema validity, tool-choice accuracy, retrieval hit rate) that still have resolution.
     - Contamination is a structural risk: SWE-bench tasks live on GitHub and may appear in training crawls; prefer recency-filtered splits and stratify results by task creation date.
     - In production, augment pass@k with cost-normalized metrics (tasks solved per dollar) and ablation studies that separate model contribution from scaffold contribution.
@@ -807,7 +819,7 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
     - [Zhou et al., *WebArena: A Realistic Web Environment for Building Autonomous Agents* (2023)](https://arxiv.org/abs/2307.13854) — sandboxed web benchmark across e-commerce, GitLab, and forum tasks; state-based functional evaluation.
     - [Mialon et al., *GAIA: a benchmark for General AI Assistants* (2023)](https://arxiv.org/abs/2311.12983) — three-level benchmark requiring multi-hop tool use with exact-match grading; humans score 92% vs. ~15% for GPT-4 with plugins.
     - [Yao et al., *τ-bench: Tool-Agent-User Interaction in Real-World Domains* (2024)](https://arxiv.org/abs/2406.12045) — simulated customer-service benchmark with policy-compliance scoring and a multi-turn pass^k metric.
-    - [Xie et al., *OSWorld: Benchmarking Multimodal Agents in Real Computer Environments* (2024)](https://arxiv.org/abs/2404.07972) — 369 tasks spanning Ubuntu, Windows, and macOS; at release the best model achieved ~12% vs. 72% human performance, though frontier computer-use agents have since risen well above that.
+    - [Xie et al., *OSWorld: Benchmarking Multimodal Agents in Real Computer Environments* (2024)](https://arxiv.org/abs/2404.07972) — 369 Ubuntu-based tasks inside an environment that also supports Windows and macOS; at release the best model achieved ~12% vs. 72% human performance, though frontier computer-use agents have since risen well above that.
     - [SWE-Bench Pro: Can AI Agents Solve Long-Horizon Software Engineering Tasks? (Scale AI, 2025)](https://arxiv.org/abs/2509.16941) — 1,865 enterprise-scale, multi-file tasks with public, held-out, and commercial splits designed to resist contamination; frontier resolve rates stay below 25% (Pass@1).
     - [Barres et al., *τ²-Bench: Evaluating Conversational Agents in a Dual-Control Environment* (2025)](https://arxiv.org/abs/2506.07982) — extends τ-bench so the simulated user also wields tools in a shared state, modeling technical-support-style coordination.
     - [Yehudai et al., *Survey on Evaluation of LLM-based Agents* (2025)](https://arxiv.org/abs/2503.16416) — comprehensive survey across five evaluation dimensions: core capabilities, application benchmarks, generalist agents, benchmark analysis, and evaluation frameworks.

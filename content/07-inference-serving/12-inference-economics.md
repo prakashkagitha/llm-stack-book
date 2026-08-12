@@ -58,22 +58,22 @@ $$
 
 !!! example "Worked Example: H100 cluster serving Llama-3 70B"
 
-    **Setup:** 4× H100 SXM (8 GPU node rented at around \$20/hour, or roughly \$2.50/GPU-hour). Serving Llama-3 70B in BF16 (140 GB weights), tensor-parallel across 4 GPUs. At a busy batch of 32 concurrent requests each generating 512 tokens:
+    **Setup:** 4× H100 SXM at roughly \$5.00/GPU-hour, so about \$20/hour for the four-GPU group you are actually billed for. Serving Llama-3 70B in BF16 (140 GB weights), tensor-parallel across those 4 GPUs. At a busy batch of 32 concurrent requests each generating 512 tokens:
 
     - Sustained decode throughput (measured): roughly 1,800 output tokens/second for the 4-GPU node.
-    - Rental cost: \$20/hour for the node.
+    - Rental cost: \$20/hour for the four-GPU group.
 
     $$
     \text{\$/1M tokens} = \frac{20 \times 10^6}{1800 \times 3600} = \frac{20{,}000{,}000}{6{,}480{,}000} \approx \$3.09 \text{ per 1M output tokens}
     $$
 
-    If we instead run a small batch of 4 (low traffic), throughput drops to ~550 tokens/s:
+    If we instead run a small batch of 6 (low traffic), throughput drops to ~550 tokens/s — note it does *not* drop in proportion to the batch, because each GPU still streams its 35 GB weight shard every step no matter how few sequences are riding along (a ~10.4 ms floor at 3.35 TB/s), so the step time shrinks only by the KV traffic you removed:
 
     $$
     \text{\$/1M tokens} = \frac{20 \times 10^6}{550 \times 3600} \approx \$10.10 \text{ per 1M output tokens}
     $$
 
-    **Lesson:** at 1/8th the traffic, cost per token triples. Low utilization is the enemy of cost efficiency.
+    **Lesson:** at roughly a fifth of the concurrency, cost per token triples. Low utilization is the enemy of cost efficiency.
 
 {{fig:econ-cost-per-token-hyperbola}}
 
@@ -109,7 +109,7 @@ The report gives you output-token throughput plus mean/median/p99 TTFT, TPOT (ti
 
 !!! warning "Common pitfall"
 
-    Benchmarking closed-loop (a fixed pool of $N$ clients, each sending the next request only after the previous one returns) reports a flattering throughput number that no real traffic will reproduce. Closed-loop load self-throttles: when the server slows down, the offered load drops with it, so queues never build and p99 latency never blows up. Always use an open-loop generator with a target arrival rate (`--request-rate`), which is what `vllm bench serve` and `sglang.bench_serving` do by default. `--request-rate inf` reverts to the flattering saturation number — useful for offline batch sizing, misleading for interactive SLOs.
+    Benchmarking closed-loop (a fixed pool of $N$ clients, each sending the next request only after the previous one returns) reports a flattering throughput number that no real traffic will reproduce. Closed-loop load self-throttles: when the server slows down, the offered load drops with it, so queues never build and p99 latency never blows up. Always use an open-loop generator with a *finite* target arrival rate, which is what `vllm bench serve` and `sglang.bench_serving` give you once you pass `--request-rate`. Both default to `--request-rate inf`, which fires every prompt at once and reports the flattering saturation number — useful for offline batch sizing, misleading for interactive SLOs — so setting the flag explicitly is not optional.
 
 ### Input Tokens vs. Output Tokens
 
@@ -183,7 +183,8 @@ def decode_step_time_ms(
     size (bandwidth-bound regime). At large batch sizes the MMA units become the
     bottleneck (compute-bound regime).
     """
-    # Bytes read: all parameters once (both weight read and result write)
+    # Bytes read: the model weights, streamed once per step (activation traffic
+    # is negligible at these batch sizes and is ignored here)
     bytes_read = n_params * bytes_per_param
     # FLOPs: 2 MACs per parameter per batch element
     flops = 2 * n_params * batch_size
@@ -327,8 +328,8 @@ When choosing a GPU for inference, the relevant specs are different from those f
 
 | GPU | HBM (GB) | BW (TB/s) | BF16 TFLOP/s | $/hr (spot, approx) |
 |---|---|---|---|---|
-| A10G | 24 | 0.60 | 31.2 | ~\$0.70 |
-| A100 40GB | 40 | 2.00 | 312 | ~\$2.50 |
+| A10 / A10G | 24 | 0.60 | ~125 | ~\$0.70 |
+| A100 40GB | 40 | 1.55 | 312 | ~\$2.50 |
 | A100 80GB | 80 | 2.00 | 312 | ~\$3.50 |
 | H100 SXM5 | 80 | 3.35 | 989 | ~\$5.00 |
 | H200 SXM | 141 | 4.80 | 989 | ~\$7.00 |
@@ -341,7 +342,7 @@ For inference on a fixed model, the figures of merit are:
 2. **Max batch size before KV-cache OOM**: dominated by HBM capacity.
 3. **TTFT for long prompts**: dominated by compute (FLOP/s).
 
-The H100's jump in bandwidth (3.35 vs. 2.00 TB/s for A100) directly translates to a 1.67× speedup in decode throughput per GPU when bandwidth-bound — before any software optimization.
+The H100's jump in bandwidth (3.35 vs. 2.00 TB/s for the A100 80GB) directly translates to a 1.67× speedup in decode throughput per GPU when bandwidth-bound — before any software optimization.
 
 ### Tensor Parallelism Across GPUs
 
@@ -351,7 +352,7 @@ $$
 t_{\text{decode, TP=N}}(B) \approx \max\!\left(\frac{2P / N}{\text{BW}_{\text{GPU}}},\ \frac{2PB / N}{\text{FLOP/s}_{\text{GPU}}}\right) + t_{\text{allreduce}}
 $$
 
-The all-reduce adds a fixed per-step communication overhead (typically a few ms over NVLink). Since the weight-streaming time halves with TP=2, the effective batch size breakeven also halves — you saturate compute with fewer concurrent requests.
+The all-reduce adds a fixed per-step communication overhead (typically a few ms over NVLink). Note that the $1/N$ cancels in the breakeven: TP divides weight bytes *and* FLOPs by the same factor, so $B^\ast = \text{FLOP/s}_{\text{GPU}} / \text{BW}_{\text{GPU}}$ is unchanged. What TP buys is a lower absolute step time (each GPU streams only its shard of the weights) and the memory to fit the model at all — not a cheaper path to saturation.
 
 For very large models (>70B), TP is often mandatory to fit in memory. The key point is that **TP does not improve tokens/s/dollar beyond what's needed to fit the model** — it just allows serving. Sequence parallelism and disaggregated architectures are needed for further scaling (see [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html)).
 
@@ -422,7 +423,7 @@ For prefill-heavy workloads, a similar formula applies based on TTFT SLO and pre
 
     Suppose your API sees peak traffic of 50 requests/second, each generating an average of 400 output tokens. You are using A100 80GB GPUs with TP=1 serving a 13B model. The 13B model fits on one GPU with plenty of KV cache headroom.
 
-    Sustained decode throughput at batch=50 (all bandwidth-bound): roughly 8,000 tokens/s per A100 (illustrative).
+    Sustained decode throughput at batch≈110 (all bandwidth-bound): roughly 8,000 tokens/s per A100 (illustrative). Sanity-check it against the roofline before trusting it: 13B in BF16 is 26 GB of weights, so the streaming floor on a 2.0 TB/s A100 is $26/2000 \approx 13$ ms per step, and 110 sequences at a ~13.7 ms step is indeed ~8,000 tokens/s. A number like 8,000 tokens/s at batch 50 would have been *below* the bandwidth floor, i.e. impossible.
 
     Target utilization = 0.70 (30% headroom for traffic spikes and cold starts).
 
@@ -497,7 +498,11 @@ def autoscale_step(
         # Estimate replicas needed to drain queue within 30 seconds
         needed = int((active_tokens_per_sec + queue_depth_tokens / 30.0)
                      / config.target_tokens_per_sec_per_replica) + 1
-        desired = min(needed, config.max_replicas)
+        # This branch may only *add* replicas: measured throughput is low
+        # precisely when the fleet is struggling, so `needed` must act as a
+        # floor, never as a target that shrinks a fleet with a growing queue.
+        needed = max(needed, state.n_replicas)
+        desired = min(max(needed, config.min_replicas), config.max_replicas)
 
     # Scale DOWN: we have spare capacity
     elif active_tokens_per_sec < 0.5 * tokens_capacity and state.n_replicas > config.min_replicas:
@@ -532,7 +537,7 @@ For a 70B model:
 | FP8 | 70 GB | 2.0× | 1× H100 |
 | INT4 (AWQ) | 35 GB | 4.0× | 1× H100 (with KV headroom) |
 
-FP8 inference is supported natively on H100 and Blackwell hardware via the FP8 matmul units, offering near-BF16 quality with roughly 2× throughput improvement — a straightforward win for most production workloads. On Blackwell, NVIDIA's NVFP4 4-bit format (a micro-scaled FP4 storing one FP8 scale per 16 values) pushes this further: post-training quantization to NVFP4 has been shown to stay within about 1% of FP8 accuracy on models like DeepSeek-R1 while delivering roughly 3× the FP8 (up to 4× the BF16) peak throughput on Blackwell, and it is now deployable via TensorRT-LLM and vLLM. In 2026 this makes hardware-native 4-bit a viable production tier rather than a research curiosity.
+FP8 inference is supported natively on H100 and Blackwell hardware via the FP8 matmul units, offering near-BF16 quality with roughly 2× throughput improvement — a straightforward win for most production workloads. On Blackwell, NVIDIA's NVFP4 4-bit format (a micro-scaled FP4 storing one FP8 scale per 16 values) pushes this further: post-training quantization to NVFP4 has been shown to stay within about 1% of FP8 accuracy on models like DeepSeek-R1 while delivering roughly 2× the FP8 (and 4× the BF16) peak tensor-core throughput on Blackwell, and it is now deployable via TensorRT-LLM and vLLM. In 2026 this makes hardware-native 4-bit a viable production tier rather than a research curiosity.
 
 ### KV Cache Quantization
 
@@ -600,7 +605,12 @@ def classify_complexity(prompt: str, n_few_shot: int = 0) -> float:
     hard_signal  = sum(1 for w in words if w in hard_keywords) / max(n_words, 1)
     length_signal = min(n_words / 200.0, 1.0)  # normalize at 200 words
 
-    return min(1.0, code_signal * 2 + hard_signal * 2 + length_signal * 0.5)
+    # Code keywords are weighted above "hard" keywords so that a single code
+    # verb in a short prompt ("Implement a red-black tree...", 9 words) clears
+    # the 0.25 threshold; at weight 2 it scores 0.24 and misroutes to the small
+    # tier. Boundary cases like this are why production routers use a trained
+    # classifier rather than hand-tuned weights.
+    return min(1.0, code_signal * 3 + hard_signal * 2 + length_signal * 0.5)
 
 
 def route_query(prompt: str, complexity_threshold: float = 0.25) -> ModelTier:
@@ -965,7 +975,7 @@ Alert thresholds to set:
 
     Working the arithmetic by hand for batch 64 (both precisions are bandwidth-bound, since the compute term $2PB/\text{FLOP/s} = 2 \times 70\text{e}9 \times 64 / 989\text{e}12 \approx 9.1$ ms is below both bandwidth floors):
 
-    - **BF16**: $t_{\text{step}} = 2 \times 70\text{e}9 \times 2 / 3.35\text{e}12 \approx 41.8$ ms. $\;T = 64 / 0.0418 \approx 1{,}531$ tok/s. $\;\$/1M = 5\text{e}6 / (1531 \times 3600) \approx \$0.91$.
-    - **INT8**: bytes read halve, so $t_{\text{step}} \approx 20.9$ ms. $\;T = 64 / 0.0209 \approx 3{,}063$ tok/s. $\;\$/1M = 5\text{e}6 / (3063 \times 3600) \approx \$0.45$.
+    - **BF16**: $t_{\text{step}} = 70\text{e}9 \times 2\ \text{B} / 3.35\text{e}12 \approx 41.8$ ms. $\;T = 64 / 0.0418 \approx 1{,}531$ tok/s. $\;\$/1M = 5\text{e}6 / (1531 \times 3600) \approx \$0.91$.
+    - **INT8**: bytes read halve ($70\text{e}9 \times 1\ \text{B} / 3.35\text{e}12$), so $t_{\text{step}} \approx 20.9$ ms. $\;T = 64 / 0.0209 \approx 3{,}063$ tok/s. $\;\$/1M = 5\text{e}6 / (3063 \times 3600) \approx \$0.45$.
 
     The INT8 throughput is $3063 / 1531 = 2.0\times$ the BF16 throughput and the cost per token is halved — exactly the $\text{bits}_{\text{original}} / \text{bits}_{\text{quantized}} = 16/8 = 2.0\times$ bandwidth speedup the chapter predicts, because in the bandwidth-bound regime halving the bytes-per-weight halves the per-step weight-streaming time.

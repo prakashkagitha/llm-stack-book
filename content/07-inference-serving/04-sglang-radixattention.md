@@ -13,7 +13,7 @@ By the end you should be able to (a) explain RadixAttention's data structure and
 
 ## Why RadixAttention exists: the shared-prefix problem
 
-Recall the two phases of inference from [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html). **Prefill** runs the prompt through the model once, producing one KV vector pair per layer per token; this is compute-bound and $O(L)$ in prompt length $L$. **Decode** then generates tokens one at a time, each step reading the entire KV cache; this is memory-bandwidth-bound.
+Recall the two phases of inference from [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html). **Prefill** runs the prompt through the model once, producing one KV vector pair per layer per token; this is compute-bound, costing $\approx 2PL$ FLOPs for a $P$-parameter model plus a quadratic $O(L^2)$ attention term that only starts to matter at long context. **Decode** then generates tokens one at a time, each step reading the entire KV cache; this is memory-bandwidth-bound.
 
 The crucial observation: a huge fraction of real-world prompts *share prefixes*.
 
@@ -330,7 +330,9 @@ def tip_suggestion(s):
 backend = sgl.RuntimeEndpoint("http://localhost:30000")
 sgl.set_default_backend(backend)
 state = tip_suggestion.run()
-print(state["tip_0"], state["tip_1"], state["tip_2"])
+# NOTE: join(mode="gather_variable") copies each child variable into the parent
+# WRAPPED IN A LIST, so state["tip_0"] is ["<text>"], not "<text>". Index it.
+print(state["tip_0"][0], state["tip_1"][0], state["tip_2"][0])
 ```
 
 The primitives (from `python/sglang/lang/api.py`):
@@ -343,13 +345,13 @@ The primitives (from `python/sglang/lang/api.py`):
 
 ### Why this matters beyond ergonomics
 
-`fork` is where the frontend and RadixAttention meet. When you fork three branches off a shared context, SGLang knows — *statically, before running* — that all three share a prefix, so it computes that prefix's KV once and points all three branches at the same radix node. Compare this to issuing three independent HTTP requests: with RadixAttention the prefix is *probably* still cached, but with `fork` it is *guaranteed* shared and the branches are co-scheduled into the same batch. The frontend turns prefix sharing from a lucky cache hit into a planned execution.
+`fork` is where the frontend and RadixAttention meet. When you fork three branches off a shared context, SGLang knows *at fork time* that all three share a prefix: the parent state's text is already materialized, so the interpreter first flushes it to the runtime as a `max_new_tokens=0` "commit" request that prefills the prefix and lands it in the radix tree, then fires the three branches concurrently against that freshly warmed node. Compare this to issuing three independent HTTP requests: those may arrive minutes apart, so the prefix is only *probably* still cached, whereas the fork's branches are dispatched together, back-to-back with the commit, and are co-scheduled into the same batch. The frontend turns prefix sharing from a lucky cache hit into a planned execution. (It is a very strong hint, not a hard pin: the frontend holds no handle on the radix node, so under extreme memory pressure the committed prefix could still in principle be evicted before the branches land.)
 
 The same applies to agents and chained calls. A multi-step program (extract → reason → format) keeps a single growing state; each step's prompt is the previous state plus new text, so each call reuses everything before it. Tree-of-thought search, self-consistency voting, and branch-and-evaluate harnesses are the canonical fits — the same patterns from [The Agentic Loop](../08-agents-harness/02-agentic-loop.html) and [Reasoning, Chain-of-Thought & Test-Time Compute](../05-posttraining-alignment/10-reasoning-test-time-compute.html).
 
 ### Tracing and interpretation
 
-How does `fork` know the prefix statically? SGLang can **trace** the program (`lang/tracer.py`) into an intermediate representation (`lang/ir.py`) — a dataflow graph of `Gen`, `Select`, `Fork`, `Join` nodes — before execution. The interpreter (`lang/interpreter.py`) then walks that graph, dispatching calls to the runtime and managing the shared state. Tracing lets the system reorder independent calls, batch siblings, and reuse prefixes without you orchestrating any of it. For simple use you never see the IR; for advanced control flow it is what makes the structure analyzable.
+Can SGLang find a shared prefix *before* running anything at all? Yes, but on a different path. SGLang can **trace** the program (`lang/tracer.py`) into an intermediate representation (`lang/ir.py`) — a dataflow graph of `Gen`, `Select`, `Fork`, `Join` nodes — without executing it, and use that trace to pre-cache the common prefix of a whole batch. This is what `run_batch` does: `run_program_batch` calls `cache_program(program, backend)` when more than one argument set is supplied, so the shared instruction block is prefilled once before any of the batch's requests go out. A single `run()` with `fork` inside it takes the dynamic path described above instead — the interpreter (`lang/interpreter.py`) simply walks the program as it executes, dispatching calls to the runtime and managing the shared state. For simple use you never see the IR; for advanced control flow it is what makes the structure analyzable.
 
 !!! tip "Practitioner tip: you do not need the frontend to get RadixAttention"
 
@@ -367,7 +369,12 @@ The mechanism (covered in depth in [Structured & Constrained Generation](../07-i
 import torch
 
 def apply_fsm_mask(logits, allowed_token_ids):
-    """Zero out probability mass on tokens that would violate the grammar."""
+    """Zero out probability mass on tokens that would violate the grammar.
+
+    logits: 1-D tensor of shape [vocab] for ONE sequence at ONE decode step.
+    (A real sampler holds [batch, vocab] and masks per row -- each sequence is
+     at a different FSM state, so `allowed_token_ids` differs row by row.)
+    """
     mask = torch.full_like(logits, float("-inf"))
     mask[allowed_token_ids] = 0.0
     return logits + mask        # softmax over this only samples from allowed tokens
@@ -383,12 +390,17 @@ The frontend is the brain; the **runtime** is the muscle. Launch it from the CLI
 
 ```bash
 # Start an OpenAI-compatible SGLang server with RadixAttention on by default.
+#   --tp-size                 tensor-parallel degree (see ch 7.11)
+#   --mem-fraction-static     fraction of GPU mem reserved for weights+KV pool
+#   --chunked-prefill-size    cap prefill tokens per step (ch 7.8)
+#   --enable-cache-report     report cached_tokens in the OpenAI `usage` field
 python -m sglang.launch_server \
     --model-path meta-llama/Llama-3.1-8B-Instruct \
     --port 30000 \
-    --tp-size 1 \                 # tensor-parallel degree (see ch 7.11)
-    --mem-fraction-static 0.85 \  # fraction of GPU mem reserved for weights+KV pool
-    --chunked-prefill-size 8192   # cap prefill tokens per step (ch 7.8)
+    --tp-size 1 \
+    --mem-fraction-static 0.85 \
+    --chunked-prefill-size 8192 \
+    --enable-cache-report
 
 # Prefix caching (RadixAttention) is ENABLED by default; disable to A/B test:
 #   --disable-radix-cache
@@ -421,7 +433,7 @@ for o in outs:
 llm.shutdown()
 ```
 
-`meta_info["cached_tokens"]` is the number to watch, and the single best debugging tool in this whole chapter: the first prompt reports a cold `0` and the rest report roughly the length of the shared `SYSTEM` prefix (rounded down to `page_size`). If all three land in one prefill step the split is ambiguous, so issue the same `generate` call twice — the second call reads cleanly, since the tree is now warm. On the OpenAI-compatible endpoint the same quantity comes back as `usage.prompt_tokens_details.cached_tokens`. If that number stays at zero when you expect sharing, your prompts are not byte-identical — a timestamp, a shuffled tool list, or a per-user ID smuggled into the system prompt is the usual culprit, and moving it *after* the shared block restores the hit.
+`meta_info["cached_tokens"]` is the number to watch, and the single best debugging tool in this whole chapter: the first prompt reports a cold `0` and the rest report roughly the length of the shared `SYSTEM` prefix (rounded down to `page_size`). If all three land in one prefill step the split is ambiguous, so issue the same `generate` call twice — the second call reads cleanly, since the tree is now warm. On the OpenAI-compatible endpoint the same quantity comes back as `usage.prompt_tokens_details.cached_tokens` — but *only if you launched the server with `--enable-cache-report`*. That flag defaults to off (`ServerArgs.enable_cache_report = False`), and without it `usage.prompt_tokens_details` is simply `None`, which is a missing field, not a cache miss. Once it is reporting, if that number stays at zero when you expect sharing, your prompts are not byte-identical — a timestamp, a shuffled tool list, or a per-user ID smuggled into the system prompt is the usual culprit, and moving it *after* the shared block restores the hit.
 
 To quantify the win on your own hardware rather than trusting the worked example below, SGLang ships a load generator with a dataset built precisely for this experiment:
 
@@ -510,7 +522,7 @@ The win is structural, not a micro-optimization: it removes a *serial dependency
 
     **Speedup on prefill:** $2.87\times 10^{17} / 7.3\times 10^{15} \approx \mathbf{39\times}$ less prefill compute. The shared prefix went from 97.6% of the prefill work to a one-time cost. Decode work is unchanged (each request still generates its own tokens), so the *end-to-end* speedup depends on your prefill/decode ratio — but for short-output, long-shared-prompt workloads (classification, routing, RAG with a fixed instruction block), the win is enormous.
 
-    **Memory check.** The 625 MiB shared prefix easily fits; the 1,000 unique 50-token suffixes add $1000 \times 50 \times 320\ \text{KiB} \approx 16\ \text{GiB}$ — substantial, which is exactly why eviction and paging matter. As requests finish, their suffix nodes unlock and the LRU evictor reclaims them while keeping the hot shared prefix pinned.
+    **Memory check.** The 625 MiB shared prefix easily fits; the 1,000 unique 50-token suffixes add $1000 \times 50 \times 320\ \text{KiB} = 16{,}000{,}000\ \text{KiB} \approx 15.3\ \text{GiB}$ — substantial, which is exactly why eviction and paging matter. As requests finish, their suffix nodes unlock and the LRU evictor reclaims them while keeping the hot shared prefix pinned.
 
 The take-away: **RadixAttention converts repeated prefill into a one-time cost plus cheap suffix prefill.** The more your traffic shares prefixes, the closer you get to that 39× figure; with all-unique prompts the radix tree degenerates to a flat list of leaves and you pay roughly the same as without it (minus tiny bookkeeping).
 
@@ -610,7 +622,7 @@ This is not a toy pattern reserved for large deployments. When we build Stack-10
     - The **frontend DSL** — `gen`, `select`, `fork`, `join` — lets you express branchy multi-call programs so the runtime can *guarantee* prefix sharing and co-schedule parallel branches, instead of relying on lucky cache hits.
     - **Constrained decoding** masks logits against a grammar/FSM; SGLang's **compressed FSM + jump-forward** emits forced token runs in one step, slashing decode cost for JSON/regex outputs, while `select` scores a fixed choice list.
     - The **zero-overhead (overlap) scheduler** runs CPU batch preparation *under* the GPU forward pass, removing scheduling bubbles; with CUDA graphs the decode loop becomes near-pure GPU work.
-    - **Drive it three ways** — OpenAI-compatible server, in-process `sgl.Engine` (what RL rollout and offline-batch jobs use), or the DSL — and **verify** reuse with `meta_info["cached_tokens"]` / `usage.prompt_tokens_details.cached_tokens`; across replicas, a **cache-aware router** (`sglang-router`) is what stops round-robin from throwing your hit rate away.
+    - **Drive it three ways** — OpenAI-compatible server, in-process `sgl.Engine` (what RL rollout and offline-batch jobs use), or the DSL — and **verify** reuse with `meta_info["cached_tokens"]` (or, on the OpenAI endpoint launched with `--enable-cache-report`, `usage.prompt_tokens_details.cached_tokens`); across replicas, a **cache-aware router** (`sglang-router`) is what stops round-robin from throwing your hit rate away.
     - **Versus vLLM:** the engines have converged; SGLang's edge is branchy/agentic programs, heavy shared prefixes, and structured output, while vLLM leads on breadth of models/hardware. Benchmark both on your own traffic.
     - The savings are real and bounded by your sharing: a long shared prefix can cut prefill compute by an order of magnitude or more; all-unique prompts see little benefit.
 
@@ -761,25 +773,30 @@ This is not a toy pattern reserved for large deployments. When we build Stack-10
     cache.insert(hot + list("gamma"))    # reuses "SYS:" again
     cache.insert(list("COLD:one"))       # a lonely, never-reused branch
 
-    # Drive up hits on the hot prefix with more matches:
+    # Drive up hits on EVERY hot leaf, so "COLD:one" is the unique hit_count == 0 leaf.
+    # (If you only touch "alpha", the beta/gamma/COLD leaves all sit at hit_count 0 and
+    #  the heap breaks the three-way tie by id() -- an allocation-address accident, not
+    #  a policy. Make the thing you are demonstrating the only thing that can happen.)
     for _ in range(5):
         cache.match_prefix(hot + list("alpha"))
+    cache.match_prefix(hot + list("beta"))
+    cache.match_prefix(hot + list("gamma"))
 
     before = cache.num_tokens
-    cache.evict_lfu(4)                    # free ~4 tokens, least-frequent first
-    # The "COLD:one" leaf (hit_count 0) is reclaimed before the hot "SYS:" path.
-    node, reused, matched = cache.match_prefix(hot + list("alpha"))
-    print("hot prefix still reusable:", matched >= len(hot))   # True
-    print("tokens freed:", before - cache.num_tokens)
+    cache.evict_lfu(4)                    # free >= 4 tokens, least-frequent first
+    # The "COLD:one" leaf (the only hit_count == 0 leaf) is reclaimed; the hot path lives.
+    print("cold branch gone:", "C" not in cache.root.children)  # True
+    print("hot leaves left:", sorted(cache.root.children["S"].children))  # ['a','b','g']
+    print("tokens freed:", before - cache.num_tokens)           # 8 (all of "COLD:one")
     ```
 
-    The cold, never-reused leaf has `hit_count = 0` and sits at the bottom of the min-heap, so `evict_lfu` reclaims it first while the frequently-matched `"SYS:"` prefix (high `hit_count`) survives -- which is precisely the behavior you want when a small set of prompts dominates traffic. (LRU would make the same call here only if the cold branch were also the *oldest*; LFU protects a hot-but-briefly-idle prefix that LRU might wrongly evict.)
+    The cold, never-reused leaf is the *unique* `hit_count = 0` leaf and therefore sits alone at the bottom of the min-heap, so `evict_lfu` reclaims it first while every leaf on the frequently-matched `"SYS:"` prefix survives -- which is precisely the behavior you want when a small set of prompts dominates traffic. Note the demo is deliberately arranged so no tie exists at the minimum: whenever several leaves share the lowest `hit_count`, LFU says nothing about which one goes, and the `id(c)` tie-breaker picks essentially at random. Real systems break such ties with a secondary key rather than leaving it to the allocator: SGLang's `LFUStrategy` (`srt/mem_cache/evict_policy.py`) returns the priority tuple `(hit_count, last_access_time)`, i.e. LFU with LRU as the tie-break -- swap `id(c)` for `c.last_access` above and you have the same policy. (LRU would make the same call here only if the cold branch were also the *oldest*; LFU protects a hot-but-briefly-idle prefix that LRU might wrongly evict.)
 
 **6.** The `fork` primitive and issuing three independent HTTP requests can both end up sharing a prefix via RadixAttention. The chapter argues `fork` still gives a stronger guarantee. Explain the difference between "probably cached" and "guaranteed shared and co-scheduled," and separately explain why the **zero-overhead (overlap) scheduler** is what lets that shared, batched work actually keep the GPU busy. Give a case where three independent requests would *miss* the shared prefix that `fork` would have kept.
 
 ??? note "Solution"
-    **`fork` vs. three independent requests.** RadixAttention is a runtime property: any request whose prompt starts with a cached sequence reuses it *if that KV is still in GPU memory*. With three independent HTTP requests, the sharing is opportunistic -- request 2 hits request 1's prefix only if request 1 has already been prefilled and its node hasn't been evicted. `fork(3)`, by contrast, is analyzed *statically, before execution*: SGLang traces the program (`lang/tracer.py` -> `lang/ir.py`) and knows the three branches descend from one parent state. So it computes the shared prefix's KV **once**, points all three branches at the same radix node, and **co-schedules** them into the same batch. It converts prefix sharing from a lucky cache hit into a planned execution: guaranteed reuse plus guaranteed batched parallelism.
+    **`fork` vs. three independent requests.** RadixAttention is a runtime property: any request whose prompt starts with a cached sequence reuses it *if that KV is still in GPU memory*. With three independent HTTP requests, the sharing is opportunistic -- request 2 hits request 1's prefix only if request 1 has already been prefilled and its node hasn't been evicted, which may be many seconds or minutes later. `fork(3)`, by contrast, knows at fork time that the three branches descend from one parent state whose text is already materialized. The interpreter flushes that parent text once as a `max_new_tokens=0` commit request -- which prefills the prefix into the radix tree -- and then dispatches all three branches concurrently against it, so they are **co-scheduled** into the same batch microseconds later. It converts prefix sharing from a lucky cache hit into a planned execution: the prefix is computed once, and the branches arrive together instead of at unrelated times. (For a *batch* of programs, `run_batch` goes further and pre-caches the common prefix by tracing the program ahead of execution, `lang/tracer.py` -> `lang/ir.py`, via `cache_program`.)
 
     **Why the overlap scheduler matters.** Having a shared batch is worthless if the CPU can't feed the GPU fast enough. Each decode step the CPU must pick the batch, update the radix tree, build sampling metadata, and prepare input tensors; if that scheduling runs *serially* before each GPU forward pass, the GPU idles during it (the chapter's 8 ms forward + 4 ms scheduling = 33% idle example). The zero-overhead / overlap scheduler prepares step $t+1$'s batch on the CPU *while* the GPU runs step $t$'s forward pass, so kernels launch back-to-back with no bubble. Combined with CUDA graphs, the steady-state decode loop becomes near-pure GPU work -- so the co-scheduled forked branches actually translate into throughput instead of being throttled by Python bookkeeping.
 
-    **A miss case.** Suppose request 1 finishes, its path unlocks (`lock_ref` drops to 0), and before requests 2 and 3 arrive the system is under memory pressure. The LRU evictor reclaims request 1's now-cold suffix and even its prefix leaf, freeing those KV slots. When requests 2 and 3 arrive moments later they `match_prefix` and find nothing cached -- they re-prefill the whole shared prefix from scratch, paying full prefill cost. `fork` avoids this entirely: the parent node is created and **locked** for the lifetime of the branches, so it cannot be evicted between branches, and the prefix is computed exactly once regardless of memory pressure or arrival timing. Independent requests can also miss if they arrive interleaved with enough unrelated traffic to evict the prefix, or if they hit different server replicas without cache-aware routing.
+    **A miss case.** Suppose request 1 finishes, its path unlocks (`lock_ref` drops to 0), and before requests 2 and 3 arrive the system is under memory pressure. The LRU evictor reclaims request 1's now-cold suffix and even its prefix leaf, freeing those KV slots. When requests 2 and 3 arrive moments later they `match_prefix` and find nothing cached -- they re-prefill the whole shared prefix from scratch, paying full prefill cost. `fork` shrinks this window to almost nothing: the commit request materializes the prefix and the branches are dispatched immediately afterward, so the prefix is computed once and the branches hit a node that is at most microseconds old, rather than one that has been sitting evictable while unrelated traffic churned the cache. Note it is a *warm* node, not a *pinned* one -- the frontend holds no reference on the radix node, so a sufficiently violent burst of memory pressure between the commit and the branches could still evict it. Independent requests can also miss if they arrive interleaved with enough unrelated traffic to evict the prefix, or if they hit different server replicas without cache-aware routing.

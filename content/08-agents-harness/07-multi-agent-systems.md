@@ -28,7 +28,7 @@ $$
 
 For $p = 0.7$ and $N = 3$, this is $1 - 0.3^3 = 0.973$. The gain is largest when $p$ is moderate — for tasks that are either trivial ($p \approx 1$) or impossibly hard ($p \approx 0$), multiple agents add cost without benefit.
 
-That formula is an *upper bound*, and in practice a loose one, because the independence assumption almost never holds: $N$ agents sampled from the same model with the same prompt share the same blind spots. A more honest model splits failures into systematic and idiosyncratic. Let a task be "systematically hard" for this model-and-prompt with probability $\rho$ — in which case *every* sample fails, no matter how many you draw — and otherwise let each agent succeed independently with probability $q$. The marginal per-agent success rate is then $p = (1-\rho)q$, and
+That formula is an *upper bound* whenever agent failures are non-negatively correlated — which is the realistic regime — and in practice a loose one, because the independence assumption almost never holds: $N$ agents sampled from the same model with the same prompt share the same blind spots. A more honest model splits failures into systematic and idiosyncratic. Let a task be "systematically hard" for this model-and-prompt with probability $\rho$ — in which case *every* sample fails, no matter how many you draw — and otherwise let each agent succeed independently with probability $q$. The marginal per-agent success rate is then $p = (1-\rho)q$, and
 
 $$
 P(\text{at least one correct}) = (1-\rho)\left[1 - (1-q)^N\right] \le 1 - \rho
@@ -60,9 +60,9 @@ Each topology has a natural failure mode:
 
 The LLM agent community overuses the word "agent." It is worth being precise.
 
-A **workflow** is a directed acyclic graph (DAG) of LLM calls where the routing logic is deterministic and written in code by the developer. Each node calls a model; the edges between nodes are if/else or fixed sequences. The model does *not* decide what to do next.
+A **workflow** is a graph of LLM calls — possibly containing bounded loops — whose edges and branch predicates are fixed in code by the developer. Each node calls a model; the edges between nodes are if/else or fixed sequences. The model does *not* choose the next node; at most it emits a value that a developer-written predicate branches on.
 
-An **agent** lets the model itself decide the next action at each step, including whether to call a tool, which tool, and what to pass. The control flow is dynamic and emerges from model outputs.
+An **agent** lets the model itself decide the next action at each step, selecting from an open action space: whether to call a tool, which tool, and what to pass. The control flow is dynamic and emerges from model outputs.
 
 ```text
 WORKFLOW (control flow in code)                AGENT (control flow in model)
@@ -576,10 +576,11 @@ A minimal CrewAI pipeline for writing a technical blog post.
 Requires: pip install crewai
 """
 
-from crewai import Agent, Task, Crew, Process
-from langchain_openai import ChatOpenAI
+from crewai import Agent, Task, Crew, Process, LLM
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.4)
+# CrewAI has its own LiteLLM-backed LLM class — it does not take LangChain
+# chat models. Provider prefix ("openai/", "anthropic/", …) selects the backend.
+llm = LLM(model="openai/gpt-4o-mini", temperature=0.4)
 
 # ---------------------------------------------------------------------------
 # Define specialist agents
@@ -721,7 +722,7 @@ if __name__ == "__main__":
 
 | Dimension | LangGraph | AutoGen | CrewAI | Swarm |
 |---|---|---|---|---|
-| Mental model | State machine / DAG | Conversational agents | Crew with roles & tasks | Agent-as-router, handoffs |
+| Mental model | State machine / graph (cycles allowed) | Conversational agents | Crew with roles & tasks | Agent-as-router, handoffs |
 | Control flow owner | Developer (graph edges) | Model (message replies) | Framework + model | Model (function calls) |
 | State management | Typed dict per node | Message history | Task context passing | Context variables |
 | Debugging | Excellent (typed state) | Moderate | Moderate | Minimal |
@@ -737,27 +738,33 @@ How agents pass information to each other determines much of the system's reliab
 **Structured handoff** uses typed schemas (JSON, Pydantic models) at every boundary. The orchestrator validates the payload before forwarding. This adds a small overhead but makes errors explicit rather than silently propagating malformed text.
 
 ```python
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class ResearchHandoff(BaseModel):
     """Validated payload from researcher → writer."""
     topic: str
-    key_facts: list[str]          # at most 10 bullet points
-    source_urls: list[str]        # cited sources (may be empty)
-    confidence: float             # researcher's self-assessed confidence 0–1
+    key_facts: list[str] = Field(max_length=10)      # at most 10 bullet points
+    source_urls: list[str] = []                      # cited sources (may be empty)
+    confidence: float = Field(ge=0.0, le=1.0)        # self-assessed, 0–1
 
 class WritingHandoff(BaseModel):
     """Validated payload from writer → editor."""
     draft_text: str
-    word_count: int
-    flagged_sections: list[str]   # writer's own uncertainty flags
+    word_count: int = Field(ge=0)
+    flagged_sections: list[str] = []                 # writer's own uncertainty flags
 ```
+
+Put every constraint in the *type*, not in a comment: a `#` comment is not a
+validator, so `confidence=7.3` or an 80-item `key_facts` would sail through a
+bare `float` / `list[str]` annotation and corrupt the next stage silently.
+With the `Field` constraints above, Pydantic raises `ValidationError` at the
+boundary — which is the entire point of a structured handoff.
 
 **Cross-process handoff (A2A).** Pydantic schemas work when every agent is a function in one Python process. Once agents are separately deployed services — possibly owned by different teams or vendors — you need a wire protocol, and the emerging open standard is **Agent2Agent (A2A)**, introduced by Google in 2025 and donated to the Linux Foundation later that year. A2A is deliberately the mirror image of MCP: where [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html) standardises how *one* agent reaches *tools*, A2A standardises how one agent delegates to *another opaque agent* whose internals and prompts it cannot see. The mechanics are ordinary web plumbing — JSON-RPC over HTTP with server-sent events for streaming — plus two ideas worth borrowing even if you never adopt the protocol: a machine-readable **Agent Card** served at a well-known URL that advertises an agent's skills, endpoint, and auth requirements (the discovery step, analogous to a tool schema), and a **task** object with an explicit lifecycle (`submitted → working → input-required → completed/failed`) so a long-running delegation can be polled, resumed, or cancelled rather than held open on a single request. CrewAI and Microsoft's Agent Framework both ship A2A support; if your agents live in one process, the Pydantic boundary above is the right amount of ceremony.
 
 **Message bus** — agents subscribe to topics (e.g. "findings", "code_output") rather than passing messages directly. This decouples the topology and makes it easy to add new agents without rewiring the graph. Apache Kafka or even Redis pub/sub serve as the bus in production systems; for local development a simple Python `queue.Queue` suffices.
 
-**Context forwarding** is the mechanism used by most LLM-native systems: each agent's context window includes a summary or verbatim copy of the preceding step's output. The cost is linear in chain length — a 10-step pipeline may inject up to 10 prior summaries into each new model call. Managing this is the subject of [Context Engineering & Management](../08-agents-harness/04-context-engineering.html).
+**Context forwarding** is the mechanism used by most LLM-native systems: each agent's context window includes a summary or verbatim copy of the preceding step's output. Per-call context grows linearly with the step index, so the *total* forwarded-token cost is quadratic in chain length: an $L$-step chain forwarding $s$ tokens per step pays $s \cdot L(L-1)/2$ in forwarded context overall, and the last call of a 10-step pipeline may carry up to 9 prior summaries. Managing this is the subject of [Context Engineering & Management](../08-agents-harness/04-context-engineering.html).
 
 ## When Multi-Agent Hurts: Costs, Anti-Patterns, and Failure Modes
 
@@ -814,7 +821,7 @@ Multi-agent systems are not only engineered; they can be *trained*. Reinforcemen
 
 This is the regime where [Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html) becomes relevant: the value function must account for multi-step credit assignment across agent boundaries, not just within a single model call.
 
-A simpler approach — and one deployable today — is **self-critique with routing**: the orchestrator scores each worker's output against a rubric and re-dispatches to the same worker (with the critique as additional context) if the score is below a threshold. This is a policy gradient in disguise, but the gradient is computed by a scoring LLM rather than a reward model.
+A simpler approach — and one deployable today — is **self-critique with routing**: the orchestrator scores each worker's output against a rubric and re-dispatches to the same worker (with the critique as additional context) if the score is below a threshold. This is best-of-$N$ rejection sampling with verbal feedback, not RL: the scoring LLM supplies a *reward signal*, but nothing is differentiated and no weights change. It is the inference-time analogue of a policy update — the "policy" improves only inside the prompt.
 
 ```python
 def self_critique_loop(
@@ -872,8 +879,8 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
     - LangGraph is best for stateful workflows where you want typed, inspectable state. AutoGen suits open-ended multi-turn conversations. CrewAI speeds up structured pipelines. OpenAI Swarm illustrates the handoff pattern but is educational-grade.
     - Shared-state (blackboard) architectures enable concurrent writers and emergent synthesis, but require thread-safe access and explicit conflict resolution.
     - Structured handoffs (Pydantic schemas at every inter-agent boundary) reduce silent error propagation. Validate payloads before forwarding.
-    - The multi-agent "tax" is real: a 5-agent pipeline with context forwarding can cost 3–5× more tokens than a single well-prompted call, and the quality side of that trade is oversold — $1-(1-p)^N$ is an upper bound, not a forecast, because $N$ samples from one model share its systematic failures and can never beat the $1-\rho$ ceiling. Pay the premium only when you have deliberately decorrelated the agents and measured the gain.
-    - Self-critique loops (worker → scorer → retry with critique) are simple forms of policy gradient that can be applied without any model fine-tuning.
+    - The multi-agent "tax" is real: a 5-agent pipeline with context forwarding can cost 3–5× more tokens than a single well-prompted call, and the quality side of that trade is oversold — $1-(1-p)^N$ is an upper bound for positively-correlated agents, not a forecast, because $N$ samples from one model share its systematic failures and can never beat the $1-\rho$ ceiling. Pay the premium only when you have deliberately decorrelated the agents and measured the gain.
+    - Self-critique loops (worker → scorer → retry with critique) are reward-guided search at inference time — best-of-$N$ with verbal feedback, not a policy gradient — and need no model fine-tuning.
     - Anti-patterns: agent soup (unclear role boundaries), infinite loops (no iteration cap), blind trust (no output validation), and over-parallelism (ignoring rate limits).
 
 !!! sota "State of the Art & Resources (2026)"
@@ -924,11 +931,11 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
 - (c) The LangGraph research graph from this chapter, whose `route_after_critic` edge sends the state back to the researcher unless the critique contains `APPROVED`.
 
 ??? note "Solution"
-    The chapter's test is: *does the model decide the next action, or does developer-written code?* A **workflow** is a DAG whose routing is deterministic and written in code; an **agent** lets the model itself choose the next action.
+    The chapter's test is: *does the model decide the next action, or does developer-written code?* A **workflow** is a graph (bounded loops allowed) whose edges and branch predicates are fixed in code; an **agent** lets the model itself choose the next action from an open action space.
 
     - (a) **Agent.** The model's own output (`transfer_to_billing` vs `transfer_to_technical`) selects the next step — this is exactly the "agent-as-router" / Swarm handoff pattern, where control flow emerges from model output.
     - (b) **Workflow.** The three stages run in a fixed, code-specified sequence; the model never chooses what runs next. It is a deterministic pipeline (chain topology).
-    - (c) **Hybrid, but the routing is a workflow.** The *edges* are developer-written code: `route_after_critic` is a Python function whose branch is decided by a string check (`"APPROVED" in state["critique"]`) plus a hard iteration cap. The model produces content, but the graph — not the model — owns control flow. This is the chapter's recommended pattern: a workflow shell (LangGraph edges) with model-driven work at the nodes.
+    - (c) **Hybrid, but the routing is a workflow.** The *edges* are developer-written code: `route_after_critic` is a Python function whose branch is decided by a string check (`"APPROVED" in state["critique"]`) plus a hard iteration cap. The model does emit the token the predicate reads, but — unlike (a), where it selects freely among actions — it only signals a binary halt condition into a fixed two-way branch. The graph, not the model, owns control flow (and the loop is bounded, which is why it still counts as a workflow). This is the chapter's recommended pattern: a workflow shell (LangGraph edges) with model-driven work at the nodes.
 
 **2.** The chapter models the probability that at least one of $N$ independent agents (each succeeding with probability $p$) solves a task where any single correct solution suffices, as $P = 1 - (1-p)^N$.
 
@@ -993,7 +1000,7 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
 **4.** The chapter lists **over-parallelism** as an anti-pattern: "spawning 20 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled." The `orchestrate` function submits *every* work item to the `ThreadPoolExecutor` at once. Modify the worker layer so that no more than `rate_limit` model calls start per 60-second window, while still running workers concurrently up to that bound. Keep the chapter's `WorkItem` / `WorkResult` types and `call_model` unchanged.
 
 ??? note "Solution"
-    A simple, correct approach is a token-bucket-style throttle enforced by a shared, thread-safe gate that every worker must pass before it calls the model. We block a worker until a slot in the current 60-second window is free.
+    A simple, correct approach is a rolling-window (sliding-log) throttle enforced by a shared, thread-safe gate that every worker must pass before it calls the model. We block a worker until a slot in the current 60-second window is free.
 
     ```python
     import threading

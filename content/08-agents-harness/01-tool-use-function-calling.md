@@ -86,7 +86,7 @@ The result will be returned in <tool_response>...</tool_response>.
 {%- endif %}
 ```
 
-The exact XML-like or JSON-like wrapper tokens vary per model family. Llama 3.1 uses a `<|python_tag|>` prefix for code interpreter calls and a custom tool-call format. Mistral uses `[TOOL_CALLS]` markers. Claude uses a dedicated `<parameter name="name">` XML structure. What they all share is that the *schema is in the context* and the *call is in the generated text*.
+The exact XML-like or JSON-like wrapper tokens vary per model family. Llama 3.1 uses a `<|python_tag|>` prefix for code interpreter calls and a custom tool-call format. Mistral uses `[TOOL_CALLS]` markers. Claude returns tool calls as structured `tool_use` content blocks (`{"type": "tool_use", "id": ..., "name": ..., "input": {...}}`) inside the message `content` array rather than as in-text markers. What they all share is that the *schema is in the context* and the *call is in the generated text*.
 
 In the open-source stack you rarely hand-write that JSON. HuggingFace `transformers` will derive the schema from a plain Python function — type hints plus a Google-style docstring — via `transformers.utils.get_json_schema`, and `apply_chat_template` accepts callables directly in its `tools=` argument:
 
@@ -157,7 +157,7 @@ From a representation-learning perspective, the model learns to:
 - Generate a JSON object whose token distribution is conditioned on the schema (field names, types, constraints) that appears earlier in the context.
 - Recognize when tool results are sufficient to answer without further calls.
 
-The function-calling capability generalizes across tools never seen during training because the schema is in-context. The model does not memorize specific tool names; it learns the *meta-skill* of reading a schema and producing conformant output. This is the same mechanism discussed in [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html) — the schema tokens attend to the generation tokens, providing strong conditioning.
+The function-calling capability generalizes across tools never seen during training because the schema is in-context. The model does not memorize specific tool names; it learns the *meta-skill* of reading a schema and producing conformant output. This is the same mechanism discussed in [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html) — because the schema sits earlier in the context, the causal mask lets every generated token attend *back* to the schema tokens, providing strong conditioning.
 
 ### RL on top of SFT
 
@@ -610,13 +610,16 @@ def execute_tool_calls_parallel(tool_calls: list) -> list[dict]:
         for future in concurrent.futures.as_completed(futures):
             results.append(future.result())
 
-    # Sort by tool_call_id to produce a deterministic ordering
-    results.sort(key=lambda m: m["tool_call_id"])
+    # Restore the ORIGINAL call order. Tool-call ids are opaque random strings,
+    # so sorting them lexically would not reproduce call order — index by the
+    # position each id had in `tool_calls` instead.
+    order = {tc.id: i for i, tc in enumerate(tool_calls)}
+    results.sort(key=lambda m: order[m["tool_call_id"]])
     return results
 ```
 
 !!! warning "Ordering of tool result messages matters"
-    The OpenAI API requires that tool result messages appear in the *same order* as their corresponding tool calls in the assistant message. If you execute calls in parallel and append results out of order, the API may reject the request or the model may correlate results to the wrong calls. Always sort results by `tool_call_id` before appending.
+    Every tool call in the assistant message must be answered by a `role="tool"` message carrying its `tool_call_id` before the next assistant turn — the id, not the position, is what binds a result to its call. Even so, append the results in *call order*: some OpenAI-compatible servers are stricter than the reference API about the message sequence, and a history that reads in call order is far easier to debug. Because ids are opaque strings, "call order" means the index of each id in `msg.tool_calls`, not a lexical sort of the ids.
 
 ---
 
@@ -627,9 +630,9 @@ Function calling and *structured outputs* solve overlapping but distinct problem
 - **Function calling**: the model decides *whether* to call a tool and *which one*. The output is a tool invocation object, not prose.
 - **Structured outputs / JSON mode**: the model is constrained to always produce valid JSON conforming to a schema, regardless of whether tools are involved. Useful for extraction, classification, and parsing tasks.
 
-Both mechanisms use constrained decoding under the hood (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html) for the full theory). The key insight is that once you have a JSON Schema, a CFG (context-free grammar) can be derived that accepts exactly the set of strings conforming to the schema. Token sampling is then masked so only tokens that could continue a valid prefix are allowed.
+Structured outputs are always backed by constrained decoding; function calling is backed by it only when you ask for it — OpenAI enforces the parameter schema when the function definition sets `"strict": true`, and an open-weight server enforces it when a structured-output backend is engaged. Default function calling is pure fine-tuned generation, which is exactly why the parse-validate-dispatch pipeline above exists (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html) for the full theory). The key insight is that once you have a JSON Schema, a CFG (context-free grammar) can be derived from its *structural* keywords — object shape, property names, types, nesting — and token sampling is then masked so only tokens that could continue a valid prefix are allowed. Value-level keywords such as `minimum`/`maximum`, `multipleOf`, and `uniqueItems` are not expressible in the grammar; real engines compile a superset and leave those to post-validation.
 
-The practical implication: when you set `response_format={"type": "json_schema", "json_schema": {...}}`, the model cannot produce invalid JSON. Field names are not masked (the model still generates them from its parameters), but structural elements — braces, commas, colons, value types — are enforced.
+The practical implication: when you set `response_format={"type": "json_schema", "json_schema": {...}}` (with `"strict": true` on the OpenAI endpoint), the model cannot produce invalid JSON. Both the structural elements — braces, commas, colons, value types — *and* the declared property names are enforced, because the schema's `properties` become literal terminals in the derived grammar; with `additionalProperties: false` no undeclared key is even reachable. Only the semantic content of values is left to the model.
 
 The open-source implementations of that masking are worth knowing by name: **XGrammar**, **Outlines**, and **llguidance** all compile a JSON Schema (or an arbitrary EBNF grammar) into an incremental token-level mask. vLLM and SGLang both ship them as pluggable structured-output backends — XGrammar is the default in recent vLLM versions — and you reach them through the same OpenAI-compatible field:
 
@@ -724,12 +727,10 @@ def safe_dispatch(tool_call) -> dict:
     def _timeout_handler(signum, frame):
         raise TimeoutError("Tool execution exceeded time limit.")
 
-    signal.signal(signal.SIGALRM, _timeout_handler)
+    prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(10)  # 10 second limit
     try:
-        result = TOOL_FN_MAP[fn_name](**fn_args)
-        signal.alarm(0)  # cancel alarm
-        return result
+        return TOOL_FN_MAP[fn_name](**fn_args)
     except TimeoutError:
         return {"error": "timeout", "message": "Tool call timed out after 10 seconds."}
     except TypeError as exc:
@@ -740,6 +741,12 @@ def safe_dispatch(tool_call) -> dict:
         import traceback
         print(f"[ERROR] Tool '{fn_name}' raised: {traceback.format_exc()}")
         return {"error": "execution_error", "message": "An internal error occurred."}
+    finally:
+        # Cancel on EVERY exit path and restore the previous handler. Cancelling
+        # only on success leaves a live alarm that fires later inside unrelated
+        # code — the next model call, or the next tool in the same loop.
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, prev_handler)
 ```
 
 !!! warning "`signal.alarm` does not work in worker threads"
@@ -902,7 +909,7 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
     - Function-calling capability is taught during SFT on multi-turn conversations that include tool calls and results; the model learns the meta-skill of reading any schema and producing conformant output.
     - The parse-validate-dispatch pipeline must handle JSON syntax errors, unknown tools, wrong argument types, and execution errors — all by feeding errors back to the model as tool results.
     - The tool-call loop appends every (call, result) pair to the message history and repeats until the model produces a plain-text response; always bound it with a maximum iteration limit, per-tool quotas, and a context-window budget check.
-    - Parallel tool calls allow the model to emit multiple independent calls in one response; results must be appended in the same order as the calls before the next LLM invocation.
+    - Parallel tool calls allow the model to emit multiple independent calls in one response; every call must be answered by a tool message carrying its `tool_call_id` (the id, not the position, is the correlation key), and results should be re-sorted into the original call order before the next LLM invocation.
     - Structured outputs (JSON Schema constrained decoding, implemented open-source by XGrammar/Outlines/llguidance inside vLLM and SGLang) and function calling are complementary: function calling governs when to invoke a tool; constrained decoding makes the argument JSON structurally valid by construction — the difference between a usable and an unusable small-model tool caller.
     - The same loop runs against an open-source model: vLLM/SGLang serve an OpenAI-compatible endpoint and a `--tool-call-parser` translates model-specific markers into `tool_calls`; with no parser for your own fine-tune, the regex parse-validate-dispatch pipeline in this chapter *is* the parser.
     - Training for tool use requires both positive examples (correct calls) and negative examples (correct non-calls) to avoid over-calling; a few thousand high-quality examples suffice on top of a strong instruction-following base.
@@ -988,7 +995,7 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
 
     Parallel execution is therefore about **3x faster** for tool time (2400 ms -> 800 ms), consistent with the chapter's claim that parallel calling "halves latency for independent subtasks" (here, better than halving because there are three calls, not two). Note the parallel path also avoids the intermediate LLM inference round-trips that the sequential loop incurs between iterations, so the real-world speedup is even larger.
 
-    (b) `execute_tool_calls_parallel` collects results as futures complete (via `as_completed`, so in Tokyo/London/Paris order), then executes `results.sort(key=lambda m: m["tool_call_id"])` before returning. The chapter notes the OpenAI API "requires that tool result messages appear in the *same order* as their corresponding tool calls," and each result carries the `tool_call_id` of the call it answers. Sorting by that id produces a deterministic ordering that the harness aligns with the call order, so completion order is irrelevant — the sort re-establishes the correspondence the API expects. (In a real system you would sort/index by the original call order rather than lexical id, but the mechanism is the same: use `tool_call_id` to reattach each result to its call.)
+    (b) `execute_tool_calls_parallel` collects results as futures complete (via `as_completed`, so in Tokyo/London/Paris order), then re-sorts them into the original call order before returning: it builds `order = {tc.id: i for i, tc in enumerate(tool_calls)}` and sorts by `order[m["tool_call_id"]]`, yielding Paris/Tokyo/London. Two things do the work here. The `tool_call_id` carried on every result is what *binds* it to its call — correlation is by id, never by position, which is why a completion order of Tokyo/London/Paris loses no information. The index lookup is what *restores* the call order for the appended message list. Note that a lexical sort on the ids themselves would not work: ids like `call_9Zk2…` are opaque random strings whose alphabetical order has nothing to do with the order the model emitted the calls.
 
 **4.** During SFT for tool use, the chapter's `build_tool_call_example` produces a 5-message conversation, and the text states the training loss is "computed only on the assistant tokens — the tool call JSON and the final response — not on the user turns or tool results." (a) Explain why computing loss on the `role="tool"` message (turn 4) would actively *hurt* the model. (b) The chapter also insists on including "negative examples" in the training set. What specifically would break if you trained only on positive (tool-is-called) examples?
 
@@ -1024,11 +1031,11 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
                 model=model, messages=messages, tools=TOOLS, tool_choice="auto",
             )
             msg = response.choices[0].message
-            messages.append({
-                "role": "assistant",
-                "content": msg.content,
-                "tool_calls": [tc.model_dump() for tc in msg.tool_calls] if msg.tool_calls else None,
-            })
+            # As in the main loop: omit `tool_calls` entirely when absent.
+            assistant_msg: dict = {"role": "assistant", "content": msg.content}
+            if msg.tool_calls:
+                assistant_msg["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
+            messages.append(assistant_msg)
 
             if not msg.tool_calls:
                 return msg.content or ""

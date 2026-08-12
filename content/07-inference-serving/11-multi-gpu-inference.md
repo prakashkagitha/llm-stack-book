@@ -112,10 +112,14 @@ import torch.nn.functional as F
 
 
 def main():
-    dist.init_process_group(backend="nccl")  # "gloo" for a CPU-only machine
+    use_cuda = torch.cuda.is_available()
+    dist.init_process_group(backend="nccl" if use_cuda else "gloo")
     rank, world = dist.get_rank(), dist.get_world_size()
-    torch.cuda.set_device(rank)
-    dev = torch.device("cuda", rank)
+    if use_cuda:
+        torch.cuda.set_device(rank)
+        dev = torch.device("cuda", rank)
+    else:
+        dev = torch.device("cpu")  # same math, no NVLink — fine for a correctness check
 
     # Identical seed on every rank => every rank materializes the SAME full
     # weights, so we can compare the sharded result against a local reference.
@@ -156,13 +160,13 @@ The error is pure floating-point reassociation noise, which is the point: TP is 
 
 ### TP in the Decode Loop
 
-During decode, the batch size is typically small (often 1 to a few hundred). A single all-reduce on a BF16 tensor of shape `[B, 1, d_model]` transfers roughly $2 \times d_{\text{model}} \times B$ bytes per rank over NVLink. For Llama-3 70B with $d_{\text{model}} = 8192$ and $B = 64$:
+During decode, the batch size is typically small (often 1 to a few hundred). The buffer being reduced is a BF16 tensor of shape `[B, 1, d_model]`, i.e. $2 \times d_{\text{model}} \times B$ bytes; a ring all-reduce both sends and receives it, so each rank moves roughly $4 \times d_{\text{model}} \times B$ bytes over NVLink. For Llama-3 70B with $d_{\text{model}} = 8192$ and $B = 64$:
 
 $$
-\text{bytes per all-reduce} = 2 \times 8192 \times 64 = 1\,\text{MB}
+\text{bytes per rank per all-reduce} = 4 \times 8192 \times 64 = 2\,\text{MB}
 $$
 
-At a NVLink bandwidth of around 900 GB/s between two H100s, that is about **1 µs** per all-reduce, negligible compared with the kernel launch overhead. TP therefore has very low communication overhead on a single NVLink island. Crossing PCIe or Ethernet raises this cost by 10–100×, making TP across nodes generally inadvisable.
+At a NVLink bandwidth of around 900 GB/s between two H100s, that is about **2 µs** per all-reduce, negligible compared with the kernel launch overhead. TP therefore has very low communication overhead on a single NVLink island. Crossing PCIe or Ethernet raises this cost by 10–100×, making TP across nodes generally inadvisable.
 
 ### Latency vs. Throughput Impact
 
@@ -206,7 +210,7 @@ For Llama-3 70B with $d = 8192$, $B = 1$, BF16: $1 \times 8192 \times 2 = 16$ KB
 
 During *training*, PP creates a "bubble" — idle time while stages wait for activations. In inference, the story is different:
 
-- **Prefill**: a single batch passes through the pipeline sequentially. For a PP degree of $P$, each stage processes $L/P$ layers, so the total latency is *roughly unchanged* from a single GPU processing all $L$ layers (ignoring inter-stage latency). There is no bubble; the pipeline has only one micro-batch.
+- **Prefill**: a single batch passes through the pipeline sequentially. For a PP degree of $P$, each stage processes $L/P$ layers, so the total latency is *roughly unchanged* from a single GPU processing all $L$ layers (ignoring inter-stage latency). What does *not* survive is utilization: with a single micro-batch in flight the bubble is maximal — only one stage is busy at a time, so device utilization is $1/P$. PP recovers throughput only when several micro-batches (or concurrent requests) are in flight at once.
 - **Decode**: each step is sequential by nature. Stage $i$ cannot start until stage $i-1$ finishes. This makes PP a **latency-neutral** strategy for decode: it does not help per-token latency and may hurt it slightly due to inter-stage synchronization.
 
 PP's real value is enabling models that do not fit in TP-only memory. For example, a 400B+ dense model with PP = 4 and TP = 8 on 32 GPUs keeps each GPU's memory load manageable while TP handles the per-layer distribution.
@@ -352,11 +356,13 @@ def expert_parallel_forward(
 
     # Step 4: compute expert outputs on local experts
     local_expert_indices = top_k_indices % experts_per_rank  # local numbering
+    owned = expert_ranks == rank  # (B, k) — the slots this rank actually serves
     # This would iterate over local experts and process their assigned tokens
-    expert_out = _apply_local_experts(dispatched, local_expert_indices, expert_ffns)
+    expert_out = _apply_local_experts(dispatched, local_expert_indices, owned,
+                                      expert_ffns)
 
     # Step 5: all-to-all gather — return results to token-owning ranks
-    output = _all_to_all_gather(expert_out, expert_ranks, ep_group)
+    output = _all_to_all_gather(expert_out, expert_ranks, k, ep_group)
 
     # Step 6: weighted sum over k experts
     # output shape: (B, k, d_model); top_k_weights: (B, k)
@@ -371,27 +377,29 @@ def _all_to_all_dispatch(x, expert_ranks, indices, group):
     return x  # simplified
 
 
-def _all_to_all_gather(x, expert_ranks, group):
+def _all_to_all_gather(x, expert_ranks, k, group):
     """Placeholder — real implementation uses dist.all_to_all."""
-    return x.unsqueeze(1).expand(-1, 2, -1)  # simplified
+    return x.unsqueeze(1).expand(-1, k, -1)  # simplified: (B, k, d_model)
 
 
-def _apply_local_experts(x, local_indices, expert_ffns):
+def _apply_local_experts(x, local_indices, owned, expert_ffns):
     """Apply local expert FFNs to dispatched tokens."""
     results = []
     for i, expert in enumerate(expert_ffns):
-        mask = (local_indices == i).any(dim=-1)  # tokens routed to expert i
+        # local_indices is (global expert id) % experts_per_rank, so the same
+        # local id appears on every rank — mask on ownership as well.
+        mask = ((local_indices == i) & owned).any(dim=-1)  # tokens for expert i
         if mask.any():
             results.append(expert(x[mask]))
     # Reassemble — simplified
-    return x.unsqueeze(1).expand(-1, 2, -1)
+    return x
 ```
 
 ### EP Load Balancing
 
 Router collapse (all tokens routed to a few "hot" experts) kills EP performance: one GPU is overloaded while others are idle, and the all-to-all becomes unbalanced. Production systems address this with:
 
-1. **Auxiliary load-balancing loss** during training (balance loss in Switch Transformer, DeepSeek-V2/V3's group-norm softmax).
+1. **Auxiliary load-balancing loss** during training (the balance loss of Switch Transformer; DeepSeek-V2's expert-, device- and communication-level balance losses). DeepSeek-V3 instead goes auxiliary-loss-free, nudging a per-expert bias on its sigmoid router until load evens out.
 2. **Token dropping** when an expert's capacity is exceeded.
 3. **Expert duplication**: replicate popular experts on multiple GPUs at inference time, then route with load awareness.
 4. **Dynamic expert offloading**: for CPU-offloaded MoE inference (useful when GPU count is limited), pre-fetch the next likely experts based on previous routing statistics.
@@ -494,7 +502,7 @@ The decode step is uniquely sensitive to communication latency because it proces
 
 ### TP Communication Profile
 
-For TP degree $T$ and hidden size $d$, the all-reduce each layer transfers $2d$ bytes per rank (send $d$ bytes, receive $d$ bytes in BF16). With $L$ layers and $A$ all-reduces per layer ($A = 2$ for standard TP):
+For TP degree $T$ and hidden size $d$, each all-reduce moves about $2d$ *elements* per rank (a ring sends the $d$-element buffer once and receives it once), i.e. $2 \times d \times \text{dtype\_bytes} = 4d$ bytes in BF16. With $L$ layers and $A$ all-reduces per layer ($A = 2$ for standard TP):
 
 $$
 \text{total TP comm per decode step} = 2 \times d \times L \times A \times \text{dtype\_bytes} \times B
@@ -512,7 +520,7 @@ Crossing InfiniBand HDR (25 GB/s effective per rank in a ring): about **208 µs*
 
 ### PP Communication Profile
 
-PP communication in decode is a single `send`/`recv` of the hidden-state tensor: $B \times d$ elements. For $B = 64$ and $d = 8192$ in BF16: $64 \times 8192 \times 2 = 1$ MB, sent once per layer per stage boundary. With $P - 1$ stage boundaries, this is much smaller than TP all-reduces and is non-blocking (can overlap with compute on next stage).
+PP communication in decode is a single `send`/`recv` of the hidden-state tensor: $B \times d$ elements. For $B = 64$ and $d = 8192$ in BF16: $64 \times 8192 \times 2 = 1$ MB, sent once per layer per stage boundary. With $P - 1$ stage boundaries, this is much smaller than TP all-reduces — but it is *blocking* on the decode critical path, since the next stage cannot begin until the hidden state arrives. Only with multiple micro-batches in flight can the transfer be overlapped with another micro-batch's compute.
 
 ### EP (Wide) Communication Profile
 
@@ -561,9 +569,9 @@ $$
 M_{\text{total}} = M_{\text{weights}} + M_{\text{kv}} + M_{\text{activations}} + M_{\text{framework}}
 $$
 
-- **Weights**: $P \times \text{dtype\_bytes} / \text{TP}$ per GPU (divided by TP degree).
+- **Weights**: $N_{\text{params}} \times \text{dtype\_bytes} / (\text{TP} \times \text{PP})$ per GPU — each device holds one shard of each of its stage's layers.
 - **KV cache**: $2 \times n_{\text{kv\_heads}} \times d_{\text{head}} \times L \times \text{dtype\_bytes} \times S_{\text{max}}$ per request, where $S_{\text{max}}$ is max sequence length. Divided by TP if KV heads are sharded.
-- **Activations**: during prefill, $\approx 2 \times B \times S \times d \times L \times \text{dtype\_bytes}$, transient. Negligible during decode.
+- **Activations**: during prefill, $\approx c \times B \times S \times d \times \text{dtype\_bytes}$ for a small constant $c$ (a handful of live buffers, the largest being the $d_{\text{ff}}$ FFN intermediate). Independent of depth, because a no-grad forward pass reuses the same buffers layer after layer — nothing is retained for a backward pass. Transient, and negligible during decode.
 - **Framework overhead**: typically 1–4 GB for CUDA context, memory allocator, etc.
 
 ### Throughput Sizing
@@ -571,10 +579,10 @@ $$
 The maximum throughput of a DP+TP+PP cluster scales as:
 
 $$
-\text{throughput} = D \times \frac{\text{model\_flops\_per\_token}}{\text{GPU\_flops} \times \text{MFU}}
+\text{throughput} \approx D \times \frac{N_{\text{GPU/replica}} \times \text{GPU\_flops} \times \text{MFU}}{\text{model\_flops\_per\_token}}
 $$
 
-where $D$ is the DP replica count and MFU (Model FLOP Utilization) is the fraction of peak hardware FLOPs actually achieved. For well-tuned serving stacks (continuous batching, FlashAttention, CUDA graphs), MFU during prefill reaches 40–60% on H100s; during decode with small batches, MFU drops to 5–15% because the workload is memory-bandwidth-bound, not compute-bound (see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html)).
+where $D$ is the DP replica count, $N_{\text{GPU/replica}} = \text{TP} \times \text{PP}$ is the number of GPUs in one replica, and MFU (Model FLOP Utilization) is the fraction of peak hardware FLOPs actually achieved. For well-tuned serving stacks (continuous batching, FlashAttention, CUDA graphs), MFU during prefill reaches 40–60% on H100s; during decode with small batches, MFU drops to 5–15% because the workload is memory-bandwidth-bound, not compute-bound (see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html)).
 
 !!! example "Deployment sizing for a 70B model"
 
@@ -611,7 +619,7 @@ where $D$ is the DP replica count and MFU (Model FLOP Utilization) is the fracti
 
     $$\frac{100}{0.018\ \text{s}} \approx 5{,}500 \text{ tokens/s from one replica}$$
 
-    That nominally meets a 5,000 tokens/s SLO, but with zero headroom for traffic spikes, prefill stealing decode time, or a failed node. Deploy **DP = 2** replicas (8 GPUs) for a 2x margin and single-replica fault tolerance, and add replicas from there as traffic grows.
+    The target itself implies $100 \times (1/0.050) = 2{,}000$ tokens/s (100 users each served at the 50 ms TPOT budget), so one replica clears it with roughly 2.7x of margin on paper — but that margin is what absorbs traffic spikes, prefill stealing decode time, and node failures, and a single replica has no redundancy at all. Deploy **DP = 2** replicas (8 GPUs) for a 2x margin and single-replica fault tolerance, and add replicas from there as traffic grows.
 
     **Final configuration**: 8 × H100 GPUs, TP = 4 per replica, DP = 2 replicas — then scale DP linearly with traffic.
 
@@ -745,7 +753,7 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
     - **Data parallel replicas** are the purest throughput scaling mechanism — identical model copies, independently serving requests, with no communication overhead.
     - **DP attention + EP** is the standard wide-EP layout: attention runs data-parallel so the KV cache is never duplicated (TP cannot shard KV past $n_{\text{kv\_heads}}$, and not at all for MLA), while the same GPUs regroup into one large expert-parallel group for the MoE layers. **Context parallelism** shards the sequence itself and is the axis to reach for when long context, not weight size, is the memory constraint.
     - **Decode is memory-bandwidth-bound**: the all-reduce cost of TP at NVLink speeds is negligible, but TP across InfiniBand can introduce measurable per-token latency.
-    - **Communication volume**: TP all-reduce ≈ 2 × d_model bytes per rank per layer; EP all-to-all ≈ B × k × d_model bytes per rank per MoE layer. Both must fit within the per-token time budget.
+    - **Communication volume**: TP all-reduce ≈ 4 × d_model bytes per rank per all-reduce in BF16, with two all-reduces per layer; EP all-to-all ≈ 2 × B × k × d_model bytes per rank per MoE layer in BF16. Both must fit within the per-token time budget.
     - **Sizing rule of thumb**: allocate enough TP to fit model weights with 40–60% GPU memory headroom for KV cache, then add DP replicas until the throughput SLO is met.
     - **Wide-EP (DeepSeek-style)** requires large batch sizes to amortize inter-node all-to-all; it excels for high-throughput API serving of enormous MoE models but adds serving infrastructure complexity.
 
@@ -799,7 +807,7 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
 
     The difference is entirely about the communication that sits on the critical path of a decode step.
 
-    - **TP** requires two all-reduces *per transformer layer* per forward pass (one after attention, one after the MLP). An all-reduce is a blocking collective: the layer cannot proceed until every rank has contributed and received the summed partial. Its volume is roughly $2 \times d_{\text{model}}$ bytes per rank per layer and, crucially, **does not shrink with batch size** — you pay it on every single decode step. On NVLink (about 900 GB/s) the total per-step cost for Llama-3 70B is around 5.8 microseconds and is negligible; over InfiniBand HDR the same traffic costs on the order of 208 microseconds per step, large enough to eat a measurable fraction of a 33 ms token budget. Because the cost is fixed per step and blocking, it only stays cheap on the fast intra-node fabric — hence "TP within NVLink islands only."
+    - **TP** requires two all-reduces *per transformer layer* per forward pass (one after attention, one after the MLP). An all-reduce is a blocking collective: the layer cannot proceed until every rank has contributed and received the summed partial. Its volume is roughly $4 \times d_{\text{model}}$ bytes per rank per all-reduce in BF16 (two all-reduces per layer) and, crucially, **does not shrink with batch size** — you pay it on every single decode step. On NVLink (about 900 GB/s) the total per-step cost for Llama-3 70B is around 5.8 microseconds and is negligible; over InfiniBand HDR the same traffic costs on the order of 208 microseconds per step, large enough to eat a measurable fraction of a 33 ms token budget. Because the cost is fixed per step and blocking, it only stays cheap on the fast intra-node fabric — hence "TP within NVLink islands only."
 
     - **DP** replicas are fully independent copies of the model. Different requests go to different replicas, and no tensor is ever exchanged *between* replicas during inference. There is no collective on the decode critical path at all, so the interconnect between replicas is irrelevant — they can be in different datacenters. DP buys linear throughput with zero communication cost; the flip side is that it does nothing for the latency of a single request (each replica is still a full model).
 
@@ -847,7 +855,7 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
 
     Pipeline parallelism is **latency-neutral for decode** and is fundamentally a memory-capacity / throughput tool, not a latency tool.
 
-    - **Prefill**: a single batch flows through the stages sequentially. Each of the 8 stages processes $L/8$ layers, so the end-to-end latency is roughly the same as one GPU doing all $L$ layers (there is only one micro-batch, so no bubble), plus a small amount of inter-stage `send`/`recv`. PP neither helps nor meaningfully hurts TTFT here.
+    - **Prefill**: a single batch flows through the stages sequentially. Each of the 8 stages processes $L/8$ layers, so the end-to-end latency is roughly the same as one GPU doing all $L$ layers, plus a small amount of inter-stage `send`/`recv` (utilization is only $1/8$ with a single micro-batch in flight, but that costs throughput, not latency). PP neither helps nor meaningfully hurts TTFT here.
 
     - **Decode**: each step generates one token and is inherently sequential across stages — stage $i$ cannot begin until stage $i-1$ has produced and shipped its hidden state. The total work per token is still all $L$ layers, now strung across 8 devices with $P-1 = 7$ inter-stage synchronizations added on top. So TPOT is at best unchanged and in practice slightly *worse* because of the added hop latency and the loss of overlap.
 

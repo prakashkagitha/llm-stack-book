@@ -168,7 +168,11 @@ def schedule_step(self):
     scheduled, blocks_to_copy = [], []
 
     # 1. Keep RUNNING sequences going; each decode step may need +1 block.
-    for seq in self.running:
+    #    Iterate over a SNAPSHOT: preemption below pops from self.running, and
+    #    mutating the list under a live iterator would silently skip sequences.
+    for seq in list(self.running):
+        if seq not in self.running:
+            continue                                 # already preempted as a victim
         while not self.block_mgr.can_append(seq):
             # Out of memory: preempt the lowest-priority running seq.
             victim = self.running.pop()              # tail = newest/lowest prio
@@ -280,7 +284,7 @@ Decode steps are tiny — one token per sequence — so per-kernel **launch over
 
     **Block count.** With block size 16, one block holds $16 \times 128\text{KB} = 2$ MB, so the pool is $\approx 52\text{GB} / 2\text{MB} \approx 26{,}500$ blocks. Worst-case internal waste is 15 token-slots per sequence — about $15/2000 = 0.75\%$ — versus the old design's reservation-dominated waste.
 
-    The throughput consequence is direct: decode is memory-bandwidth bound, so reading $\sim4\times$ more concurrent sequences' KV per unit time (because $4\times$ more fit) yields roughly $4\times$ the tokens/second, until you saturate HBM bandwidth or compute.
+    **Throughput consequence.** Decode is memory-bandwidth bound, so a step costs the HBM traffic it moves: a *fixed* read of the weights ($\approx 16$ GB) plus $B \times$ (per-sequence KV), where 2,000 tokens of context is $2{,}000 \times 128\text{ KB} \approx 0.25$ GB. At $B = 52$ that is $16 + 52(0.25) \approx 29$ GB moved to emit 52 tokens ($1.8$ tokens/GB); at $B = 210$ it is $16 + 210(0.25) \approx 68$ GB for 210 tokens ($3.1$ tokens/GB) — about $1.7\times$ the tokens/second. The mechanism is **amortizing the fixed weight read over more tokens**, not moving more bytes per second (bandwidth is the fixed resource). So the win is largest for short contexts, where the weight read dominates the traffic, and shrinks as per-sequence KV grows and the $B \times \text{KV}$ term takes over. The paper's 2–4× end-to-end gains come from this *plus* continuous batching eliminating the idle time between requests.
 
 ## V1: the rewritten architecture
 
@@ -350,15 +354,25 @@ vLLM supports several proposers behind a common interface:
 - **N-gram / prompt lookahead** — propose by matching recent context against the prompt; free, great for tasks with copying (summarization, code editing).
 - **EAGLE / Medusa-style** — lightweight heads on the target model predict multiple future tokens.
 
-Each step, vLLM runs the proposer to get $k$ draft tokens, then runs the target model on all $k+1$ positions at once. A **rejection-sampling verifier** accepts the longest prefix of drafts consistent with the target's distribution and corrects the first rejected token, so the output distribution is *provably identical* to plain sampling from the target — speculation changes speed, not what is generated.
+Each step, vLLM runs the proposer to get $k$ draft tokens, then runs the target model on all $k+1$ positions at once. A **rejection-sampling verifier** accepts each drafted token $x$ with probability $\min\!\big(1, p(x)/q(x)\big)$ (target $p$, draft $q$) and, at the first rejection, replaces it with a sample from the normalized **residual** $(p - q)_+$; if instead all $k$ drafts survive, the target's extra logit yields a free **bonus** token sampled from $p$. Resampling from the residual rather than from $p$ is exactly what makes the emitted distribution *provably identical* to plain sampling from the target — speculation changes speed, not what is generated.
 
 ```python
 # Engine-level shape of one speculative step (target distribution preserved).
-draft_tokens, draft_probs = proposer.propose(seq, k)          # cheap
+draft_tokens, draft_probs = proposer.propose(seq, k)          # cheap; q at each pos
 target_logits = target_model(seq.context + draft_tokens)      # ONE big fwd, k+1 pos
-accepted = rejection_sample(draft_tokens, draft_probs, target_logits)  # 0..k accepted
-seq.extend(accepted)
-seq.extend([sample(target_logits[len(accepted)])])            # +1 bonus/correction token
+
+# min(1, p/q) test per position; stops at the first rejection (None if all k pass).
+accepted, reject_pos = rejection_sample(draft_tokens, draft_probs, target_logits)
+seq.extend(accepted)                                          # 0..k accepted drafts
+
+if reject_pos is None:                    # all k drafts accepted
+    dist = softmax(target_logits[k])                          # bonus token ~ p
+else:                                     # first rejection at reject_pos
+    p = softmax(target_logits[reject_pos])
+    q = draft_probs[reject_pos]
+    dist = normalize(clamp_min(p - q, 0.0))                   # correction ~ (p - q)_+
+seq.append(sample(dist))                  # sampling the correction from p, not the
+                                          # residual, would BIAS the output
 # Net: up to k+1 tokens emitted per single target forward pass.
 ```
 
@@ -404,7 +418,7 @@ Adapters themselves are **paged like the KV cache**: a pool of GPU adapter slots
 !!! interview "Interview Corner"
     **Q:** vLLM gets a large throughput win over a naive HuggingFace `generate` serving loop. Mechanistically, where does that win come from, and what is the single biggest lever?
 
-    **A:** The win is overwhelmingly about **KV-cache memory efficiency translating into concurrency**. A naive loop pre-allocates a contiguous KV buffer sized to `max_seq_len` per request, so 60–80% of KV memory is reserved-but-empty (internal fragmentation) or unusable gaps (external fragmentation). Since KV memory caps how many sequences run concurrently, and decode throughput scales with concurrency (it's HBM-bandwidth bound — more sequences read per unit time = more tokens/sec), that wasted memory is wasted throughput. **PagedAttention** removes the fragmentation by paging the KV cache into fixed-size blocks mapped through a per-sequence block table, so the only waste is the last partial block (≤ `block_size − 1` slots). That can quadruple concurrency on typical workloads. **Continuous batching** then keeps that concurrency saturated by admitting and retiring requests at token granularity instead of waiting for a whole batch to finish. The single biggest lever is the paged KV enabling high concurrency; continuous batching, prefix caching, CUDA graphs, and chunked prefill are multipliers on top. A good follow-up answer names the failure mode: oversubscribing the KV pool causes preemption thrashing that destroys tail latency, so `gpu_memory_utilization`, `max_num_seqs`, and `max_num_batched_tokens` must be tuned to keep steady-state demand under the pool size.
+    **A:** The win is overwhelmingly about **KV-cache memory efficiency translating into concurrency**. A naive loop pre-allocates a contiguous KV buffer sized to `max_seq_len` per request, so 60–80% of KV memory is reserved-but-empty (internal fragmentation) or unusable gaps (external fragmentation). Since KV memory caps how many sequences run concurrently, and decode throughput rises with concurrency (decode is HBM-bandwidth bound, and a larger batch amortizes the fixed per-step read of the model weights over more tokens), that wasted memory is wasted throughput. **PagedAttention** removes the fragmentation by paging the KV cache into fixed-size blocks mapped through a per-sequence block table, so the only waste is the last partial block (≤ `block_size − 1` slots). That can quadruple concurrency on typical workloads. **Continuous batching** then keeps that concurrency saturated by admitting and retiring requests at token granularity instead of waiting for a whole batch to finish. The single biggest lever is the paged KV enabling high concurrency; continuous batching, prefix caching, CUDA graphs, and chunked prefill are multipliers on top. A good follow-up answer names the failure mode: oversubscribing the KV pool causes preemption thrashing that destroys tail latency, so `gpu_memory_utilization`, `max_num_seqs`, and `max_num_batched_tokens` must be tuned to keep steady-state demand under the pool size.
 
 ## Running and tuning vLLM
 

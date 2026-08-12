@@ -33,7 +33,8 @@ class ClassificationPrompt:
     Template for a text-classification task.
     Slots:
         categories   : list[str]   — valid output labels
-        examples     : list[dict]  — few-shot {"input": ..., "label": ...}
+        examples     : list[dict]  — few-shot {"input": ..., "label": ...};
+                                     also needs "rationale" when cot=True
         user_input   : str         — the document to classify
         cot          : bool        — whether to ask for chain-of-thought reasoning
     """
@@ -44,12 +45,18 @@ from the provided list to the given document.
 Valid labels: {categories}
 
 Rules:
-1. Output only the label, nothing else{cot_instruction}.
+1. {output_rule}
 2. If the document is ambiguous, choose the most likely label.
 3. Never output a label not in the list above."""
 
-    cot_template_suffix: str = """\
- followed by a newline, then one sentence explaining your choice"""
+    # The reasoning must come BEFORE the label: generation is autoregressive and
+    # causally masked, so a label emitted first cannot attend to an explanation
+    # that does not exist yet — that is post-hoc rationalization, not CoT.
+    direct_output_rule: str = "Output only the label, nothing else."
+    cot_output_rule: str = (
+        "First output one sentence explaining your choice, then a newline, "
+        "then the label alone on the final line — nothing after it."
+    )
 
     few_shot_template: str = """\
 ---
@@ -69,19 +76,23 @@ Label:"""
         cot: bool = False,
     ) -> list[dict]:
         """Returns an OpenAI-style messages list."""
-        cot_instruction = self.cot_template_suffix if cot else ""
+        output_rule = self.cot_output_rule if cot else self.direct_output_rule
         system_content = self.system_template.format(
             categories=", ".join(categories),
-            cot_instruction=cot_instruction,
+            output_rule=output_rule,
         )
         messages = [{"role": "system", "content": system_content}]
 
         # Add few-shot turns as alternating user/assistant messages.
         # This mirrors how the model was instruction-tuned and produces
         # more reliable behavior than concatenating examples in the system.
+        # The assistant turns must match the requested format exactly:
+        # demonstrations reliably override a contradicting instruction, so a
+        # bare label here would silently cancel the CoT rule above.
         for ex in examples:
             messages.append({"role": "user", "content": f"Document: {ex['input']}"})
-            messages.append({"role": "assistant", "content": ex["label"]})
+            answer = f"{ex['rationale']}\n{ex['label']}" if cot else ex["label"]
+            messages.append({"role": "assistant", "content": answer})
 
         # Final user turn
         messages.append({"role": "user", "content": f"Document: {user_input}"})
@@ -220,7 +231,7 @@ $$
 P(y \mid x) = \sum_{z} P(y \mid x, z) \cdot P(z \mid x)
 $$
 
-where $z$ is the chain-of-thought rationale. Without CoT, the model must directly estimate $P(y \mid x)$. With CoT it marginalizes over explicit reasoning steps, which factorizes a hard distribution into easier conditional steps.
+where $z$ is the chain-of-thought rationale. Read this carefully: the identity is *trivially* true whether or not you prompt for CoT, so the marginal itself is not what CoT buys you. Plain CoT does not compute the sum — it samples a single $z^{(1)} \sim P(z \mid x)$ (or takes the greedy path) and returns $\arg\max_y P(y \mid x, z^{(1)})$, a one-sample plug-in estimate. The win comes from the autoregressive chain rule over $z$'s tokens: writing the rationale out spends many forward passes decomposing the problem into easy per-token steps, instead of squeezing the whole computation into the single forward pass that must emit $y$. The full sum over $z$ is what self-consistency (next subsection) approximates by Monte Carlo.
 
 ```python
 # Comparing direct vs. CoT for arithmetic
@@ -244,7 +255,7 @@ A: Let's think step by step."""
 
 {{fig:self-consistency-majority-vote}}
 
-A single CoT sample can contain arithmetic or logical errors. Self-consistency (Wang et al., 2022) generates $k$ independent CoT chains and takes the majority-vote answer. This works because different reasoning paths that reach the same conclusion are unlikely to share the same error.
+A single CoT sample can contain arithmetic or logical errors. Self-consistency (Wang et al., 2022) generates $k$ independent CoT chains and takes the majority-vote answer. This works because different reasoning paths that reach the same conclusion are unlikely to share the same error. It is also exactly the Monte-Carlo estimator of the marginal $\sum_z P(y \mid x, z) P(z \mid x)$ from the previous subsection: $k$ i.i.d. draws of $z$, each voting for its own answer.
 
 $$
 \hat{y} = \arg\max_{y} \sum_{i=1}^{k} \mathbb{1}[\text{answer}(z_i) = y]
@@ -294,7 +305,7 @@ async def self_consistent_answer(
 
 
 # Example usage (requires running event loop)
-# result = asyncio.run(self_consistent_answer(CoT_PROMPT, k=7))
+# result = asyncio.run(self_consistent_answer(COT_PROMPT, k=7))
 ```
 
 ### Tree of Thoughts
@@ -508,7 +519,7 @@ async def run_eval(
             resp = await client.chat.completions.create(
                 model=model,
                 messages=messages,
-                temperature=0.0,   # deterministic for evals
+                temperature=0.0,   # greedy: minimizes, but does not remove, run-to-run variance
                 max_tokens=512,
             )
             prediction = resp.choices[0].message.content.strip()
@@ -749,7 +760,7 @@ The ReAct (Reasoning + Acting) pattern interleaves `Thought:`, `Action:`, and `O
 REACT_FEW_SHOT = """
 Thought: I need to find the current population of Tokyo.
 Action: search(query="Tokyo population 2024")
-Observation: Tokyo's population is approximately 13.96 million (city proper).
+Observation: Tokyo's population is approximately 13.96 million (Tokyo Metropolis; the 23 special wards are about 9.7 million).
 
 Thought: I have the answer.
 Action: finish(answer="Tokyo's population is approximately 14 million people.")
@@ -796,13 +807,13 @@ Let us address the skeptical reader directly. Three objections and their answers
 
 **"Better models will make prompting obsolete."** Partially true — instruction-following capability has improved substantially, reducing the need for careful formatting in simple cases. But agentic systems, tool use, context management, and cost optimization still require the techniques in this chapter. The gap between a naive prompt and an optimized one in a complex pipeline remains large.
 
-**"It's not reproducible."** It is, if you treat prompts as code. Version control your templates. Pin your model version. Use fixed seeds for evals. Report metrics on held-out sets. The reason prompting feels unreproducible is that most practitioners do none of these things.
+**"It's not reproducible."** It is, if you treat prompts as code. Version control your templates. Pin your model version. Use fixed seeds for evals — while remembering that provider `seed` parameters are best-effort and even greedy decoding varies run to run, because batched serving changes reduction order and kernel selection, so report intervals over repeated runs rather than trusting a single number. Report metrics on held-out sets. The reason prompting feels unreproducible is that most practitioners do none of these things.
 
 **"It's not a transferable skill."** The specific wording that works for GPT-5.2 may not work for Gemini 3 or Claude Opus 4.5. But the principles — clear instructions, structured format, examples, decomposition, eval loops, caching strategy — transfer across models and over time. The meta-skill is knowing which levers to pull and in what order.
 
 The connection to the rest of the LLM stack is also real. Prompting interacts with:
 
-- **Tokenization** ([Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html)) — the way text is tokenized affects what "natural" delimiters are. XML-like tags tend to be single tokens in modern vocabularies; arbitrary strings may not be.
+- **Tokenization** ([Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html)) — the way text is tokenized affects what "natural" delimiters are. XML-like tags are *not* free: byte-level BPE splits on the angle brackets, so `<document>` is 3 tokens in both `cl100k_base` and `o200k_base` and `<untrusted_tool_output>` is 6 — tag-heavy scaffolding carries a real per-turn tax. Their value comes from matching instruction-tuning conventions (next bullet), not from tokenizer economy, so keep tag names short and reuse the same few.
 - **RLHF/alignment** ([Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html)) — what prompt patterns work best depends on how the model was instruction-tuned. Models trained to follow XML tags respond better to them.
 - **Inference serving** ([The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html)) — prompt length directly determines prefill latency and cost.
 - **Agent evaluation** ([Agent Evaluation & Benchmarks](../08-agents-harness/08-agent-evaluation.html)) — the eval harness described in §8.6 is a prerequisite for meaningful agent benchmarking.

@@ -22,7 +22,7 @@ For $B=64$, $k=8$, $E=256$ this is $256(1-(1-1/32)^{64})\approx 256(1-0.132)\app
 
 {{fig:moe-serving-sparse-token-dense-batch}}
 
-The second inversion is communication. EP places experts on different GPUs; routing is data-dependent and changes every token. The required primitive is **all-to-all**: GPU $i$ has a variable number of tokens destined for each expert, hence for each GPU. Unlike the all-reduce of tensor parallelism (TP) — whose volume is fixed at $\sim 2\,d_{\text{model}}$ bytes per token per layer regardless of routing — all-to-all volume is $\sim k\,d_{\text{model}}$ bytes per token per layer *and* is **load-imbalanced and irregular**: the message sizes are unknown until the router fires.
+The second inversion is communication. EP places experts on different GPUs; routing is data-dependent and changes every token. The required primitive is **all-to-all**: GPU $i$ has a variable number of tokens destined for each expert, hence for each GPU. Unlike the all-reduce of tensor parallelism (TP) — whose payload is fixed at $\sim 2\,d_{\text{model}}$ *elements* per token per layer (two all-reduces, post-attention and post-MLP) regardless of routing — all-to-all volume is $\sim 2k\,d_{\text{model}}$ elements per token per layer (dispatch + combine) *and* is **load-imbalanced and irregular**: the message sizes are unknown until the router fires.
 
 
 {{fig:moe-serving-dense-tp-vs-moe-ep}}
@@ -114,16 +114,17 @@ The `mask.nonzero` step is the heart of the cost model: its length on each rank 
 Steps 2 and 4 in a real deployment are `torch.distributed.all_to_all_single` calls. It is worth writing that out once, because the variable-length version has a subtlety the in-process simulation hides: **you must exchange the counts before you can exchange the payload.**
 
 ```python
-# real_ep_alltoall.py — the actual collective. Run with:
+# real_ep_alltoall.py — the actual collective. NOTE: this one needs GPUs —
+# all_to_all_single is implemented by NCCL only; the Gloo backend has no
+# all-to-all at all. Run with:
 #   torchrun --nproc_per_node=2 real_ep_alltoall.py
 import torch
 import torch.distributed as dist
 
-dist.init_process_group("nccl" if torch.cuda.is_available() else "gloo")
+dist.init_process_group("nccl")
 rank, G = dist.get_rank(), dist.get_world_size()
-if torch.cuda.is_available():
-    torch.cuda.set_device(rank)
-dev = f"cuda:{rank}" if torch.cuda.is_available() else "cpu"
+torch.cuda.set_device(rank)
+dev = f"cuda:{rank}"
 
 T, d, E, k = 8, 16, 8, 2
 experts_per_rank = E // G
@@ -163,7 +164,7 @@ Two things in that listing are the reason production stacks do not just call NCC
 
 ### The Two Costs: Bytes Moved and the Barrier
 
-Per MoE layer, the all-to-all moves about $k\,d_{\text{model}}$ bytes per token *out* (dispatch) and the same back (combine), times bytes-per-element. For BF16, $d_{\text{model}}=7168$ (DeepSeek-V3), $k=8$:
+Per MoE layer, the all-to-all moves about $k\,d_{\text{model}}$ *elements* per token *out* (dispatch) and the same back (combine), times bytes-per-element. For BF16, $d_{\text{model}}=7168$ (DeepSeek-V3), $k=8$:
 
 $$
 \text{dispatch bytes/token} = k \cdot d_{\text{model}} \cdot 2 = 8 \cdot 7168 \cdot 2 \approx 115\,\text{KB}.
@@ -254,7 +255,10 @@ def imbalance_factor(token_expert_ids, E, G):
 rng = np.random.default_rng(0)
 E, G, T, k = 256, 32, 2048, 8
 uniform = rng.integers(0, E, size=(T, k))
-print("uniform IF:", round(imbalance_factor(uniform, E, G), 3))    # ~1.05
+print("uniform IF:", round(imbalance_factor(uniform, E, G), 3))    # ~1.10 — even
+# perfectly uniform routing is not perfectly balanced: each rank's load is
+# Binomial(T*k, 1/G) with mean 512 and sd ~22, and the *max* of G=32 such draws
+# lands ~2 sd above the mean.
 
 p = np.ones(E); p[:8] *= 4; p /= p.sum()                            # experts 0..7 hot
 skewed = rng.choice(E, size=(T, k), p=p)
@@ -270,7 +274,7 @@ The production countermeasures are layered:
 
 !!! warning "Common pitfall: benchmarking MoE on uniform synthetic traffic"
 
-    A favorite way to fool yourself is to benchmark an EP deployment with randomly sampled prompts that route near-uniformly, measure a beautiful IF $\approx 1.05$, and ship. Production traffic is correlated — shared system prompts, one dominant language, bursty topics — and IF in the wild is routinely 1.3–2.0. Always benchmark with *replayed production traces*, and always report tail TPOT (p99), not mean, because skew lives in the tail.
+    A favorite way to fool yourself is to benchmark an EP deployment with randomly sampled prompts that route near-uniformly, measure a beautiful IF $\approx 1.1$, and ship. Production traffic is correlated — shared system prompts, one dominant language, bursty topics — and IF in the wild is routinely 1.3–2.0. Always benchmark with *replayed production traces*, and always report tail TPOT (p99), not mean, because skew lives in the tail.
 
 ---
 
@@ -320,13 +324,13 @@ This asymmetry is the core argument for **disaggregating** prefill and decode on
 
     **Model.** DeepSeek-V3: 671B total params, ~37B active/token, 256 routed experts + 1 shared, top-8 routing, $d_{\text{model}}=7168$, 61 layers (58 MoE), MLA KV.
 
-    **Weights, FP8 (1 byte/param).** Resident weight memory $\approx 671\text{ GB}$. On 8×H100-80GB (640 GB) it does *not* fit with room for KV and activations. On **2 nodes = 16×H100 (1.28 TB)** it fits comfortably: $\approx 42\text{ GB}$ weights/GPU, leaving ~38 GB/GPU for KV + activations + overhead.
+    **Weights, FP8 (1 byte/param).** Resident weight memory $\approx 671\text{ GB}$. On 8×H100-80GB (640 GB) it does *not* fit at all. On **2 nodes = 16×H100 (1.28 TB)** it fits — but mind the layout, because only the experts shard. The 256 routed experts across 58 MoE layers are $256\cdot58\cdot3\cdot7168\cdot2048 \approx 654\text{B}$ params, i.e. $\approx 41\text{ GB/GPU}$ when spread 16 ways; the remaining $\approx 17\text{ GB}$ (MLA projections $\approx 11.4$B over 61 layers, embeddings + LM head $\approx 1.9$B, shared experts $\approx 2.6$B, the 3 dense FFN layers $\approx 1.2$B) is **replicated on every attention-DP rank**. Total $\approx 58\text{ GB}$ weights/GPU, leaving ~22 GB/GPU for KV + activations + overhead.
 
     **EP layout.** Place 256 experts over 16 GPUs $\Rightarrow$ 16 experts/GPU. Attention runs DP (each GPU owns its requests' MLA KV); MoE runs EP=16 with all-to-all.
 
-    **All-to-all per layer (decode).** Per token, BF16 dispatch moves $k\,d_{\text{model}}\cdot 2 = 8\cdot7168\cdot2 \approx 115\text{ KB}$; FP8 dispatch halves that to ~57 KB. Taking the FP8 path, a decode batch of $B=128$ tokens sends $\approx 7.3\text{ MB}$ out per MoE layer; over 58 MoE layers, $\approx 423\text{ MB}$ moved per decode step (dispatch), with combine returning a comparable volume in BF16. At an effective ~150 GB/s usable bidirectional RDMA per GPU after overlap, the *exposed* (non-overlapped) fraction is what hits TPOT — the engineering goal is to drive that toward zero with the low-latency hook kernels.
+    **All-to-all per layer (decode).** Per token, BF16 dispatch moves $k\,d_{\text{model}}\cdot 2 = 8\cdot7168\cdot2 \approx 115\text{ KB}$; FP8 dispatch halves that to ~57 KB. Taking the FP8 path, a decode batch of $B=128$ tokens sends $\approx 7.3\text{ MB}$ out per MoE layer; over 58 MoE layers, $\approx 423\text{ MB}$ moved per decode step (dispatch), with combine returning a comparable volume in BF16. At the ~45 GB/s of usable RDMA per GPU that DeepEP measures on this class of fabric (8×400 Gb/s IB per node is 50 GB/s per GPU per direction at line rate), the *exposed* (non-overlapped) fraction is what hits TPOT — the engineering goal is to drive that toward zero with the low-latency hook kernels.
 
-    **KV budget.** MLA compresses KV to a small latent (on the order of ~70 KB/token across all layers in FP8, vs. hundreds of KB for vanilla MHA). With ~38 GB/GPU free, one GPU holds $\sim 38\text{e}9 / 70\text{e}3 \approx 540{,}000$ tokens of KV — i.e., hundreds of concurrent long-context requests *per GPU*, times 16 GPUs. KV capacity is plentiful precisely because MLA + attention-DP avoids replication.
+    **KV budget.** MLA compresses KV to a small latent: DeepSeek-V3 caches $\text{kv\_lora\_rank}+\text{qk\_rope\_head\_dim} = 512+64 = 576$ elements per token per layer, so $576\cdot61 \approx 35\text{K}$ elements/token across all layers — **~70 KB/token in BF16, ~35 KB/token in FP8**, versus megabytes for vanilla MHA at this head count. With ~22 GB/GPU free and an FP8 KV cache, one GPU holds $\sim 22\text{e}9 / 35\text{e}3 \approx 630{,}000$ tokens of KV — e.g. ~19 concurrent 32K-context requests per GPU, ~300 across the 16-GPU pool. KV capacity is comfortable precisely because MLA + attention-DP avoids replication.
 
     **Takeaway.** The binding constraint is not arithmetic (37B active is cheap) — it is fitting 671B of weights resident, keeping IF near 1.0 with redundant experts, and hiding the 58-layer all-to-all behind compute. Two H100 nodes with large EP and DeepEP overlap is a sensible decode pool; a single node cannot hold the weights.
 
@@ -483,12 +487,12 @@ Every line of that loop is a decision this chapter argued for: local attention b
     **Foundational work**
 
     - [Lepikhin et al., *GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding* (2020)](https://arxiv.org/abs/2006.16668) — first formalization of expert sharding with all-to-all dispatch/combine at 600B+ parameter scale on TPUs.
-    - [Fedus, Zoph & Shazeer, *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity* (2021)](https://arxiv.org/abs/2101.03961) — introduced capacity factor, token dropping, and the load-balancing auxiliary loss that underpins all later MoE routing analysis.
+    - [Fedus, Zoph & Shazeer, *Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity* (2021)](https://arxiv.org/abs/2101.03961) — popularized top-1 routing and the *simplified* single-term load-balancing auxiliary loss, and systematized capacity factor and token dropping (both introduced in GShard above, with auxiliary balancing losses going back to Shazeer et al., 2017); the reference point for all later MoE routing analysis.
     - [Rajbhandari et al., *DeepSpeed-MoE: Advancing Mixture-of-Experts Inference and Training to Power Next-Generation AI Scale* (2022)](https://arxiv.org/abs/2201.05596) — first systematic treatment of MoE inference optimization, combining EP + TP, achieving 4.5× speedup over quality-equivalent dense models.
 
     **Recent advances (2023–2026)**
 
-    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — canonical large-EP production MoE: MLA, auxiliary-loss-free load balancing, redundant expert replication, and disaggregated EP32-prefill / EP144-decode serving across nodes (32 redundant routed experts).
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — canonical large-EP production MoE: MLA, auxiliary-loss-free load balancing, redundant expert replication, and disaggregated serving across nodes — §3.4 specifies EP32 prefill (4 nodes, 32 redundant routed experts) and EP320 decode (40 nodes, one expert per GPU). The later EP144-decode configuration quoted above comes from DeepSeek's *DeepSeek-V3/R1 Inference System Overview* (2025), not this report.
     - [Jiang et al., *Mixtral of Experts* (2024)](https://arxiv.org/abs/2401.04088) — first widely-deployed open-weight sparse MoE (8×7B), establishing the modern top-2 routing + grouped-GEMM baseline for MoE serving benchmarks.
     - [Gale et al., *MegaBlocks: Efficient Sparse Training with Mixture-of-Experts* (2022)](https://arxiv.org/abs/2211.15841) — block-sparse GPU kernels for MoE that eliminate token dropping and padding waste; widely used as the grouped-GEMM backend in serving stacks.
     - [Kimi Team (Moonshot AI), *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — a ~1T-total / ~32B-active open-weight MoE (384 experts, MLA, $d_{\text{model}}=7168$) that scales the DeepSeek-V3 serving recipe to trillion-parameter total, the concrete "trillion-scale sparse model" this chapter's techniques target.
@@ -601,7 +605,7 @@ Every line of that loop is a decision this chapter argued for: local attention b
 
 ??? note "Solution"
 
-    **Dense TP.** Every rank participates in an all-reduce whose volume is fixed at $\sim 2\,d_{\text{model}}$ bytes per token per layer *regardless of the rank count*, and the collective's latency grows (more participants, more synchronization / more hops) as you add ranks. Meanwhile each rank's slice of the matmul shrinks, but past a point the per-token work is already tiny and latency-bound, so the growing all-reduce dominates. Net: beyond a sweet spot, more TP ranks = higher decode latency.
+    **Dense TP.** Every rank participates in an all-reduce whose payload is fixed at $\sim 2\,d_{\text{model}}$ elements per token per layer (two all-reduces per layer) *regardless of the rank count*, and the collective's latency grows (more participants, more synchronization / more hops) as you add ranks. Meanwhile each rank's slice of the matmul shrinks, but past a point the per-token work is already tiny and latency-bound, so the growing all-reduce dominates. Net: beyond a sweet spot, more TP ranks = higher decode latency.
 
     **MoE EP.** Spreading $E$ experts over more GPUs means each GPU holds *fewer* experts ($E/G$ shrinks). Two things improve: (1) the local grouped GEMM per rank gets smaller and faster, and (2) more aggregate HBM bandwidth is available to stream expert weights, since decode is bandwidth-bound on the expert weights. The countervailing cost is that the all-to-all now spans more GPUs — but that is a *latency* cost that DeepEP's low-latency hook-overlap kernels are specifically built to hide behind compute. When the all-to-all is well-overlapped (driven toward zero exposed latency), the win from fewer-experts-per-GPU + more bandwidth dominates, so *larger* EP *lowers* per-token decode latency.
 
@@ -655,7 +659,7 @@ Every line of that loop is a decision this chapter argued for: local attention b
     print("replicated IF:", round(imbalance_factor_replicated(skewed, E, G, range(8), 2), 3))
     ```
 
-    On the skewed batch the fixed round-robin layout yields IF well above 1.5. Simply *greedily* packing experts (no replicas) already helps by moving hot experts onto separate ranks, and adding 2 replicas each to the top-8 hot experts pulls IF close to ~1.1 — the barrier no longer waits on a single overloaded GPU. The cost is memory: $8\times2$ extra expert copies resident. This is exactly DeepSeek's "redundant experts," and the eviction/placement policy is driven by the router's live load histogram.
+    On the skewed batch the fixed round-robin layout yields IF well above 1.5 (it lands near 3.7 here, because the 8 hot experts all sit on rank 0). Simply *greedily* packing experts (no replicas) already recovers most of the balance — IF $\approx 1.04$ — by scattering the hot experts onto separate ranks. Adding 2 replicas each to the top-8 keeps IF $\approx 1.05$ *and* makes the placement robust to the case greedy packing cannot fix: a single expert whose load exceeds one rank's fair share, where no assignment of whole experts can balance and you must split the expert itself. The barrier no longer waits on a single overloaded GPU. The cost is memory: $8\times2$ extra expert copies resident. This is exactly DeepSeek's "redundant experts," and the eviction/placement policy is driven by the router's live load histogram.
 
     (Small hand-check that the LPT logic is right: experts with counts `[40, 20, 10, 10]` on `G=2` greedily assign 40→rank0, 20→rank1, 10→rank1, 10→rank1 giving loads `[40, 40]`, IF `1.0` — versus a fixed `[40,20]/[10,10]` layout giving `[60, 20]`, IF `1.5`. Greedy packing alone recovers balance when experts happen to fit.)
 
@@ -668,8 +672,9 @@ Every line of that loop is a decision this chapter argued for: local attention b
     **(a)** FP8 weights $= 671\text{ GB}$.
 
     - One node $= 8\times80 = 640\text{ GB} < 671\text{ GB}$ — does **not** fit, even before leaving room for KV/activations.
-    - Two nodes $= 16\times80 = 1280\text{ GB}$; weights are $671/16 \approx 42\text{ GB/GPU}$, leaving $\approx 38\text{ GB/GPU}$ for KV + activations — fits comfortably.
+    - Two nodes $= 16\times80 = 1280\text{ GB}$; ignoring layout, weights are $671/16 \approx 42\text{ GB/GPU}$ — fits with room to spare.
     - With a 30 GB/GPU reserve, each H100 offers $80-30 = 50\text{ GB}$ for weights. Minimum GPUs $= \lceil 671/50 \rceil = \lceil 13.42 \rceil = \mathbf{14}$ H100s. In practice you round to whole 8-GPU nodes, i.e. **2 nodes (16 GPUs)** — which matches the chapter's worked example.
+    - *Layout caveat (the reason the worked example quotes 58 GB/GPU, not 42):* the flat $671/G$ division assumes every parameter shards. Under attention-DP + expert-EP only the $\approx 654\text{ GB}$ of routed experts shard; the $\approx 17\text{ GB}$ of non-expert weights is replicated per rank. The real requirement is $654/G + 17 \le 50$, i.e. $G \ge 654/33 \approx 19.8 \Rightarrow \mathbf{20}$ GPUs (3 nodes) under a strict 30 GB reserve — 16 GPUs still works if you accept the ~22 GB/GPU reserve of the worked example.
 
     **(b)** Dense-equivalent efficiency is $\eta = \dfrac{\text{achieved MoE tok/s}}{\text{dense-active-twin tok/s}}$, so achieved $= \eta \times 2000$:
 

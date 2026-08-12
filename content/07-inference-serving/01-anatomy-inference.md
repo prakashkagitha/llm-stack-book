@@ -22,7 +22,7 @@ Why split it this way? Because of the **causal attention mask**. Token at positi
 
 These two phases run the *same weights* through the *same layers*. What differs is the **shape of the activation tensors** flowing through them, and that single difference — a sequence dimension of $S$ versus a sequence dimension of $1$ — flips the bottleneck from compute to memory. Everything in this chapter is a downstream consequence of that flip.
 
-### A naive generation loop (and why it is quadratically wasteful)
+### A naive generation loop (and why it is so wasteful)
 
 Let us write the simplest possible autoregressive loop, with no cache at all, to expose the redundancy that the KV cache later eliminates.
 
@@ -33,9 +33,10 @@ import torch
 def generate_naive(model, input_ids, max_new_tokens):
     """
     The simplest correct autoregressive decoder: re-run the FULL forward
-    pass on the entire growing sequence at every step. Correct, but O(T^2)
-    in attention work because we recompute K and V for all old tokens
-    every single step. This is what the KV cache fixes.
+    pass on the entire growing sequence at every step. Correct, but wildly
+    wasteful: we recompute K and V for all old tokens every single step,
+    which costs O(T^2) redundant token-projections (and O(T^3) attention
+    scores in total). This is what the KV cache fixes.
     """
     for _ in range(max_new_tokens):
         # logits over the WHOLE sequence; we only need the last position
@@ -45,7 +46,7 @@ def generate_naive(model, input_ids, max_new_tokens):
     return input_ids
 ```
 
-This is correct but catastrophically slow. At decode step $t$, the sequence has length $S + t$, and we recompute the keys and values for *all* of those positions even though only the newest token is new. The cumulative attention work scales like $\sum_{t} (S+t)^2$ — quadratic in total length and full of redundant recomputation. Almost everything from the previous step is identical and could have been saved. That observation is the entire motivation for the KV cache.
+This is correct but catastrophically slow. At decode step $t$, the sequence has length $S + t$, and we recompute the keys and values for *all* of those positions even though only the newest token is new. The cumulative attention work scales like $\sum_{t} (S+t)^2 = O\big((S+T)^3\big)$ — *cubic* in the total length, because a quadratic cost is paid at every one of the $T$ steps. The redundant projection work is one order lower but still enormous: re-deriving $K$ and $V$ for all past positions every step costs $O\big((S+T)^2 d^2\big)$ FLOPs that a single step's worth of work would have sufficed for. Almost everything from the previous step is identical and could have been saved. That observation is the entire motivation for the KV cache.
 
 ## The KV Cache: Mechanism and Math
 
@@ -121,8 +122,10 @@ class CachedSelfAttention(torch.nn.Module):
         if q.shape[0] > 1:
             seq = self.k_cache.shape[0]
             past = seq - q.shape[0]
-            i = torch.arange(q.shape[0]).unsqueeze(1) + past
-            j = torch.arange(seq).unsqueeze(0)
+            # Build indices on x's device -- a CPU mask against a CUDA
+            # `scores` would raise in masked_fill.
+            i = torch.arange(q.shape[0], device=q.device).unsqueeze(1) + past
+            j = torch.arange(seq, device=q.device).unsqueeze(0)
             scores = scores.masked_fill(j > i, float("-inf"))
 
         attn = F.softmax(scores, dim=-1)
@@ -314,7 +317,7 @@ $$
 \text{Latency}_{\text{E2E}} \approx \underbrace{\text{TTFT}}_{\text{prefill of } S \text{ tokens}} + \underbrace{(T-1)\cdot\text{TPOT}}_{\text{decode of } T-1 \text{ more tokens}}
 $$
 
-**TTFT** is what the user feels as "responsiveness" — how long the cursor blinks before text appears. It is governed by prefill, so it scales with prompt length $S$ (longer prompts take longer to encode) and by queueing delay under load. Because prefill is compute-bound, TTFT is improved by more FLOPs, by **chunked prefill** (slicing a long prompt so it interleaves with ongoing decodes), and by **prefix caching** (skipping prefill entirely for a shared prompt prefix). See [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
+**TTFT** is what the user feels as "responsiveness" — how long the cursor blinks before text appears. It is governed by prefill, so it scales with prompt length $S$ (longer prompts take longer to encode) and by queueing delay under load. Because prefill is compute-bound, TTFT is improved by more FLOPs and by **prefix caching** (skipping prefill entirely for a shared prompt prefix). **Chunked prefill** (slicing a long prompt so it interleaves with ongoing decodes) belongs to the *other* column: it protects the TPOT/ITL of in-flight decodes from being blocked by one giant prefill, at a small cost to that prompt's own TTFT — the usual `max_num_batched_tokens` knob is exactly this TTFT-versus-ITL trade. See [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
 
 **TPOT** is what the user feels as "typing speed" — the steady cadence once text starts flowing. It is governed by decode, so it is memory-bound and follows the tokens/sec ceiling above. A common product target is to keep TPOT below the human reading rate (very roughly 5–10 tokens/sec is readable, so a TPOT under ~100–200 ms feels smooth). Crucially, batching *raises aggregate throughput but can raise per-stream TPOT*, because a larger decode batch takes slightly longer per step. This tension — throughput versus per-user latency — is the central knob of serving.
 
@@ -324,7 +327,7 @@ def measure_streaming_latency(stream_fn, prompt):
     Wrap a streaming generation call and report TTFT, mean TPOT, and the
     per-token ITL series. `stream_fn(prompt)` must yield one token at a time.
     """
-    import time
+    import math, time
     t_start = time.perf_counter()
     t_prev = None
     ttft = None
@@ -339,10 +342,13 @@ def measure_streaming_latency(stream_fn, prompt):
         t_prev = now
         n_tokens += 1
     tpot = sum(itls) / len(itls) if itls else float("nan")
+    # Nearest-rank percentile: index ceil(q*n) - 1, NOT int(q*n) - 1, which
+    # would report the *minimum* ITL as p99 for small n.
+    p99_idx = max(0, math.ceil(0.99 * len(itls)) - 1)
     return {
         "ttft_ms": ttft * 1e3,
         "tpot_ms": tpot * 1e3,                # mean inter-token latency
-        "p99_itl_ms": sorted(itls)[int(0.99 * len(itls)) - 1] * 1e3 if itls else None,
+        "p99_itl_ms": sorted(itls)[p99_idx] * 1e3 if itls else None,
         "output_tokens": n_tokens,
         "decode_tps": (n_tokens - 1) / sum(itls) if itls else float("nan"),
     }
@@ -390,26 +396,26 @@ $$
 This ties the whole chapter together. The numerator $L$ is set by **KV-cache memory** — the formula from earlier directly bounds how many sequences fit. The denominator $W$ is set by **decode speed** — the bandwidth-bound TPOT ceiling. So your serving throughput is fundamentally governed by the two physical facts we derived: how much KV cache fits in HBM, and how fast HBM bandwidth lets you decode.
 
 !!! example "Worked example: sizing a fleet with Little's law"
-    Suppose our 8B model on an 80 GB A100 holds $L \approx 60$ concurrent 8k-token sequences (from the earlier KV-cache budget). Suppose each request generates on average $T = 500$ tokens and our batched decode achieves a per-stream TPOT of about 20 ms (decode steps are fast because batching amortizes the weight read). Then the average time-in-system per sequence is:
+    Suppose our 8B model on an 80 GB A100 holds $L \approx 60$ concurrent 8k-token sequences (from the earlier KV-cache budget). Suppose each request generates on average $T = 500$ tokens. Batching amortizes the weight read, but *not* the KV read (previous section): with 60 resident 8k sequences, each decode step must stream 16 GB of weights plus $60 \times 1\,\text{GiB} \approx 64$ GB of cache, so at 2.0 TB/s the step floor is $\approx 40$ ms — take TPOT $\approx 40$ ms. (Exercise 5 runs the identical accounting at $B=32$.) Then the average time-in-system per sequence is:
 
     $$
-    W \approx 500 \times 0.020\ \text{s} = 10\ \text{s (decode)} \; + \; \text{TTFT} \approx 10\text{–}11\ \text{s}.
+    W \approx 500 \times 0.040\ \text{s} = 20\ \text{s (decode)} \; + \; \text{TTFT} \approx 20\text{–}21\ \text{s}.
     $$
 
     By Little's law the sustainable request throughput is:
 
     $$
-    \lambda = \frac{L}{W} = \frac{60}{10.5} \approx 5.7\ \text{requests/sec}.
+    \lambda = \frac{L}{W} = \frac{60}{20.5} \approx 2.9\ \text{requests/sec}.
     $$
 
-    At 500 output tokens each that is about **2,850 output tokens/sec** of aggregate decode throughput from one GPU. Push arrival rate above $\lambda$ and the queue grows without bound — TTFT climbs, the system becomes unstable, and you must add GPUs or shorten outputs. This back-of-envelope is exactly how capacity planners size inference fleets, and it shows concretely how KV-cache capacity ($L$) and decode bandwidth ($W$) jointly set the ceiling.
+    At 500 output tokens each that is about **1,450 output tokens/sec** of aggregate decode throughput from one GPU. Push arrival rate above $\lambda$ and the queue grows without bound — TTFT climbs, the system becomes unstable, and you must add GPUs or shorten outputs. This back-of-envelope is exactly how capacity planners size inference fleets, and it shows concretely how KV-cache capacity ($L$) and decode bandwidth ($W$) jointly set the ceiling.
 
 The practical consequence: to raise throughput you either **increase $L$** (shrink the KV cache via GQA/MLA, quantize the cache, page it more tightly, share prefixes) or **decrease $W$** (faster decode via quantized weights, speculative decoding, better kernels). Every serving optimization in Part VII is, underneath, an attack on one of these two terms. Continuous batching keeps $L$ as full as possible at all times; PagedAttention lets you pack $L$ tighter without fragmentation; speculative decoding shrinks $W$ by emitting multiple tokens per forward pass.
 
 !!! interview "Interview Corner"
     **Q:** A teammate says "our 7B model only generates 30 tokens/sec on an H100, the GPU must be broken — it has 1000 TFLOPS." How do you respond?
 
-    **A:** The GPU is almost certainly fine; single-stream decode is *memory-bandwidth-bound, not compute-bound*, so TFLOPS is the wrong number to look at. Each decode step generates one token but must stream all ~14 GB of fp16 weights from HBM. At ~3 TB/s that is a hard floor of roughly $14/3000 \approx 4.7$ ms per step, i.e. a single-stream ceiling around 200 tokens/sec; 30 tokens/sec just means we are achieving a fraction of peak bandwidth (kernel overhead, small context, or an unfused implementation). The tensor cores are mostly *idle* during decode — their 1000 TFLOPS is unused because arithmetic intensity is about 1 FLOP/byte, two orders of magnitude below the H100's ridge point. The fix is not "a faster GPU's FLOPS" but to (1) raise arithmetic intensity by **batching** many sequences so one weight read serves many tokens, (2) shrink the weight bytes via **int4/int8 quantization**, or (3) emit multiple tokens per pass via **speculative decoding**. I'd also confirm we are actually using a KV cache and a fused-attention kernel, since a naive O($T^2$) loop or an unfused path can leave bandwidth on the table.
+    **A:** The GPU is almost certainly fine; single-stream decode is *memory-bandwidth-bound, not compute-bound*, so TFLOPS is the wrong number to look at. Each decode step generates one token but must stream all ~14 GB of fp16 weights from HBM. At ~3 TB/s that is a hard floor of roughly $14/3000 \approx 4.7$ ms per step, i.e. a single-stream ceiling around 200 tokens/sec; 30 tokens/sec just means we are achieving a fraction of peak bandwidth (kernel overhead, small context, or an unfused implementation). The tensor cores are mostly *idle* during decode — their 1000 TFLOPS is unused because arithmetic intensity is about 1 FLOP/byte, two orders of magnitude below the H100's ridge point. The fix is not "a faster GPU's FLOPS" but to (1) raise arithmetic intensity by **batching** many sequences so one weight read serves many tokens, (2) shrink the weight bytes via **int4/int8 quantization**, or (3) emit multiple tokens per pass via **speculative decoding**. I'd also confirm we are actually using a KV cache and a fused-attention kernel, since a cacheless loop that recomputes every past key and value, or an unfused path, can leave bandwidth on the table.
 
 ## Putting It Together: An Annotated Generation Loop
 

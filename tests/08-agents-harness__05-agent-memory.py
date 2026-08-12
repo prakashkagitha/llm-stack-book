@@ -90,7 +90,12 @@ class EpisodicLog:
 
     def append(self, session_id: str, role: str, content: str,
                metadata: dict[str, Any] | None = None) -> None:
-        """Write one episode entry. Thread-safe via append mode + file lock."""
+        """
+        Write one episode entry. Opening in "a" mode is enough for a single
+        writer process; for concurrent writers wrap the write in an
+        `fcntl.flock(f.fileno(), fcntl.LOCK_EX)` (or use a real DB) — O_APPEND
+        alone does not guarantee that a long buffered line stays intact.
+        """
         entry = {
             "timestamp": time.time(),
             "iso_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -372,10 +377,20 @@ class AgentMemory:
                           confidence=confidence)
 
     def store(self, text: str,
-              metadata: dict[str, Any] | None = None) -> str:
-        """Add a free-text memory to the vector store."""
+              metadata: dict[str, Any] | None = None,
+              importance: float = 0.5) -> str:
+        """
+        Add a free-text memory to the vector store.
+
+        `last_access` (epoch seconds) and `importance` (in [0, 1]) are written
+        on every entry because the ranked recall of section 8.5.10 needs them;
+        without them every memory looks equally recent and equally important
+        and the ranker degenerates to plain cosine similarity.
+        """
         meta = {"session_id": self.session_id,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "last_access": time.time(),
+                "importance": float(importance),
                 **(metadata or {})}
         return self.vectors.add(text, metadata=meta)
 
@@ -385,7 +400,10 @@ class AgentMemory:
                min_score: float = 0.3) -> list[tuple[str, float]]:
         """
         Query the vector store. Returns list of (text, score) tuples.
-        Score is cosine similarity in [0, 1] (since vectors are normalised).
+        Since the vectors are L2-normalised the dot product *is* the cosine,
+        so the score lies in [-1, 1]; sentence-embedder scores are usually
+        positive, but unrelated or opposed texts do go negative, which is
+        why min_score defaults to a positive cut rather than 0.
         """
         hits = self.vectors.search(query, top_k=top_k, min_score=min_score)
         return [(entry.text, score) for entry, score in hits]
@@ -401,8 +419,11 @@ class AgentMemory:
         facts = self.semantic.as_context_string()
         parts.append(facts)
 
-        # 2. Recent episodic entries (last 5 from this session).
-        recent = self.episodic.tail(n=5, session_id=self.session_id)
+        # 2. Recent episodic entries. Deliberately *not* filtered to
+        #    self.session_id: at session start this session has written
+        #    nothing yet, and what we want is the tail of the previous
+        #    session — including the summary written by close_session().
+        recent = self.episodic.tail(n=5)
         if recent:
             lines = ["## Recent episode summary"]
             for e in recent:
@@ -432,7 +453,8 @@ class AgentMemory:
                  metadata={"type": "session_summary"})
         self.store(summary,
                    metadata={"type": "session_summary",
-                             "session_id": self.session_id})
+                             "session_id": self.session_id},
+                   importance=1.0)   # session summaries are the highest-value entries
 
 
 # =====================================================================

@@ -110,10 +110,15 @@ draft  = AutoModelForCausalLM.from_pretrained(DRAFT_NAME).eval().cuda()
 
 def apply_temperature(logits, temperature):
     """Return a probability distribution from logits with temperature.
-    temperature == 0 collapses to a one-hot argmax (greedy)."""
+    temperature == 0 collapses to a one-hot argmax (greedy).
+    Works for any leading shape: the verify path passes a [gamma+1, V] batch
+    of rows, so the one-hot must be built PER ROW. (Writing
+    `probs[..., logits.argmax(-1)] = 1.0` would be advanced indexing over the
+    cross product of rows and argmax columns — every row would get gamma+1
+    ones and the accept test would silently break.)"""
     if temperature == 0:
         probs = torch.zeros_like(logits)
-        probs[..., logits.argmax(-1)] = 1.0
+        probs.scatter_(-1, logits.argmax(-1, keepdim=True), 1.0)
         return probs
     return F.softmax(logits / temperature, dim=-1)
 
@@ -297,8 +302,9 @@ def speculative_step_cached(prefix_ids, draft_cache, target_cache, gamma=4, temp
     #   (2) ALL gamma drafts accepted (n == gamma): keep = T+gamma, which
     #       exceeds the draft cache's current length T+gamma-1, so
     #       draft_cache.crop is a no-op — the draft cache legitimately LAGS
-    #       the committed prefix by one token (d_gamma was never fed to the
-    #       drafter). This is fine and self-healing: next step's gap-prefill
+    #       the committed prefix (T+gamma+1 tokens) by TWO, i.e. one more
+    #       than the usual pending token, because d_gamma was never fed to
+    #       the drafter. This is fine and self-healing: next step's gap-prefill
     #       `draft_ids[:, draft_cache.get_seq_length():]` will simply feed
     #       TWO tokens (d_gamma and the bonus) instead of one. The target
     #       cache never lags this way, since the verify pass always
@@ -334,7 +340,7 @@ def generate_cached(prompt, max_new_tokens=128, gamma=4, temperature=1.0):
 
 Correctness is easy to check reproducibly. At `temperature=0`, speculative decoding is deterministic and lossless — the accept/reject rule collapses to argmax comparison — so `generate_cached` must produce a byte-identical continuation to both the naive `generate(...)` above and plain Hugging Face greedy decoding: `tok.decode(target.generate(tok(prompt, return_tensors="pt").input_ids.cuda(), max_new_tokens=128, do_sample=False)[0, start:])`. Concretely: `assert generate_cached("The future of machine learning is", temperature=0) == generate("The future of machine learning is", temperature=0)`. At `temperature > 0` the two only match if the same RNG draws happen in the same order (seed with `torch.manual_seed` before each call), since sampling consumes randomness — the greedy-equivalence check is the robust invariant to test. As a speed sanity check, `generate_cached` should be several times faster wall-clock than `generate` for long generations, since it drops the $O(T)$ per-step recompute entirely.
 
-Hugging Face Transformers implements exactly this rollback in `transformers/generation/utils.py` (the assisted-generation path and `_speculative_sampling`), backed by `DynamicCache.crop` in `transformers/cache_utils.py`. For **tree verification** (see the Tree Attention section below), crop-by-length no longer applies — instead of truncating a contiguous suffix, you keep exactly the accepted root-to-leaf path's nodes with a per-layer gather: `key_cache[l] = key_cache[l].index_select(-2, keep_idx)` (and likewise for `value_cache`), where `keep_idx` is a `LongTensor` of the flattened node indices on the accepted path and `-2` is the sequence dimension of the `[batch, heads, seq, head_dim]` KV tensors. This `index_select` mechanics is what paged/tree engines like vLLM, SGLang, and gpt-fast's speculative-decoding worker use under the hood.
+Hugging Face Transformers implements exactly this rollback in `transformers/generation/utils.py` (the assisted-generation path and `_speculative_sampling`), backed by `DynamicCache.crop` in `transformers/cache_utils.py`. For **tree verification** (see the Tree Attention section below), crop-by-length no longer applies — instead of truncating a contiguous suffix, you keep exactly the accepted root-to-leaf path's nodes with a per-layer gather: `key_cache[l] = key_cache[l].index_select(-2, keep_idx)` (and likewise for `value_cache`), where `-2` is the sequence dimension of the `[batch, heads, seq, head_dim]` KV tensors. The critical detail is that `index_select` keeps **only** the positions you list, and the tree's KV sits *after* the committed prefix in the same tensor — so `keep_idx` must be a `LongTensor` of **absolute cache positions**, `torch.cat([torch.arange(L, device=dev), L + path_nodes])`: the whole committed prefix of length `L`, followed by the accepted path's flattened node indices shifted by `L`. Passing the bare node indices would silently discard the entire context and leave the model attending to a handful of speculative tokens. This `index_select` mechanics is what paged/tree engines like vLLM, SGLang, and gpt-fast's speculative-decoding worker use under the hood.
 
 ## Choosing and Training a Draft Model
 
@@ -359,7 +365,7 @@ These trade off: a bigger drafter raises $\alpha$ but also raises $c$. The sweet
 
 ## Medusa: Parallel Prediction Heads
 
-Maintaining a *separate* draft model is operationally annoying: extra weights to load, a second model to serve, a second KV cache. **Medusa** (Cai et al., 2024) removes the separate model. It freezes the target and bolts on a small number of extra **decoding heads** — typically 4 or 5 — each a one- or two-layer MLP with a residual connection feeding into the target's existing unembedding (LM head). The base model predicts token $t{+}1$ as usual; Medusa head $k$ predicts token $t{+}k{+}1$ *directly from the same final hidden state* $h_t$.
+Maintaining a *separate* draft model is operationally annoying: extra weights to load, a second model to serve, a second KV cache. **Medusa** (Cai et al., 2024) removes the separate model. It freezes the target and bolts on a small number of extra **decoding heads** — typically 4 or 5 — each a one-layer MLP with a residual connection feeding its **own** vocabulary projection $W_2^{(k)} \in \mathbb{R}^{d \times V}$. That projection is *initialized as a copy* of the target's unembedding (LM head) and then trained, rather than being shared with the frozen base — each head needs its own output matrix precisely because it is solving a different (harder) prediction problem. Medusa also zero-initializes the head's MLP weight $W_1^{(k)}$, so at the start of training every head reproduces the base model's next-token distribution exactly. The base model predicts token $t{+}1$ as usual; Medusa head $k$ predicts token $t{+}k{+}1$ *directly from the same final hidden state* $h_t$.
 
 
 {{fig:specdec-medusa-heads}}
@@ -376,13 +382,18 @@ import torch
 import torch.nn as nn
 
 class MedusaHead(nn.Module):
-    """One Medusa head: a residual MLP block reusing the base model's LM head.
+    """One Medusa head: a residual MLP block plus its OWN vocabulary
+    projection, initialized from (not shared with) the base model's LM head.
     Predicts a token several positions ahead from the SAME hidden state."""
-    def __init__(self, hidden_size, lm_head):
+    def __init__(self, hidden_size, vocab_size, lm_head_weight):
         super().__init__()
         self.linear = nn.Linear(hidden_size, hidden_size)
+        nn.init.zeros_(self.linear.weight)   # W1 = 0 => head starts as a copy
+        nn.init.zeros_(self.linear.bias)     #           of the base LM head
         self.act = nn.SiLU()
-        self.lm_head = lm_head            # SHARED with the frozen base model
+        self.lm_head = nn.Linear(hidden_size, vocab_size, bias=False)
+        with torch.no_grad():                # INITIALIZED from the base head,
+            self.lm_head.weight.copy_(lm_head_weight)   # then trained itself
     def forward(self, h):                 # h: [B, T, hidden]
         h = h + self.act(self.linear(h))  # residual connection
         return self.lm_head(h)            # [B, T, vocab]
@@ -393,14 +404,18 @@ class MedusaModel(nn.Module):
         self.base = base_model            # frozen target
         hidden = base_model.config.hidden_size
         lm_head = base_model.get_output_embeddings()
+        vocab = lm_head.weight.shape[0]
         self.heads = nn.ModuleList(
-            MedusaHead(hidden, lm_head) for _ in range(num_heads)
+            MedusaHead(hidden, vocab, lm_head.weight) for _ in range(num_heads)
         )
-    @torch.no_grad()
     def forward(self, input_ids):
-        out = self.base(input_ids, output_hidden_states=True)
-        h_last = out.hidden_states[-1]            # [B, T, hidden]
-        base_logits = self.base.get_output_embeddings()(h_last)
+        # Only the BACKBONE is frozen. Scoping no_grad to the base call (rather
+        # than decorating forward) keeps the heads trainable: head outputs still
+        # carry grad_fn, so Medusa-1 training can call loss.backward().
+        with torch.no_grad():
+            out = self.base(input_ids, output_hidden_states=True)
+            h_last = out.hidden_states[-1]        # [B, T, hidden]
+            base_logits = self.base.get_output_embeddings()(h_last)
         # head k predicts token t+k+2; base predicts t+1.
         head_logits = [head(h_last) for head in self.heads]
         return base_logits, head_logits          # use last position to draft
@@ -435,7 +450,7 @@ The trick that makes it cheap is **tree attention**: we flatten the tree into on
 {{fig:specdec-tree-attention}}
 
 
-Each node must also carry the correct **position id** equal to its depth (not its index in the flattened sequence), so that positional encodings such as RoPE behave as if the path were contiguous (see [Positional Encodings](../02-transformer/05-positional-encoding.html)). Here is a compact construction of the mask and position ids from a parent-pointer tree:
+Each node must also carry the correct **position id** — driven by its depth, not by its index in the flattened sequence — so that positional encodings such as RoPE behave as if the path were contiguous (see [Positional Encodings](../02-transformer/05-positional-encoding.html)). Concretely, if `past_len` positions are already in the KV cache and the tree's root is the first token fed in this pass, node $i$'s position id is `past_len + depth[i]`; the raw depths are only the *offsets*. Here is a compact construction of the ancestor mask and those depth offsets from a parent-pointer tree:
 
 ```python
 import torch
@@ -445,9 +460,10 @@ def build_tree_attn(parents):
     parents: list where parents[i] is the index of node i's parent
              (parents[0] = -1 for the root). Nodes are in any order such
              that a parent appears before its children.
-    Returns (mask, position_ids):
+    Returns (mask, depth):
       mask[i, j] = True  iff node j is an ancestor of node i, or j == i.
-      position_ids[i] = depth of node i (root = 0).
+      depth[i]   = depth of node i (root = 0) -- the position-id OFFSET,
+                   to which the committed prefix length must be added.
     """
     n = len(parents)
     mask = torch.zeros(n, n, dtype=torch.bool)
@@ -466,9 +482,19 @@ def build_tree_attn(parents):
 # Example tree: [root, A, B, A1, A2, B1, B2] from the diagram above.
 parents = [-1, 0, 0, 1, 1, 2, 2]
 mask, pos = build_tree_attn(parents)
-print(pos.tolist())          # [0, 1, 1, 2, 2, 2, 2]  (depths)
-# Feed `mask` as the attention mask and `pos` as position_ids to the target
-# in ONE forward pass; then verify each root->leaf path with accept/reject.
+print(pos.tolist())          # [0, 1, 1, 2, 2, 2, 2]  (depth offsets)
+
+# `mask` is [n, n] over tree nodes ONLY, and `pos` holds depth offsets only.
+# To feed the tree to a target that already holds `past_len` cached positions:
+past_len = 0   # in a real step: target_cache.get_seq_length()
+n = len(parents)
+full = torch.ones(n, past_len + n, dtype=torch.bool)   # prefix fully visible
+full[:, past_len:] = mask                              # tree part: ancestors only
+attn_4d = full[None, None]                             # [1, 1, n, past_len+n]
+position_ids = (past_len + pos)[None]                  # [1, n]
+# Pass attn_4d as a 4-D additive/boolean mask (NOT as the 2-D [B, kv_len]
+# padding mask HF's `attention_mask=` expects) together with position_ids, in
+# ONE forward pass; then verify each root->leaf path with accept/reject.
 ```
 
 After the single masked forward pass, you have the target's distribution at every node. You verify paths from the root: walk down, applying the accept/reject test at each edge, and take the longest accepted path; append the bonus token from the deepest accepted node.
@@ -559,7 +585,7 @@ python -m sglang.launch_server --model-path meta-llama/Llama-3.1-8B-Instruct \
   --speculative-num-draft-tokens 32
 ```
 
-Read those SGLang flags against the Tree Attention section: `--speculative-num-steps` is the tree *depth*, `--speculative-eagle-topk` the *branching factor* per level, and `--speculative-num-draft-tokens` the total node budget $n$ verified in one target pass — exactly the three quantities whose product determines verification cost. TensorRT-LLM offers the same menu through its `speculative_config` / draft-target engine build ([TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html)), and llama.cpp does it on CPU/edge with `llama-server -m model.gguf -md draft.gguf --draft-max 8 --draft-min 2` (shared vocabulary required).
+Read those SGLang flags against the Tree Attention section: `--speculative-num-steps` is the tree *depth*, `--speculative-eagle-topk` the *branching factor* per level, and `--speculative-num-draft-tokens` the total node budget $n$ verified in one target pass. They are *not* multiplied: depth × branching bounds how many candidates the drafter can produce, while `--speculative-num-draft-tokens` alone is the per-pass verification cost — and it must stay consistent with the other two (it cannot exceed the candidates depth × branching can generate, plus the root). TensorRT-LLM offers the same menu through its `speculative_config` / draft-target engine build ([TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html)), and llama.cpp does it on CPU/edge with `llama-server -m model.gguf -md draft.gguf --draft-max 8 --draft-min 2` (shared vocabulary required).
 
 The one number to watch in production is the **acceptance rate**, which every engine reports: vLLM exposes Prometheus counters for drafted and accepted speculative tokens (their ratio is $\alpha$, and accepted-per-step is the $\mathbb{E}[\text{tokens per step}]$ of the next section), and SGLang logs an average accept length. If accepted-per-step drifts toward 1 on your traffic, speculation is pure overhead and should be switched off — which is exactly what the economics below quantify.
 

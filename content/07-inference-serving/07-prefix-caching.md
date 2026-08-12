@@ -88,23 +88,25 @@ This representation has several advantages over a flat hash table:
 
 ```python
 from __future__ import annotations
-import hashlib
 from dataclasses import dataclass, field
-from typing import Optional
 
 @dataclass
 class RadixNode:
     """
     A node in the RadixAttention trie.
 
-    In a real implementation, kv_ptr would be a reference to a GPU
-    memory block. Here we use a placeholder bytes object to represent
-    the serialised KV tensors.
+    `token_ids` is the edge label leading into this node, and `kv` holds the
+    KV tensors for *exactly those tokens*, one entry per token. Here each
+    entry is a placeholder bytes object; in a real implementation it is a
+    physical GPU block reference. Storing KV per edge is what makes an edge
+    split cheap — cutting the label at index `lcp` cuts the KV list at the
+    same index — and it is what lets a lookup return a *partial* edge match
+    without claiming more cached tokens than it actually has.
     """
-    token_ids: list[int]      # edge label (tokens along this edge)
-    kv_data: Optional[bytes]  # cached KV tensors (None if not yet materialized)
+    token_ids: list[int]              # edge label (tokens along this edge)
+    kv: list[bytes]                   # per-token KV for this edge
     children: dict[int, "RadixNode"] = field(default_factory=dict)
-    ref_count: int = 0        # how many active requests are using this node
+    ref_count: int = 0                # how many active requests use this node
     last_access_time: float = 0.0
 
     def is_leaf(self) -> bool:
@@ -118,18 +120,19 @@ class RadixTree:
     """
 
     def __init__(self):
-        self.root = RadixNode(token_ids=[], kv_data=None)
+        self.root = RadixNode(token_ids=[], kv=[])
         self._clock = 0.0
 
     def _tick(self) -> float:
         self._clock += 1.0
         return self._clock
 
-    def insert(self, token_ids: list[int], kv_data: bytes) -> None:
+    def insert(self, token_ids: list[int], kv: list[bytes]) -> None:
         """
-        Insert a fully prefilled sequence into the trie.
+        Insert a fully prefilled sequence (and its per-token KV) into the trie.
         Splits existing edges as needed (standard radix tree insertion).
         """
+        assert len(kv) == len(token_ids), "one KV entry per token"
         node = self.root
         idx = 0  # position in token_ids
 
@@ -137,13 +140,12 @@ class RadixTree:
             first_token = token_ids[idx]
 
             if first_token not in node.children:
-                # No matching child — create a new leaf.
-                new_node = RadixNode(
+                # No matching child — create a new leaf holding the suffix.
+                node.children[first_token] = RadixNode(
                     token_ids=token_ids[idx:],
-                    kv_data=kv_data,  # store full KV data at leaf
+                    kv=kv[idx:],
                     last_access_time=self._tick(),
                 )
-                node.children[first_token] = new_node
                 return
 
             child = node.children[first_token]
@@ -158,37 +160,44 @@ class RadixTree:
                 # Fully matched the existing edge — descend.
                 idx += lcp
                 node = child
-            else:
-                # Partial match — split the edge.
-                # Create an intermediate node with the common prefix.
-                split_node = RadixNode(
-                    token_ids=child.token_ids[:lcp],
-                    kv_data=None,  # split node has no KV data of its own
-                    last_access_time=self._tick(),
-                )
-                # Old child gets the suffix as its new edge label.
-                child.token_ids = child.token_ids[lcp:]
-                split_node.children[child.token_ids[0]] = child
-                # New leaf gets the remaining tokens.
-                remainder_node = RadixNode(
-                    token_ids=token_ids[idx + lcp:],
-                    kv_data=kv_data,
-                    last_access_time=self._tick(),
-                )
-                split_node.children[token_ids[idx + lcp]] = remainder_node
-                # Attach split_node to parent.
-                node.children[first_token] = split_node
-                return
+                continue
 
-    def match_prefix(self, token_ids: list[int]) -> tuple[int, Optional[bytes]]:
+            # Partial match — split the edge at `lcp` (here 1 <= lcp < len(edge)).
+            split_node = RadixNode(
+                token_ids=child.token_ids[:lcp],
+                kv=child.kv[:lcp],
+                last_access_time=self._tick(),
+            )
+            # Old child keeps the suffix of the label and the matching KV slice.
+            child.token_ids = child.token_ids[lcp:]
+            child.kv = child.kv[lcp:]
+            split_node.children[child.token_ids[0]] = child
+            # Attach split_node to parent.
+            node.children[first_token] = split_node
+            idx += lcp
+            # If the inserted sequence ends exactly at the split point there is
+            # nothing left to attach — split_node already owns its KV. (Missing
+            # this case is the classic radix-insert bug: it fires the first time
+            # a request is a strict prefix of one already in the tree.)
+            if idx < len(token_ids):
+                split_node.children[token_ids[idx]] = RadixNode(
+                    token_ids=token_ids[idx:],
+                    kv=kv[idx:],
+                    last_access_time=self._tick(),
+                )
+            return
+        # Falling out of the loop means the sequence terminated on an existing
+        # node boundary: its KV is already stored along the path we walked.
+
+    def match_prefix(self, token_ids: list[int]) -> tuple[int, list[bytes]]:
         """
         Find the longest cached prefix of token_ids.
-        Returns (length_matched, kv_data_of_deepest_matched_node).
+        Returns (length_matched, per-token KV for exactly those tokens) —
+        the two are always consistent, including on a partial edge match.
         """
         node = self.root
         idx = 0
-        best_len = 0
-        best_kv = None
+        matched_kv: list[bytes] = []
 
         while idx < len(token_ids):
             first_token = token_ids[idx]
@@ -204,21 +213,18 @@ class RadixTree:
                    child.token_ids[lcp] == token_ids[idx + lcp]):
                 lcp += 1
 
+            matched_kv.extend(child.kv[:lcp])   # only the tokens that matched
             idx += lcp
-
-            if child.kv_data is not None:
-                best_len = idx
-                best_kv = child.kv_data
 
             if lcp < len(child.token_ids):
                 break  # partial match — descent stops here
 
             node = child
 
-        return best_len, best_kv
+        return idx, matched_kv
 ```
 
-The implementation above shows the essential structure. In production (e.g., the SGLang codebase), `kv_data` is replaced by a list of physical GPU memory block IDs, and the tree nodes carry reference counts so the memory manager knows which blocks are actively being read by running requests.
+The implementation above shows the essential structure. In production (e.g., the SGLang codebase), each `kv` entry is a physical GPU memory block ID rather than a bytes blob (so the per-edge list is per *block*, not per token), and the tree nodes carry reference counts so the memory manager knows which blocks are actively being read by running requests.
 
 ---
 
@@ -236,6 +242,7 @@ In vLLM's model:
 
 ```python
 # Pseudo-code: vLLM APC block-allocation logic (simplified from vLLM source)
+from collections import OrderedDict
 
 class APCBlockAllocator:
     def __init__(self, num_blocks: int, block_size: int):
@@ -243,9 +250,14 @@ class APCBlockAllocator:
         self.free_blocks: list[int] = list(range(num_blocks))
         # Map from content hash -> physical block id
         self.prefix_cache: dict[int, int] = {}
-        # LRU ordering: (timestamp, block_id) — use a sortedcontainer in practice
-        self.lru_order: list[tuple[float, int]] = []
-        self._time = 0
+        # LRU ordering: block_id -> None, oldest first. An OrderedDict gives
+        # O(1) "promote to most-recent" and O(1) "pop the oldest"; a plain
+        # append-only timestamp list would NOT be an LRU, because a hot block's
+        # stale early entry would still sort to the front and be evicted first.
+        self.lru_order: "OrderedDict[int, None]" = OrderedDict()
+        # Blocks allocated but not yet filled by prefill: their hashes may not
+        # be published until the KV tensors actually exist.
+        self.pending_publish: list[tuple[int, int]] = []
 
     def _compute_block_hash(self, prev_hash: int, token_ids: list[int]) -> int:
         """Chain the previous block hash with current token IDs."""
@@ -268,6 +280,7 @@ class APCBlockAllocator:
         block_ids = []
         prev_hash = 0
         num_cached = 0
+        still_contiguous = True  # only a run of hits from position 0 counts
 
         for i, block_tokens in enumerate(token_ids_blocks):
             h = self._compute_block_hash(prev_hash, block_tokens)
@@ -276,34 +289,50 @@ class APCBlockAllocator:
                 # Cache hit: reuse this physical block.
                 phys_id = self.prefix_cache[h]
                 block_ids.append(phys_id)
-                num_cached += 1
+                if still_contiguous:
+                    num_cached += 1
                 self._touch(phys_id)
             else:
                 # Cache miss: allocate a fresh physical block.
-                # Evict if necessary.
+                # Evict if necessary. A later block may still hash-hit (its
+                # chained hash is unaffected by *this* block being evicted),
+                # but the caller may only skip prefill for a contiguous run
+                # from position 0, so stop counting here.
+                still_contiguous = False
                 if not self.free_blocks:
                     self._evict_lru()
                 phys_id = self.free_blocks.pop()
-                # We will compute KV for this block during prefill.
-                # After prefill completes, insert into cache.
-                self.prefix_cache[h] = phys_id
                 self._touch(phys_id)
                 block_ids.append(phys_id)
+                # Do NOT publish the hash yet: the block's KV tensors do not
+                # exist until prefill writes them, and a concurrent request
+                # that hit this hash would read uninitialised GPU memory.
+                self.pending_publish.append((h, phys_id))
 
             prev_hash = h
 
         return block_ids, num_cached
 
+    def publish_pending(self):
+        """
+        Called by the scheduler AFTER prefill has written the KV tensors for
+        the newly allocated blocks. This is the invariant vLLM enforces: a
+        block enters the prefix cache only once it is complete and written.
+        """
+        for h, phys_id in self.pending_publish:
+            self.prefix_cache[h] = phys_id
+            self._touch(phys_id)
+        self.pending_publish.clear()
+
     def _touch(self, block_id: int):
-        """Update LRU timestamp for a block."""
-        self._time += 1
-        self.lru_order.append((self._time, block_id))
+        """Mark a block as most-recently-used."""
+        self.lru_order[block_id] = None
+        self.lru_order.move_to_end(block_id)
 
     def _evict_lru(self):
         """Remove the least-recently-used cached block."""
-        self.lru_order.sort()
         while self.lru_order:
-            _, block_id = self.lru_order.pop(0)
+            block_id, _ = self.lru_order.popitem(last=False)  # oldest first
             # Remove from prefix cache if it's still there and not pinned.
             for k, v in list(self.prefix_cache.items()):
                 if v == block_id:
@@ -367,7 +396,7 @@ On the vLLM V1 engine, APC runs with normal-priority LRU eviction by default (di
 
 ### Cache sizing heuristics
 
-A rough rule of thumb: allocate 15–25 % of the KV cache budget to "warm" cached blocks for a production system that uses a static system prompt. If you have a 40 GB GPU KV budget and a 2,000-token system prompt that accounts for 80 % of traffic, the warm portion for that prompt is tiny (a few MB; see the worked example below). The budget concern arises with many distinct prefixes (e.g., per-user system prompts or a large set of few-shot demonstrations), where the aggregate footprint can run into gigabytes.
+A rough rule of thumb: allocate 15–25 % of the KV cache budget to "warm" cached blocks for a production system that uses a static system prompt. If you have a 40 GB GPU KV budget and a 2,000-token system prompt that accounts for 80 % of traffic, the warm portion for that prompt is a few hundred megabytes — $2000 \times 80 \times 4096 \approx 655$ MB on the 70B model of the worked example below, or $\approx 260$ MB on an 8B model (32 layers, 8 KV heads, head dim 128). That is well under 2 % of the budget for a single prefix. The budget concern arises with many distinct prefixes (e.g., per-user system prompts or a large set of few-shot demonstrations), where the aggregate footprint can run into gigabytes.
 
 !!! tip "Practitioner tip"
     Monitor the metric `prefix_cache_hit_rate` (exposed by both SGLang and vLLM via their metrics endpoints). A hit rate below 50 % on a workload with a static system prompt usually indicates a configuration error — either prefix caching is not enabled or the system prompt is being varied (e.g., injecting a timestamp into it, which defeats hashing).
@@ -407,13 +436,15 @@ For a request with prefix length $P$ (tokens) and new suffix length $S$ (tokens)
 - Without caching: prefill cost $\propto (P + S)^2 / 2$ attention operations (rough $O(N^2)$ scaling) plus $P + S$ weight projections.
 - With a warm cache hit on the full prefix: prefill cost $\propto S \cdot P + S^2/2$ (the suffix attends to the cached prefix) plus $S$ weight projections.
 
-The ratio of cached to uncached prefill work is approximately
+The speedup — the ratio of *uncached* to *cached* prefill work — is
 
 $$
-\text{speedup} \approx \frac{P + S}{S + P \cdot \frac{S}{P+S}} \approx \frac{P + S}{S}\quad \text{for large } P/S
+\text{speedup} = \frac{P + S}{S + P \cdot \frac{S}{P+S}} = \frac{(P+S)^2}{S\,(2P + S)} \approx \frac{P + S}{2S}\quad \text{for large } P/S
 $$
 
-For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): speedup $\approx 41\times$ in prefill attention FLOPs. Real TTFT improvements are smaller due to weight-loading overhead that is shared regardless of cache state, but 5–15× TTFT improvements are commonly observed in practice.
+Note the factor of 2 in the limit: as $S/P \to 0$ the dropped term $P\cdot\frac{S}{P+S}$ tends to $S$, not to $0$, so the denominator tends to $2S$. The naive $(P+S)/S$ overestimates the true ratio by very nearly $2\times$ *no matter how small* $S/P$ is.
+
+For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): speedup $= 2050^2 / (50 \times 4050) \approx 20.8\times$ in prefill attention FLOPs (the large-$P/S$ approximation gives $2050/100 = 20.5\times$). Real TTFT improvements are smaller due to weight-loading overhead that is shared regardless of cache state, but 5–15× TTFT improvements are commonly observed in practice.
 
 
 {{fig:prefixcache-attention-cost-geometry}}
@@ -441,7 +472,7 @@ For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): 
 
     **With prefix caching.** The 1,024-token system-prompt KV tensors are computed once and stored. They occupy 335 MB of GPU memory (one copy, shared across all concurrent requests). Each arriving request skips the system-prompt prefill entirely, saving:
     $$
-    \text{saved prefill tokens per second} = 200 \times 0.95 \times 1024 \approx 194{,}880 \text{ tokens/sec}
+    \text{saved prefill tokens per second} = 200 \times 0.95 \times 1024 = 194{,}560 \text{ tokens/sec}
     $$
 
     At an LLaMA-3 70B prefill throughput of roughly 5,000–15,000 tokens/sec per A100 (depending on batch size), those saved tokens correspond to freeing up one or more GPUs worth of compute that can be redeployed to serve more requests.
@@ -586,7 +617,7 @@ def build_prompt_bad(user_code: str, timestamp: str) -> str:
     )
 ```
 
-**Alignment to block boundaries.** Because the cache operates on full blocks, prompts that are aligned to multiples of `block_size` tokens get the best coverage. If your system prompt is 1,020 tokens and `block_size=16`, the last partial block (4 tokens) will never be cached. Pad the system prompt to 1,024 tokens to get full coverage.
+**Alignment to block boundaries.** Because the cache operates on full blocks, prompts that are aligned to multiples of `block_size` tokens get the best coverage. If your system prompt is 1,020 tokens and `block_size=16`, the last partial block (1020 mod 16 = 12 tokens) will never be cached. Pad the system prompt with 4 tokens, to 1,024, to get full coverage.
 
 !!! warning "Pad with real text, not with `<pad>`"
     The "padding" here sits *inside* the context, between the system prompt and the user turn — the model attends to it and cannot mask it out (a causal decoder has no padding mask for interior positions, and removing the tokens would shift every subsequent RoPE position). So do not literally emit `pad_token_id`, which the model has probably never seen mid-sequence during training and which will perturb the output. Pad with innocuous in-distribution text instead — trailing newlines, a separator rule like `\n---\n`, or a sentence of harmless boilerplate — and check the token count with your tokenizer until it lands on a multiple of `block_size`. The `pad_to_block_boundary` helper below shows the arithmetic; substitute a real filler-token ID for `pad_token_id` in production.
@@ -735,14 +766,15 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
     $$
     Total footprint for 512 tokens over 80 layers:
     $$
-    512 \times 80 \times 4096 = 167{,}772{,}160 \text{ bytes} = 160 \text{ MB}.
+    512 \times 80 \times 4096 = 167{,}772{,}160 \text{ bytes} \approx 168 \text{ MB}.
     $$
+    (Decimal MB throughout, matching Section 7.7.7; in binary units this is exactly 160 MiB.)
 
-    **(b)** Redundant prefill tokens per second $= 300 \times 512 = 153{,}600$ tokens/sec. Redundant KV bytes per second $= 300 \times 160\text{ MB} = 48{,}000\text{ MB} \approx 46.9 \text{ GB/sec}$ — all of it identical and wasted.
+    **(b)** Redundant prefill tokens per second $= 300 \times 512 = 153{,}600$ tokens/sec. Redundant KV bytes per second $= 300 \times 167.77\text{ MB} \approx 50{,}300\text{ MB} \approx 50 \text{ GB/sec}$ — all of it identical and wasted.
 
-    **(c)** Exactly **one** copy. The cached KV blocks are read-only and shared across all concurrent requests (Section 7.7.6); a reference count tracks the active readers, but only a single 160 MB physical copy is stored no matter how many requests are in flight.
+    **(c)** Exactly **one** copy. The cached KV blocks are read-only and shared across all concurrent requests (Section 7.7.6); a reference count tracks the active readers, but only a single 168 MB physical copy is stored no matter how many requests are in flight.
 
-**4.** *(Quantitative.)* The chapter models uncached prefill attention cost as $\propto (P+S)^2/2$ and cached prefill cost as $\propto S\cdot P + S^2/2$ (the suffix attends to the cached prefix). Take $P = 1500$ (prefix) and $S = 100$ (suffix). (a) Compute the exact attention-op speedup ratio. (b) Compute the chapter's large-$P/S$ approximation $(P+S)/S$ and explain why it overestimates the true ratio here. (c) The chapter says real TTFT gains are typically 5-15x rather than the raw FLOP ratio. Give one reason from the chapter.
+**4.** *(Quantitative.)* The chapter models uncached prefill attention cost as $\propto (P+S)^2/2$ and cached prefill cost as $\propto S\cdot P + S^2/2$ (the suffix attends to the cached prefix). Take $P = 1500$ (prefix) and $S = 100$ (suffix). (a) Compute the exact attention-op speedup ratio. (b) Compute the chapter's large-$P/S$ approximation $(P+S)/(2S)$, and explain why the *naive* $(P+S)/S$ overestimates the true ratio by roughly $2\times$ — for any $S \ll P$, not just here. (c) The chapter says real TTFT gains are typically 5-15x rather than the raw FLOP ratio. Give one reason from the chapter.
 
 ??? note "Solution"
     **(a)** Uncached cost $\propto (P+S)^2/2 = 1600^2/2 = 2{,}560{,}000/2 = 1{,}280{,}000$. Cached cost $\propto S\cdot P + S^2/2 = 1500\times100 + 100^2/2 = 150{,}000 + 5{,}000 = 155{,}000$. Exact ratio:
@@ -750,7 +782,11 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
     \frac{1{,}280{,}000}{155{,}000} \approx 8.26\times.
     $$
 
-    **(b)** The approximation gives $(P+S)/S = 1600/100 = 16\times$, roughly double the true value. It overestimates because it drops the $S\cdot P$ term in the denominator — but with $S=100$ that term ($150{,}000$) actually dominates the cached cost. The approximation is only tight when $S \ll P$ *and* $S\cdot P$ becomes negligible relative to $(P+S)^2/2$; here $S/P = 1/15$ is not small enough, so the suffix's attention over the long cached prefix is a substantial fraction of the remaining work.
+    **(b)** The chapter's approximation gives $(P+S)/(2S) = 1600/200 = 8\times$, close to the exact $8.26\times$. The naive $(P+S)/S = 1600/100 = 16\times$ is roughly double the true value — and it is *always* roughly double. Writing the exact ratio as
+    $$
+    \frac{P+S}{S + P\cdot\frac{S}{P+S}},
+    $$
+    the naive form drops the term $P\cdot\frac{S}{P+S}$, which tends to $S$ (not to $0$) as $S/P \to 0$. So the denominator it uses is $S$ where the true denominator tends to $2S$, and the overestimate factor is $\frac{2P+S}{P+S} \to 2$ — here $3100/1600 = 1.9375$. Making $S/P$ smaller does not fix it; only the factor of $2$ does.
 
     **(c)** Prefill also involves weight-projection / weight-loading overhead that is incurred regardless of cache state (the chapter notes "weight-loading overhead that is shared regardless of cache state"). That fixed component is not eliminated by caching, so the observed TTFT speedup is smaller than the pure attention-FLOP ratio.
 

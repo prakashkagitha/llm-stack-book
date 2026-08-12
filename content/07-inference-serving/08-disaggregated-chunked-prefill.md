@@ -203,13 +203,13 @@ In practice, production systems tune $C$ per deployment based on their latency S
 
 !!! example "Worked Example: Chunked Prefill Latency"
 
-    **Setup:** A 13B parameter model running on one A100 80GB SXM. The decode batch is $B_d = 32$ sequences. A new request arrives with a 8,192-token prompt.
+    **Setup:** A 13B parameter model running on one H100 80GB SXM. The decode batch is $B_d = 32$ sequences. A new request arrives with a 8,192-token prompt.
 
-    **Without chunked prefill:** The prefill runs as one monolithic forward pass. Empirically, a 13B model prefill over 8K tokens on an A100 takes roughly 800 ms (this varies with implementation; the order of magnitude is correct). During this time, all 32 decode sequences are stalled — their ITL spikes by 800 ms. If the SLO is P99 ITL ≤ 100 ms, this is an 8x violation.
+    **Without chunked prefill:** The prefill runs as one monolithic forward pass. Empirically, a 13B model prefill over 8K tokens on an H100 takes roughly 800 ms (the work is $2 \times 13\text{B} \times 8192 \approx 2.1 \times 10^{14}$ FLOPs of GEMM plus $\approx 5.5 \times 10^{13}$ of attention, so 800 ms is about 34% MFU against the H100's 989 TFLOP/s BF16 peak — a realistic, slightly conservative figure). During this time, all 32 decode sequences are stalled — their ITL spikes by 800 ms. If the SLO is P99 ITL ≤ 100 ms, this is an 8x violation.
 
-    **With chunked prefill, $C = 512$:** The 8K prompt is split into 16 chunks of 512 tokens. Each chunk takes roughly $800 / 16 = 50$ ms to process on average (the GEMM cost per chunk is constant, so to first order the per-chunk cost is linear in $C$; as noted above the later chunks are somewhat more expensive because their attention runs over a longer cached prefix, so 50 ms is the mean, not the max). Each iteration, decode sequences incur ~50 ms of ITL overhead from the chunk — right at the 100 ms SLO boundary (they add their own ~10–20 ms of decode compute on top). TTFT increases from 800 ms to 16 × 50 ms + scheduling overhead ≈ 850 ms — almost unchanged.
+    **With chunked prefill, $C = 512$:** The 8K prompt is split into 16 chunks of 512 tokens. Each chunk takes roughly $800 / 16 = 50$ ms to process on average (the GEMM cost per chunk is constant, so to first order the per-chunk cost is linear in $C$; as noted above the later chunks are somewhat more expensive because their attention runs over a longer cached prefix, so 50 ms is the mean, not the max). Each iteration, decode sequences incur ~50 ms of ITL overhead from the chunk plus their own ~10–20 ms of decode compute, so P99 ITL lands around 65 ms — inside the 100 ms SLO, with little headroom to spare. TTFT, however, now spans all 16 iterations, and each of those iterations carries the piggybacked decode work as well as the chunk: 16 × (50 ms + ~15 ms) ≈ 1,040 ms. This is the tradeoff Sarathi-Serve measures — you cannot bound TTFT by the prefill-only term once prefill *shares* every iteration with decode.
 
-    **Tradeoff:** Chunked prefill kept P99 ITL within SLO by paying a modest 6% TTFT penalty.
+    **Tradeoff:** Chunked prefill brought P99 ITL from 800 ms down to ~65 ms — inside the SLO — at the cost of a ~30% TTFT increase (800 ms → ~1,040 ms).
 
 ### Attention on Partial KV Caches
 
@@ -248,7 +248,7 @@ def chunked_prefill_attention(
     # Build causal mask for the chunk against the full context
     # Shape: [C, T_past + C]
     T_total = T_past + C
-    causal_mask = torch.ones(C, T_total, dtype=torch.bool)
+    causal_mask = torch.ones(C, T_total, dtype=torch.bool, device=q_chunk.device)
     for i in range(C):
         # query at position T_past + i can see positions 0 .. T_past + i
         causal_mask[i, T_past + i + 1:] = False
@@ -298,7 +298,7 @@ where $r_P$ and $r_D$ are the number of replicas (GPU groups) allocated to prefi
 - **Prefill workers:** use high-FLOP/s, moderately-bandwidth GPUs. In an H100/A100 world, this often means fewer GPUs with aggressive compute configurations.
 - **Decode workers:** use high-bandwidth-memory GPUs — or even CPUs with large memory for small batches (CPU offloading). High-HBM parts shine here, from the H100's 3.35 TB/s HBM3 up to the Blackwell B200's ~8 TB/s HBM3e.
 
-Splitwise also introduced the term **"prompt phase"** for prefill and **"token phase"** for decode, now widely adopted in the systems literature. Their key empirical finding: on commercial cloud deployments, the decode phase uses far fewer FLOPs per token than prefill but consumes a comparable fraction of total serving cost due to the time it spends waiting for memory bandwidth. Disaggregation with heterogeneous hardware can reduce per-token cost by routing each phase to its best-fit hardware.
+Splitwise also introduced the term **"prompt phase"** for prefill and **"token phase"** for decode, now widely adopted in the systems literature. Their key empirical finding: on commercial cloud deployments, the decode phase issues roughly the *same* FLOPs per token as prefill (a dense forward pass is $\approx 2N$ FLOPs per token either way) but achieves a far lower fraction of peak FLOP/s, so it consumes a disproportionate share of total serving cost while sitting idle waiting on memory bandwidth. Disaggregation with heterogeneous hardware can reduce per-token cost by routing each phase to its best-fit hardware.
 
 This connects directly to inference economics (see [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html)) — the compute-to-cost frontier is different for prefill and decode, and ignoring this difference means overpaying.
 
@@ -618,7 +618,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
 
 **Speculative Decoding** (see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)): Speculative decoding generates draft tokens on the decode worker and verifies them in a batched forward pass. This verification pass looks like a short prefill — under disaggregation, it stays on the decode worker (it is short enough not to cause interference) rather than being sent to the prefill pool.
 
-**Multi-GPU Inference** (see [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html)): Tensor parallelism and pipeline parallelism within each pool interact with KV transfer. For a tensor-parallel model (e.g., 4-way TP), each GPU holds $1/4$ of each KV head — so the KV cache transfer is split across 4 GPUs, and all four must synchronize with the corresponding 4 decode GPUs. This requires careful collective communication design.
+**Multi-GPU Inference** (see [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html)): Tensor parallelism and pipeline parallelism within each pool interact with KV transfer. For a tensor-parallel model (e.g., 4-way TP), attention is sharded along the *head* dimension, so each GPU holds $1/4$ of the KV **heads** (whole heads, $d_\text{head}$ intact) — the KV cache transfer is sharded head-wise across 4 GPUs, and all four must synchronize with the corresponding 4 decode GPUs. The exception worth knowing: when $n_\text{kv\_heads} <$ the TP degree (e.g. an 8-KV-head GQA model on 16-way TP), engines such as vLLM *replicate* the KV heads across ranks rather than splitting them, so the aggregate KV footprint — and the aggregate transfer volume — is larger than $1/\text{TP}$ per GPU. This requires careful collective communication design.
 
 **GPU Architecture** (see [GPU Architecture & The Memory Hierarchy](../01-foundations/08-gpu-architecture.html)): The fundamental reason prefill and decode prefer different hardware is rooted in the roofline model. The compute roof matters for prefill; the memory bandwidth wall matters for decode. Choosing hardware with the right roof height for each pool is a direct application of the roofline analysis.
 
@@ -629,7 +629,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
     - **Chunked prefill** breaks long prompts into sub-chunks of size $C$ (typically 256–2048 tokens) interleaved with decode steps, bounding P99 ITL inflation to the chunk compute time with minimal TTFT overhead.
     - **Disaggregated prefill/decode** separates the two phases onto dedicated GPU pools, eliminating interference entirely at the cost of a KV cache transfer over the interconnect. NVLink/NVSwitch is preferred (sub-millisecond transfer); InfiniBand is viable for bulk long-context workloads.
     - KV cache transfer size scales as $O(L \times T_p \times n_\text{kv} \times d_\text{head})$; for a 70B model with a 4K-token prompt this is about 1.34 GB — ~1.5 ms on NVLink4, but over 100 ms on 100 Gb/s InfiniBand. The decision criterion is per-layer transfer time versus per-layer prefill time, since layer-wise streaming can only hide the former under the latter.
-    - **DistServe** (Zhong et al., 2024) formally analyzed disaggregation and showed 2–4x throughput improvement under tight SLOs. **Splitwise** (Patel et al., 2023) extended this to heterogeneous hardware, routing each phase to cost-optimal GPU types.
+    - **DistServe** (Zhong et al., 2024) formally analyzed disaggregation and reported up to 7.4x more requests served under tight SLOs (2–4x is the more typical range practitioners report on mixed production traffic). **Splitwise** (Patel et al., 2023) extended this to heterogeneous hardware, routing each phase to cost-optimal GPU types.
     - Chunked prefill and disaggregation are complementary: a disaggregated system can still chunk large prefills within the prefill pool to improve batching efficiency.
     - Chunk size $C$ should be tuned dynamically: large chunks when the decode queue is empty (to minimize TTFT), small chunks under high decode load (to protect ITL SLOs).
     - Chunk size has a hard lower bound set by the roofline: each iteration re-streams the model weights, so the per-iteration token count must stay above the hardware's ridge point (a few hundred tokens on an H100 in BF16) or prefill itself goes bandwidth-bound. Sarathi-Serve's token budget — vLLM's `max_num_batched_tokens` — is the practical form of this constraint.
@@ -711,7 +711,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
 
     (c) On NVLink4 the transfer (0.37 ms) is negligible next to the 120 ms prefill — well under 1% of end-to-end latency. On InfiniBand HDR the transfer (26.8 ms) is about 22% of the prefill time, a clear first-order term. The chapter's recommendations: keep prefill and decode workers on the same NVSwitch fabric so transfer stays under a few milliseconds; and if a slow interconnect is unavoidable, **pipeline the transfer with computation** (layer-wise KV streaming) so the transfer overlaps prefill's later layers instead of adding serially.
 
-**3.** *(Quantitative — choosing the chunk size.)* A 13B model on one A100 prefills an 8,192-token prompt as a single pass in about 800 ms (as in the chapter's worked example), and prefill time scales roughly linearly in the number of tokens processed. Each decode iteration adds about 15 ms of its own decode compute. Your SLO is P99 ITL $\le 100$ ms. For chunk sizes $C = 256$ and $C = 1024$, compute: (a) the number of chunks, (b) the per-chunk prefill time, (c) the resulting per-iteration ITL seen by in-flight decode sequences, and (d) which value(s) of $C$ satisfy the SLO. (e) Briefly, why not just pick the smallest $C$ possible?
+**3.** *(Quantitative — choosing the chunk size.)* A 13B model on one H100 prefills an 8,192-token prompt as a single pass in about 800 ms (as in the chapter's worked example), and prefill time scales roughly linearly in the number of tokens processed. Each decode iteration adds about 15 ms of its own decode compute. Your SLO is P99 ITL $\le 100$ ms. For chunk sizes $C = 256$ and $C = 1024$, compute: (a) the number of chunks, (b) the per-chunk prefill time, (c) the resulting per-iteration ITL seen by in-flight decode sequences, and (d) which value(s) of $C$ satisfy the SLO. (e) Briefly, why not just pick the smallest $C$ possible?
 
 ??? note "Solution"
     Per-chunk prefill time $=$ (full-prompt prefill time) $\times$ (chunk tokens / total tokens) $= 800\ \text{ms} \times C / 8192$.

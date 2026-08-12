@@ -177,7 +177,7 @@ This structured compaction is more retrievable and less prone to hallucination t
 
 A naive agent starts each session with a blank context. A persistent agent carries its prior self into every new session. The architecture has four moving parts:
 
-1. **Session ID:** a stable identifier for this user/project/thread. Every memory write tags itself with the session ID; every session-start retrieval filters by it.
+1. **Session ID:** a stable identifier for this user/project/thread. Every memory write tags itself with the session ID, so any later read can be scoped to one session. The bootstrap read at *session start* is the exception: filtering it by the new session's own ID would return nothing, because that session has not written anything yet — it must read across sessions (or scope to the most recent *prior* session).
 
 2. **Bootstrap read:** the first thing the harness does is query external memory for entries relevant to this session, and prepend them to the system prompt. This gives the agent an immediate sense of continuity.
 
@@ -264,7 +264,12 @@ class EpisodicLog:
 
     def append(self, session_id: str, role: str, content: str,
                metadata: dict[str, Any] | None = None) -> None:
-        """Write one episode entry. Thread-safe via append mode + file lock."""
+        """
+        Write one episode entry. Opening in "a" mode is enough for a single
+        writer process; for concurrent writers wrap the write in an
+        `fcntl.flock(f.fileno(), fcntl.LOCK_EX)` (or use a real DB) — O_APPEND
+        alone does not guarantee that a long buffered line stays intact.
+        """
         entry = {
             "timestamp": time.time(),
             "iso_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -546,10 +551,20 @@ class AgentMemory:
                           confidence=confidence)
 
     def store(self, text: str,
-              metadata: dict[str, Any] | None = None) -> str:
-        """Add a free-text memory to the vector store."""
+              metadata: dict[str, Any] | None = None,
+              importance: float = 0.5) -> str:
+        """
+        Add a free-text memory to the vector store.
+
+        `last_access` (epoch seconds) and `importance` (in [0, 1]) are written
+        on every entry because the ranked recall of section 8.5.10 needs them;
+        without them every memory looks equally recent and equally important
+        and the ranker degenerates to plain cosine similarity.
+        """
         meta = {"session_id": self.session_id,
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "last_access": time.time(),
+                "importance": float(importance),
                 **(metadata or {})}
         return self.vectors.add(text, metadata=meta)
 
@@ -559,7 +574,10 @@ class AgentMemory:
                min_score: float = 0.3) -> list[tuple[str, float]]:
         """
         Query the vector store. Returns list of (text, score) tuples.
-        Score is cosine similarity in [0, 1] (since vectors are normalised).
+        Since the vectors are L2-normalised the dot product *is* the cosine,
+        so the score lies in [-1, 1]; sentence-embedder scores are usually
+        positive, but unrelated or opposed texts do go negative, which is
+        why min_score defaults to a positive cut rather than 0.
         """
         hits = self.vectors.search(query, top_k=top_k, min_score=min_score)
         return [(entry.text, score) for entry, score in hits]
@@ -575,8 +593,11 @@ class AgentMemory:
         facts = self.semantic.as_context_string()
         parts.append(facts)
 
-        # 2. Recent episodic entries (last 5 from this session).
-        recent = self.episodic.tail(n=5, session_id=self.session_id)
+        # 2. Recent episodic entries. Deliberately *not* filtered to
+        #    self.session_id: at session start this session has written
+        #    nothing yet, and what we want is the tail of the previous
+        #    session — including the summary written by close_session().
+        recent = self.episodic.tail(n=5)
         if recent:
             lines = ["## Recent episode summary"]
             for e in recent:
@@ -606,7 +627,8 @@ class AgentMemory:
                  metadata={"type": "session_summary"})
         self.store(summary,
                    metadata={"type": "session_summary",
-                             "session_id": self.session_id})
+                             "session_id": self.session_id},
+                   importance=1.0)   # session summaries are the highest-value entries
 ```
 
 This gives you an immediately usable memory layer. The vector backend is pure numpy — swap in `faiss.IndexFlatIP` or `qdrant_client` for production with millions of entries.
@@ -733,17 +755,19 @@ $$
 \;+\; \alpha_{\text{rel}}\,\underbrace{\cos\!\left(\mathbf{e}(q), \mathbf{e}(m)\right)}_{\text{relevance}}
 $$
 
-Here $\Delta t(m)$ is the number of hours since the memory was last *accessed* (not created — retrieving a memory refreshes it, exactly as in an LRU cache), $\gamma$ is a decay factor just below 1, and $I(m)$ is an importance score the LLM assigns once at write time ("on a scale of 1 to 10, how consequential is this?"). Park et al. use $\gamma = 0.99$, so recency weight halves after $\ln 0.5 / \ln 0.99 \approx 69$ hours — roughly three days — and they set all three $\alpha = 1$ after min-max normalising each component to $[0,1]$. The normalisation matters: raw cosine scores for a sentence embedder cluster in a narrow band (often 0.3–0.8), so without rescaling the relevance term would be nearly constant and the ranker would collapse into pure recency.
+Here $\Delta t(m)$ is the number of hours since the memory was last *accessed* (not created — retrieving a memory refreshes it, exactly as in an LRU cache), $\gamma$ is a decay factor just below 1, and $I(m)$ is an importance score the LLM assigns once at write time ("on a scale of 1 to 10, how consequential is this?" — the code below stores that rescaled to $[0,1]$, i.e. `importance = llm_score / 10`). Park et al. use $\gamma = 0.995$, so recency weight halves after $\ln 0.5 / \ln 0.995 \approx 138$ hours — a little under six days — and they set all three $\alpha = 1$ after min-max normalising each component to $[0,1]$. The normalisation matters: raw cosine scores for a sentence embedder cluster in a narrow band (often 0.3–0.8), so without rescaling the relevance term would be nearly constant and the ranker would collapse into pure recency.
 
 ```python
 def recall_ranked(mem: AgentMemory, query: str, top_k: int = 5,
-                  gamma: float = 0.99, now: float | None = None,
+                  gamma: float = 0.995, now: float | None = None,
                   weights: tuple[float, float, float] = (1.0, 1.0, 1.0),
                   n_candidates: int = 50) -> list[tuple[str, float]]:
     """
     Generative-Agents-style retrieval: recency + importance + relevance.
-    Expects entries written with metadata['last_access'] (epoch seconds) and
-    metadata['importance'] in [0, 1]; both default sensibly if absent.
+    Reads metadata['last_access'] (epoch seconds) and metadata['importance']
+    in [0, 1] -- both written by AgentMemory.store(); they default sensibly if
+    absent, but note that if *no* entry carries them the recency and importance
+    terms are flat and this collapses back to pure relevance ranking.
 
     Two-stage: cheap ANN/dot-product recall of a wide candidate set, then an
     exact re-rank of those candidates. This is the standard retrieve-then-rerank
@@ -883,8 +907,10 @@ Memory systems fail silently: the agent simply does not mention the thing it sho
     Many teams start by logging every message verbatim to a vector store and
     retrieving the top-20 similar entries. This produces two failure modes.
     First, recent repetitive messages (boilerplate system prompt text, repeated
-    clarification questions) crowd out genuinely informative memories because
-    their text appears many times and therefore scores high on any query. Second,
+    clarification questions) crowd out genuinely informative memories: each
+    near-identical copy is scored independently, so a dozen copies of the same
+    line occupy a dozen of the top-$k$ slots, and bland boilerplate sits near
+    the embedding centroid, matching every query weakly but consistently. Second,
     injecting 20 verbose entries at once consumes 2 000+ tokens of context budget.
     Fix: (a) filter what you write to the vector store — only write entries with
     genuine informational value; (b) cap injection at top-$k = 5$ with a
@@ -931,7 +957,7 @@ The code in this chapter gives you a concrete starting point. In the next chapte
     - File-as-memory (structured directories of markdown/JSON) is a production-proven pattern that requires no external database and is human-auditable.
     - Injection budget matters: at top-$k = 5$ and 100 tokens per entry, 500 extra input tokens per call costs under \$0.001 at typical API prices — memory retrieval is cheap relative to its value.
     - The reflect step should be triggered periodically (every $N$ episodes) and at session boundaries; it is the mechanism by which short-term experience becomes long-term knowledge.
-    - Rank retrieved memories by recency $\times$ importance $\times$ relevance (each min-max normalised), not by cosine similarity alone — a stale but similar memory is worse than useless.
+    - Rank retrieved memories by a weighted *sum* of recency, importance and relevance (each min-max normalised), not by cosine similarity alone — a stale but similar memory is worse than useless.
     - In production the layer is usually LangGraph (checkpointer = short-term, store = long-term), mem0 (LLM-managed ADD/UPDATE/DELETE reconciliation), or Letta (self-editing core memory); a ~100M model cannot drive any of them itself, so its memory triad must run harness-side and offline.
 
 ---
@@ -980,7 +1006,7 @@ The code in this chapter gives you a concrete starting point. In the next chapte
 
 ## Exercises
 
-**1.** For each of the following memory items, decide whether it belongs in the **episodic** store or the **semantic** store, and give a one-line justification. Then explain, using the argument in section 8.5.2, why storing (a) and (c) together in a single undifferentiated vector store degrades retrieval quality.
+**1.** For each of the following memory items, decide whether it belongs in the **episodic** store or the **semantic** store, and give a one-line justification. Then explain, using the argument in section 8.5.2, why storing (a) and (c) in the *same* undifferentiated vector store as (b) and (d) degrades retrieval quality.
 
   - (a) "2025-11-04 14:12: the user asked me to refactor the auth module and I found a bug in the JWT refresh endpoint."
   - (b) "The production database engine is PostgreSQL 15."
@@ -1091,7 +1117,7 @@ Compute each cosine similarity by hand, then state exactly which entries `recall
 
     Why a single dot product suffices: cosine similarity is $\cos(u,v) = \frac{u\cdot v}{\lVert u\rVert\,\lVert v\rVert}$. When $\lVert u\rVert = \lVert v\rVert = 1$ the denominator is 1, so $\cos(u,v) = u\cdot v$ exactly — no per-pair norm computation is needed, which is the same shortcut `search` uses (`scores = self._vectors @ q_vec`). The pass is $O(N \cdot K)$ where $K$ is the number of kept (unique) entries; for large stores you would replace the inner loop with a batched matmul against the kept matrix.
 
-**5.** Implement the *structured compaction* trigger described in the practitioner tip and section 8.5.5.3. Write a function `compact_if_needed(mem, transcript_tokens, llm_call, ctx_window=128_000, threshold=0.75)` that: (a) does nothing and returns `None` while the transcript is below `threshold` of the context window; (b) otherwise asks the LLM to serialise current state into the structured JSON schema from 8.5.5.3, parses it robustly, persists the fields to the semantic store, and returns the parsed dict. Why is serialising into this schema more reliable than a free-text summary?
+**5.** Implement the *structured compaction* trigger described in the practitioner tip and section 8.5.5.3. Write a function `compact_if_needed(mem, transcript, transcript_tokens, llm_call, ctx_window=128_000, threshold=0.75)` — where `transcript` is the rendered conversation text and `llm_call` is the same stateless `func(prompt: str) -> str` used by `reflect()` — that: (a) does nothing and returns `None` while the transcript is below `threshold` of the context window; (b) otherwise asks the LLM to serialise current state into the structured JSON schema from 8.5.5.3, parses it robustly, persists the fields to the semantic store, and returns the parsed dict. Why is serialising into this schema more reliable than a free-text summary?
 
 ??? note "Solution"
     The tip says: trigger at 70-80% of capacity (here `threshold=0.75`), before information is lost, and produce a deterministic structured blob rather than a lossy free-text summary. The function mirrors the robust-parse style of the chapter's `reflect`:
@@ -1099,7 +1125,7 @@ Compute each cosine similarity by hand, then state exactly which entries `recall
     ```python
     import re, json as _json
 
-    def compact_if_needed(mem, transcript_tokens, llm_call,
+    def compact_if_needed(mem, transcript, transcript_tokens, llm_call,
                           ctx_window: int = 128_000,
                           threshold: float = 0.75):
         """
@@ -1107,11 +1133,14 @@ Compute each cosine similarity by hand, then state exactly which entries `recall
         crosses `threshold` of the context window. Persists the compacted
         state to the semantic store and returns the parsed dict (or None
         if compaction was not needed).
+
+        `llm_call` is stateless -- func(prompt) -> str -- so the transcript
+        text must be interpolated into the prompt, exactly as in reflect().
         """
         if transcript_tokens < threshold * ctx_window:
             return None  # still room; do not compact yet
 
-        prompt = f"""Serialise the current session state into EXACTLY this JSON schema:
+        prompt = f"""Serialise the session state below into EXACTLY this JSON schema:
     {{
       "task_state": "one-line status",
       "decisions_made": ["..."],
@@ -1119,7 +1148,10 @@ Compute each cosine similarity by hand, then state exactly which entries `recall
       "user_preferences": {{"key": "value"}},
       "next_steps": ["..."]
     }}
-    Fill every field from the conversation so far. Output only the JSON object.
+    Fill every field from the transcript. Output only the JSON object.
+
+    TRANSCRIPT:
+    {transcript}
 
     JSON output:"""
 

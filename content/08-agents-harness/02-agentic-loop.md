@@ -110,7 +110,6 @@ Usage:
 
 import os
 import re
-import math
 import json
 import datetime
 from typing import Callable
@@ -152,11 +151,13 @@ def search(query: str) -> str:
 @register_tool("Evaluate a Python arithmetic expression and return the result.")
 def calculator(expression: str) -> str:
     # Restrict to safe arithmetic — no exec() on untrusted input.
+    # The allowlist has no letters, so no name (and hence no builtin, no
+    # import, no attribute access) can appear in the expression at all.
     allowed = set("0123456789+-*/()., ")
     if not all(c in allowed for c in expression):
         return "Error: only arithmetic expressions allowed."
     try:
-        result = eval(expression, {"__builtins__": {}}, {"math": math})
+        result = eval(expression, {"__builtins__": {}}, {})
         return str(result)
     except Exception as e:
         return f"Error: {e}"
@@ -271,7 +272,6 @@ Important:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                # Stop generation right after "Action: finish(...)"
                 # We use a stop sequence to prevent the model generating
                 # a fake Observation line.
                 stop=["Observation:"],
@@ -523,31 +523,43 @@ def make_plan(client, model: str, task: str) -> dict:
 
 def execute_plan(agent: ReActAgent, plan: dict) -> dict[int, str]:
     """
-    Execute each step in dependency order.
+    Execute the steps in dependency order (a topological sort on `depends_on`).
+    Do NOT trust the order the model emitted them in: a plan may list step 2
+    before step 1 even though step 2 declares depends_on: [1].
     Returns a dict mapping step id → result string.
     """
     results: dict[int, str] = {}
+    pending = list(plan["steps"])
 
-    for step in plan["steps"]:
-        step_id = step["id"]
-        desc = step["description"]
-        deps = step.get("depends_on", [])
+    while pending:
+        # A step is ready when every dependency it declared has produced a result.
+        ready = [s for s in pending
+                 if all(d in results for d in s.get("depends_on", []))]
+        if not ready:
+            # No progress possible: a cycle, or a reference to a missing step id.
+            raise ValueError(
+                f"Unsatisfiable dependencies for steps {[s['id'] for s in pending]}"
+            )
 
-        # Build a context-enriched task that incorporates prior results
-        prior_context = "\n".join(
-            f"Step {d} result: {results[d]}"
-            for d in deps
-            if d in results
-        )
-        full_task = f"{desc}\n\nContext from prior steps:\n{prior_context}" if prior_context else desc
+        for step in ready:
+            step_id = step["id"]
+            desc = step["description"]
+            deps = step.get("depends_on", [])
 
-        print(f"\n=== Executing step {step_id}: {desc} ===")
-        results[step_id] = agent.run(full_task, verbose=True)
+            # Build a context-enriched task that incorporates prior results
+            prior_context = "\n".join(f"Step {d} result: {results[d]}" for d in deps)
+            full_task = f"{desc}\n\nContext from prior steps:\n{prior_context}" if prior_context else desc
+
+            print(f"\n=== Executing step {step_id}: {desc} ===")
+            results[step_id] = agent.run(full_task, verbose=True)
+
+        ready_ids = {s["id"] for s in ready}
+        pending = [s for s in pending if s["id"] not in ready_ids]
 
     return results
 ```
 
-The `depends_on` field enables a simple topological sort; steps with no dependencies can in principle run in parallel using `asyncio` or `concurrent.futures`.
+The `depends_on` field is what drives the topological sort above; each wave of `ready` steps is by construction mutually independent, so it can in principle run in parallel using `asyncio` or `concurrent.futures`.
 
 ## Reflection and Self-Correction
 
@@ -701,8 +713,18 @@ def beam_react_agent(
                 if "finish(" in text:
                     match = re.search(r"finish\(([^)]*)\)", text)
                     answer = match.group(1).strip('"\'') if match else text
-                    # Score this leaf
-                    leaf_score = value_fn(node) if value_fn else node.score
+                    # Score this leaf.  Note that the terminal node must be
+                    # built first: scoring the *parent* would give every
+                    # sibling answer the same score, so the value function
+                    # could not rank them at all.
+                    leaf = AgentNode(
+                        messages=node.messages + [{"role": "assistant",
+                                                   "content": text}],
+                        score=node.score * 0.95,
+                        depth=depth + 1,
+                        actions=node.actions + [text],
+                    )
+                    leaf_score = value_fn(leaf) if value_fn else leaf.score
                     candidates.append((leaf_score, answer, None))
                     continue
 
@@ -715,18 +737,24 @@ def beam_react_agent(
                 else:
                     obs = "Error: no valid action found."
 
-                # Compute node score (simple: add log-prob proxy from token count)
                 new_msgs = deepcopy(node.messages)
                 new_msgs.append({"role": "assistant", "content": text})
                 new_msgs.append({"role": "user", "content": f"Observation: {obs}"})
-                child_score = node.score * (0.95 ** 1)  # decay per step
                 new_node = AgentNode(
                     messages=new_msgs,
-                    score=child_score,
+                    score=node.score * 0.95,   # placeholder: depth decay only
                     depth=depth + 1,
                     actions=node.actions + [text],
                 )
-                candidates.append((child_score, None, new_node))
+                # Score the *child* state.  The depth decay alone is identical
+                # for every sibling, so without a value function the sort below
+                # is a no-op and the "beam" degenerates into a depth-first walk
+                # over the first parent's children.  A real value function
+                # (verifier LLM, trained reward model, or heuristic) is what
+                # makes the pruning meaningful.
+                if value_fn is not None:
+                    new_node.score = value_fn(new_node)
+                candidates.append((new_node.score, None, new_node))
 
         # Separate finished and unfinished candidates
         finished = [(s, a) for s, a, n in candidates if n is None]
@@ -743,7 +771,7 @@ def beam_react_agent(
     return "Exhausted search depth without finding answer."
 ```
 
-Tree search multiplies the LLM calls by roughly $k \times d$ (beam width × depth), making it expensive. It is typically reserved for offline evaluation or tasks where quality clearly outweighs cost.
+Tree search costs roughly $b \times k \times d$ generations (beam width × branching factor × depth), i.e. it multiplies the number of LLM calls by about $b \times k$ relative to the linear ReAct loop's $d$ calls, making it expensive. It is typically reserved for offline evaluation or tasks where quality clearly outweighs cost.
 
 ## When to Stop: Termination Criteria
 
@@ -763,7 +791,13 @@ MAX_CONTEXT_FRACTION = 0.85  # stop at 85% of context window
 
 def context_full(messages: list, model_context_limit: int = 128_000) -> bool:
     """Rough check: count characters as a proxy for tokens (4 chars ≈ 1 token)."""
-    total_chars = sum(len(m["content"]) for m in messages)
+    # `content` may be absent or None on an assistant turn that only carries
+    # tool calls (that is exactly what `model_dump(exclude_none=True)` produces
+    # in the native tool-calling loop), so never index it directly.
+    total_chars = sum(
+        len(m.get("content") or "") + len(str(m.get("tool_calls") or ""))
+        for m in messages
+    )
     estimated_tokens = total_chars / 4
     return estimated_tokens > MAX_CONTEXT_FRACTION * model_context_limit
 ```
@@ -854,7 +888,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
     - Use `temperature=0.0` for agentic tasks, a hard `MAX_STEPS` safety limit, and action deduplication to detect and break loops before they waste tokens or cause real-world side effects.
     - Plan-Execute architectures front-load planning into a separate LLM call that produces a structured dependency graph of subtasks, enabling parallel execution and better long-horizon coherence.
     - Reflexion wraps the ReAct loop in an outer retry loop, using verbal reflection on failed trajectories to guide subsequent attempts — a form of few-shot self-supervised improvement.
-    - Tree-of-Thought extends ReAct to a beam-search tree, sampling $k$ candidate actions at each step and pruning with a value function. It is powerful but multiplies LLM calls by $O(k \times d)$.
+    - Tree-of-Thought extends ReAct to a beam-search tree, sampling $k$ candidate actions at each step and pruning with a value function. It is powerful but costs $O(b \times k \times d)$ LLM calls (beam width × branching factor × depth), a factor of $b \times k$ more than a linear loop.
     - Key failure modes are: infinite loops (action deduplication + early termination), context drift/derailment (goal re-injection + context compression), and hallucinated observations (stop sequences). All three must be actively defended against in production.
     - Agentic RL trains the model to internalize the agentic loop as a policy, replacing fragile prompt engineering with learned behavior that generalizes across task distributions.
 
@@ -947,7 +981,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
 
     (the very first level expands the single root into 3, so the exact count is $3 + 9 \times 7 = 66$; either way it is order-of-magnitude $b \times k \times d \approx 3 \times 3 \times 8 = 72$).
 
-    So Tree-of-Thought costs roughly $72 / 8 \approx 9\times$ more model calls than ReAct here — consistent with the chapter's statement that tree search "multiplies the LLM calls by roughly $k \times d$." Because each call also has latency and dollar cost, a ~9x blow-up in generations is only worth paying when quality clearly dominates cost. In an interactive production setting the extra latency (each generation is a full forward pass) makes it impractical, so it is reserved for offline evaluation or high-value tasks where correctness outweighs cost.
+    So Tree-of-Thought costs roughly $72 / 8 \approx 9\times$ more model calls than ReAct here — consistent with the chapter's statement that the multiplier is about $b \times k = 3 \times 3 = 9$ (total cost $b \times k \times d$). Because each call also has latency and dollar cost, a ~9x blow-up in generations is only worth paying when quality clearly dominates cost. In an interactive production setting the extra latency (each generation is a full forward pass) makes it impractical, so it is reserved for offline evaluation or high-value tasks where correctness outweighs cost.
 
 **4.** The `_parse_action` method uses the regex `r"Action:\s*(\w+)\(([^)]*)\)"`. Identify a realistic tool call that this regex parses *incorrectly*, and explain the consequence inside `_execute_action`. Then propose (in words or code) a more robust parsing strategy consistent with the chapter's style.
 
