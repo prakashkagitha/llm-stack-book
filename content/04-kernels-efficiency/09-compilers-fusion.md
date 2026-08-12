@@ -145,7 +145,7 @@ Each subgraph between graph breaks is independently compiled and cached. The gua
 
 ### AOTAutograd: Differentiation Before Compilation
 
-For training, we need not just the forward pass but also the backward pass to be compiled and fused. AOTAutograd ("Ahead-Of-Time Autograd") uses the `functorch` dispatcher to *trace through the autograd engine itself* at compile time, producing a single joint FX graph representing both forward and backward. This joint graph is then handed to the backend, which can fuse across the forward/backward boundary — for example, fusing an activation function with its gradient computation.
+For training, we need not just the forward pass but also the backward pass to be compiled and fused. AOTAutograd ("Ahead-Of-Time Autograd") uses the `functorch` dispatcher to *trace through the autograd engine itself* at compile time, producing a single joint FX graph representing both forward and backward. That joint graph is then *partitioned* (by default `min_cut_rematerialization_partition`) into a forward graph and a backward graph, handed to `fw_compiler` and `bw_compiler` respectively. Two wins follow, neither available in eager mode: the partitioner chooses which intermediates to save versus recompute in backward (a cheap, automatic form of rematerialization), and the backend sees the *whole* backward graph at once, so gradient formulas fuse with their neighbours instead of each running as its own `*Backward` kernel.
 
 ```python
 import torch
@@ -155,11 +155,11 @@ def fn(x, w):
     """A simple layer: linear + sigmoid."""
     return torch.sigmoid(x @ w)
 
-# AOTAutograd decomposes this into a joint graph.
-# During compilation, it generates:
-#   forward:  z = x @ w; y = sigmoid(z)
-#   backward: dy/dz = y * (1 - y); ...
-# The sigmoid and its gradient can be fused into a single kernel.
+# AOTAutograd traces a joint graph, then partitions it into two graphs:
+#   forward:  z = x @ w; y = sigmoid(z)             -> fw_compiler
+#   backward: dz = g * y * (1 - y); dx = dz @ w.T   -> bw_compiler
+# Inductor fuses `g * y * (1 - y)` into its neighbours *inside the backward
+# graph* instead of launching a standalone SigmoidBackward kernel.
 compiled_fn = aot_function(fn, fw_compiler=lambda g, _: g, bw_compiler=lambda g, _: g)
 ```
 
@@ -297,7 +297,7 @@ Two things that are commonly *assumed* to break the graph but do not: a shape-de
     - Fusing the GeLU into the up-projection matmul epilogue in the FFN
     - Eliminating ~40 separate kernel launches via CUDA graph capture in reduce-overhead mode
 
-    **For training** (forward + backward), the gain is typically somewhat larger because AOTAutograd fuses activation-gradient pairs that eager mode computes in separate kernels.
+    **For training** (forward + backward), the gain is typically somewhat larger because AOTAutograd hands Inductor the entire backward graph, so the pointwise gradient formulas fuse into their neighbours instead of running as one `*Backward` kernel each.
 
     A rough breakdown of where time goes in the compiled version:
     - ~55% FFN (the two $4096 \leftrightarrow 16384$ matmuls, with fused epilogues) — at these dimensions the FFN alone is about 60% of the layer's FLOPs
@@ -369,7 +369,7 @@ class FeedForward(nn.Module):
         self.down_proj = nn.Linear(ffn_dim, d_model, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # SwiGLU: gate * silu(up)
+        # SwiGLU: silu(gate) * up
         # torch.compile will fuse the silu + elementwise multiply
         return self.down_proj(
             torch.nn.functional.silu(self.gate_proj(x)) * self.up_proj(x)
@@ -599,7 +599,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     - `torch.compile` is a three-layer pipeline: TorchDynamo captures an FX graph via Python bytecode tracing, AOTAutograd differentiates it ahead-of-time, and TorchInductor lowers it to fused Triton or CUDA kernels.
     - Graph breaks partition the model into compiled subgraphs separated by eager fallback; the most common culprits are `tensor.item()`, `if` statements that branch on a tensor value, and unsupported Python built-ins (a *shape*-dependent `if`, by contrast, costs a recompile, not a break).
     - `mode="reduce-overhead"` enables CUDA graph capture internally; `mode="max-autotune"` runs an exhaustive Triton tile-size search that takes longer to compile but achieves the highest throughput on a given shape.
-    - AOTAutograd's joint forward+backward graph enables cross-boundary fusion, for example fusing an activation function with its gradient computation, which is unavailable in eager mode.
+    - AOTAutograd traces a *joint* forward+backward graph and then partitions it into separate forward and backward graphs; the payoff is that the partitioner decides what to save versus rematerialize, and that Inductor compiles the whole backward graph at once — fusing each pointwise gradient formula into its neighbours rather than launching one `*Backward` kernel per op, as eager autograd must.
     - XLA (used by JAX/TPU) and TVM take fundamentally similar approaches — whole-graph compilation with loop fusion — but are optimized for different hardware targets and have different dynamism tradeoffs.
     - `torch.compile` composes with FSDP, DDP, and fused optimizers; compile the model before wrapping with FSDP, and use `fused=True` in AdamW to reduce optimizer kernel count.
     - For deployment, `torch.export` captures a strict graph-break-free `ExportedProgram` and AOTInductor lowers it ahead of time to a Python-free package; for training, compile one decoder block (not the whole model), set `TORCHINDUCTOR_CACHE_DIR`, and keep batch shapes constant so you never blow the recompile budget.
@@ -678,7 +678,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 
     **Speedup** $= 8T / 4T = 2\times$ — *identical* to the `[4096, 4096]` case, because both numerator and denominator scale with tensor size. The first lesson: under a pure-bandwidth roofline the fusion speedup is set by the *ratio of transfers eliminated*, not by the absolute tensor size.
 
-    **What would push it toward $3\times$?** The fused kernel's cost is floored at (distinct inputs + outputs) $= 4T$ here, so the ceiling is set by how much naive traffic you can pile on top of that floor. Lengthen the pointwise chain — `relu(a*b + c)` then scaled, then GELU'd, then dropped out — and each extra eager op adds $2T$ to the naive side while adding *nothing* to the fused side, so the ratio climbs $8/4 \to 10/4 \to 12/4$. Alternatively, reduce the number of distinct inputs: `relu(a*a + a)` has a fused floor of only $2T$, giving $8/2 = 4\times$. This is exactly why Inductor's scheduler tries to grow fusion groups greedily: every additional pointwise op absorbed into an existing kernel is close to free.
+    **What would push it toward $3\times$?** The fused kernel's cost is floored at (distinct inputs + outputs) $= 4T$ here, so the ceiling is set by how much naive traffic you can pile on top of that floor. Lengthen the pointwise chain — `relu(a*b + c)` then scaled, then GELU'd, then dropped out — and each extra eager op adds $2T$ to the naive side while adding *nothing* to the fused side, so the ratio climbs $8/4 \to 10/4 \to 12/4$. Alternatively, reduce the number of distinct inputs: `relu(a*a + a)` costs $2T + 3T + 2T = 7T$ naively (the `a*a` kernel loads each element of `a` once and squares it in a register) but has a fused floor of only $2T$, giving $7/2 = 3.5\times$. This is exactly why Inductor's scheduler tries to grow fusion groups greedily: every additional pointwise op absorbed into an existing kernel is close to free.
 
 **3.** A batch-size-1 decode step launches 140 small kernels, each doing negligible arithmetic (memory-bound, ~1 µs of actual GPU work) but costing 8 µs of CPU launch time. The CPU launches kernels serially and the GPU cannot start a kernel until the CPU has launched it. (a) Estimate the per-step wall-clock time in eager mode. (b) After wrapping the decode step in a CUDA graph, the entire sequence replays with a single 8 µs CPU call and the GPU then runs the 140 kernels back-to-back. Estimate the new per-step time and the speedup. (c) Which sentence in the chapter explains why this workload is a *good* fit for CUDA graphs?
 
@@ -799,7 +799,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 
     Reading the results: `t_eager / t_noCG` is the pure **fusion / memory-traffic** speedup (Inductor merging the SiLU + gate multiply and fusing bias/epilogues), and `t_noCG / t_reduce` is the **incremental CUDA-graph** speedup from eliminating per-kernel CPU launch overhead. On a memory-bound FFN at small batch the CUDA-graph increment is usually the smaller of the two, but it grows as the kernels get shorter and more numerous — the regime the chapter flags for batch-1 serving.
 
-**6.** The chapter claims AOTAutograd's joint forward+backward graph enables a fusion "unavailable in eager mode": fusing an activation with its gradient. Take `y = sigmoid(z)`. (a) Derive $\partial y / \partial z$ and show it can be written using only the forward output `y`, not `z`. (b) Explain concretely, in terms of memory traffic and kernel count, what cross-boundary fusion saves here versus eager mode, and why eager mode cannot do it.
+**6.** The chapter claims AOTAutograd's joint forward+backward graph enables optimizations "unavailable in eager mode". Take `y = sigmoid(z)`. (a) Derive $\partial y / \partial z$ and show it can be written using only the forward output `y`, not `z`. (b) Explain concretely, in terms of memory traffic and kernel count, what compiling the *backward graph as a whole* saves here versus eager mode, and why eager mode cannot do it. (c) Why can the compiler *not* simply fuse the forward `sigmoid` with its own backward kernel?
 
 ??? note "Solution"
     **(a)** For $y = \sigma(z) = \dfrac{1}{1 + e^{-z}}$,
@@ -808,8 +808,10 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     \frac{\partial y}{\partial z} = \sigma(z)\,\bigl(1 - \sigma(z)\bigr) = y\,(1 - y).
     $$
 
-    Crucially the derivative depends only on the *forward output* `y`, matching the chapter's inline comment in the AOTAutograd example: `dy/dz = y * (1 - y)`. The backward pass therefore never needs `z` (or a fresh recomputation of the exponential); it just needs the already-computed `y`.
+    Crucially the derivative depends only on the *forward output* `y`, matching the backward line in the chapter's AOTAutograd example: `dz = g * y * (1 - y)`. The backward pass therefore never needs `z` (or a fresh recomputation of the exponential); it just needs the already-computed `y`.
 
-    **(b)** In **eager mode** the forward launches a `sigmoid` kernel that reads `z` from DRAM and writes `y` to DRAM. Later, the backward launches a *separate* kernel that reads `y` (and the incoming gradient `g`) back from DRAM, computes `g * y * (1 - y)`, and writes the result. That is two kernel launches and an extra DRAM round-trip of `y` (write it in forward, read it back in backward), because eager mode has no visibility across the forward/backward boundary — the autograd engine only records that a `SigmoidBackward` node exists and schedules it as its own op at `loss.backward()` time.
+    **(b)** In **eager mode** the backward pass is a chain of independent, dynamically dispatched nodes. `SigmoidBackward` runs as its own kernel: it reads `y` and the incoming gradient `g` from DRAM, computes `g * y * (1 - y)`, and writes `dz` back to DRAM — where the *next* backward node (here the `dx = dz @ w.T` matmul, or whatever pointwise op precedes it) immediately reads it again. Every gradient formula in the network pays that same launch-plus-round-trip tax, and eager autograd cannot avoid it because it discovers each node only when it pops it off the ready queue.
 
-    **AOTAutograd** traces through the autograd engine *at compile time* and produces one joint FX graph containing both `y = sigmoid(z)` and `g * y * (1 - y)`. TorchInductor can then **fuse across the boundary**: the elementwise gradient computation can be scheduled with the activation so that `y` is kept live in registers / shared memory (or the gradient epilogue is merged into an adjacent kernel), removing the extra DRAM write-and-reread of `y` and collapsing two elementwise kernels toward one. Eager mode cannot do this because it never has the forward and backward in the same graph — it dispatches them as independent ops separated in time by the entire rest of the forward and backward passes.
+    **AOTAutograd** traces through the autograd engine *at compile time*, so `bw_compiler` receives the whole backward graph as one FX graph. Inductor can then merge `g * y * (1 - y)` with its neighbours *inside that graph* — folding it into an adjacent pointwise group, or into the matmul's prologue/epilogue — so `dz` never round-trips DRAM and one fewer kernel is launched. The joint graph buys a second thing as well: the `min_cut_rematerialization_partition` pass decides whether `y` is worth saving at all, and may instead keep the cheaper `z` and recompute `sigmoid(z)` inside the backward kernel, trading a few flops for one less saved activation.
+
+    **(c)** Because the partitioner splits the joint graph into two GraphModules that *run at different times* — the forward at `model(x)`, the backward at `loss.backward()`, separated by the entire rest of the network. No kernel can hold `y` live in registers or shared memory across that gap, so whatever the partitioner decides to save (`y` or `z`) is still written to DRAM in forward and read back in backward. The compiler's leverage is over *what* crosses the boundary and how the backward graph is scheduled, not over erasing the boundary itself.

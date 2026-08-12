@@ -22,7 +22,7 @@ where $\mu = \frac{1}{d}\sum_i x_i$ and $\sigma^2 = \frac{1}{d}\sum_i (x_i - \mu
 
 ### RMSNorm derivation
 
-Zhang and Sennrich ("Root Mean Square Layer Normalization", NeurIPS 2019) asked: is the re-centering operation actually necessary? They ablated LayerNorm into its components and found that the re-scaling (via $\gamma$) drives almost all of LayerNorm's benefit, while mean subtraction contributes little to final performance but accounts for roughly a third of LayerNorm's compute.
+Zhang and Sennrich ("Root Mean Square Layer Normalization", NeurIPS 2019) asked: is the re-centering operation actually necessary? They ablated LayerNorm into its components and found that the re-scaling invariance — dividing by a per-vector magnitude statistic — drives almost all of LayerNorm's benefit, while the re-centering (mean subtraction) contributes little to final performance but accounts for roughly a third of LayerNorm's compute.
 
 Root Mean Square Normalization (RMSNorm) drops mean subtraction entirely:
 
@@ -265,7 +265,7 @@ GQA:  H_q = G * H_kv  for G > 1   (G query heads share one KV head)
 MQA:  H_kv = 1                     (all query heads share one KV)
 ```
 
-The near-universal choice is **8 KV heads**, almost regardless of query-head count: Llama 3 8B uses 32 query / 8 KV heads ($G=4$), Llama 2 70B and Llama 3 70B use 64 query / 8 KV heads ($G=8$), and the Qwen 2.5 / Qwen3 families follow the same pattern. This reduces KV cache memory by a factor of $G$ while introducing only a small quality degradation versus MHA. Eight is not a coincidence: under tensor parallelism the KV heads are split across ranks, so $H_{kv} \ge \text{TP degree}$ lets each GPU of a standard 8-GPU node own exactly one KV head with no replication and no extra all-gather (see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)). Picking $H_{kv} < \text{TP}$ forces the KV cache to be duplicated on every rank and silently gives back the memory you were trying to save.
+The near-universal choice is **8 KV heads**, almost regardless of query-head count: Llama 3 8B uses 32 query / 8 KV heads ($G=4$), Llama 2 70B and Llama 3 70B use 64 query / 8 KV heads ($G=8$), and the Qwen3 family follows the same pattern at every size (16 query / 8 KV at 0.6B up to 64 / 8 at 32B). The convergence is recent, though: Qwen 2.5 only reaches 8 KV heads at 14B and above — Qwen2.5-7B uses 28 query / 4 KV, and its sub-3B models use just 2. This reduces KV cache memory by a factor of $G$ while introducing only a small quality degradation versus MHA. Eight is not a coincidence: under tensor parallelism the KV heads are split across ranks, so $H_{kv} \ge \text{TP degree}$ lets each GPU of a standard 8-GPU node own exactly one KV head with no replication and no extra all-gather (see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)). Picking $H_{kv} < \text{TP}$ forces the KV cache to be duplicated on every rank and silently gives back the memory you were trying to save.
 
 !!! example "Worked example: KV cache memory budget"
 
@@ -406,7 +406,8 @@ class QKNormAttention(nn.Module):
         self.v_proj   = nn.Linear(d_model, d_model, bias=False)
         self.o_proj   = nn.Linear(d_model, d_model, bias=False)
 
-        # One RMSNorm per head for Q and K; per-head head_dim
+        # One RMSNorm for Q and one for K, each with a gamma of size
+        # head_dim shared across all heads (Qwen3 / Gemma 3 convention)
         self.q_norm = RMSNorm(self.head_dim)
         self.k_norm = RMSNorm(self.head_dim)
 
@@ -424,7 +425,10 @@ class QKNormAttention(nn.Module):
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        attn = torch.softmax((q @ k.transpose(-2,-1)) / math.sqrt(self.head_dim), dim=-1)
+        logits = (q @ k.transpose(-2,-1)) / math.sqrt(self.head_dim)
+        # Causal mask: decoder-only, so a position must never see the future.
+        mask = torch.tril(torch.ones(T, T, device=x.device)).bool()
+        attn = torch.softmax(logits.masked_fill(~mask, float('-inf')), dim=-1)
         out  = (attn @ v).transpose(1,2).contiguous().view(B, T, C)
         return self.o_proj(out)
 ```
@@ -657,7 +661,7 @@ We now have enough pieces to assemble a complete reference. The table below summ
 
 | Component | GPT-2 (2019) | Modern Consensus | HF config field | Notes |
 |---|---|---|---|---|
-| Normalization | LayerNorm (pre) | RMSNorm (pre; +post in Gemma/OLMo 2) | `rms_norm_eps` | Zhang & Sennrich 2019 |
+| Normalization | LayerNorm (pre) | RMSNorm (pre; sandwich pre+post in Gemma 2/3; output-only in OLMo 2) | `rms_norm_eps` | Zhang & Sennrich 2019 |
 | MLP activation | GeLU | SwiGLU / GeGLU | `hidden_act: "silu"` | Shazeer 2020 |
 | MLP width | $4d$ | $\approx \tfrac{8}{3}d$, multiple of 256 | `intermediate_size` | iso-parameter with 3 matrices |
 | Position encoding | Learned absolute | RoPE (+ NoPE layers at long ctx) | `rope_theta`, `rope_scaling` | Su et al. 2021 |
@@ -889,7 +893,7 @@ The from-scratch modules in this chapter are for understanding. In a real traini
 | RMSNorm | `x * rsqrt(mean(x²))` | `LigerRMSNorm`, `apex.normalization.FusedRMSNorm` | Liger-Kernel, apex |
 | SwiGLU MLP | three `nn.Linear` + `F.silu` | `LigerSwiGLUMLP` | Liger-Kernel |
 | RoPE | complex-valued rotation | `LigerRopeFunction`, `apply_rotary_emb` | Liger-Kernel, `flash-attn` |
-| LM head + CE (+ z-loss) | `lm_head` then `cross_entropy` | `LigerFusedLinearCrossEntropy`, `cut-cross-entropy` | Liger-Kernel |
+| LM head + CE (+ z-loss) | `lm_head` then `cross_entropy` | `LigerFusedLinearCrossEntropyLoss`, `cut-cross-entropy` | Liger-Kernel |
 
 The last row matters more than it looks: it never materializes the $(B, T, V)$ logit tensor, which at $BT=16384$ and $V=128256$ would be 8.4 GB in fp32 — often the single largest tensor in a small-model training step. `enable_gqa=True` similarly avoids materializing the repeated K and V, which our teaching code does materialize. Liger-Kernel is written in Triton (see [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html)); `torch.compile` will fuse the simpler ones (RMSNorm, SwiGLU) for you without any extra dependency.
 
@@ -983,7 +987,7 @@ When you need a correct, complete, *trainable* version of this recipe rather tha
 ??? note "Solution"
     (a) RMSNorm discards **mean subtraction** (the $-\mu$ re-centering) and the **learned shift $\beta$**. It keeps the **re-scaling**: division by a per-vector magnitude statistic followed by the learned element-wise scale $\gamma$. The magnitude statistic changes from the standard deviation $\sigma$ (computed around the mean) to the root-mean-square $\text{RMS}(x)=\sqrt{\frac{1}{d}\sum_i x_i^2 + \epsilon}$ (computed around zero), so no mean is ever needed.
 
-    (b) Their ablation of LayerNorm into its components found that the **re-scaling via $\gamma$ drives almost all of LayerNorm's benefit**, while **mean subtraction contributes little to final performance** yet costs roughly a third of LayerNorm's compute (a second reduction pass plus a subtraction kernel). Dropping it is therefore near-free in quality but ~10-30% faster.
+    (b) Their ablation of LayerNorm into its components found that the **re-scaling invariance — division by a per-vector magnitude statistic — drives almost all of LayerNorm's benefit**, while **re-centering (mean subtraction) contributes little to final performance** yet costs roughly a third of LayerNorm's compute (a second reduction pass plus a subtraction kernel). Dropping it is therefore near-free in quality but ~10-30% faster.
 
     (c) The normalization involves squaring every element, summing, and taking a reciprocal square root. In low-precision formats like bf16 the squared sum loses precision badly — bf16 keeps only 8 mantissa bits, so squaring and accumulating $d$ terms compounds rounding error — and the reciprocal-square-root is sensitive to that error. (In fp16 the squares can additionally overflow the 65504 ceiling; bf16 shares fp32's exponent range, so its problem is precision, not range.) Computing `x.float().pow(2).mean(...)` in float32 keeps the reduction accurate; the result is then cast back with `.type_as(x)` so the rest of the network still runs in the model's working precision. This is exactly the pattern used in the Llama reference code.
 

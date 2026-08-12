@@ -83,7 +83,7 @@ You rarely hand-write a norm in production. PyTorch ≥ 2.4 ships `torch.nn.RMSN
 
 !!! warning "Common pitfall: computing norm statistics in bf16"
 
-    Compute $\mu$, $\sigma^2$, and $\text{RMS}$ in **fp32 even when the model runs in bf16**. bf16 carries roughly 8 mantissa bits, so accumulating $d = 4096$ squared activations in bf16 loses real precision in the very quantity you are dividing by — the norm itself becomes a source of gradient noise, and the error grows with $d$. Every production implementation upcasts: HuggingFace's `LlamaRMSNorm` calls `.to(torch.float32)`, computes the reciprocal RMS, then casts back before applying $\boldsymbol{\gamma}$. The reference code later in this chapter does the same.
+    Compute $\mu$, $\sigma^2$, and $\text{RMS}$ in **fp32 even when the model runs in bf16**. bf16 carries only 7 explicit mantissa bits (an 8-bit significand counting the implicit leading 1), so accumulating $d = 4096$ squared activations in bf16 loses real precision in the very quantity you are dividing by — the norm itself becomes a source of gradient noise, and the error grows with $d$. Every production implementation upcasts: HuggingFace's `LlamaRMSNorm` calls `.to(torch.float32)`, computes the reciprocal RMS, then casts back before applying $\boldsymbol{\gamma}$. The reference code later in this chapter does the same.
 
     A second trap, this one for checkpoint conversion: **Gemma stores its RMSNorm scale as $\gamma - 1$** and applies `(1.0 + weight)`, so its norm weights are initialized to zero. Loading Gemma norm tensors into a Llama-style `(x / rms) * weight` module without adding the 1 multiplies the residual stream by ≈ 0 and produces a model that emits pure noise.
 
@@ -164,7 +164,7 @@ For a Llama 2 7B block with $d = 4{,}096$ and the gated FFN described below with
 - $W_\text{down}$: $11{,}008 \times 4{,}096 = 45.1\text{M}$ parameters
 - Total per FFN: $\approx 135\text{M}$
 
-Multiplied across 32 blocks: $\approx 4.3\text{B}$ parameters — about 62% of the model's 7B total.
+Multiplied across 32 blocks: $\approx 4.33\text{B}$ parameters — about 64% of the model's true 6.74B total (the nominal "7B" is a rounded name, not a parameter count; see the sanity check later in this chapter), and close to two-thirds of the non-embedding parameters.
 
 {{fig:tblock-parameter-budget}}
 
@@ -291,7 +291,7 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: [batch, seq_len, dim]  (or any shape ending in dim)
         # Statistics are computed in fp32 even when x is bf16/fp16: summing
-        # `dim` squared activations with bf16's ~8 mantissa bits loses real
+        # `dim` squared activations with bf16's 7 mantissa bits loses real
         # precision in the exact quantity we divide by. Every production
         # implementation (HF LlamaRMSNorm, Liger-Kernel) does this upcast.
         in_dtype = x.dtype
@@ -349,6 +349,14 @@ class MinimalMHA(nn.Module):
     """
     Causal multi-head self-attention. Minimal implementation for block wiring.
     For MQA, GQA, RoPE, FlashAttention, see chapter 2.4 and 2.5.
+
+    IMPORTANT — `mask` semantics: when `mask is None` the causal mask is
+    generated internally (`is_causal=True`). When you *do* pass a `mask`, it is
+    used verbatim and `is_causal` is False, so the mask MUST already encode
+    causality. Passing a bare padding mask therefore makes attention
+    bidirectional and leaks future tokens:
+
+        mask = padding_mask & torch.ones(T, T, dtype=torch.bool).tril()
     """
 
     def __init__(self, dim: int, n_heads: int, bias: bool = False,
@@ -381,7 +389,9 @@ class MinimalMHA(nn.Module):
             q, k, v,
             attn_mask=mask,
             dropout_p=self.attn_drop.p if self.training else 0.0,
-            is_causal=(mask is None),   # if no explicit mask, use causal
+            # No explicit mask -> generate the causal mask internally.
+            # With an explicit mask, the mask itself must be causal (see above).
+            is_causal=(mask is None),
         )  # [B, n_heads, T, head_dim]
 
         # Merge heads and project
@@ -432,7 +442,8 @@ class TransformerBlock(nn.Module):
     def forward(self, x: torch.Tensor,
                 mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         # ── Attention sublayer (pre-norm residual) ─────────────────────────
-        # Normalize first, pass through attention, add back to residual stream
+        # Normalize first, pass through attention, add back to residual stream.
+        # `mask` is forwarded verbatim: if given, it must already be causal.
         x = x + self.res_drop(self.attn(self.norm_attn(x), mask))
 
         # ── FFN sublayer (pre-norm residual) ───────────────────────────────
@@ -550,7 +561,7 @@ float16 and bfloat16 both use 16 bits but split them differently: fp16 keeps 10 
 
     (This is the *worst case*, assuming successive updates point in the same direction. If the updates were mutually orthogonal — the independent-random-vector assumption behind the $\mathcal{O}(\sqrt{l})$ estimate above — the norm would instead grow like $\sqrt{\|\mathbf{x}_0\|^2 + L c^2}$. Real networks sit between the two, closer to linear in later layers where sublayers learn correlated writes.)
 
-    For $L = 32$, $\|\mathbf{x}_0\| \approx \sqrt{d} = \sqrt{4096} = 64$ (a unit-normal $d$-dim vector), and $c \approx 2$ (a rough estimate from empirical norms early in training), we get $\|\mathbf{x}_{32}\| \approx 64 + 64 = 128$. Pre-norm normalizes this back to $\approx 1$ before each sublayer input, so each sublayer sees a clean signal despite the stream growing. Post-norm would normalize *after* the addition, applying different normalization constants at each block, which has been observed to interact poorly with gradient flow.
+    For $L = 32$, $\|\mathbf{x}_0\| \approx \sqrt{d} = \sqrt{4096} = 64$ (a unit-normal $d$-dim vector), and $c \approx 2$ (a rough estimate from empirical norms early in training), we get $\|\mathbf{x}_{32}\| \approx 64 + 64 = 128$ (the orthogonal-update model would instead give $\sqrt{64^2 + 32 \cdot 2^2} \approx 65$, i.e. almost no growth). Pre-norm normalizes this back to unit RMS — norm $\approx \sqrt{d} = 64$ again — before each sublayer input, undoing the depth-driven growth rather than the $\sqrt{d}$ scale itself, so each sublayer sees a clean signal despite the stream growing. Post-norm would normalize *after* the addition, applying different normalization constants at each block, which has been observed to interact poorly with gradient flow.
 
 ---
 
@@ -610,7 +621,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
     - Dropout is typically 0.0 during large-scale pretraining (data is more abundant than model capacity), but 0.05–0.1 is useful for fine-tuning on small datasets.
     - Deep stacks benefit from careful output-projection scaling ($1/\sqrt{2L}$) to prevent residual stream variance blowup. Using bfloat16 (rather than float16) gives the block fp32's exponent range, removing both the overflow risk on outlier activations and the loss-scaling machinery fp16 requires.
     - The final RMSNorm after the last block is essential in pre-norm architectures: without it, the last block's output is un-normalized before the language-model head projection.
-    - Modern blocks carry **no bias terms** anywhere (PaLM's finding, now universal), and norm statistics must be accumulated in fp32 even under bf16 training. In real code this block is `LlamaDecoderLayer` in HuggingFace `transformers`, `torch.nn.RMSNorm` in PyTorch, and `LigerRMSNorm`/`LigerSwiGLUMLP` when you want the fused Triton versions.
+    - Modern blocks drop **bias terms** almost everywhere (PaLM's finding), with per-family exceptions worth checking in `config.json` — notably Qwen2's QKV bias — and norm statistics must be accumulated in fp32 even under bf16 training. In real code this block is `LlamaDecoderLayer` in HuggingFace `transformers`, `torch.nn.RMSNorm` in PyTorch, and `LigerRMSNorm`/`LigerSwiGLUMLP` when you want the fused Triton versions.
 
 ---
 
@@ -627,7 +638,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
     **Recent advances (2024–2026)**
 
     - [Grattafiori et al., *The Llama 3 Herd of Models* (2024)](https://arxiv.org/abs/2407.21783) — canonical modern reference for pre-norm + RMSNorm + SwiGLU + GQA at scale (8B–405B parameters); the 2025 Llama 4 herd keeps this block recipe and moves the FFN to a mixture-of-experts.
-    - [Gemma Team, *Gemma 3 Technical Report* (2025)](https://arxiv.org/abs/2503.19786) — the current Gemma generation (1B–27B, ≥128K context), raising the local-to-global attention ratio and shortening the local-attention span for memory-efficient long context.
+    - [Gemma Team, *Gemma 3 Technical Report* (2025)](https://arxiv.org/abs/2503.19786) — the current Gemma generation (1B–27B; 128K context on the 4B and larger variants, 32K on the 1B), raising the local-to-global attention ratio and shortening the local-attention span for memory-efficient long context.
     - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — a 671B-parameter (37B active) frontier open-weight model pairing the modern pre-norm block with Multi-head Latent Attention and DeepSeekMoE; notably trained to completion with no loss spikes or rollbacks.
     - [Qwen Team, *Qwen3 Technical Report* (2025)](https://arxiv.org/abs/2505.09388) — dense and Mixture-of-Experts models (0.6B–235B) on the same modern pre-norm gated-FFN spine, unifying thinking and non-thinking inference in one model.
     - [Wang et al., *DeepNet: Scaling Transformers to 1,000 Layers* (2022)](https://arxiv.org/abs/2203.00555) — DeepNorm residual scaling with a theoretically bounded update rule; shows post-norm can be stable at extreme depth with the right init.
@@ -723,7 +734,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
 **3.** (Conceptual) Pre-norm architectures leave the last block's output un-normalized on the residual stream. (a) Why do GPT-2, Llama, and friends therefore add a *final* norm (`ln_f` / `norm`) after the last block, and what specifically would degrade without it? (b) The original post-norm transformer required learning-rate *warmup* to train; pre-norm does not. Give the one-line mechanical reason, referencing how gradients scale in each layout.
 
 ??? note "Solution"
-    **(a) Final norm.** In pre-norm, each block computes $\mathbf{x}' = \mathbf{x} + F(\text{Norm}(\mathbf{x}))$, so the normalization only ever touches the *input* to a sublayer — it never normalizes the value that leaves the last block. As the chapter's variance discussion notes, the residual stream grows across depth (roughly $\mathcal{O}(\sqrt{l})$, and up to a norm of $\approx 128$ in the worked $L=32$ example), so the final block emits a vector of large and layer-count-dependent magnitude. Feeding that directly into the language-model head would send poorly-conditioned, large-magnitude logits into the softmax, hurting stability and calibration. Inserting a final RMSNorm/LayerNorm rescales the stream back to a well-conditioned unit scale before the LM head projection, which is why every pre-norm model adds one.
+    **(a) Final norm.** In pre-norm, each block computes $\mathbf{x}' = \mathbf{x} + F(\text{Norm}(\mathbf{x}))$, so the normalization only ever touches the *input* to a sublayer — it never normalizes the value that leaves the last block. As the chapter's variance discussion notes, the residual stream grows across depth (somewhere between $\mathcal{O}(\sqrt{l})$ for orthogonal updates and linear in $l$ for correlated ones — the worked $L=32$ example reaches a norm of $\approx 128$ in the linear worst case, versus $\approx 65$ under the orthogonal model), so the final block emits a vector of large and layer-count-dependent magnitude. Feeding that directly into the language-model head would send poorly-conditioned, large-magnitude logits into the softmax, hurting stability and calibration. Inserting a final RMSNorm/LayerNorm rescales the stream back to a well-conditioned unit scale before the LM head projection, which is why every pre-norm model adds one.
 
     **(b) Warmup.** In post-norm the normalization sits on top of every residual sum, so no un-normalized path connects the loss to the early layers: each backward path passes through all $L$ norms and picks up a $1/\text{std}$ Jacobian factor from each, and those factors compound with depth — at initialization the layers nearest the output see large gradients while the lower layers are starved, a mismatch no single learning rate handles, so the rate must be ramped up slowly. In pre-norm the unnormalized skip path always contributes a clean unit-variance gradient path backward regardless of what $F$ outputs, so gradients stay bounded from step one and no warmup is needed.
 
@@ -755,7 +766,7 @@ For more on these and other architectural choices, see [Modern Architecture Impr
 **5.** (Implementation) Gemma 2 uses **GeGLU** instead of SwiGLU — the same gated FFN but with GELU as the gating nonlinearity instead of Swish. Starting from the chapter's `SwiGLUFFN`, implement a `GeGLUFFN` module in the same style (same $8d/3$-rounded-to-64 default width, no-bias linears, internal dropout). What is the *only* line that must change, and why does the parameter count stay identical?
 
 ??? note "Solution"
-    GeGLU is $W_\text{down}(\text{GELU}(W_\text{gate}\mathbf{x}) \odot (W_\text{up}\mathbf{x}))$. Structurally it is identical to SwiGLU; only the pointwise gate function changes from `F.silu` (Swish) to `F.gelu`. Because both are pointwise activations applied to the gate branch, they add *no* parameters, so the three-matrix parameter count is unchanged.
+    GeGLU is $W_\text{down}(\text{GELU}(W_\text{gate}\mathbf{x}) \odot (W_\text{up}\mathbf{x}))$. Structurally it is identical to SwiGLU; only the pointwise gate function changes from `F.silu` (Swish) to `F.gelu`. Because both are pointwise activations applied to the gate branch, they add *no* parameters, so the three-matrix parameter count is unchanged. One detail matters if you want to match a real Gemma checkpoint: Gemma's `hidden_act` is `"gelu_pytorch_tanh"`, the tanh approximation, whereas plain `F.gelu` defaults to `approximate="none"` (the exact erf form that `hidden_act="gelu"` means). The two differ in the fourth decimal place, so pass `approximate="tanh"` explicitly.
 
     ```python
     import torch
@@ -787,7 +798,10 @@ For more on these and other architectural choices, see [Modern Architecture Impr
             self.dropout = nn.Dropout(dropout)
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            gate = F.gelu(self.w_gate(x))   # ONLY change: F.silu -> F.gelu
+            # ONLY change: F.silu -> F.gelu. Gemma's config says
+            # hidden_act="gelu_pytorch_tanh", i.e. the tanh approximation —
+            # bare F.gelu defaults to approximate="none" (exact erf GELU).
+            gate = F.gelu(self.w_gate(x), approximate="tanh")
             up   = self.w_up(x)
             fused = gate * up
             return self.dropout(self.w_down(fused))

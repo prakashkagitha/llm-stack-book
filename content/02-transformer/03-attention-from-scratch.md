@@ -213,7 +213,7 @@ K = np.array([
     [0.0, 1.0, 0.0, 0.0],   # key 1
     [0.0, 0.0, 1.0, 0.0],   # key 2
 ])
-# Values are easy to recognize: value j is the number (j+1) repeated.
+# Values are easy to recognize: value j is the number 10*(j+1) repeated.
 V = np.array([
     [10.0, 10.0],           # value 0
     [20.0, 20.0],           # value 1
@@ -353,13 +353,24 @@ class SelfAttention(nn.Module):
         self.W_o = nn.Linear(d_k, d_model, bias=False)   # mix attended info back
 
     def forward(self, x, attn_mask=None):
-        # x : (B, L, d_model). Project into the three roles.
+        """x : (B, L, d_model).
+
+        attn_mask must broadcast against the (B, 1, L, L) score matrix, i.e. be
+        (L, L), (B, 1, L, L), or a per-sequence (B, L, L) that we lift below.
+        """
         q = self.W_q(x)                          # (B, L, d_k): "what I seek"
         k = self.W_k(x)                          # (B, L, d_k): "how to address me"
         v = self.W_v(x)                          # (B, L, d_k): "what I return"
 
         # Add a singleton head dim so we can reuse the (B,H,L,d) kernel with H=1.
         q, k, v = (t.unsqueeze(1) for t in (q, k, v))    # (B, 1, L, d_k)
+
+        # A per-sequence (B, L, L) mask must be lifted to (B, 1, L, L) FIRST.
+        # Broadcasting is right-aligned, so (B,L,L) against (B,1,L,L) would pair
+        # the mask's batch axis with the head axis and silently yield (B,B,L,L) —
+        # cross-contaminating sequences, with no exception raised anywhere.
+        if attn_mask is not None and attn_mask.dim() == 3:
+            attn_mask = attn_mask.unsqueeze(1)   # (B, L, L) -> (B, 1, L, L)
 
         attended = scaled_dot_product_attention(
             q, k, v, attn_mask=attn_mask,
@@ -407,7 +418,7 @@ The built-in does the *exact same math* — it just never materializes the full 
 
 ### Which kernel actually runs: the open-source attention layer
 
-`F.scaled_dot_product_attention` is a *dispatcher*, not one kernel. At call time PyTorch chooses among several backends — a FlashAttention backend, a memory-efficient (xFormers-derived) backend, a cuDNN fused backend, and a pure-PyTorch `MATH` fallback that does materialize the $n^2$ matrix — based on dtype, head dimension, mask type, and hardware. The surprise in practice is silent *fallback*: pass an arbitrary float `attn_mask`, an unsupported head dim, or fp32 inputs, and you quietly drop to `MATH` and pay the quadratic memory you thought you had avoided. Pin and inspect the choice rather than hoping:
+`F.scaled_dot_product_attention` is a *dispatcher*, not one kernel. At call time PyTorch chooses among several backends — a FlashAttention backend, a memory-efficient (xFormers-derived) backend, a cuDNN fused backend, and a pure-PyTorch `MATH` fallback that does materialize the $n^2$ matrix — based on dtype, head dimension, mask type, and hardware. The surprise in practice is silent *demotion*, and it comes in two grades. Pass fp32 inputs or an arbitrary float `attn_mask` and you disqualify the FlashAttention and cuDNN backends (both want fp16/bf16, and Flash takes no mask at all), dropping you to the memory-efficient backend — still fused, still no $n^2$ matrix in HBM, just slower than Flash. Only when *no* fused backend will service the call — an unsupported head dimension, say, or an awkward mask/dtype/hardware combination — do you land on `MATH` and pay the quadratic memory you thought you had avoided. Pin and inspect the choice rather than hoping:
 
 ```python
 import torch

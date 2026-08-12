@@ -43,7 +43,7 @@ PE_{\text{pos},\,2k} = \sin\!\left(\frac{\text{pos}}{10000^{\,2k/d}}\right), \qq
 PE_{\text{pos},\,2k+1} = \cos\!\left(\frac{\text{pos}}{10000^{\,2k/d}}\right).
 $$
 
-Each *pair* of dimensions $(2k, 2k+1)$ is a sine/cosine at its own frequency. The frequencies form a geometric progression: dimension pair $k=0$ oscillates fastest (wavelength $2\pi$), and the wavelengths grow geometrically up to $2\pi \cdot 10000$ for the last pair. The intuition is a **binary-clock for continuous space**: just as the bits of an integer toggle at frequencies $1, 2, 4, 8, \dots$, the dimensions of $PE_{\text{pos}}$ oscillate at a spectrum of frequencies, so the full vector encodes the position with high resolution (fast dims) and long range (slow dims) simultaneously.
+Each *pair* of dimensions $(2k, 2k+1)$ is a sine/cosine at its own frequency. The frequencies form a geometric progression: dimension pair $k=0$ oscillates fastest (wavelength $2\pi$), and the wavelengths grow geometrically up to $2\pi \cdot 10000$ for the last pair. The intuition is a **binary-clock for continuous space**: just as the bits of an integer toggle with periods $1, 2, 4, 8, \dots$ (each successive bit toggling half as fast as the last), the dimensions of $PE_{\text{pos}}$ oscillate at a spectrum of frequencies, so the full vector encodes the position with high resolution (fast dims) and long range (slow dims) simultaneously.
 
 The clever part is *why sinusoids specifically*. For any fixed offset $\Delta$, $PE_{\text{pos}+\Delta}$ is a **linear function** of $PE_{\text{pos}}$ — a rotation, in fact. Using the angle-addition formulas,
 
@@ -67,7 +67,8 @@ def sinusoidal_encoding(seq_len: int, d_model: int, base: float = 10000.0) -> np
     """
     pe = np.zeros((seq_len, d_model), dtype=np.float64)
     position = np.arange(seq_len)[:, None]                 # (seq_len, 1)
-    # 10000^(2k/d) for k = 0,1,...,d/2-1 -> the per-pair wavelengths.
+    # 10000^(2k/d) for k = 0,1,...,d/2-1 -> the per-pair inverse angular
+    # frequency 1/omega_k (the wavelength is 2*pi*div_term, a factor 2*pi larger).
     div_term = base ** (np.arange(0, d_model, 2) / d_model)  # (d_model/2,)
     pe[:, 0::2] = np.sin(position / div_term)              # even dims: sin
     pe[:, 1::2] = np.cos(position / div_term)              # odd  dims: cos
@@ -166,7 +167,7 @@ $$
 \theta_k = \text{base}^{-2k/d}, \qquad k = 0, 1, \dots, d/2 - 1,
 $$
 
-with $\text{base} = 10000$ by default — the *same* geometric frequency ladder as the sinusoidal encoding, which is no coincidence. Low-index pairs rotate fast (encode fine, local position); high-index pairs rotate slowly (encode coarse, long-range position). The base is a real design knob, not a constant: models pretrained for long context now ship a much larger `rope_theta` from the start (Llama 3 uses 500,000 and the Qwen 2.5/3 families use 1,000,000, versus GPT-NeoX-era 10,000), because a bigger base slows every dimension down and keeps the slow pairs inside a well-trained angular range at long positions. There is a genuine floor here — the base needed to support a target context grows with that context, a point argued directly in the "base of RoPE bounds context length" line of work (Men et al., 2024) — so a model pretrained at base 10,000 has less headroom to be stretched later than one pretrained at 500,000. The full RoPE transform is a block-diagonal rotation matrix:
+with $\text{base} = 10000$ by default — the *same* geometric frequency ladder as the sinusoidal encoding, which is no coincidence. Low-index pairs rotate fast (encode fine, local position); high-index pairs rotate slowly (encode coarse, long-range position). The base is a real design knob, not a constant: models pretrained for long context now ship a much larger `rope_theta` from the start (Llama 3 uses 500,000 and the Qwen 2.5/3 families use 1,000,000, versus GPT-NeoX-era 10,000), because a bigger base slows the *slow* pairs down — leaving the fast, local pairs essentially untouched, since $\theta_0 = \text{base}^{0} = 1$ radian/token no matter what the base is — and so keeps the low-frequency dimensions inside a well-trained angular range at long positions. There is a genuine floor here — the base needed to support a target context grows with that context, a point argued directly in the "base of RoPE bounds context length" line of work (Men et al., 2024) — so a model pretrained at base 10,000 has less headroom to be stretched later than one pretrained at 500,000. The full RoPE transform is a block-diagonal rotation matrix:
 
 $$
 R_{\Theta}(m) = \begin{bmatrix}
@@ -394,7 +395,7 @@ ALiBi's headline virtue is **length extrapolation**: because the penalty is a sm
 
 ### NoPE: maybe you need nothing
 
-A genuinely surprising 2023 result (Kazemnejad et al., *The Impact of Positional Encoding on Length Generalization*): a **decoder-only** Transformer with a causal mask and *no positional encoding at all* (NoPE) can still learn position — and sometimes generalizes to longer lengths *better* than explicit schemes. How? The causal mask itself breaks permutation symmetry: token $i$ can attend to $\{0, \dots, i\}$ but token $j > i$ can attend to a strictly larger set. The model can count how many tokens are visible (e.g., via attention patterns that effectively measure the size of the attended set), recovering absolute position implicitly. NoPE is mostly a research curiosity and a clarifying conceptual point — it proves position info is *latent in causality* — rather than a production default, but it is a favorite interview probe and a reminder that the causal mask is itself doing positional work.
+A genuinely surprising 2023 result (Kazemnejad et al., *The Impact of Positional Encoding on Length Generalization*): a **decoder-only** Transformer with a causal mask and *no positional encoding at all* (NoPE) can still learn position — and sometimes generalizes to longer lengths *better* than explicit schemes. How? The causal mask itself breaks permutation symmetry: token $i$ can attend to $\{0, \dots, i\}$ but token $j > i$ can attend to a strictly larger set. The model can count how many tokens are visible (e.g., via attention patterns that effectively measure the size of the attended set), recovering absolute position implicitly. *Pure* NoPE — no positional signal on any layer — is not a production default. But *interleaved* NoPE has become one: drop the rotation on a fraction of the layers and keep RoPE on the rest, and you get a positional-signal-free pathway that is exactly translation-invariant and therefore extrapolates cleanly past the training length. SmolLM3 (HuggingFace, 2025) uses NoPE on every 4th layer; Llama 4's *iRoPE* interleaves position-free layers among the RoPE ones to reach its advertised 10M-token window ([Modern Architecture Improvements](../02-transformer/10-modern-arch-improvements.html)); and this book's own capstone adopts the every-4th-layer rule ([The Stack-100M Architecture](../14-capstone/04-architecture.html)). So NoPE is both a clarifying conceptual point — it proves position info is *latent in causality* — and a shipped architectural ingredient, plus a favorite interview probe.
 
 !!! interview "Interview Corner"
     **Q:** Modern LLMs overwhelmingly use RoPE. Explain *why* RoPE beat learned absolute and sinusoidal encodings, and name a concrete situation where you would still reach for ALiBi instead.
@@ -417,7 +418,7 @@ $$
 \theta_k^{\text{PI}}(m) = \frac{m}{s}\,\theta_k.
 $$
 
-Geometrically, you compress all positions so position 8000 in a 2× extension is *treated like* position 4000 — an angle the model has seen. Every dimension's rotation now stays within the trained angular range. The cost: you have reduced the *resolution* of position (adjacent tokens are now only $\theta_k/s$ apart in angle, so the model must distinguish finer differences). PI works remarkably well but typically needs a short fine-tune (a few hundred steps) to recover the lost fine-grained resolution.
+Geometrically, you compress all positions so position 8000 in a 2× extension is *treated like* position 4000 — an angle the model has seen. Every dimension's rotation now stays within the trained angular range. The cost: you have reduced the *resolution* of position (adjacent tokens are now only $\theta_k/s$ apart in angle, so the model must distinguish finer differences). PI works remarkably well but typically needs a short fine-tune (~1000 steps in the original paper) to recover the lost fine-grained resolution.
 
 ### NTK-aware scaling
 
@@ -512,7 +513,7 @@ We have traversed the whole landscape. Step back and the design space is a small
 | T5 relative bias | score $S_{ij}$ | yes | moderate | few/head | yes | T5 |
 | **RoPE** | rotate $q,k$ | **exact** | good + **tunable** | 0 | yes | Llama, Qwen, GPT-NeoX, DeepSeek, Mistral, Gemma |
 | **ALiBi** | score $S_{ij}$ | yes | **excellent** | 0 | yes | BLOOM, MPT |
-| NoPE | nothing | implicit (causal) | surprisingly good | 0 | yes | research |
+| NoPE | nothing | implicit (causal) | surprisingly good | 0 | yes | research; interleaved in SmolLM3, Llama 4 (iRoPE) |
 
 The story of the field is a march from Approach A's absolute encodings (sinusoidal, learned) toward relative ones, with the two survivors being RoPE (rotate $q,k$ — exact relative, tunable extrapolation, the default for almost all frontier models) and ALiBi (a linear score penalty — supremely simple and robust extrapolation, recency-biased). The context-extension toolkit — PI, NTK-aware, YaRN — exists *because* RoPE's frequency ladder is a continuous, manipulable object, turning "train short, serve long" from impossible (learned tables) into a config flag.
 
@@ -525,7 +526,7 @@ From here, RoPE'd attention slots into [a full Transformer block](../02-transfor
     - **RoPE rotates each $q,k$ pair by an angle proportional to position**, so $q_m^\top R_\Theta(n-m)k_n$ depends only on the relative offset $n-m$. It has zero parameters, is a cheap rotate-half elementwise op, and is fully KV-cache compatible (key $n$'s rotation depends only on $n$). It is the modern default.
     - **Positions are an input, not `arange`.** Index the cos/sin tables with an explicit `position_ids` tensor: packed documents restart at 0 per document, and a decode step's single token sits at `past_len`, not 0. Build the tables in fp32 (bf16 cannot even represent integer positions past 256) and rotate keys once, at cache-write time.
     - **ALiBi** adds a per-head linear distance penalty $-m_h|i-j|$ to the score, with no embedding-side position at all. It extrapolates beautifully out of the box but encodes a recency bias that can hurt long-range retrieval.
-    - **NoPE** shows the causal mask alone leaks enough information for a decoder-only model to recover position — a clarifying result, not a production default.
+    - **NoPE** shows the causal mask alone leaks enough information for a decoder-only model to recover position. Pure NoPE is not a production default, but *interleaved* NoPE is: SmolLM3 drops RoPE on every 4th layer and Llama 4's iRoPE does the same, because position-free layers extrapolate past the training length by construction.
     - **Context extension manipulates RoPE's frequency ladder:** Position Interpolation (uniform squeeze, needs fine-tune) → NTK-aware (stretch the base non-uniformly, often training-free for 2–4×) → YaRN (per-dimension ramp + attention-logit temperature, the production-grade method behind most long-context releases).
     - **Always validate extended context with long-range *retrieval* probes** (needle-in-a-haystack), not perplexity, which is dominated by easy local tokens. And never blindly stack a second RoPE-scaling factor on an already-scaled model.
 

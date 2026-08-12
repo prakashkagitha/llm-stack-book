@@ -65,7 +65,7 @@ Bandwidth numbers are order-of-magnitude illustrations; see NVIDIA's official ar
 
 ### Global Memory Coalescing
 
-When threads in a warp access global memory, the hardware tries to *coalesce* the accesses into as few 128-byte cache-line transactions as possible. If warp lane $i$ reads address $A + i$, one transaction serves all 32 threads — perfect coalescing. If lane $i$ reads address $A + i \cdot 64$, you get 32 separate transactions — a 32× bandwidth penalty.
+When threads in a warp access global memory, the hardware tries to *coalesce* the accesses into as few 128-byte cache-line transactions as possible. If warp lane $i$ reads the `float` element $A[i]$, the warp touches 128 contiguous bytes and one transaction serves all 32 threads — perfect coalescing. If lane $i$ reads element $A[i \cdot 64]$ — a 256-byte stride, so every lane lands in its own 128-byte line — you get 32 separate transactions and a 32× bandwidth penalty.
 
 **Pattern to prefer**: threads in a warp should access consecutive (strided-by-1) memory addresses.
 
@@ -83,7 +83,7 @@ float val = A[threadIdx.x * N + col];   // threads 0..31 are N floats apart
 
 Shared memory is organized into 32 **banks** (on modern GPUs), each 4 bytes wide. Bank $b$ holds bytes $4b, 4b+128, 4b+256, \ldots$. Accesses from the same warp to different addresses in the *same* bank are **serialized** — a bank conflict.
 
-The golden rule: if warp lane $i$ accesses shared memory address $s_i$, there is no conflict if all $s_i$ map to distinct banks, i.e., $(s_i \bmod 32)$ are all distinct.
+The golden rule: if warp lane $i$ accesses the shared-memory 4-byte word whose index is $w_i$ (i.e. byte address $4w_i$), there is no conflict if all $w_i$ map to distinct banks, i.e., the $(w_i \bmod 32)$ are all distinct. (Lanes reading the *same* word are also fine — that is a broadcast, not a conflict.)
 
 A common source of bank conflicts is the naive tiled matmul transpose: when you load a tile column-by-column into a $32 \times 32$ shared-memory array, all threads in a warp hit the same bank. The fix is to add a **padding column**:
 
@@ -105,7 +105,7 @@ The padding wastes 32 floats (128 bytes) per tile but eliminates the conflict en
     
     Without padding:
     - All 32 threads in the warp access column $j$.
-    - Element $(i, j)$ lives at offset $i \cdot 32 + j$ bytes/4 = offset $i \cdot 32 + j$ in 4-byte words.
+    - Element $(i, j)$ lives at byte offset $4(i \cdot 32 + j)$, i.e. word index $i \cdot 32 + j$.
     - Bank for element $(i,j)$ = $(i \cdot 32 + j) \bmod 32 = j \bmod 32$.
     - All 32 threads access bank $j \bmod 32$ — a 32-way conflict! Shared memory throughput drops from ~19 TB/s to ~0.6 TB/s.
     
@@ -144,7 +144,11 @@ __device__ float warp_reduce_sum(float val) {
 
 // Block-level reduction using warp reductions + shared memory
 __device__ float block_reduce_sum(float val) {
-    __shared__ float warp_sums[32];  // At most 32 warps per block
+    // Precondition: blockDim.x is a multiple of 32 and <= 1024, so every warp is
+    // fully populated (the 0xFFFFFFFF mask above requires that) and there are at
+    // most 32 warps. A partial trailing warp would both break the mask and be
+    // dropped by the integer division below.
+    __shared__ float warp_sums[32];
     int warp_id = threadIdx.x / 32;
     int lane_id = threadIdx.x % 32;
 
@@ -156,7 +160,8 @@ __device__ float block_reduce_sum(float val) {
     __syncthreads();
 
     // First warp reduces the per-warp sums
-    val = (threadIdx.x < blockDim.x / 32) ? warp_sums[lane_id] : 0.0f;
+    int num_warps = blockDim.x / 32;  // exact, given the precondition above
+    val = (threadIdx.x < num_warps) ? warp_sums[lane_id] : 0.0f;
     if (warp_id == 0) val = warp_reduce_sum(val);
 
     return val;  // Lane 0 of warp 0 holds the block sum
@@ -208,7 +213,9 @@ The idea: divide A and B into $T \times T$ tiles. Each block cooperatively loads
 
 ```cpp
 // Tiled matrix multiplication with shared memory
-// Tile size T must divide blockDim.x == blockDim.y (set T = BLOCK_SIZE)
+// Requires blockDim.x == blockDim.y == BLOCK_SIZE exactly: the kernel maps blocks
+// to output tiles with BLOCK_SIZE (not blockDim) and indexes the [BLOCK_SIZE]^2
+// shared tiles directly with threadIdx.x/y.
 #define BLOCK_SIZE 32
 
 __global__ void matmul_tiled(

@@ -65,7 +65,7 @@ There is a second, even harsher cost: **memory capacity.** The $S$ and $P$ matri
     | 32,768 | ~1.07 B | ~2.1 GB |
     | 131,072 | ~17.2 B | ~34 GB |
 
-    Now remember a real model has, on the order of, 32 layers and 32 heads — but those run sequentially or in modest parallel, so the per-head matrix is what hits memory at any instant. Still, at $N=131{,}072$ a *single* score matrix does not fit in a 24 GB consumer GPU, and barely fits in an 80 GB datacenter GPU with nothing else loaded. FlashAttention's peak extra memory is instead $O(N)$ (it keeps only the output and two length-$N$ statistics), independent of $N^2$. That is the difference between "long context is impossible" and "long context is routine."
+    And these are *per-head* numbers, which understates the wall: eager attention computes all heads of a layer in one batched matmul — `q @ k.transpose(-2, -1)` on a $(B, H, N, d)$ input allocates a single $(B, H, N, N)$ tensor — so the resident intermediate is $B \cdot H$ times the table above. At $B=1$, $H=32$, $N=8192$ that is ~4.3 GB for $S$ alone, and another ~4.3 GB for $P$, both kept alive for the backward pass. Layers at least run one at a time, but even so, at $N=131{,}072$ a *single* score matrix does not fit in a 24 GB consumer GPU, and barely fits in an 80 GB datacenter GPU with nothing else loaded. FlashAttention's peak extra memory is instead $O(N)$ (it keeps only the output and two length-$N$ statistics), independent of $N^2$. That is the difference between "long context is impossible" and "long context is routine."
 
 The diagnosis is now sharp. Attention is slow because (1) it moves $\Theta(N^2)$ bytes across the slow HBM bus, and (2) it allocates $\Theta(N^2)$ bytes of HBM it does not fundamentally need. Both pathologies share one cause: the algorithm **materializes the full score matrix in HBM.** If we could compute the exact same output without ever writing $S$ or $P$ to HBM — keeping the working set in SRAM — both problems vanish. The obstacle to doing that is the softmax, because softmax over a row needs to see the *whole* row (to normalize) before it can produce any output. The online softmax dissolves that obstacle.
 
@@ -166,7 +166,7 @@ o_online = online_softmax_weighted_sum(x, V, block_size=4)
 print("max abs error:", np.abs(o_online - o_ref).max())   # ~1e-16, machine epsilon
 ```
 
-Run it: the maximum absolute error is on the order of $10^{-16}$ — floating-point round-off, nothing more. The online algorithm is **bit-for-bit equivalent up to round-off**, not an approximation. Here is why, by induction on the blocks.
+Run it: the maximum absolute error is on the order of $10^{-16}$ — floating-point round-off, nothing more. The online algorithm is **mathematically exact** — it computes the same function as the two-pass version, not an approximation. (Exact is not the same as bit-identical: the streaming form sums the terms in a different order, so in finite precision the two results differ by round-off. In fp64 that is $\sim10^{-16}$, as above; in bf16 a fused kernel can differ from an eager one by $10^{-3}$–$10^{-2}$, which is worth remembering before you conclude a diff against eager attention is a bug.) Here is why the algorithm is exact, by induction on the blocks.
 
 **Claim.** After processing the first $k$ blocks (covering indices in a set $I_k$), the state satisfies, exactly,
 
@@ -503,7 +503,7 @@ The model: HBM is large and slow; SRAM has size $M$ (in elements) and is fast. W
 **Naive attention.** It writes and reads the $N \times N$ matrices $S$ and $P$. Even with perfect overlap, $S$ is written once and read once, $P$ is written once and read once: that is $\Theta(N^2)$ HBM accesses, plus $\Theta(Nd)$ for $Q,K,V,O$. Total:
 
 $$
-\text{HBM}_{\text{naive}} = \Theta\!\left(N^2 + N d\right) = \Theta(N^2 d \, / \, d) \approx \Theta(N^2).
+\text{HBM}_{\text{naive}} = \Theta\!\left(N^2 + N d\right) = \Theta(N^2) \quad \text{(since } d = O(N)\text{)} .
 $$
 
 **FlashAttention.** Choose block sizes so that one $Q$ tile, one $K$ tile, one $V$ tile, and the accumulators all fit in SRAM. With SRAM size $M$, take the row block $B_r = \Theta(M/d)$ — so the $Q_i$ tile and the $O_i$ accumulator are each $\Theta(M)$ elements — and the column block $B_c = \Theta(d)$, which keeps the $B_r \times B_c$ score tile at $\Theta(M)$ as well. (Both blocks cannot be $\Theta(M/d)$ at once: that would make the score tile $\Theta(M^2/d^2) \gg M$. The paper, whose loops are transposed, sets $B_c = \lceil M/4d \rceil$ and $B_r = \min(\lceil M/4d \rceil, d)$ for exactly this reason.) Now count: the outer loop runs $N / B_r$ times; for *each* query block, the inner loop streams **all** of $K$ and $V$ from HBM once — that is $\Theta(Nd)$ bytes per query block. So:
@@ -618,7 +618,7 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
     - Naive attention is **memory-bound, not compute-bound**: it materializes the $N \times N$ score and probability matrices in HBM, paying $\Theta(N^2)$ slow memory accesses and $O(N^2)$ peak memory. The matmuls were never the problem.
     - The **online softmax** computes a numerically-stable, exactly-correct softmax-weighted sum in one streaming pass using three running statistics — max $m$, denominator $\ell$, output $o$ — and a **correction factor** $\alpha = e^{m_{\text{old}} - m_{\text{new}}} \in (0,1]$ that rescales prior accumulators whenever a larger logit appears.
     - FlashAttention **fuses** $QK^\top$, softmax, and $\cdot V$ into a single tiled kernel; the $B_r \times B_c$ score tile lives only in **SRAM** and is never written to HBM. Peak extra memory falls from $O(N^2)$ to $O(N)$ (just the output $O$ and the per-row logsumexp $L$).
-    - It is **exact**, not approximate — bit-for-bit equal to naive attention up to floating-point round-off. The speedup is purely from reduced data movement.
+    - It is **exact**, not approximate — it computes the same function as naive attention, differing only by floating-point round-off from a different summation order (exact, but not bit-identical). The speedup is purely from reduced data movement.
     - The **backward pass uses recomputation**: it does not store $P$; it reconstructs each probability tile as $\exp(S_{ij} - L_i)$ from $Q$, $K$, and the saved logsumexp, trading idle-tensor-core FLOPs for avoiding an $O(N^2)$ HBM read. The per-row scalar $D_i = \mathrm{d}O_i \cdot O_i$ collapses the softmax Jacobian.
     - **IO complexity** drops from $\Theta(N^2)$ to $\Theta(N^2 d^2 / M)$ where $M$ is SRAM size — about an order of magnitude — and is provably near-optimal for exact tiled attention.
     - **Causal masking is nearly free**: tiled kernels skip key-blocks entirely above the diagonal, roughly halving the work for long sequences.
@@ -680,11 +680,11 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
     $$\alpha = e^{\,m - m_{\text{new}}} = e^{3-6} = e^{-3} = 0.049787.$$
     Rescale the old sum and add the new block's terms (exponentiated against $6$):
     $$\ell = \alpha \cdot 1.135335 + \big(e^{6-6} + e^{2-6}\big) = 0.049787 \times 1.135335 + (1 + e^{-4}).$$
-    $$\ell = 0.056523 + (1 + 0.018316) = 0.056523 + 1.018316 = 1.074839.$$
+    $$\ell = 0.056525 + (1 + 0.018316) = 0.056525 + 1.018316 = 1.074841.$$
 
     **(a) Reference check.** Global max is $6$, so
     $$\ell^\star = e^{3-6} + e^{1-6} + e^{6-6} + e^{2-6} = e^{-3} + e^{-5} + 1 + e^{-4} = 0.049787 + 0.006738 + 1 + 0.018316 = 1.074841.$$
-    The streaming value $1.074839$ matches $1.074841$ to round-off — exactly as the correctness proof guarantees. The single multiply by $\alpha$ re-based block 1's entire contribution (accumulated against its local max of 3) onto the true max of 6, with no second pass over the data.
+    The streaming value $1.074841$ equals the reference exactly — as the correctness proof guarantees, the recurrence is algebraically exact, not an approximation. The single multiply by $\alpha$ re-based block 1's entire contribution (accumulated against its local max of 3) onto the true max of 6, with no second pass over the data.
 
     **(b) Saved logsumexp.**
     $$L = m + \log \ell = 6 + \log(1.074841) = 6 + 0.072172 = 6.072172.$$

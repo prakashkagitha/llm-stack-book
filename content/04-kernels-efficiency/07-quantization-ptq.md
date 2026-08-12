@@ -36,13 +36,13 @@ The zero-point lets an asymmetric range like $[-0.2, 1.8]$ use the *full* intege
 
 ### Symmetric quantization
 
-If the distribution is roughly symmetric about zero — which is true of most **weight** matrices — we drop the zero-point ($z=0$) and use a signed grid. For INT4 that is $[-8, 7]$; for INT8, $[-128, 127]$. The scale is set from the maximum absolute value:
+If the distribution is roughly symmetric about zero — which is true of most **weight** matrices — we drop the zero-point ($z=0$) and use a signed grid. The full signed range is $[-8, 7]$ for INT4 and $[-128, 127]$ for INT8, but note it is *not* symmetric — there is one extra negative code. The convention used throughout this chapter sacrifices that code and clips to $[-7, 7]$ (resp. $[-127, 127]$) so that $q$ and $-q$ are both representable; the scale is then set from the maximum absolute value:
 
 $$
 s = \frac{\max_i |x_i|}{2^{b-1}-1}, \qquad q = \operatorname{clip}\!\left(\operatorname{round}\!\left(\frac{x}{s}\right),\, -(2^{b-1}-1),\, 2^{b-1}-1\right).
 $$
 
-Symmetric quantization is cheaper at inference time: dequantization is a single multiply $\hat{x}=s\cdot q$ with no add, and the integer matmul does not need a zero-point correction term. **Almost all modern LLM weight-quantization (GPTQ, AWQ) uses symmetric or near-symmetric per-group schemes.**
+Symmetric quantization is cheaper at inference time: dequantization is a single multiply $\hat{x}=s\cdot q$ with no add, and the integer matmul does not need a zero-point correction term. **Symmetric per-group is the common default for GPTQ-style checkpoints and for `compressed-tensors` W4A16.** It is not universal, though: AWQ's reference implementation quantizes groups *asymmetrically* (`zero_point=True` in AutoAWQ's default config), buying a little extra effective range on skewed groups at the cost of storing a zero-point per group. We use the symmetric form throughout this chapter for clarity; the algorithmic ideas are unchanged either way.
 
 Here is the whole idea in runnable code:
 
@@ -434,7 +434,7 @@ $$
 X W = (X Q)\,(Q^\top W), \qquad Q^\top Q = I .
 $$
 
-Choose $Q$ to be a random-sign **Hadamard** matrix ($Q = \tfrac{1}{\sqrt d} H D$, applicable in $O(d\log d)$ by the fast Hadamard transform) and every output coordinate becomes an equally-weighted $\pm$ mix of *all* $d$ input coordinates. A single channel that was 100x the others no longer has anywhere to hide: after rotation the per-channel magnitudes are near-Gaussian and no coordinate is much larger than the vector's RMS. This is **incoherence processing**, introduced for weight quantization in QuIP and used by FlashAttention-3 to make FP8 attention viable (see [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html)).
+Choose $Q$ to be a random-sign **Hadamard** matrix ($Q = \tfrac{1}{\sqrt d} D H$ with $D$ a random $\pm1$ diagonal, applicable in $O(d\log d)$ by the fast Hadamard transform) and every output coordinate becomes an equally-weighted $\pm$ mix of *all* $d$ input coordinates. A single channel that was 100x the others no longer has anywhere to hide: after rotation the per-channel magnitudes are near-Gaussian and no coordinate is much larger than the vector's RMS. The order of $D$ and $H$ matters: in the row-vector convention $XQ$, the signs must hit the input coordinates *before* the Hadamard mixes them. Putting $D$ on the other side ($\tfrac{1}{\sqrt d} H D$) only flips the signs of the already-mixed *output* coordinates, leaving every magnitude — and hence the whole point of the randomization — unchanged, which leaves adversarial inputs unprotected (take an $x$ aligned with a Hadamard row: $H$ alone concentrates it into a single huge coordinate, and flipping that coordinate's sign afterwards does not help). This is **incoherence processing**, introduced for weight quantization in QuIP and used by FlashAttention-3 to make FP8 attention viable (see [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html)).
 
 ```python
 # Why rotation kills an outlier: a Hadamard mix spreads it over all d coords.
@@ -444,10 +444,19 @@ H = torch.tensor([[1.0]])
 while H.shape[0] < d:                                  # Sylvester construction
     H = torch.cat([torch.cat([H,  H], 1),
                    torch.cat([H, -H], 1)], 0)
-Q = (H / d ** 0.5) * torch.randint(0, 2, (d,)).mul(2).sub(1).float()  # random signs
+signs = torch.randint(0, 2, (d,)).mul(2).sub(1).float()
+Q = signs.unsqueeze(1) * (H / d ** 0.5)                # Q = D H / sqrt(d): signs FIRST
 x = torch.randn(64, d); x[:, 17] *= 60.0               # one outlier channel
 print(f"max|x| before rotation: {x.abs().max():.2f}")
 print(f"max|x| after  rotation: {(x @ Q).abs().max():.2f}")   # far smaller
+
+# The row scaling is what makes the randomization real. With `Q = (H / d**0.5) * signs`
+# (signs on the columns, i.e. H D) the signs only flip already-mixed outputs, so
+# |x @ Q| is bit-identical to |x @ H| / sqrt(d) -- no randomization at all. Try an
+# adversarial x aligned with a Hadamard row to see the difference:
+x_adv = H[3].unsqueeze(0)
+print(f"adversarial, D H: {(x_adv @ Q).abs().max():.1f}")                  # ~3-4
+print(f"adversarial, H D: {(x_adv @ ((H / d ** 0.5) * signs)).abs().max():.1f}")  # 32 = sqrt(d)
 ```
 
 **QuaRot** (Ashkboos et al., 2024) and **SpinQuant** (which *learns* the rotation instead of sampling it) fold these rotations into the checkpoint wherever the residual stream is linear, so most of them cost nothing at runtime. Two structural conditions make that folding legal, and they are worth internalizing: the normalization must be **RMSNorm without mean subtraction** (a rotation commutes with scaling by $\|x\|$ but not with subtracting a mean), and the norm's learned $\gamma$ must first be folded into the *following* linear so what remains is a pure scalar normalization. What cannot be folded — typically one rotation on the attention output and one on the MLP down-projection input — runs as an online fast Hadamard kernel costing a few percent of layer time. The payoff is large: rotated models quantize to **W4A4 including the KV cache** with roughly a point or less of perplexity loss, where SmoothQuant-style W8A8 was previously the floor. The same trick is what makes 4-bit *float* formats (NVFP4/MXFP4) usable; those formats and their kernels live in [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html).
@@ -460,7 +469,7 @@ print(f"max|x| after  rotation: {(x @ Q).abs().max():.2f}")   # far smaller
 
     **Decode speedup.** Decoding one token requires streaming *all* weights from HBM once (it is bandwidth-bound — see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html)). Moving 6.7 GB instead of 26 GB at, say, 2 TB/s of HBM bandwidth: $26/2000 = 13\ \text{ms}$ vs $6.7/2000 \approx 3.4\ \text{ms}$ of weight-load time per token. Close to 4x fewer milliseconds spent moving weights — the headline reason INT4 weight-only quantization speeds up *decoding*.
 
-    **Quantization error budget.** A typical weight column has values around $|w|\sim 0.02$. Per-group INT4 with $\max|w|\approx0.08$ gives step $s = 0.08/7 \approx 0.0114$. Worst-case rounding error per weight is $s/2 \approx 0.0057$ — about 29% of a typical weight (and $\approx 7\%$ of the group's max-magnitude weight, which is what sets $s$). But those errors are **uncorrelated across the 5120 weights in a row**, so on the *output* sum they add incoherently, like $\sqrt{5120}\,\sigma_e$ rather than the coherent worst case $5120\times s/2$ — a factor $1/\sqrt{5120}\approx 1.4\%$ of that worst case. What survives is an RMS relative output error of $\sigma_e/\sigma_w = (s/\sqrt{12})/0.02 \approx 16.5\%$, i.e. the same relative noise the weights themselves carry, not 5120 times worse. That averaging is why INT4 weight-only quantization barely moves perplexity, and why GPTQ/AWQ — which actively *correlate* and *protect* against the worst errors — close most of the remaining gap.
+    **Quantization error budget.** A typical weight column has values around $|w|\sim 0.02$. Per-group INT4 with $\max|w|\approx0.08$ gives step $s = 0.08/7 \approx 0.0114$. Worst-case rounding error per weight is $s/2 \approx 0.0057$ — about 29% of a typical weight (and $\approx 7\%$ of the group's max-magnitude weight, which is what sets $s$). But those errors are **uncorrelated across the 5120 weights in a row**, so on the *output* sum they add incoherently: with a per-weight error RMS of $\sigma_e = s/\sqrt{12} \approx 3.3\times10^{-3}$, the sum grows like $\sqrt{5120}\,\sigma_e$ rather than the coherent $5120\,\sigma_e$ you would get if every error pushed the same direction — a factor $1/\sqrt{5120}\approx 1.4\%$. (Measured against the even more pessimistic worst case $5120\times s/2$, which uses each weight's *maximum* rounding error instead of its RMS, the ratio is $\approx 0.8\%$.) What survives is an RMS relative output error of $\sigma_e/\sigma_w = (s/\sqrt{12})/0.02 \approx 16.5\%$, i.e. the same relative noise the weights themselves carry, not 5120 times worse. That averaging is why INT4 weight-only quantization barely moves perplexity, and why GPTQ/AWQ — which actively *correlate* and *protect* against the worst errors — close most of the remaining gap.
 
 ## Putting It Together: A Decision Guide
 
@@ -731,4 +740,4 @@ To watch this run end to end on a model you built yourself — RTN INT8 and INT4
     print(f"GPTQ is {e_rtn / e_gptq:.2f}x lower")
     ```
 
-    Both methods place weights on the *same* INT4-g128 grid, so they incur nearly identical *weight*-space error. The difference is entirely in the objective: RTN minimizes per-weight error and ignores $X$, while GPTQ minimizes the layer *output* error $\|WX^\top-\hat WX^\top\|_2^2$. After quantizing column $i$ it propagates the scaled residual $(w_i-q_i)/[H^{-1}]_{ii}$ into the not-yet-quantized columns (the `W[:, i:] -= ...` step), cancelling part of the output error that RTN leaves on the table. With correlated inputs you should see GPTQ's output MSE clearly below RTN's. If you replace `X` with white noise (`X = torch.randn(N, in_f)`), $H$ becomes near-diagonal, the compensation term vanishes, and the two errors converge — confirming that GPTQ's advantage comes specifically from *input correlations* captured by the Hessian.
+    Note what GPTQ is *not* doing: it is not finding a better rounding of the original weights. Add `print((Wq_rtn - W).pow(2).mean(), (Wq_gptq - W).pow(2).mean())` and you will see GPTQ's **weight**-space error come out roughly 2.5x *larger* than RTN's (about $8.9\times10^{-5}$ vs $3.5\times10^{-5}$ here) — it deliberately perturbs the not-yet-quantized columns away from their originals, and even recomputes each group's scale from those perturbed values. The difference is entirely in the objective: RTN minimizes per-weight error and ignores $X$, while GPTQ minimizes the layer *output* error $\|WX^\top-\hat WX^\top\|_2^2$. After quantizing column $i$ it propagates the scaled residual $(w_i-q_i)/[H^{-1}]_{ii}$ into the not-yet-quantized columns (the `W[:, i:] -= ...` step), cancelling part of the output error that RTN leaves on the table. With correlated inputs you should see GPTQ's output MSE clearly below RTN's. If you replace `X` with white noise (`X = torch.randn(N, in_f)`), $H$ becomes near-diagonal, the compensation term vanishes, and the two errors converge — confirming that GPTQ's advantage comes specifically from *input correlations* captured by the Hessian.

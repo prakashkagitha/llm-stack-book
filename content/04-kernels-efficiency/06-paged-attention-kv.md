@@ -79,7 +79,7 @@ print(f"{beta/2**20:.3f} MiB/token")  # ~0.781 MiB/token
 
 ## The Fragmentation Problem
 
-The naive serving system allocates one **contiguous** chunk of GPU memory per request, sized for the maximum sequence length the request could reach. This is how early systems (and a straightforward HuggingFace `generate` loop) work. It is also catastrophically wasteful, in three distinct ways. The vLLM authors named them precisely.
+The naive serving system allocates one **contiguous** chunk of GPU memory per request, sized for the maximum sequence length the request could reach. This is how early systems (and a straightforward HuggingFace `generate` loop) work. It is also catastrophically wasteful. The vLLM authors named three sources of waste precisely — **internal fragmentation**, **external fragmentation**, and **reservation** — and separately noted a fourth, missed opportunity: such a system cannot *share* memory between requests at all.
 
 ### Internal fragmentation: reserving for the worst case
 
@@ -95,9 +95,11 @@ Different requests reserve different-sized contiguous blocks. As requests of var
 
 ### Reservation waste and the inability to share
 
-Because each request owns a private contiguous region, two requests with an *identical prompt prefix* — a shared system prompt, a few-shot template, a forked beam — each store their own complete copy of that prefix's KV. There is no mechanism to share it. For agentic and batch workloads with long fixed preambles, this duplicates gigabytes.
+**Reservation** is subtler than internal fragmentation, and the vLLM paper is careful to separate them. Even if you knew a request's final length *exactly*, pre-allocating its whole slab up front is still inefficient: the slots for tokens the request has not generated yet are held for its entire lifetime, so no other, shorter request may use them in the meantime. That memory is eventually used — it is not dead space — but it is *unavailable while idle*, which for scheduling purposes is just as costly. Paging turns this waste into on-demand block allocation: a sequence holds only the blocks it has actually filled.
 
-The vLLM paper measured that under contiguous allocation, only **20–40%** of KV memory held actual token state; the rest was lost to these three effects. Recovering that memory is, to first order, a $2\text{--}4\times$ throughput win — because throughput in the memory-bound decode regime is set by *how many sequences you can hold concurrently*.
+Then there is the missed opportunity the paper lists separately from the three wastes. Because each request owns a private contiguous region, two requests with an *identical prompt prefix* — a shared system prompt, a few-shot template, a forked beam — each store their own complete copy of that prefix's KV. There is no mechanism to share it. For agentic and batch workloads with long fixed preambles, this duplicates gigabytes.
+
+The vLLM paper measured that under contiguous allocation, only **20.4–38.2%** of KV memory held actual token state; the rest was lost to reservation and fragmentation. Recovering that memory is, to first order, a $2\text{--}4\times$ throughput win — because throughput in the memory-bound decode regime is set by *how many sequences you can hold concurrently*.
 
 !!! warning "Throughput is gated by batch size, which is gated by memory"
 
@@ -203,7 +205,13 @@ Now the payoff that contiguous allocation simply cannot offer. Suppose many requ
 ```python
     def fork(self, parent_id, child_id):
         """Share ALL of parent's blocks with a new child (e.g. a new beam
-        or sample). O(#blocks) pointer copies, zero KV data copied."""
+        or sample). O(#blocks) pointer copies, zero KV data copied.
+
+        Note this shares the trailing *partial* block too, so after a fork the
+        write path MUST go through `cow_append` (below) before storing a new
+        token's K,V — otherwise parent and child would scribble into the same
+        physical slot. `serve_step` at the end of the chapter does exactly that.
+        """
         parent = self.block_tables[parent_id]
         self.block_tables[child_id] = list(parent)   # copy the table, not the KV
         for blk in parent:
@@ -239,9 +247,9 @@ Crucially, COW happens **per block, not per sequence**. Two diverging beam-searc
     **Contiguous (no sharing):** each sample stores prompt + output = 1200 tokens.
     Total $= 8 \times 1200 \times 0.3125 = 3000$ MiB $\approx 2.93$ GiB.
 
-    **Paged + COW:** the 1000-token prompt is stored *once* ($\lceil 1000/16\rceil = 63$ blocks), shared by all 8 samples. Each sample privately stores its 200 output tokens ($\lceil 200/16\rceil = 13$ blocks). Total blocks $= 63 + 8\times 13 = 167$ blocks $\times 16 \times 0.3125 = 835$ MiB $\approx 0.82$ GiB.
+    **Paged + COW:** sharing is at *block* granularity, so only the prompt's **full** blocks can stay shared: $1000 = 62 \times 16 + 8$, so 62 blocks are shared by all 8 samples, and the partial 63rd block (prompt tokens 992–999) is COW-copied by each sample the moment it appends its first output token. Each sample therefore privately owns the blocks covering positions 992–1199, i.e. $\lceil 208/16 \rceil = 13$ blocks. Total blocks $= 62 + 8\times 13 = 166$ blocks $\times 16 \times 0.3125 = 830$ MiB $\approx 0.81$ GiB.
 
-    A **3.6× reduction**, from sharing the prompt KV. That freed memory becomes more concurrent requests — i.e. more throughput.
+    A **3.6× reduction**, from sharing the prompt KV. That freed memory becomes more concurrent requests — i.e. more throughput. The one COW'd block per sample is also the general rule: real engines (vLLM, SGLang) only ever share *complete* blocks, which is why prefix-cache hit counts are always reported in whole blocks.
 
 {{tool:paged-attention-blocks}}
 
@@ -334,7 +342,16 @@ def build_step_tensors(seq_ids, block_mgr, cur_lens, device="cpu"):
     context_lens: [batch] — valid cached tokens per sequence AFTER this step's
                   write. (Here `batch` is the number of sequences; `B` is
                   reserved for the block size throughout this chapter.)
+
+    `cur_lens` are PRE-write lengths, so a sequence whose length is an exact
+    multiple of the block size does not yet have a block for the slot we are
+    about to fill. This helper therefore grows the tables itself, before
+    translating positions to slots — call it exactly once per step, INSTEAD of
+    a separate `append_token` loop, or you will allocate two blocks per
+    boundary crossing.
     """
+    for s, n in zip(seq_ids, cur_lens):
+        block_mgr.append_token(s, n)           # grow BEFORE slot translation
     tables = [block_mgr.block_tables[s] for s in seq_ids]
     max_blocks = max(len(t) for t in tables)
     bt = torch.zeros(len(tables), max_blocks, dtype=torch.int32, device=device)
@@ -354,7 +371,7 @@ The indirection is not free, but it is cheap:
 
 - **Extra memory traffic** is one small block-table read per block — negligible against loading the block's $B \times H_{kv} \times d_h$ KV elements.
 - **Non-contiguous reads** are the real cost: scattered physical blocks defeat large coalesced loads and prefetchers. PagedAttention mitigates this by keeping a *whole block* contiguous (so within a block, loads are coalesced) and by choosing $B$ large enough (16+) to amortize the per-block setup.
-- The vLLM authors report the paged kernel runs within a small percentage of a perfectly-contiguous FlashAttention kernel — a tiny per-step tax that is *overwhelmingly* repaid by the larger batch sizes the freed memory enables.
+- **The measured tax is real but local.** In the paper's kernel microbenchmark (§7.1), the block-table lookups, extra branches, and variable-length handling cost **20–26% higher attention-kernel latency** than the highly optimized contiguous FasterTransformer kernel they adapted. That sounds large until you remember attention is one operator among the layer's Linear/MLP GEMMs, so the end-to-end cost is a small single-digit percentage — and it is *overwhelmingly* repaid by the larger batch sizes the freed memory enables.
 
 A further refinement, **PagedAttention v2** (in vLLM) and related work, splits very long sequences across multiple thread blocks (a "split-K"-style reduction over the sequence dimension) so a single long request does not serialize on one streaming multiprocessor — important when concurrency is low but contexts are long. Note the currency here: vLLM's original hand-written `paged_attention_v1/v2` CUDA kernels have largely been displaced in recent versions by attention *backends* — FlashAttention and FlashInfer — that consume a paged KV layout natively, so "PagedAttention" today names the memory-management design far more than one specific kernel. The block table, the slot mapping, and the block allocator are the durable parts.
 
@@ -436,8 +453,9 @@ def serve_step(seqs, block_mgr, k_pool, v_pool, model, block_size):
 
     `seqs`: dict seq_id -> {"tokens": [...], "len": int}
     Each step: (1) run the model to get this token's q,k,v per layer,
-    (2) grow the block table if this position starts a new block, then
-    write k,v into the paged pool at the right slot,
+    (2) grow the block table if this position starts a new block and
+    copy-on-write the target block if it is still shared, then write k,v
+    into the paged pool at the right slot,
     (3) attend over the sequence's blocks, (4) sample next token.
     Sequences that emit EOS are freed, returning their blocks to the pool.
     """
@@ -456,6 +474,16 @@ def serve_step(seqs, block_mgr, k_pool, v_pool, model, block_size):
         # the table one block short. Skip this and slot_index indexes
         # table[cur_len // block_size] one past the last block -> IndexError.
         block_mgr.append_token(seq_id, cur_len)         # grow on block boundary
+
+        # ...and, before touching it, make sure the block we are about to write
+        # is privately owned. After a fork() the trailing partial block is
+        # shared (ref_count > 1); writing into it would corrupt the sibling's
+        # KV. cow_append is a no-op for privately-owned blocks.
+        src, dst = block_mgr.cow_append(seq_id, cur_len // block_size)
+        if src != dst:                                  # copy-on-write: clone the block
+            k_pool[dst].copy_(k_pool[src])
+            v_pool[dst].copy_(v_pool[src])
+
         slot = block_mgr.slot_index(seq_id, cur_len)    # logical pos -> physical slot
         phys_block, off = divmod(slot, block_size)
         k_pool[phys_block, off] = k
@@ -515,7 +543,7 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
 
     - The **KV cache** stores per-layer keys and values to avoid $O(n^2)$ recomputation; its size is $2 \cdot L \cdot H_{kv} \cdot d_h \cdot s \cdot b$ bytes — linear in tokens, and it often rivals the model weights. KV memory, not FLOPs, is the binding constraint on concurrency and context length during decode.
     - **GQA/MQA** shrink the KV cache by reducing $H_{kv}$; this is a serving decision as much as a modeling one.
-    - Naive **contiguous, max-length** allocation wastes 60–80% of KV memory through internal fragmentation (worst-case reservation), external fragmentation (holes between allocations), and the inability to share identical prefixes.
+    - Naive **contiguous, max-length** allocation wastes 60–80% of KV memory through internal fragmentation (over-provisioning for the worst-case length), external fragmentation (holes between allocations), and reservation (slots held for a request's own future tokens, unusable by anyone else meanwhile) — and it additionally forecloses sharing identical prefixes.
     - **PagedAttention** applies OS virtual-memory paging: split the KV cache into fixed-size **blocks** ($B \approx 16$ tokens), store them anywhere in a pool, and map logical → physical via a per-sequence **block table**. This eliminates external fragmentation and bounds internal fragmentation to under one block.
     - **Copy-on-write** block sharing lets requests share identical prompt prefixes (system prompts, few-shot, beams, parallel samples), copying only the one block where they diverge — large memory and prefill-compute savings.
     - The **paged kernel** is FlashAttention-style online softmax plus one indirection: read the physical block id from the block table, gather that block's K/V, accumulate. The tax is a small per-block gather; the payoff is far larger batches. In a real engine that indirection arrives as two int32 tensors per step — `block_tables` `[batch, max_blocks]` for the gather and `slot_mapping` for the write — pre-allocated at fixed shape so the decode step can be CUDA-graph captured.
@@ -700,7 +728,7 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
 
 ??? note "Solution"
 
-    **(a) Numerics are unchanged.** Attention is a permutation-order-independent reduction *in structure but not in indexing*: each cached token $j$ contributes one term $\exp(q^\top k_j/\sqrt{d_h}) v_j$ to the numerator and one to the denominator. The block table only changes *where in HBM* the kernel fetches $k_j, v_j$ from; it does not change *which* $(k_j, v_j)$ pairs are gathered, their values, or the order in which logical positions are visited (the loop still walks logical blocks $0, 1, 2, \dots$ in order and, within a block, token offsets in order). Since the online-softmax accumulation (running max $m$, denominator $l$, output $out$) is mathematically the same associative reduction over the same set of terms, the final normalized output $out / l$ is bit-for-bit the same computation as a contiguous kernel reading the identical K/V. The indirection is an address translation, not a change to the math.
+    **(a) Numerics are unchanged.** Attention is a permutation-order-independent reduction *in structure but not in indexing*: each cached token $j$ contributes one term $\exp(q^\top k_j/\sqrt{d_h}) v_j$ to the numerator and one to the denominator. The block table only changes *where in HBM* the kernel fetches $k_j, v_j$ from; it does not change *which* $(k_j, v_j)$ pairs are gathered, their values, or the order in which logical positions are visited (the loop still walks logical blocks $0, 1, 2, \dots$ in order and, within a block, token offsets in order). Since the online-softmax accumulation (running max $m$, denominator $l$, output $out$) is the same reduction over the same set of terms, the final normalized output $out / l$ is *in exact arithmetic* identical to what a contiguous kernel reading the identical K/V computes. The indirection is an address translation, not a change to the math. (In floating point, "identical" means "to rounding," not necessarily bit-for-bit: fp addition is not associative, so any kernel that changes the *order* of accumulation — a differently tiled contiguous FlashAttention kernel, or PagedAttention v2's split-K reduction over the sequence dimension — can differ in the last ulps. Paging itself never changes the order; parallelization strategies do.)
 
     **(b) Cost and mitigations.** The hardware reason: GPUs achieve peak HBM bandwidth through *coalesced*, large, contiguous memory transactions and hardware prefetching. When consecutive logical blocks live at scattered physical addresses (blocks 7, 1, 4, ...), the kernel issues loads that jump around HBM, defeating prefetchers and preventing the wide coalesced bursts a fully contiguous tensor would allow — so effective bandwidth drops even though the total bytes read are the same.
 
@@ -709,4 +737,4 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
     1. **Keep each block internally contiguous.** A physical block stores its $B \times H_{kv} \times d_h$ K/V elements in a contiguous region, so *within* a block the loads are fully coalesced — scattering happens only at block *boundaries*, not on every element.
     2. **Choose $B$ large enough (16+).** With a larger block, each expensive "jump to a new physical location" is amortized over $B$ tokens' worth of contiguous, coalesced reads, so the per-block indirection/setup cost is a small fraction of the useful load. (This is the same trade-off discussed in "Choosing the block size $B$": too small bloats overhead, too large reintroduces internal fragmentation.)
 
-    The net effect, per the vLLM authors, is that the paged kernel runs within a small percentage of a perfectly contiguous FlashAttention kernel — a tax overwhelmingly repaid by the larger batches the recovered memory enables.
+    The net effect, per the vLLM authors' kernel microbenchmark, is 20–26% higher *attention-kernel* latency than the highly optimized contiguous FasterTransformer kernel. Because attention is only one operator per layer, that translates into a small single-digit end-to-end tax — overwhelmingly repaid by the larger batches the recovered memory enables.

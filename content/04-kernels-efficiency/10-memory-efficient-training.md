@@ -37,9 +37,9 @@ So for a 7B model: $16 \times 7 \times 10^9 = 112\,\text{GB}$ — already beyond
 
 For a transformer trained with a batch of $B$ sequences of length $T$, with $L$ layers, hidden dimension $d$, and $h$ attention heads:
 
-During the **forward pass**, each transformer block needs to store activations for the backward pass. The dominant contributors per layer, per token are:
+During the **forward pass**, each transformer block needs to store activations for the backward pass. The dominant contributors per layer are:
 
-- **Attention QKV projections**: $3 \times d$ (one fp16 tensor per projection)
+- **Attention QKV projections**: $3 \times B \times T \times d$ (one fp16 tensor per projection)
 - **Attention scores and softmax output**: $B \times h \times T \times T$ (the full $T \times T$ attention matrix per head)
 - **Post-attention projections**: $B \times T \times d$
 - **MLP intermediate**: $B \times T \times 4d$ (for a standard 4× MLP expansion)
@@ -68,7 +68,7 @@ so in fp16/bf16 (2 bytes per element) this is $M_{\text{act}} \approx 24\,B\,T\,
 
     **With gradient checkpointing (no activations stored):**
     $$M_{\text{total}} \approx 112 + \sqrt{L} \times \text{(one layer's activations)} \approx 112 + \sqrt{32}\times 0.2 \approx 112 + 1.1 \approx 113\,\text{GB}$$
-    (One layer's activations $\approx 6.4/32 \approx 0.2$ GB and $\sqrt{32}\approx 5.7$, so the $\sqrt{L}$ checkpoints cost $\approx 1.1$ GB. The simpler "store only each block's input" strategy costs $L\,B\,T\,d\times 2$ bytes $\approx 0.5$ GB.)
+    (Read that term carefully. The $\sqrt{L}$ *stored* checkpoints are block-boundary tensors of $B\,T\,d\times 2 \approx 17$ MB each, so they cost only $\sqrt{32}\times 17\,\text{MB}\approx 0.1$ GB; the $\approx 1.1$ GB is the *transient* peak while one segment of $L/k \approx 5.7$ layers is re-materialized, at $\approx 6.4/32 \approx 0.2$ GB per layer. The simpler "store only each block's input" strategy stores all $L$ boundary tensors, $L\,B\,T\,d\times 2 \approx 0.5$ GB, but re-materializes only one layer at a time — a peak of $\approx 0.7$ GB, actually *lower* here. The $O(\sqrt{L})$ result assumes comparable constants on the two terms; at $L=32$ a layer's saved activations are $\approx 12\times$ larger than a boundary tensor, so the stored term is cheap and the recompute term dominates.)
 
     Still too large — we need ZeRO or PEFT as well.
 
@@ -81,9 +81,9 @@ so in fp16/bf16 (2 bytes per element) this is $M_{\text{act}} \approx 24\,B\,T\,
     Frozen quantized base: $\approx 3.5\,\text{GB (4-bit)}$.
     Adam optimizer states on the adapters only (8 bytes/param):
     $$8 \times 16.8\text{M} \approx 0.13\,\text{GB}$$
-    Total: $3.5 + 0.03 + 0.13 \approx$ **3.7 GB** — easily fits in a 6 GB consumer GPU.
+    Total: $3.5 + 0.03 + 0.13 \approx$ **3.7 GB** of *static* state. Activations are untouched by LoRA ($\approx 6.4$ GB at $B=1$, $T=2048$ from above), so a 6 GB consumer GPU fits this only with gradient checkpointing (which brings the activation term under $\approx 1$ GB) and/or a shorter sequence — which is exactly why QLoRA is always paired with checkpointing.
 
-The 7B numbers make optimizer state look like the whole story. Run the same accounting at the scale you can actually afford to pretrain — a ~100M-parameter model — and the ranking *inverts*: $16P = 1.6$ GB of static state disappears into a corner of any GPU, while a micro-batch of 32 sequences at $T=2048$ puts tens of GB into activations. Two consequences follow, and both are why the capstone run is engineered the way it is. First, at 100M the memory levers that matter are micro-batch size, activation checkpointing, and the *loss head* — the $B \times T \times V$ logits tensor, which lives outside the transformer blocks and is therefore untouched by block-level checkpointing, and which for $B\,T = 65{,}536$ and $V = 32{,}768$ is over a gigabyte in fp32 before you have counted a single block. Second, PEFT is the wrong tool here: you are training *from scratch*, so there is no pretrained base to freeze. [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) does this budget line by line for Stack-100M, including the chunked cross-entropy head that shrinks the logits term ~14–30×.
+The 7B numbers make optimizer state look like the whole story. Run the same accounting at the scale you can actually afford to pretrain — a ~100M-parameter model — and the ranking *inverts*: $16P = 1.6$ GB of static state disappears into a corner of any GPU, while a micro-batch of 32 sequences at $T=2048$ puts tens of GB into activations. Two consequences follow, and both are why the capstone run is engineered the way it is. First, at 100M the memory levers that matter are micro-batch size, activation checkpointing, and the *loss head* — the $B \times T \times V$ logits tensor, which lives outside the transformer blocks and is therefore untouched by block-level checkpointing, and which for $B\,T = 65{,}536$ and $V = 32{,}768$ is $65{,}536 \times 32{,}768 \times 4 \approx 8.6$ GB in fp32 before you have counted a single block. Second, PEFT is the wrong tool here: you are training *from scratch*, so there is no pretrained base to freeze. [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) does this budget line by line for Stack-100M, including the chunked cross-entropy head that shrinks the logits term ~14–30×.
 
 ## Activation Checkpointing: Recompute vs. Store
 
@@ -258,9 +258,21 @@ from torch.utils.checkpoint import (
 # Ops whose outputs are expensive to recompute -> save them.
 # Everything else (GELU/SiLU, mul, add, LayerNorm internals) is recomputed:
 # those are memory-bound elementwise ops, so recompute is nearly free.
+#
+# List EVERY aten op your matmuls actually lower to, or the policy silently
+# saves nothing and SAC degenerates into ordinary full checkpointing:
+#   nn.Linear(bias=False) -> aten.mm.default   (torchtitan's models are bias-free)
+#   nn.Linear(bias=True)  -> aten.addmm.default
+#   fp8 linears           -> aten._scaled_mm.default
+#   F.scaled_dot_product_attention -> flash OR efficient backend, dtype/shape dependent
+# Print the ops from inside the policy once for your own block before trusting it.
 _SAVE = {
     torch.ops.aten.mm.default,
+    torch.ops.aten.addmm.default,
+    torch.ops.aten.bmm.default,
+    torch.ops.aten._scaled_mm.default,
     torch.ops.aten._scaled_dot_product_flash_attention.default,
+    torch.ops.aten._scaled_dot_product_efficient_attention.default,
 }
 
 def _policy(ctx, op, *args, **kwargs):
@@ -465,12 +477,13 @@ With LoRA, the memory budget changes dramatically:
 | Term | Full fine-tuning | LoRA ($r=16$) |
 |---|---|---|
 | **Frozen weights** (bf16) | $2P$ bytes (trainable) | $2P$ bytes (frozen, no grad) |
+| **Master weights** (fp32) | $4P$ bytes | — (a frozen base needs none) |
 | **Adapter weights** (bf16) | — | $2 \cdot \lvert\theta_{\text{LoRA}}\rvert$ bytes |
 | **Gradients** | $2P$ bytes | $2 \cdot \lvert\theta_{\text{LoRA}}\rvert$ bytes |
 | **Optimizer states** (Adam fp32) | $8P$ bytes | $8 \cdot \lvert\theta_{\text{LoRA}}\rvert$ bytes |
 | **Activations** | $M_{\text{act}}$ | $\approx M_{\text{act}}$ (**unchanged**) |
 
-For a frozen weight tensor, PyTorch does not allocate a gradient buffer, so **frozen parameters contribute 0 bytes of gradient or optimizer state**. The savings are enormous: if LoRA covers all linear layers in a 7B model with rank 16, the optimizer state shrinks from $\sim$56 GB (fp32 Adam) to roughly $56 \times 0.0078 \approx 0.44$ GB.
+The full-fine-tuning column sums to $2P + 4P + 2P + 8P = 16P$, the headline budget from the opening section. For a frozen weight tensor, PyTorch does not allocate a gradient buffer, so **frozen parameters contribute 0 bytes of gradient or optimizer state**. The savings are enormous: if LoRA covers all linear layers in a 7B model with rank 16, the optimizer state shrinks from $\sim$56 GB (fp32 Adam) to roughly $56 \times 0.0078 \approx 0.44$ GB.
 
 Note the last row carefully, because it is the single most common misconception about LoRA. Because adapters sit at *every* depth, the backward pass still traverses the whole network and every layer still saves the input it needs to form $\partial\mathcal{L}/\partial A$. **LoRA cuts the gradient and optimizer lines by ~99% and the activation line by ~0%.** That is why the standard single-GPU recipe is QLoRA *plus* gradient checkpointing, not QLoRA alone: the two techniques attack disjoint line items. See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html) for the gradient-flow derivation.
 
@@ -480,7 +493,7 @@ $$
 M_{\text{QLoRA}} = \underbrace{\frac{P}{2}}_{\text{4-bit base}} + \underbrace{2 \cdot |\theta_{\text{LoRA}}|}_{\text{bf16 adapters}} + \underbrace{8 \cdot |\theta_{\text{LoRA}}|}_{\text{Adam states on adapters}}
 $$
 
-For LLaMA-7B with rank 16 covering all four attention projections (q, k, v, o), $|\theta_{\text{LoRA}}| \approx 16.8$M: approximately $3.5 + 0.03 + 0.13 \approx 3.7$ GB — fitting in a 6 GB GPU.
+For LLaMA-7B with rank 16 covering all four attention projections (q, k, v, o), $|\theta_{\text{LoRA}}| \approx 16.8$M: approximately $3.5 + 0.03 + 0.13 \approx 3.7$ GB of static state — fitting in a 6 GB GPU *once the activation term is also checkpointed*, since $M_{\text{act}}$ is unchanged by LoRA.
 
 ### LoRA From Scratch: A Full Implementation
 
@@ -523,7 +536,8 @@ class LoRALinear(nn.Module):
         ) if bias else None
 
         # Trainable LoRA matrices
-        # A is initialized from N(0, 1/sqrt(r)) to give unit-variance init.
+        # A gets nn.Linear's own default init (Kaiming-uniform, a=sqrt(5)),
+        # which is what Hu et al.'s reference implementation uses.
         # B is initialized to zero so ΔW = 0 at the start of training.
         self.lora_A = nn.Parameter(
             torch.empty(rank, in_features)
@@ -623,7 +637,7 @@ def inject_lora(model: nn.Module, rank: int = 16, alpha: float = 32.0,
 
 ### QLoRA: Quantized Base + LoRA Adapters
 
-QLoRA (Dettmers et al., *QLoRA: Efficient Finetuning of Quantized LLMs*, 2023) combines two ideas:
+QLoRA (Dettmers et al., *QLoRA: Efficient Finetuning of Quantized LLMs*, 2023) combines three ideas:
 
 1. **NF4 (NormalFloat4)**: A 4-bit data type optimized for normally-distributed weights. Instead of linear quantization, NF4 assigns quantization levels at equal-probability points of a standard normal distribution, minimizing quantization error for the typical weight distribution.
 
@@ -791,7 +805,7 @@ $$
 V_t \approx r_t \cdot c_t^\top, \quad r_t \in \mathbb{R}^{d},\; c_t \in \mathbb{R}^{k}
 $$
 
-This reduces optimizer state from $O(dk)$ (Adam's $v_t$ for a $d \times k$ weight) to $O(d + k)$. For a 4096×4096 linear layer, that is 16.7 million → 8,192 values: a 2,048× compression. Adafactor also omits the first moment $m_t$ (relying on relative step size), further halving the state. The tradeoff is that Adafactor can be less stable for fine-tuning on small datasets; many practitioners use it for pretraining but fall back to Adam for RLHF.
+This reduces optimizer state from $O(dk)$ (Adam's $v_t$ for a $d \times k$ weight) to $O(d + k)$. For a 4096×4096 linear layer, that is 16.7 million → 8,192 values: a 2,048× compression. Adafactor also omits the first moment $m_t$ (relying on relative step size), which removes the one remaining $O(dk)$ term: for that same layer, Adam's 33.5M state values ($m_t$ *and* $v_t$) collapse to 8,192, a $\approx 4{,}000\times$ reduction overall. The tradeoff is that Adafactor can be less stable for fine-tuning on small datasets; many practitioners use it for pretraining but fall back to Adam for RLHF.
 
 ### 8-bit Adam
 
@@ -820,7 +834,7 @@ A different lever, orthogonal to compressing Adam's states, is to replace Adam i
 
 ### Gradient Accumulation and FP16 Gradients
 
-When gradient accumulation is used, the gradient buffer persists across every micro-batch of the window, so its dtype matters. Keeping gradients in bf16/fp16 costs $2P$ bytes versus $4P$ for fp32 — a 2× saving on that line item, but one you should take deliberately: accumulating many micro-batch gradients into a 10-bit-mantissa bf16 buffer loses small contributions to rounding, which is why DDP/FSDP expose an explicit `reduce_dtype` and why long accumulation windows usually keep fp32 gradient accumulation on (`MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)` in FSDP). With fp16 — not bf16 — you additionally need loss scaling to keep small gradients from flushing to zero; PyTorch's `autocast` + `GradScaler` handles that:
+When gradient accumulation is used, the gradient buffer persists across every micro-batch of the window, so its dtype matters. Keeping gradients in bf16/fp16 costs $2P$ bytes versus $4P$ for fp32 — a 2× saving on that line item, but one you should take deliberately: accumulating many micro-batch gradients into a bf16 buffer — only 7 stored mantissa bits, an 8-bit significand — loses small contributions to rounding, which is why DDP/FSDP expose an explicit `reduce_dtype` and why long accumulation windows usually keep fp32 gradient accumulation on (`MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.float32)` in FSDP). With fp16 — not bf16 — you additionally need loss scaling to keep small gradients from flushing to zero; PyTorch's `autocast` + `GradScaler` handles that:
 
 ```python
 scaler = torch.amp.GradScaler("cuda")  # torch.cuda.amp.GradScaler is deprecated in 2.4+
@@ -892,7 +906,7 @@ model = CheckpointedModel(n_layers=32, d_model=4096, n_heads=32,
 model = torch.compile(model, mode="reduce-overhead")
 ```
 
-If you compile first and then toggle checkpointing, the compiled graph may not include the recompute branches, and you will silently fall back to full activation storage.
+If you compile first and then flip the flag, the cost is *latency*, not correctness: Dynamo guards on the `use_checkpointing` attribute it read while tracing, so mutating it fails the guard (`self.use_checkpointing == False`) and triggers a full recompile of the forward — after which the recompute branches are in the graph and the memory saving does materialize (measured on one H100: 2593 MB → 961 MB). Enable checkpointing before compiling to avoid paying for two compilations, not because toggling would silently lose the savings.
 
 ### The `no_grad` vs. `detach` Distinction
 

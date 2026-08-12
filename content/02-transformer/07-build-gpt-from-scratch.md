@@ -282,7 +282,7 @@ class GPT(nn.Module):
 
 Two non-obvious lines in that constructor carry real weight (pun intended).
 
-**Weight tying** sets `self.transformer.wte.weight = self.lm_head.weight`. The input embedding maps a token ID to a vector; the output head maps a vector to a logit per token. These are inverse operations over the *same* vocabulary, and tying their matrices both **saves $V \times n_\text{embd}$ parameters** (for a 50k vocab and 768-dim model, that is ~38M parameters — a huge fraction of a small model) and acts as a regularizer that empirically improves perplexity. It traces to Press & Wolf, *Using the Output Embedding to Tie Word Vectors* (2017).
+**Weight tying** sets `self.transformer.wte.weight = self.lm_head.weight`. The input embedding maps a token ID to a vector; the output head maps a vector to a logit per token. These are inverse operations over the *same* vocabulary, and tying their matrices both **saves $V \times n_\text{embd}$ parameters** (for a 50k vocab and 768-dim model, that is ~38M parameters — a huge fraction of a small model) and acts as a regularizer that empirically improves perplexity. It traces to Press & Wolf, *Using the Output Embedding to Improve Language Models* (2017).
 
 **The scaled residual init** (`std = 0.02 / sqrt(2 * n_layer)` on every `c_proj.weight`) addresses a subtle problem with deep residual networks. Each block adds two terms to the residual stream. If every addition has variance $\approx \sigma^2$, then after $n_\text{layer}$ blocks the stream's variance grows like $2\,n_\text{layer}\,\sigma^2$ — it accumulates with depth. To keep the residual stream's scale roughly constant, GPT-2 shrinks the *output* projection of each sublayer (the matrices feeding the residual add) by $1/\sqrt{2\,n_\text{layer}}$, so the $2\,n_\text{layer}$ contributions sum back to a sane variance. The factor of 2 is because each block has two residual adds (attention and MLP). This is initialization-time hygiene, but it markedly improves the stability of deep models.
 
@@ -500,7 +500,7 @@ torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)   # clip the FULL 
 optimizer.step()
 ```
 
-Two orderings in that snippet are load-bearing. Dividing each micro-batch loss by `grad_accum_steps` is what makes the accumulated gradient the *mean* rather than the sum; forgetting it silently multiplies your effective learning rate by `grad_accum_steps`, which usually shows up as a loss spike a few hundred steps in. And `clip_grad_norm_` runs **once, after the last micro-batch**, so the norm is taken over the complete gradient — clipping inside the accumulation loop clips each partial gradient and changes the update. This is exactly the loop the capstone scales up to spend ~20 GPU-hours training a real ~100M model in [The Pretraining Run](../14-capstone/07-pretraining-run.html).
+Two orderings in that snippet are load-bearing. Dividing each micro-batch loss by `grad_accum_steps` is what makes the accumulated gradient the *mean* rather than the sum. Under plain SGD, forgetting it would multiply your effective learning rate by `grad_accum_steps`; under **AdamW it does not**, because the update $\hat m/(\sqrt{\hat v} + \epsilon)$ is invariant to a constant rescaling of the gradient (scale $g$ by $G$ and $m$ scales by $G$, $v$ by $G^2$, so the ratio is unchanged). What the missing divide *does* break is the clipping and the logging: `clip_grad_norm_` compares a $G$-times-larger norm against the same fixed threshold, so it clips far more aggressively and your update ends up *smaller*, not larger — and the logged loss stops being comparable across different `grad_accum_steps`. Keep the divide. Second, `clip_grad_norm_` runs **once, after the last micro-batch**, so the norm is taken over the complete gradient — clipping inside the accumulation loop clips each partial gradient and changes the update. This is exactly the loop the capstone scales up to spend ~20 GPU-hours training a real ~100M model in [The Pretraining Run](../14-capstone/07-pretraining-run.html).
 
 ### Checkpointing: save and resume
 
@@ -560,7 +560,7 @@ for it in range(start_it, max_iters):
     optimizer.step()
 ```
 
-Three things worth internalizing. First, if you wrapped the model in `torch.compile`, **`state_dict()` keys gain an `_orig_mod.` prefix** — save `model._orig_mod.state_dict()` (or strip the prefix on load) so the checkpoint stays loadable by an uncompiled model. Second, **weight tying survives the round-trip automatically**: `wte.weight` and `lm_head.weight` are the *same* tensor object, so it appears once in `state_dict()` and reloads shared — there is nothing special to do. Third, **saving RNG state and the optimizer's moment buffers is what makes a kill/resume bit-continuous**: after resuming, the first logged loss should continue from roughly where it left off (modulo ordinary batch-sampling noise), *not* jump back up toward $\ln V$. If you see a jump on resume, you forgot to restore the optimizer state (AdamW's first/second moment estimates) or the RNG/data-iterator state — the model is stepping from a warm optimizer trajectory it thinks is cold.
+Three things worth internalizing. First, if you wrapped the model in `torch.compile`, **`state_dict()` keys gain an `_orig_mod.` prefix** — save `model._orig_mod.state_dict()` (or strip the prefix on load) so the checkpoint stays loadable by an uncompiled model. Second, **weight tying survives the round-trip automatically** — though not for the reason usually given: `state_dict()` does *not* deduplicate shared tensors (only `parameters()`/`named_parameters()` do), so the tied matrix is serialized under *both* `transformer.wte.weight` and `lm_head.weight`. On load, both keys copy in place into the one shared tensor of an already-tied module, so the tie is preserved and there is nothing special to do. Two practical consequences of the duplication: a checkpoint size estimated from `state_dict()` is inflated by $V \times n_\text{embd}$ numbers, and `safetensors` refuses outright to save shared tensors (use `safetensors.torch.save_model`, which drops the redundant key). Third, **saving RNG state and the optimizer's moment buffers is what makes a kill/resume bit-continuous**: after resuming, the first logged loss should continue from roughly where it left off (modulo ordinary batch-sampling noise), *not* jump back up toward $\ln V$. If you see a jump on resume, you forgot to restore the optimizer state (AdamW's first/second moment estimates) or the RNG/data-iterator state — the model is stepping from a warm optimizer trajectory it thinks is cold.
 
 For sizing intuition: our default ~10.7M-parameter model produces a checkpoint of roughly 130 MB in fp32 — the model weights plus AdamW's two moment buffers per parameter (~3× the raw parameter count) — trivial to write on a laptop or a single GPU. At multi-node scale, saving every rank's full state to one file stops being trivial; you either checkpoint only on rank 0 or use DCP's sharded format, both covered in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
@@ -582,7 +582,10 @@ def generate(model, idx, max_new_tokens, temperature=1.0, top_k=None, top_p=None
        top_k: keep only the k highest-prob tokens before sampling.
        top_p: nucleus sampling — keep the smallest set of tokens whose cumulative
               probability exceeds p."""
-    model.eval()
+    was_training = model.training   # remember the mode so we can put it back:
+    model.eval()                    # sampling mid-training and leaving the model
+                                    # in eval() would silently disable dropout for
+                                    # every remaining training step.
     for _ in range(max_new_tokens):
         # 1) Crop context to block_size — the model cannot attend beyond it.
         idx_cond = idx if idx.size(1) <= model.config.block_size \
@@ -616,6 +619,7 @@ def generate(model, idx, max_new_tokens, temperature=1.0, top_k=None, top_p=None
 
         # 7) Append and repeat. The new token becomes part of next step's context.
         idx = torch.cat((idx, next_id), dim=1)
+    model.train(was_training)   # restore the caller's mode (no-op at inference time)
     return idx
 
 
@@ -887,10 +891,10 @@ Four checks confirm the integration is wired correctly, not just "not crashing":
 
 1. **Param count.** `print(sum(p.numel() for p in model.parameters()))` should read **~10.6M** — slightly *smaller* than the baseline's 10.74M, because dropping the learned `wpe` table saves `256 * 384 = 98,304` parameters while RoPE adds none (it is a fixed, non-parametric cache).
 2. **Init loss.** The first logged loss should still land near $\ln(65) \approx 4.174$ — the same uniform-guess sanity check as the baseline; RoPE and RMSNorm don't change what an untrained model's loss should look like.
-3. **Final loss.** After the same 5000 iterations, validation loss should land essentially on top of the baseline's ~1.47 — commonly a hair lower, around 1.45–1.46. Reaching an equal-or-better loss than the GELU/LayerNorm/learned-position baseline is your confirmation that the RoPE-into-attention wiring, the RMSNorm placement, and the SwiGLU gating are all correct; a *much worse* loss here is the classic symptom of RoPE applied at the wrong tensor rank (see the load-bearing comment above).
+3. **Best validation loss — and when it arrives.** Compare the *best* val loss over the run, not the loss at the final step. Measured on this exact recipe (char-level Tiny Shakespeare, 5000 iters, bf16, one H100): the baseline bottoms out at **val ≈ 1.474 around step 3750** and ends at ≈ 1.484, while `ModernGPT` bottoms out **slightly lower and ~2.5× sooner — val ≈ 1.464 by step 1500**. After that the modern model overfits this 1 MB corpus hard: train loss keeps falling (to ≈ 0.64) while val climbs monotonically to **≈ 1.66 at step 5000**. That is a property of the tiny dataset, not a wiring bug — the modern stack simply converges faster, so it reaches the overfitting regime first. Matching-or-beating the baseline's *best* val loss is your confirmation that the RoPE-into-attention wiring, the RMSNorm placement, and the SwiGLU gating are all correct; if the best val loss never gets near ~1.47 at any point — e.g. it plateaus a few tenths above the baseline's best — that is the classic symptom of RoPE applied at the wrong tensor rank (see the load-bearing comment above).
 4. For a numeric unit test of the rotation itself (not the whole model), reuse the RoPE relative-position property already verified in [Positional Encoding](../02-transformer/05-positional-encoding.html).
 
-**Scaling this exercise to your hardware.** On a laptop or CPU, shrink to `n_layer=4, n_embd=128` and run a few hundred iterations — you should still watch the loss fall from ~4.17. On a single GPU, the defaults above take roughly 2–4 minutes for 5000 iterations on an A100 or 3090, matching the baseline's timing exactly, since param count and FLOPs are essentially unchanged. On an 8-GPU node or a multi-node cluster, the module itself is byte-for-byte the same — you only wrap `ModernGPT` in DDP or FSDP per [Distributed Data Parallelism](../03-pretraining/05-distributed-data-parallel.html); there is no architectural change at scale.
+**Scaling this exercise to your hardware.** On a laptop or CPU, shrink to `n_layer=4, n_embd=128, n_head=4` and run a few hundred iterations — you should still watch the loss fall from ~4.17. Shrink `n_head` along with `n_embd`, not just `n_embd`: leaving the default `n_head=6` would trip `assert n_embd % n_head == 0` (128 is not a multiple of 6), and `ModernGPT` additionally needs an even `head_dim` for RoPE — `n_head=4` gives `head_dim=32`, which satisfies both. On a single GPU, the defaults above take roughly 2–4 minutes for 5000 iterations on an A100 or 3090. Param count and matmul FLOPs are essentially unchanged versus the baseline, but expect the modern block to be somewhat *slower* per step in eager mode (in our runs, closer to 2× the wall clock) — RoPE's elementwise rotation and SwiGLU's third matmul add extra kernel launches, which is exactly the kind of overhead `torch.compile` exists to fuse away. On an 8-GPU node or a multi-node cluster, the module itself is byte-for-byte the same — you only wrap `ModernGPT` in DDP or FSDP per [Distributed Data Parallelism](../03-pretraining/05-distributed-data-parallel.html); there is no architectural change at scale.
 
 What you just built is, module for module, Llama's decoder block — and the direct ancestor of the capstone's Stack-100M, which takes this same `ModernBlock` and adds only GQA and a deeper/thinner aspect ratio ([The Stack-100M Architecture](../14-capstone/04-architecture.html)). The next section maps every piece onto the actual `transformers` source so you can read it directly.
 
@@ -994,7 +998,7 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
 - Karpathy — *nanoGPT* (code repository) and *Let's build GPT: from scratch, in code, spelled out* (video lecture). The minimal, readable GPT implementation this chapter follows; the canonical starting point.
 - Radford, Wu, Child, Luan, Amodei, Sutskever — *Language Models are Unsupervised Multitask Learners* (GPT-2, 2019). Introduces the pre-norm decoder-only architecture, the 0.02 init, and the scaled-residual initialization we use.
 - Vaswani et al. — *Attention Is All You Need* (2017). The original Transformer; the block structure assembled here descends directly from it.
-- Press & Wolf — *Using the Output Embedding to Tie Word Vectors* (2017). The justification for weight tying between the input embedding and output head.
+- Press & Wolf — *Using the Output Embedding to Improve Language Models* (2017). The justification for weight tying between the input embedding and output head.
 - Holtzman, Buys, Du, Forbes, Choi — *The Curious Case of Neural Text Degeneration* (2020). Diagnoses repetitive/degenerate sampling and introduces top-p (nucleus) sampling.
 - Loshchilov & Hutter — *Decoupled Weight Decay Regularization* (AdamW, 2019). The optimizer and the matmul-vs-bias weight-decay split used in the training loop.
 
@@ -1087,6 +1091,7 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
     @torch.no_grad()
     def generate(model, idx, max_new_tokens, temperature=1.0,
                  top_k=None, top_p=None, repetition_penalty=1.0):
+        was_training = model.training
         model.eval()
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= model.config.block_size \
@@ -1112,6 +1117,7 @@ then open `models/llama/modeling_llama.py` for the model and `generation/utils.p
             # ... (top-p block unchanged) ...
             next_id = torch.multinomial(probs, num_samples=1)
             idx = torch.cat((idx, next_id), dim=1)
+        model.train(was_training)
         return idx
     ```
 

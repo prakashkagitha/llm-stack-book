@@ -92,7 +92,7 @@ $$
 
 The noise does two jobs: it **breaks ties** so different tokens explore different experts early in training, and it acts as a regularizer that spreads load. Most modern models drop the learned noise (they rely on the auxiliary balancing loss instead) but the lesson — that routing needs *exploration* to avoid premature collapse onto a few experts — recurs throughout the field. DeepSeek-V3 reintroduced a different exploration mechanism: a per-expert **bias** added to the *routing scores used for selection only* (not for the gate weights), nudged up or down each step to equalize load without polluting the gradient — an "auxiliary-loss-free" balancing trick we return to below.
 
-**A baseline that should worry you.** *Hash layers* (Roller et al., 2021) throw the learned router away entirely and dispatch each token by a fixed random hash of its token id — no gating, no aux loss, perfectly balanced by construction — and still capture a large share of MoE's gain over a dense baseline. The lesson is not that routing is pointless but that much of the benefit comes from the extra *capacity* plus *balanced* dispatch, so a learned router has to earn its keep. Whenever you build one, run the hash baseline next to it; if your router does not beat a hash, it is not learning anything.
+**A baseline that should worry you.** *Hash layers* (Roller et al., 2021) throw the learned router away entirely and dispatch each token by a fixed hash of its token id — no gating, no aux loss, and **collapse-proof by construction**, since the assignment is decided before training and cannot drift — and still capture a large share of MoE's gain over a dense baseline. Note that fixed does *not* mean balanced: token frequencies are Zipfian, so a *random* hash leaves some buckets far hotter than others (whichever bucket catches `" the"` absorbs a few percent of every batch on its own), which is exactly why the paper also studies a frequency-aware **balanced assignment** that bin-packs token ids into roughly equal-mass buckets. The lesson is not that routing is pointless but that much of the benefit comes from the extra *capacity* plus a *stable, non-collapsing* dispatch, so a learned router has to earn its keep. Whenever you build one, run the hash baseline next to it; if your router does not beat a hash, it is not learning anything.
 
 {{fig:moe-router-dispatch-pipeline}}
 
@@ -192,7 +192,7 @@ y, aux = moe(x)
 print(y.shape, float(aux))             # torch.Size([4, 16, 32]) <some positive scalar>
 ```
 
-A few details in that code are load-bearing and worth dwelling on. The `index_add_` is what makes top-$k>1$ correct: a token selected by two experts contributes *both* weighted outputs to the same output row, and because the gate weights were renormalized to sum to 1, the result is a true convex combination. The capacity clamp `token_ids[:capacity]` is the **token dropping** mechanism — tokens beyond an expert's quota silently get *no* FFN contribution this layer (their output stays whatever the residual stream carried in, since we add to a zero buffer that then joins the residual). In a real implementation the dropped token still flows through the residual connection, so it is degraded, not destroyed. And the auxiliary loss combines a *hard* count `f` with a *soft* probability `P` on purpose — we explain exactly why next.
+A few details in that code are load-bearing and worth dwelling on. The `index_add_` is what makes top-$k>1$ correct: a token selected by two experts contributes *both* weighted outputs to the same output row, and because the gate weights were renormalized to sum to 1, the result is a true convex combination. The capacity clamp `token_ids[:capacity]` is the **token dropping** mechanism — tokens beyond an expert's quota silently lose *that expert's* contribution this layer. Note that the drop is per (token, expert-slot) pair, not per token: with $k = 1$ an evicted token gets no FFN update at all and its output row stays zero, while with $k > 1$ it keeps whatever surviving experts accepted it, scaled by gate weights that no longer sum to 1 — so the convex-combination property above is broken for exactly those tokens, and their FFN contribution is systematically shrunk. (In the smoke test above, capacity is 20, expert 5 attracts 30 assignments, and 10 of the 128 (token, slot) pairs are dropped; no token loses both of its slots.) Either way the token still flows through the residual connection, so it is degraded, not destroyed. And the auxiliary loss combines a *hard* count `f` with a *soft* probability `P` on purpose — we explain exactly why next.
 
 !!! warning "Common pitfall: forgetting that token dropping makes the layer batch-dependent"
     Because capacity is computed from the current batch and excess tokens are dropped, an MoE layer's output for a given token can change depending on *which other tokens are in the batch* — a property dense layers never have. At training time this is fine (it is a form of noise). At **inference** it is a correctness hazard: two identical prompts batched differently can produce different logits. Production serving either uses a generous capacity factor, drops the capacity limit entirely (dynamic-size grouped GEMM), or pads/recomputes so results are batch-invariant. Always know which regime your serving stack is in.
@@ -374,7 +374,10 @@ def upcycle_ffn_to_moe(dense_ffn, d_model, d_ff, n_experts, k=2, jitter=1e-2):
     """Sparse upcycling: one trained dense FFN -> an E-expert MoE layer.
     Every expert starts as a COPY of the dense FFN, so the upcycled layer starts
     from the dense model's function rather than from noise."""
-    moe = SparseMoE(d_model, d_ff, n_experts, k=k)
+    # capacity_factor = E makes capacity = N*k, i.e. effectively DROPLESS: day-one
+    # equivalence to the dense FFN only holds if no token loses an expert to the
+    # capacity clamp (a dropped slot costs that token its gate weight's share).
+    moe = SparseMoE(d_model, d_ff, n_experts, k=k, capacity_factor=float(n_experts))
     sd = dense_ffn.state_dict()
     with torch.no_grad():
         for e in range(n_experts):
@@ -396,10 +399,10 @@ upcycled = upcycle_ffn_to_moe(dense, d_model=32, d_ff=64, n_experts=8, k=2)
 x = torch.randn(2, 16, 32)
 y_moe, _ = upcycled(x)
 y_dense = dense(x.reshape(-1, 32)).reshape(2, 16, 32)
-print(float((y_moe - y_dense).abs().mean()))   # ~3e-3: starts where dense left off
+print(float((y_moe - y_dense).abs().mean()))   # ~1.7e-3 vs dense |y| ~0.17: starts where dense left off
 ```
 
-The gate weights sum to 1 and every expert is (nearly) the same function, so the top-$k$ convex combination reproduces the dense FFN — which is exactly why upcycling does not lose the parent model's quality on day one.
+The gate weights sum to 1 and every expert is (nearly) the same function, so the top-$k$ convex combination reproduces the dense FFN — which is exactly why upcycling does not lose the parent model's quality on day one. The residual error above is purely the symmetry-breaking jitter; run the same demo at $C_f = 1.25$ and it roughly doubles, because a single capacity-dropped slot costs one token half its FFN output. Day-one equivalence is a *dropless* claim, so upcycle with generous capacity (or a dropless kernel) if you want to measure it.
 
 ## Expert Parallelism: A Systems Preview
 

@@ -138,9 +138,9 @@ $$
 \text{softmax}(x)_i = \frac{e^{x_i - \max_j x_j}}{\sum_k e^{x_k - \max_j x_j}}
 $$
 
-A library implementation reads `x` (to find the max), reads `x` again (to exponentiate), writes the exponentials, reads them again (to sum), and reads them once more to divide and write the output — roughly **5 passes over HBM**, and that is a deliberately conservative count: a real PyTorch decomposition also materializes `x - max` and re-reads it, so the naive path's true traffic is higher still. The max-subtraction is not optional: it is the standard numerically stable softmax that prevents `exp` from overflowing for large logits (see [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html)).
+A naive op-by-op decomposition — `m = x.max(1)`, `e = (x - m).exp()`, `e / e.sum(1)` — reads `x` (to find the max), reads `x` again (to exponentiate), writes the exponentials, reads them again (to sum), and reads them once more to divide and write the output — roughly **5 passes over HBM**, and that is a deliberately conservative count: that decomposition also materializes `x - max` and re-reads it, so the naive path's true traffic is higher still. Note that `torch.softmax` is *itself* already a single fused CUDA kernel, so the comparison throughout this section is against the unfused decomposition (what the official Triton tutorial calls `naive_softmax`), not against `torch.softmax` — benchmarked head-to-head against the library call, a good Triton softmax lands at roughly parity. The max-subtraction is not optional: it is the standard numerically stable softmax that prevents `exp` from overflowing for large logits (see [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html)).
 
-The fused Triton kernel assigns **one program per row**. The program loads the entire row into registers/SRAM *once*, computes the max, the exponentials, and the sum without ever round-tripping the intermediates to HBM, and writes the row *once*. That is 1 read + 1 write — a 2.5x reduction in memory traffic, and since softmax is memory-bound, roughly a 2.5x speedup.
+The fused Triton kernel assigns **one program per row**. The program loads the entire row into registers/SRAM *once*, computes the max, the exponentials, and the sum without ever round-tripping the intermediates to HBM, and writes the row *once*. That is 1 read + 1 write — a 2.5x reduction in memory traffic *versus the unfused decomposition above*, and since softmax is memory-bound, roughly a 2.5x speedup over it.
 
 {{fig:fused-softmax-hbm-passes}}
 
@@ -186,7 +186,9 @@ def triton_softmax(x: torch.Tensor) -> torch.Tensor:
     assert x.dim() == 2 and x.is_cuda
     M, N = x.shape
     # BLOCK_SIZE must be a power of two and cover a full row, so the row
-    # fits in one program. (This simple version requires N <= ~64K.)
+    # fits in one program. The whole row has to stay resident in registers/
+    # SRAM, so this simple version is practical only up to a few thousand
+    # columns -- check `compiled.n_spills` before trusting a large BLOCK_SIZE.
     BLOCK_SIZE = triton.next_power_of_2(N)
     # More warps for wider rows => more parallel reduction throughput.
     num_warps = 4

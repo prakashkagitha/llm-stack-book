@@ -129,16 +129,19 @@ Why *blocks*? GPU tensor cores compute dense $128 \times 128$ (or larger) tiles 
 
 ```text
 Legend: X = attention computed,  . = masked/skipped,  G = global token
+The block-sparse panel uses block size b=2 -- key blocks {0,1}, {2,3}, {4,5}, {6} --
+and each query block attends the first key block plus its own, so every attended
+tile is either fully dense or (on the diagonal) the only place a mask is needed.
 
-  Full (causal)      Sliding window W=3     Block-sparse         Global + local
+  Full (causal)      Sliding window W=3     Block-sparse (b=2)   Global + local
   k:0 1 2 3 4 5 6    k:0 1 2 3 4 5 6        k:0 1 2 3 4 5 6      k:0 1 2 3 4 5 6
 q0  X . . . . . .    q0  X . . . . . .      q0  X . . . . . .    q0  G . . . . . .
 q1  X X . . . . .    q1  X X . . . . .      q1  X X . . . . .    q1  G X . . . . .
 q2  X X X . . . .    q2  X X X . . . .      q2  X X X . . . .    q2  G X X . . . .
 q3  X X X X . . .    q3  . X X X . . .      q3  X X X X . . .    q3  G X X X . . .
-q4  X X X X X . .    q4  . . X X X . .      q4  X . . X X . .    q4  G . . . X . .
-q5  X X X X X X .    q5  . . . X X X .      q5  X X . X X X .    q5  G . . . X X .
-q6  X X X X X X X    q6  . . . . X X X      q6  X . . X . X X    q6  G . . . X X X
+q4  X X X X X . .    q4  . . X X X . .      q4  X X . . X . .    q4  G . . . X . .
+q5  X X X X X X .    q5  . . . X X X .      q5  X X . . X X .    q5  G . . . X X .
+q6  X X X X X X X    q6  . . . . X X X      q6  X X . . . . X    q6  G . . . X X X
 ```
 
 {{fig:sparse-attention-mask-family}}
@@ -150,7 +153,7 @@ q6  X X X X X X X    q6  . . . . X X X      q6  X . . X . X X    q6  G . . . X X
 | Block-sparse / NSA (top-$k$ blocks of size $b$) | $\sim k b + W$ | $O(N (k b + W) d)$ |
 | Global $g$ + local $W$ | $g + W$ | $O(N (g + W) d)$ |
 
-Real implementations: FlashAttention ships a `block_mask`/varlen path, PyTorch FlexAttention compiles arbitrary `mask_mod`s into block-sparse kernels, and `state-spaces`/DeepSeek release fused NSA kernels. Citations: Child et al., *Generating Long Sequences with Sparse Transformers* (2019); Beltagy et al., *Longformer* (2020); Zaheer et al., *Big Bird* (2020); Jiang et al., *Mistral 7B* (2023); Yuan et al., *Native Sparse Attention* (2025); Lu et al., *MoBA* (2025).
+Real implementations: FlashAttention ships varlen and banded (`window_size=(left, right)`) paths, PyTorch FlexAttention compiles arbitrary `mask_mod`s into block-sparse kernels via a `block_mask`, and DeepSeek implemented NSA as fused Triton kernels. Citations: Child et al., *Generating Long Sequences with Sparse Transformers* (2019); Beltagy et al., *Longformer* (2020); Zaheer et al., *Big Bird* (2020); Jiang et al., *Mistral 7B* (2023); Yuan et al., *Native Sparse Attention* (2025); Lu et al., *MoBA* (2025).
 
 ---
 
@@ -887,13 +890,13 @@ $N_s$ denotes SSM state dimension (e.g., 16 in Mamba). Note that Mamba/SSM state
     - Per layer: $2 \times N \times d \times 2$ bytes $= 2 \times 32768 \times 4096 \times 2 = 512$ MB
     - 32 layers: $512 \times 32 = 16384$ MB $\approx$ **16 GB** just for the KV cache!
 
-    **Mamba state at any N:**
-    - Per layer: $d \times N_s \times 2$ bytes $= 4096 \times 16 \times 2 = 128$ KB
-    - 32 layers: $128 \times 32 = 4$ MB — **constant, regardless of N**
+    **Mamba state at any N:** the SSM runs on the *expanded* width $d_\text{inner} = \text{expand} \cdot d = 2 \times 4096 = 8192$ (Mamba's `expand=2`, as in the `MambaBlock` above), not on $d$:
+    - Per layer: $d_\text{inner} \times N_s \times 2$ bytes $= 8192 \times 16 \times 2 = 256$ KB
+    - 32 layers: $256 \times 32 = 8$ MB — **constant, regardless of N** (plus a small depthwise-conv state of $d_\text{inner} \times (d_\text{conv} - 1)$ elements per layer)
 
-    **RWKV state at any N:**
-    - Per layer: $d \times 2$ bytes $= 4096 \times 2 = 8$ KB (scalar state per channel)
-    - 32 layers: $8 \times 32 = 256$ KB
+    **RWKV state at any N:** two accumulators per channel — the WKV numerator $a_t$ and denominator $b_t$, so $2d$ elements:
+    - Per layer: $2d \times 2$ bytes $= 2 \times 4096 \times 2 = 16$ KB
+    - 32 layers: $16 \times 32 = 512$ KB
 
     This is the fundamental inference memory advantage of SSM/recurrent models: they can handle arbitrarily long sequences at deployment time with a fixed memory footprint.
 
@@ -1300,16 +1303,16 @@ As of mid-2026, the field has reached some pragmatic conclusions:
     Ratio $= \dfrac{2 N^2 d}{2 N r d} = \dfrac{N}{r} = \dfrac{4096}{64} = 64\times$ fewer multiplies. The saving grows linearly with sequence length $N$ and shrinks as the feature dimension $r$ grows — which is exactly why linear attention pays off at long context but a large $r$ (needed for expressive recall) eats into the advantage.
 
 **2. Inference memory: KV cache vs. recurrent state at 128K context.**
-Use the chapter's 7B configuration: 32 layers, $d = 4096$, $d_k = d_v = 128$, fp16 (2 bytes/element). For a context of $N = 131072$ (128K) tokens compute (a) the transformer KV-cache size across all layers, (b) the Mamba state size (state dim $N_s = 16$), and (c) the RWKV state size (scalar state per channel). Then give the transformer-to-Mamba ratio, and state which of the three grows with $N$.
+Use the chapter's 7B configuration: 32 layers, $d = 4096$, $d_k = d_v = 128$, fp16 (2 bytes/element). For a context of $N = 131072$ (128K) tokens compute (a) the transformer KV-cache size across all layers, (b) the Mamba state size (state dim $N_s = 16$, expansion factor 2), and (c) the RWKV state size (scalar accumulators per channel). Then give the transformer-to-Mamba ratio, and state which of the three grows with $N$.
 
 ??? note "Solution"
     **(a) Transformer KV cache.** Per layer we store both $K$ and $V$ for all $N$ tokens: $2 \times N \times d \times 2\text{ bytes} = 2 \times 131072 \times 4096 \times 2 = 2{,}147{,}483{,}648$ bytes $= 2048$ MB $= 2$ GB per layer. Across 32 layers: $2\text{ GB} \times 32 = \mathbf{64}$ **GB**. (Consistent with the chapter's 16 GB at $N=32768$: 128K is $4\times$ longer, and the KV cache is linear in $N$, so $16 \times 4 = 64$ GB.)
 
-    **(b) Mamba state.** Per layer $d \times N_s \times 2\text{ bytes} = 4096 \times 16 \times 2 = 131{,}072$ bytes $= 128$ KB. Across 32 layers: $128\text{ KB} \times 32 = \mathbf{4}$ **MB** — independent of $N$.
+    **(b) Mamba state.** The SSM runs on the expanded width $d_\text{inner} = \text{expand}\cdot d = 2 \times 4096 = 8192$, so per layer $d_\text{inner} \times N_s \times 2\text{ bytes} = 8192 \times 16 \times 2 = 262{,}144$ bytes $= 256$ KB. Across 32 layers: $256\text{ KB} \times 32 = \mathbf{8}$ **MB** — independent of $N$. (Decoding also carries the depthwise-conv window, $d_\text{inner}\times(d_\text{conv}-1)$ elements per layer — under 50 KB, small but not zero.)
 
-    **(c) RWKV state.** Scalar state per channel (numerator + denominator accumulators are $O(d)$): $\approx d \times 2\text{ bytes} = 4096 \times 2 = 8$ KB per layer, $\times 32 = \mathbf{256}$ **KB** — independent of $N$.
+    **(c) RWKV state.** Two scalar accumulators per channel (the WKV numerator and denominator, each $O(d)$): $\approx 2d \times 2\text{ bytes} = 2 \times 4096 \times 2 = 16$ KB per layer, $\times 32 = \mathbf{512}$ **KB** — independent of $N$.
 
-    **Ratio.** $\dfrac{64\text{ GB}}{4\text{ MB}} = \dfrac{64 \times 1024\text{ MB}}{4\text{ MB}} = 16384\times$. Only the transformer KV cache grows with $N$ (linearly); the Mamba and RWKV states are fixed-size regardless of how long the sequence gets — the core inference-memory advantage of recurrent/SSM models.
+    **Ratio.** $\dfrac{64\text{ GB}}{8\text{ MB}} = \dfrac{64 \times 1024\text{ MB}}{8\text{ MB}} = 8192\times$. Only the transformer KV cache grows with $N$ (linearly); the Mamba and RWKV states are fixed-size regardless of how long the sequence gets — the core inference-memory advantage of recurrent/SSM models.
 
 **3. The semiseparable decay mask by hand.**
 The Mamba-2 SSD layer computes $Y = \big(L \circ (C B^\top)\big) V$ with the 1-semiseparable causal decay mask $L_{ij} = \prod_{k=j+1}^{i} a_k$ for $i \ge j$ (and $0$ for $i < j$), where $a_k = \exp(\Delta_k A)$ are scalar per-step decays. Take a length-4 sequence with $a_1 = 0.9,\ a_2 = 0.5,\ a_3 = 0.8,\ a_4 = 0.5$ (1-indexed). (a) Write out the full $4\times4$ matrix $L$. (b) Show that if every $a_k$ equals a constant $\gamma$, then $L$ reduces to RetNet's decay mask $D_{mn} = \gamma^{\,m-n}$.

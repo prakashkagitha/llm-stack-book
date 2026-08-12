@@ -14,7 +14,7 @@ Before diving into formats, it helps to fix terminology.
 
 **Scope** refers to what gets quantized:
 
-- **Weight-only quantization (W-only):** Weights are stored in low precision; activations remain in BF16/FP16 at runtime. The kernel dequantizes weights on-the-fly and performs the GEMM in FP16. Memory footprint shrinks; arithmetic intensity of the GEMM itself is unchanged, but you win because you now move fewer bytes from HBM.
+- **Weight-only quantization (W-only):** Weights are stored in low precision; activations remain in BF16/FP16 at runtime. The kernel dequantizes weights on-the-fly and performs the GEMM in FP16. Memory footprint shrinks; the FLOP count and the compute precision are unchanged, but the *arithmetic intensity* rises (roughly 4× for INT4) because you move 4× fewer weight bytes from HBM for the same math — which is exactly the roofline shift that buys the speedup.
 - **Weight + activation quantization (W+A):** Both weights and activations are quantized, usually to INT8 or INT8+INT4. The entire matrix multiply happens in low-precision integer arithmetic on hardware integer units, which can deliver higher TFLOP/s than FP16 on some GPU generations. The tradeoff is that activation distributions are much more dynamic and harder to quantize accurately.
 
 **Symmetric vs. asymmetric:** Symmetric quantization maps $[-\alpha, +\alpha]$ linearly to $[-2^{b-1}, 2^{b-1}-1]$ — the zero-point is always 0, which simplifies dequantization math. Asymmetric allows a nonzero zero-point $z$ to shift the representable range, accommodating one-sided activation distributions (e.g., post-ReLU activations that are all positive).
@@ -33,14 +33,14 @@ The quantization error per element is bounded by $\frac{s}{2}$, and if we model 
 
 INT8 is the most widely deployed quantization format because the accuracy penalty is usually negligible and both Tensor Core (via `mma.sync`) and integer ALU paths are mature.
 
-### INT8 Weight-Only (LLM.int8)
+### INT8 with Mixed-Precision Decomposition (LLM.int8)
 
 Tim Dettmers et al. introduced LLM.int8() as part of bitsandbytes. The key insight was that large language models have a small fraction of *outlier* activation channels — typically 0.1–1 % of channels depending on model size — that take values far outside the typical range. Quantizing these outliers with per-tensor INT8 causes catastrophic error.
 
 The solution is **mixed-precision decomposition**: identify the handful of outlier columns at runtime, keep those multiplications in FP16, and quantize the rest as INT8 per-column. At 6.7 B parameters and above, this approach nearly eliminates the accuracy gap with FP16 while halving the memory footprint.
 
 ```python
-# bitsandbytes INT8 weight-only quantization (load_in_8bit)
+# bitsandbytes INT8 quantization with outlier decomposition (load_in_8bit)
 # Requires: pip install bitsandbytes transformers accelerate
 
 import torch
@@ -51,7 +51,7 @@ model_id = "meta-llama/Meta-Llama-3-8B-Instruct"
 # `load_in_8bit=True` triggers LLM.int8() decomposition via bitsandbytes
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    load_in_8bit=True,       # weight-only INT8; activations remain FP16
+    load_in_8bit=True,       # INT8 W8A8 with FP16 outlier decomposition (LLM.int8())
     device_map="auto",       # spread layers across available GPUs
     torch_dtype=torch.float16,
 )
@@ -251,7 +251,7 @@ NVIDIA's parallel tool for its own stack is **TensorRT Model Optimizer** (`nvidi
 
 ### Which Kernel Actually Runs
 
-A W4A16 checkpoint is useless without a fast kernel, and this is where most of the throughput spread in the table below comes from. vLLM's INT4/FP8 weight-only path runs on **Marlin** (Frantar et al.), a mixed-precision GEMM that hides dequantization behind the memory pipeline and holds near-4× speedup out to batch sizes of 32–64, where naive dequantize-then-FP16-GEMM has long since collapsed to BF16 speed. **Machete** is its Hopper successor, built on CUTLASS 3.x and `wgmma` with weights pre-shuffled at load time. The lesson generalizes: at batch size 1 any correct INT4 kernel wins because you are bandwidth-bound; at moderate batch the *kernel*, not the format, decides whether weight-only quantization is still a win.
+A W4A16 checkpoint is useless without a fast kernel, and this is where most of the throughput spread in the table below comes from. vLLM's INT4/FP8 weight-only path runs on **Marlin** (Frantar et al.), a mixed-precision GEMM that hides dequantization behind the memory pipeline and holds near-4× speedup out to batch sizes of roughly 16–32, where naive dequantize-then-FP16-GEMM has long since collapsed to BF16 speed. **Machete** is its Hopper successor, built on CUTLASS 3.x and `wgmma` with weights pre-shuffled at load time. The lesson generalizes: at batch size 1 any correct INT4 kernel wins because you are bandwidth-bound; at moderate batch the *kernel*, not the format, decides whether weight-only quantization is still a win.
 
 ---
 
@@ -334,7 +334,7 @@ The `--n-gpu-layers` flag enables **GPU+CPU split inference**: the first $n$ lay
 
 ### Why GGUF for Edge Deployment?
 
-GGUF's portability is unmatched: the same binary runs on macOS (Metal), Linux (CUDA or CPU), Windows (DirectML or CUDA), and even Android/iOS via llama.cpp bindings. For edge deployment, the k-quant Q4_K_M format on a 7 B model typically results in a ~4.1 GB file that runs at 20–40 tokens/second on a modern CPU — no GPU required.
+GGUF's portability is unmatched: the same binary runs on macOS (Metal), Linux (CUDA or CPU), Windows (Vulkan or CUDA), and even Android/iOS via llama.cpp bindings. For edge deployment, the k-quant Q4_K_M format on a 7 B model typically results in a ~4.1 GB file that runs at roughly 8–15 tokens/second on a modern dual-channel desktop CPU — no GPU required. Decode is bandwidth-bound (you stream all ~4.1 GB once per token), so the ceiling is set by achieved memory bandwidth: ~60–70 GB/s on DDR5 dual channel, and only many-channel server CPUs or Apple Silicon's wide unified memory push past 20 tokens/second.
 
 ### Exporting *Your Own* Model to GGUF
 
@@ -355,7 +355,7 @@ bitsandbytes (bnb) provides drop-in quantized linear layers for PyTorch. It is t
 
 {{fig:quant-bnb-linear-dataflow}}
 
-Both `Linear8bitLt` and `Linear4bit` are weight-only: the dequantized GEMM still runs in FP16 hardware. The bandwidth saving is in loading weights from HBM; once on-chip (in L2 or registers), the weights are converted to FP16 before multiply-accumulate.
+`Linear4bit` is genuinely weight-only: the NF4/FP4 weights are dequantized on-chip to the compute dtype and the GEMM runs in FP16/BF16. The bandwidth saving is in loading weights from HBM; once on-chip (in L2 or registers), the weights are converted before multiply-accumulate. `Linear8bitLt` is *not* weight-only — LLM.int8() also quantizes the activations row-wise to INT8 and runs a real INT8 GEMM (cuBLASLt's `igemmlt`) for the non-outlier subspace, keeping only the extracted outlier columns in FP16.
 
 ### Implementing a Minimal NF4 Layer From Scratch
 
@@ -558,7 +558,7 @@ QLoRA (Dettmers et al., 2023) is arguably the most impactful combination of quan
 
 1. **Freeze** the base model weights in NF4 (4-bit, per-group-64, double quantization).
 2. **Add LoRA adapters** (small rank-$r$ matrices $A, B$ in BF16) alongside the frozen quantized layers.
-3. **Fine-tune only the LoRA adapters.** Gradients flow through the NF4-dequantized base weights using STE, then into the BF16 LoRA params.
+3. **Fine-tune only the LoRA adapters.** Gradients flow *through* the dequantized BF16 base weights and into the BF16 LoRA params. No STE is involved: the base weights are frozen, so nothing ever needs a gradient with respect to the rounded NF4 values.
 4. **Paged optimizer states**: instead of keeping FP32 Adam states for the base model, only LoRA params have optimizer states — since they are tiny ($r \ll d$), this is cheap. (Those states are still ordinary 32-bit — or bnb 8-bit — Adam moments; NF4 applies to the frozen base *weights* only.)
 
 The key trick: **paged optimizers** (bnb's `PagedAdamW32bit`) allocate the optimizer states in CUDA *unified* memory, so they normally live on the GPU but are automatically evicted to CPU RAM when the GPU runs out of memory and paged back in for the update step. That smooths the transient memory spikes (long sequences, gradient checkpointing) that would otherwise OOM the run, at essentially no cost in the common case.
@@ -620,7 +620,7 @@ $$
 
 (That figure assumes multi-head attention; every modern model uses grouped-query attention, which divides it by the query-to-KV head ratio — 4× for Llama 3 8B's 32 query heads over 8 KV heads. GQA is the *first* KV-memory lever; quantization stacks on top of it. See [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html).)
 
-Quantizing the KV cache to INT8 halves this to 4.2 GB; INT4 reduces it to 2.1 GB. KV quantization is more delicate than weight quantization because keys and values are computed dynamically (they change every sequence), have heavier-tailed distributions than model weights, and — unlike weights — cannot be calibrated offline against the tensor you will actually quantize.
+The cache holds both tensors, so the full BF16 footprint is $2 \times 8.4 = 16.8$ GB. Quantizing the KV cache to INT8 halves that to 8.4 GB; INT4 reduces it to 4.2 GB. KV quantization is more delicate than weight quantization because keys and values are computed dynamically (they change every sequence), have heavier-tailed distributions than model weights, and — unlike weights — cannot be calibrated offline against the tensor you will actually quantize.
 
 ### Per-Token Dynamic Quantization of KV
 
@@ -764,7 +764,7 @@ The large spread in INT4 throughput reflects kernel quality, not format: hand-tu
     **Open-source & tools**
 
     - [bitsandbytes-foundation/bitsandbytes](https://github.com/bitsandbytes-foundation/bitsandbytes) — the canonical PyTorch INT8/NF4 quantization library; powers `load_in_8bit` and `load_in_4bit` in Hugging Face Transformers.
-    - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) — reference C/C++ implementation of GGUF k-quants (Q2_K through Q8_0); runs on CPU, Metal, CUDA, and DirectML with no Python dependency.
+    - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) — reference C/C++ implementation of GGUF k-quants (Q2_K through Q8_0); runs on CPU, Metal, CUDA, Vulkan, and ROCm with no Python dependency.
     - [NVIDIA/TransformerEngine](https://github.com/NVIDIA/TransformerEngine) — NVIDIA's FP8 (and FP4) training and inference library for Hopper/Ada/Blackwell GPUs; includes delayed scaling, amax history, and PyTorch/JAX APIs.
     - [vllm-project/llm-compressor](https://github.com/vllm-project/llm-compressor) — the production path from a BF16 checkpoint to a deployable FP8 / INT8 W8A8 / W4A16 / NVFP4 `compressed-tensors` checkpoint, in one `oneshot()` call; what vLLM and SGLang load natively.
     - [pytorch/ao (`torchao`)](https://github.com/pytorch/ao) — PyTorch-native quantization via tensor subclasses: `quantize_(model, config)` for PTQ, a two-phase prepare/convert `QATConfig` for QAT, plus FP8 training; composes with `torch.compile`, FSDP2, and `torch.export`.
@@ -791,12 +791,12 @@ The large spread in INT4 throughput reflects kernel quality, not format: hand-tu
 
 ## Exercises
 
-**1.** Weight-only INT4 quantization does *not* change the arithmetic intensity of the GEMM — the kernel dequantizes each weight back to FP16 and runs the same FP16 multiply-accumulate as the BF16 baseline. Yet the throughput table lists INT4 W-only at roughly $2.5$–$3.5\times$ the decode throughput of BF16. Using the roofline picture from the chapter, explain why decode gets faster even though the FLOP count and the compute precision are unchanged.
+**1.** Weight-only INT4 quantization does *not* change the FLOP count or the compute precision of the GEMM — the kernel dequantizes each weight back to FP16 and runs the same FP16 multiply-accumulate as the BF16 baseline. Yet the throughput table lists INT4 W-only at roughly $2.5$–$3.5\times$ the decode throughput of BF16. Using the roofline picture from the chapter, explain why decode gets faster anyway, and say what happens to the GEMM's arithmetic intensity.
 
 ??? note "Solution"
     Autoregressive decode processes one token at a time, so each weight matrix is multiplied by a single activation vector (a GEMV, batch size 1). The arithmetic intensity — FLOPs per byte moved from HBM — is very low: every weight is loaded from memory and used in essentially one multiply-accumulate. This places decode firmly on the **memory-bandwidth-bound** side of the roofline, where runtime is set by *bytes moved from HBM*, not by the GPU's peak FLOP/s.
 
-    A BF16 weight is 2 bytes; an INT4 per-group weight is $0.5$ bytes (plus negligible group-scale overhead). Because decode time is dominated by streaming the weight matrix out of HBM, cutting the bytes-per-weight by $4\times$ cuts the dominant cost by close to $4\times$. The reason the measured speedup is only $2.5$–$3.5\times$ rather than a clean $4\times$ is overhead that does *not* scale down: the on-the-fly dequantization work, unpacking two nibbles per byte, the group scales that still travel in FP16, and the FP16 multiply-accumulate itself. The compute precision is irrelevant to the win — the win comes entirely from moving fewer bytes across the memory bus, which is exactly what the roofline predicts for a bandwidth-bound regime. (This is also why kernel quality matters so much: `exllamav2`'s fused INT4 kernels sit near the top of that range, while a naive dequantize-then-GEMM path sits near the bottom.)
+    A BF16 weight is 2 bytes; an INT4 per-group weight is $0.5$ bytes (plus negligible group-scale overhead). Because decode time is dominated by streaming the weight matrix out of HBM, cutting the bytes-per-weight by $4\times$ cuts the dominant cost by close to $4\times$. Equivalently, since the FLOP count is unchanged while the bytes moved drop $4\times$, the arithmetic intensity *rises* by about $4\times$ — the point moves right along the bandwidth-bound diagonal of the roofline, which is precisely where the speedup comes from. The reason the measured speedup is only $2.5$–$3.5\times$ rather than a clean $4\times$ is overhead that does *not* scale down: the on-the-fly dequantization work, unpacking two nibbles per byte, the group scales that still travel in FP16, and the FP16 multiply-accumulate itself. The compute precision is irrelevant to the win — the win comes entirely from moving fewer bytes across the memory bus, which is exactly what the roofline predicts for a bandwidth-bound regime. (This is also why kernel quality matters so much: `exllamav2`'s fused INT4 kernels sit near the top of that range, while a naive dequantize-then-GEMM path sits near the bottom.)
 
 **2.** A group of weights is quantized with **symmetric** INT4 (signed, so the positive code limit is $2^{b-1}-1 = 7$) using the chapter's per-group scale rule $s = \max(|\mathbf{w}|) / (2^{b-1}-1)$. Suppose the group's largest-magnitude weight is $\max(|\mathbf{w}|) = 0.84$.
 

@@ -14,7 +14,7 @@ Before we justify what embeddings are, let us feel why the obvious alternative f
 
 This representation has two fatal flaws for a neural network:
 
-1. **Dimensionality.** Modern vocabularies have $V \approx 32{,}000$–$256{,}000$ tokens. A batch of $B = 32$ sequences each of length $T = 2048$ would produce a tensor of shape $[32, 2048, 256000]$, a float32 representation occupying $32 \times 2048 \times 256000 \times 4 \approx 67$ GB. That exceeds the HBM of most GPU clusters, just for the input.
+1. **Dimensionality.** Modern vocabularies have $V \approx 32{,}000$–$256{,}000$ tokens. A batch of $B = 32$ sequences each of length $T = 2048$ would produce a tensor of shape $[32, 2048, 256000]$, a float32 representation occupying $32 \times 2048 \times 256000 \times 4 \approx 67$ GB. That would consume nearly all of the 80 GB of HBM on an A100 or H100 — just for the input, before a single weight or activation.
 
 2. **No geometry.** One-hot vectors are orthogonal by construction: every pair of tokens has Euclidean distance $\sqrt{2}$ and cosine similarity $0$, regardless of semantic relationship. The model would need to learn from scratch that "king" and "queen" are related, with no inductive bias whatsoever.
 
@@ -62,7 +62,7 @@ bytes_bf16 = V * d_model * 2
 print(f"Embedding table (bf16): {bytes_bf16 / 1e6:.1f} MB")  # ~77 MB
 ```
 
-Initialization matters. `nn.Embedding` defaults to $\mathcal{N}(0, 1)$. In practice, you often want a tighter distribution — GPT-2 uses $\mathcal{N}(0, 0.02^2)$, and Llama uses a similarly small standard deviation. If the embedding vectors start large, they dominate the residual stream and can destabilize layer normalization early in training.
+Initialization matters. `nn.Embedding` defaults to $\mathcal{N}(0, 1)$. In practice, you often want a tighter distribution — GPT-2 uses $\mathcal{N}(0, 0.02^2)$, and Llama uses a similarly small standard deviation. If the embedding vectors start large, they dominate the residual stream — each block's update $\Delta_\ell$ is then too small to move the signal — and, under weight tying, they also produce enormous initial logits (the logit is an inner product of two large vectors), giving a loss spike early in training.
 
 ```python
 # Recommended initialization used by GPT-2 / nanoGPT
@@ -196,7 +196,7 @@ Make it concrete for our capstone model, `Stack-100M` ($d = 512$, $V = 32{,}768$
 | Logits upcast to fp32 for the softmax | $[32768, 32768]$ | fp32 | 4.29 GB |
 | Gradient w.r.t. logits | $[32768, 32768]$ | fp32 | 4.29 GB |
 
-That is roughly **10.7 GB** for the loss computation alone — about eight times the model's entire trainable state (101M params in bf16 plus AdamW moments). The fp32 upcast is not optional: computing `log_softmax` over 32k classes in bf16 loses several bits of the loss signal, so every serious implementation upcasts.
+That is roughly **10.7 GB** for the loss computation alone — about ten times the model's entire trainable state (101M params in bf16 is 0.2 GB, plus 0.8 GB of fp32 AdamW moments). The fp32 upcast is not optional: computing `log_softmax` over 32k classes in bf16 loses several bits of the loss signal, so every serious implementation upcasts.
 
 The fix is to never materialize the full `[N, V]` tensor. Split the tokens into chunks, compute the projection *and* the cross-entropy per chunk, and discard each chunk's logits before moving on — recomputing them in the backward pass. This is a plain application of activation checkpointing to the loss head:
 
@@ -299,7 +299,7 @@ Let us trace a concrete example from raw string to the first Transformer block i
 {{fig:embed-text-to-tensors-pipeline}}
 
 
-The entire pipeline is differentiable end-to-end. The only non-differentiable step is the tokenizer itself — it is a deterministic rule-based lookup, not a learned function (though soft approaches like SentencePiece with straight-through gradients have been explored).
+The entire pipeline is differentiable end-to-end. The only non-differentiable step is the tokenizer itself — it is a deterministic rule-based lookup, not a learned function (though differentiable-tokenization approaches — Charformer's gradient-based subword tokenization, MANTa, or dropping segmentation entirely as in the character-level CANINE — have been explored).
 
 The first hop — string to integers — is handled by the `tokenizers` / `transformers` stack, and it is worth seeing the seam explicitly rather than starting from a `randint`:
 
@@ -416,7 +416,7 @@ print(f"Output norm (mean token): {x.norm(dim=-1).mean().item():.3f}")
     $$
     V \times d = 128{,}000 \times 4{,}096 = 524{,}288{,}000 \approx 524\text{ M parameters}
     $$
-    At bfloat16 (2 bytes/param), this is $524 \times 10^6 \times 2 = 1{,}048$ MB $\approx 1.02$ GB.
+    At bfloat16 (2 bytes/param), this is $524 \times 10^6 \times 2 = 1{,}048$ MB $\approx 1.05$ GB.
 
     **Logit projection FLOPs (per token, per forward pass):**
     The unembedding step computes $\mathbf{h} \cdot \mathbf{W}_U^\top$ where $\mathbf{h} \in \mathbb{R}^{4096}$ and $\mathbf{W}_U \in \mathbb{R}^{128000 \times 4096}$.
@@ -467,10 +467,12 @@ This sparsity has practical consequences:
 With weight tying, gradients accumulate from *both* the forward token lookup and the backward logit projection:
 
 $$
-\frac{\partial \mathcal{L}}{\partial \mathbf{W}_E} = \underbrace{\frac{\partial \mathcal{L}}{\partial \mathbf{e}_i}}_{\text{from embed}} + \underbrace{\mathbf{H}^\top \frac{\partial \mathcal{L}}{\partial \text{logits}}}_{\text{from unembed}}
+\frac{\partial \mathcal{L}}{\partial \mathbf{W}_E} = \underbrace{\sum_{t=1}^{T} \mathbf{o}_{x_t} \left(\frac{\partial \mathcal{L}}{\partial \mathbf{e}_t}\right)^{\!\top}}_{\text{sparse, from embed}} + \underbrace{\left(\frac{\partial \mathcal{L}}{\partial \text{logits}}\right)^{\!\top} \mathbf{H}}_{\text{dense, from unembed}}
 $$
 
-The unembed gradient is dense (it involves all $T$ hidden states hitting all $V$ rows), while the embed gradient is sparse. This means frequent tokens are shaped by *both* paths — a large dense unembed term plus a lookup term that fires in nearly every batch — while rare tokens are shaped almost entirely by the dense unembed path, receiving only a small repulsive push away from every hidden state and picking up an input-lookup gradient in the rare batches where they actually occur. That asymmetry is a subtle one the optimizer must handle.
+Both terms have the shape of $\mathbf{W}_E$ itself, $[V, d]$: the first is an outer product that scatters each position's $d$-vector lookup gradient into row $x_t$ (all other rows get nothing), while the second contracts $[V, T] \times [T, d]$ and touches every row.
+
+That density gap is the whole story: frequent tokens are shaped by *both* paths — a large dense unembed term plus a lookup term that fires in nearly every batch — while rare tokens are shaped almost entirely by the dense unembed path, receiving only a small repulsive push away from every hidden state and picking up an input-lookup gradient in the rare batches where they actually occur. That asymmetry is a subtle one the optimizer must handle.
 
 {{fig:embed-vs-unembed-asymmetry}}
 
@@ -635,7 +637,7 @@ This perspective has practical implications:
 ## Key Takeaways
 
 !!! key "Key Takeaways"
-    - The embedding layer is a learned lookup table $\mathbf{W}_E \in \mathbb{R}^{V \times d}$. Mathematically it is $\mathbf{W}_E \mathbf{o}_i$, but implemented as an index select for $O(Td)$ cost rather than an $O(TVd)$ matmul.
+    - The embedding layer is a learned lookup table $\mathbf{W}_E \in \mathbb{R}^{V \times d}$. Mathematically it is $\mathbf{W}_E^\top \mathbf{o}_i$ (row $i$ of the table), but implemented as an index select for $O(Td)$ cost rather than an $O(TVd)$ matmul.
     - The unembedding (logit projection) is a genuine dense matmul $\mathbf{H} \mathbf{W}_U^\top$ of shape $[T, d] \times [d, V]$ and is often one of the most expensive operations at inference time.
     - Weight tying ($\mathbf{W}_U = \mathbf{W}_E$) halves the vocabulary parameter count and typically improves perplexity at small scale. As of 2026 it is standard *below* roughly 4B parameters (Gemma, Llama 3.2 1B/3B, small Qwen, SmolLM) and usually dropped above it (Llama 3 8B/70B, large Qwen).
     - The `[N, V]` logit tensor — not any weight — is usually the largest single tensor in a training step. Fusing the LM head with the cross-entropy and recomputing logits chunk-by-chunk (hand-rolled with `torch.utils.checkpoint`, or via Liger-Kernel / Cut Cross-Entropy) removes it almost entirely.
@@ -780,7 +782,7 @@ This perspective has practical implications:
 ??? note "Solution"
     (a) The projection is $\mathbf{h} \cdot \mathbf{W}_U^\top$ with $\mathbf{h} \in \mathbb{R}^{4096}$ and $\mathbf{W}_U \in \mathbb{R}^{128000 \times 4096}$. That is one multiply-add per weight: $4{,}096 \times 128{,}000 = 524{,}288{,}000 \approx 0.5$ G multiply-adds per token.
 
-    (b) For $T = 2048$: $0.5 \times 2048 \approx 1{,}024$ G multiply-adds, i.e. $\approx 2{,}150$ GFLOP ($2.15$ TFLOP) under the $2mnk$ convention, for the logit projection alone. It is "comparable to multiple attention layers" because a single dense $[T, d] \times [d, V]$ matmul with $V \gg d$ moves as much arithmetic as several of the model's internal $[T, d] \times [d, d]$ projections — the vocabulary dimension $V = 128{,}000$ is ~31x larger than $d = 4{,}096$, so one unembed matmul rivals a stack of $d \times d$ ops.
+    (b) For $T = 2048$: $0.524 \times 2048 \approx 1{,}074$ G multiply-adds, i.e. $\approx 2{,}150$ GFLOP ($2.15$ TFLOP) under the $2mnk$ convention, for the logit projection alone. It is "comparable to multiple attention layers" because a single dense $[T, d] \times [d, V]$ matmul with $V \gg d$ moves as much arithmetic as several of the model's internal $[T, d] \times [d, d]$ projections — the vocabulary dimension $V = 128{,}000$ is ~31x larger than $d = 4{,}096$, so one unembed matmul rivals a stack of $d \times d$ ops.
 
     (c) In bfloat16 the table is $524 \times 10^6 \times 2 = 1{,}048 \times 10^6$ bytes $\approx 1.05$ GB. Reading it at $\approx 2.0$ TB/s takes $1.05\text{ GB} / 2{,}000\text{ GB/s} \approx 0.53$ ms. During decode we compute logits for just one token: the arithmetic is only ~1.05 GFLOP, which at the A100's ~312 TFLOP/s bf16 peak is a few *microseconds* of compute — but we must still stream all 524 M weights from HBM. The bottleneck is therefore moving ~1 GB of parameters, not the multiply-adds — the operation is memory-bandwidth-bound. This is exactly why the chapter notes some inference systems use lower precision or approximate logit computation.
 

@@ -2,16 +2,16 @@
 
 FlashAttention I (covered in [FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)) solved the *memory* problem: by tiling the attention computation and keeping the intermediate softmax statistics in on-chip SRAM, it computes exact attention without ever materializing the $N \times N$ score matrix in high-bandwidth memory (HBM). That single idea — fuse the whole attention into one kernel, never write the scores out — is the foundation everything in this chapter builds on.
 
-But FlashAttention-1 (FA1) left a lot of GPU performance on the table. Measured against the device's peak matmul throughput, the original kernel ran at roughly 25–40% of the GPU's FLOP ceiling on an A100, while a well-tuned dense GEMM hits 80–90%. The gap is not memory traffic — FA1 already minimized that. The gap is *occupancy and instruction mix*: the kernel was leaving compute units idle and burning too many cycles on non-matmul arithmetic. FlashAttention-2 (FA2, Dao 2023) closes most of that gap on Ampere with three changes to *how the work is partitioned*. FlashAttention-3 (FA3, Shah et al. 2024) then exploits hardware features specific to NVIDIA's Hopper architecture — asynchronous tensor-core instructions, the Tensor Memory Accelerator (TMA), and FP8 tensor cores — to push utilization to roughly 75% of bf16 peak and into the petaFLOP range with FP8.
+But FlashAttention-1 (FA1) left a lot of GPU performance on the table. Measured against the device's peak matmul throughput, the original kernel ran at roughly 25–40% of the GPU's FLOP ceiling on an A100, while a well-tuned dense GEMM hits 80–90%. The gap is not bandwidth — FA1's HBM traffic is already IO-optimal, and FA2 does not improve on it asymptotically. The gap is *occupancy and instruction mix*: the kernel was leaving compute units idle and burning too many cycles on non-matmul arithmetic. FlashAttention-2 (FA2, Dao 2023) closes most of that gap on Ampere with three changes to *how the work is partitioned*. FlashAttention-3 (FA3, Shah et al. 2024) then exploits hardware features specific to NVIDIA's Hopper architecture — asynchronous tensor-core instructions, the Tensor Memory Accelerator (TMA), and FP8 tensor cores — to push utilization to roughly 75% of bf16 peak and into the petaFLOP range with FP8.
 
 This chapter is about the *systems engineering* of attention kernels. We assume you already understand the online-softmax recurrence; here we focus on **work partitioning** (which thread does what), **warp specialization** (producer/consumer pipelines), and **low-precision attention** (FP8 with incoherent processing). To follow the hardware reasoning, keep [GPU Architecture & The Memory Hierarchy](../01-foundations/08-gpu-architecture.html) and [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html) nearby — we lean heavily on the concepts of warps, warp-groups, shared memory, register pressure, and arithmetic intensity.
 
 ## What FlashAttention-1 left on the table
 
-Let us restate the FA1 inner loop precisely, because the FA2 improvements are best understood as edits to it. We tile the query into blocks of $B_r$ rows and the keys/values into blocks of $B_c$ columns. For a fixed query block $Q_i$ we loop over all key blocks $K_j, V_j$, maintaining a running max $m$, running denominator $\ell$, and a running output accumulator $O$:
+Let us restate the FA1 update precisely, because the FA2 improvements are best understood as edits to it. We tile the query into blocks of $B_r$ rows and the keys/values into blocks of $B_c$ columns. One caveat on ordering before the algebra: FA1's Algorithm 1 loops **key/value blocks outer, query blocks inner**, so each query block's $O_i, \ell_i, m_i$ are re-read from and re-written to HBM once per key block — FA2 swaps the loops to the query-outer form used in every code fence in this book (Edit 2 below). Written from the point of view of one query block $Q_i$ accumulating over the key blocks $K_j, V_j$ — maintaining a running max $m$, running denominator $\ell$, and a running output accumulator $O$ — FA1's recurrence is:
 
 $$
-S_{ij} = Q_i K_j^\top, \quad m^{\text{new}} = \max(m, \operatorname{rowmax}(S_{ij})), \quad P_{ij} = \exp(S_{ij} - m^{\text{new}})
+S_{ij} = Q_i K_j^\top/\sqrt{d}, \quad m^{\text{new}} = \max(m, \operatorname{rowmax}(S_{ij})), \quad P_{ij} = \exp(S_{ij} - m^{\text{new}})
 $$
 
 $$
@@ -109,7 +109,7 @@ The single line `Oi = alpha.unsqueeze(1) * Oi + Pij @ vj` plus the final `Oi / l
 
 ### Edit 2 — parallelize over the sequence dimension
 
-FA2's second change is at the *grid* level, not inside the kernel. FA1's grid was only `(num_heads, batch_size)`, so the loop over query blocks ran *sequentially inside* each thread block and the sequence dimension contributed no parallelism at all. FA2 promotes that loop to a grid dimension — the **outer loop over query blocks becomes the parallel axis** — so long sequences by themselves generate enough thread blocks to saturate every SM even when batch and heads are small.
+FA2's second change is at the *grid* level, not inside the kernel. FA1's grid was only `(num_heads, batch_size)`, so both loops ran *sequentially inside* each thread block and the sequence dimension contributed no parallelism at all. FA2 first **swaps the loop nest** to the query-outer order used in the reference code above (a reordering first implemented in Phil Tillet's Triton kernel): with query blocks outside, a query block's $O_i, \ell_i, m_i$ stay resident in registers/SRAM for the whole inner loop and reach HBM exactly once, instead of round-tripping once per key block as in FA1. It then promotes that now-outer loop to a grid dimension — the **loop over query blocks becomes the parallel axis** — so long sequences by themselves generate enough thread blocks to saturate every SM even when batch and heads are small.
 
 Concretely, the FA2 launch grid is three-dimensional:
 
@@ -182,7 +182,7 @@ print(out.shape)  # (2, 16, 8192, 128)
     5 N^2 = 5 \cdot (8192)^2 \approx 3.4 \times 10^8\ \text{non-matmul FLOPs}.
     $$
 
-    So non-matmul work is only ~1% of the FLOP *count*. But on an A100, suppose tensor cores run at 312 TFLOP/s and the special-function unit handling $\exp$ runs at ~20 TFLOP/s. The matmul takes $3.4\times10^{10} / 3.12\times10^{14} \approx 109\ \mu s$; the non-matmul takes $3.4\times10^{8} / 2.0\times10^{13} \approx 17\ \mu s$. That "1% of FLOPs" is suddenly **~14% of the runtime** if it is on the critical path. This is exactly why FA2 fights to minimize and overlap the softmax work, and why FA3's overlapping of matmul and softmax (below) matters so much.
+    So non-matmul work is only ~1% of the FLOP *count*. But on an A100, suppose tensor cores run at 312 TFLOP/s while *non-matmul* FP32 work runs at ~20 TFLOP/s (19.5 TFLOP/s is the figure the FA2 paper quotes; the transcendental units that actually execute $\exp$ are several times slower still, so 20 TFLOP/s is a generous bound on the softmax time). The matmul takes $3.4\times10^{10} / 3.12\times10^{14} \approx 109\ \mu s$; the non-matmul takes $3.4\times10^{8} / 2.0\times10^{13} \approx 17\ \mu s$. That "1% of FLOPs" is suddenly **~14% of the runtime** if it is on the critical path. This is exactly why FA2 fights to minimize and overlap the softmax work, and why FA3's overlapping of matmul and softmax (below) matters so much.
 
 {{fig:fa2-flops-not-fungible}}
 
@@ -314,6 +314,7 @@ out_packed = flash_attn_varlen_func(
 In Hugging Face `transformers` you normally select the backend at load time rather than calling either API yourself, and `DataCollatorWithFlattening` produces the flattened batches that route a model to the varlen path:
 
 ```python
+import torch
 from transformers import AutoModelForCausalLM
 
 model = AutoModelForCausalLM.from_pretrained(
@@ -555,7 +556,7 @@ It is worth stepping back to place these kernels against each other and against 
 | FlashAttention-2 | Ampere (A100) | deferred rescale, seqlen parallel, split-Q warps | fp16/bf16 | ~50–73% |
 | FlashAttention-3 | Hopper (H100) | warp-specialized producer/consumer (TMA), wgmma overlap | bf16 / FP8 | ~75% (bf16); higher FP8 |
 | FlashAttention-4 | Blackwell (B200) | fully async MMA pipelines, softmax co-designed with the kernel | bf16 / FP8 | ~71% reported (see the SoTA box) |
-| xFormers mem-efficient | Ampere+ | tiled attention (similar idea) | fp16/bf16 | comparable to FA1/FA2 |
+| xFormers mem-efficient | Volta/Turing/Ampere+ (sm70+) | tiled attention (similar idea) | fp16/bf16/fp32 | comparable to FA1/FA2 |
 | cuDNN fused attention | Ampere/Hopper | vendor kernels, Hopper-aware | bf16/FP8 | competitive on Hopper |
 | FlashDecoding | inference decode | split-KV parallelism for tiny query | fp16/bf16 | optimizes decode latency |
 
@@ -588,7 +589,7 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
 !!! interview "Interview Corner"
     **Q:** FlashAttention-1 already minimized HBM traffic. So why is FlashAttention-2 roughly 2× faster on the *same* GPU, and why does it take a *third* kernel (FA3) to get most of the remaining speedup on H100?
 
-    **A:** FA1 was memory-optimal but compute-*under*-utilized — it ran at ~25–40% of tensor-core peak. FA2 raises utilization without touching memory traffic via three work-partitioning changes: (1) it defers the softmax normalization so the inner loop spends fewer cycles on slow non-matmul (transcendental) ops, (2) it parallelizes the forward over query blocks along the sequence dimension so the grid has enough thread blocks to fill all SMs even at small batch/heads, and (3) it switches warp partitioning from split-K to split-Q, so warps own disjoint query rows and need no inter-warp reduction through shared memory each iteration. Those are *occupancy and instruction-mix* wins, not bandwidth wins.
+    **A:** FA1 was memory-optimal but compute-*under*-utilized — it ran at ~25–40% of tensor-core peak. FA2 raises utilization without improving on FA1's already-optimal IO complexity, via three work-partitioning changes: (1) it defers the softmax normalization so the inner loop spends fewer cycles on slow non-matmul (transcendental) ops, (2) it swaps the loop nest to query-outer and parallelizes the forward over query blocks along the sequence dimension, so the grid has enough thread blocks to fill all SMs even at small batch/heads (and each query block's running state reaches HBM once rather than once per key block), and (3) it switches warp partitioning from split-K to split-Q, so warps own disjoint query rows and need no inter-warp reduction through shared memory each iteration. Those are *occupancy and instruction-mix* wins, not bandwidth wins.
 
     FA2 still assumes Ampere's *synchronous* tensor-core instruction (`mma`): issue and wait. Hopper adds asynchronous `wgmma`, the TMA copy engine, and FP8 tensor cores — none of which FA2's structure can exploit. FA3 is a rewrite that (a) splits warps into TMA *producers* and compute *consumers* (a software pipeline so data movement overlaps compute), (b) overlaps the two matmuls with the softmax via ping-pong scheduling across warpgroups and intra-warpgroup pipelining, hiding the slow $\exp$ behind tensor-core work, and (c) runs the matmuls in FP8 — using incoherent processing (a Hadamard rotation that leaves $QK^\top$ invariant but spreads outliers) to keep accuracy. So: FA2 fixes Ampere occupancy; FA3 unlocks Hopper-specific async hardware and low precision.
 
@@ -643,7 +644,7 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
 **1.** FlashAttention-1 already minimized HBM traffic to the theoretical minimum for exact attention. Yet FA2 is roughly $2\times$ faster on the *same* A100. Explain in one or two sentences why the two facts are not contradictory, and name the bottleneck FA2 actually attacks.
 
 ??? note "Solution"
-    They are not contradictory because FA1's bottleneck was never memory bandwidth — it was **compute utilization**. FA1 ran at only ~25-40% of the A100's tensor-core FLOP peak while a well-tuned dense GEMM hits 80-90%. The idle time came from **occupancy and instruction mix**: SMs sitting empty (too few thread blocks) and cycles spent on slow non-matmul work (rescales, `exp`, inter-warp reductions through shared memory) rather than on the tensor cores. FA2's three edits — deferred normalization, sequence-length parallelism, and split-Q warp partitioning — raise utilization without changing the HBM traffic at all. Minimizing memory traffic and maximizing compute utilization are two orthogonal axes; FA1 nailed the first and left the second on the table.
+    They are not contradictory because FA1's bottleneck was never memory bandwidth — it was **compute utilization**. FA1 ran at only ~25-40% of the A100's tensor-core FLOP peak while a well-tuned dense GEMM hits 80-90%. The idle time came from **occupancy and instruction mix**: SMs sitting empty (too few thread blocks) and cycles spent on slow non-matmul work (rescales, `exp`, inter-warp reductions through shared memory) rather than on the tensor cores. FA2's three edits — deferred normalization, sequence-length parallelism (with the loop swap that comes with it), and split-Q warp partitioning — raise utilization without improving on FA1's already-optimal HBM *complexity*; the loop swap does trim a constant factor of $O_i, \ell_i, m_i$ round-trips, but that is not where the $2\times$ comes from. Minimizing memory traffic and maximizing compute utilization are two orthogonal axes; FA1 nailed the first and left the second on the table.
 
 **2.** In the FA2 reference recurrence, the per-iteration correction factor $\alpha = e^{m - m^{\text{new}}}$ is applied to *both* the running denominator $\ell$ and the unnormalized accumulator $\tilde{O}$, but the division by $\ell$ is deferred to the end. Suppose a well-meaning "optimizer" also tries to defer the $\alpha$ multiplication on $\tilde{O}$ (i.e., drops the `alpha.unsqueeze(1) * Oi` term and just does `Oi = Oi + Pij @ vj`). Does the kernel still compute exact attention? Explain precisely what breaks.
 
@@ -655,7 +656,7 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
 
     Concretely: after processing block 1 with max $m_1$, $\tilde{O} = \sum P^{(1)} V_1$ where $P^{(1)} = e^{S_1 - m_1}$. If block 2 raises the max to $m_2 > m_1$, the correct running accumulator is $e^{m_1 - m_2}\sum P^{(1)} V_1 + \sum e^{S_2 - m_2} V_2$. Without $\alpha$ you would compute $\sum e^{S_1 - m_1} V_1 + \sum e^{S_2 - m_2} V_2$, whose two halves are normalized against different maxima — not any valid softmax. The denominator $\ell$ would also then be inconsistent with the numerator. So $\alpha$ on $\tilde{O}$ is load-bearing; only the $\ell$ division is deferrable.
 
-**3.** *(Quantitative.)* Reproduce and extend the chapter's "FLOPs are not fungible" calculation for a smaller head. Take one attention head, full (non-causal) attention, sequence length $N = 4096$, head dimension $d = 64$. Assume the two matmuls cost $4N^2 d$ FLOPs total, the non-matmul softmax work is $\approx 5N^2$ FLOPs, tensor cores run at $312$ TFLOP/s, and the special-function unit doing `exp`/max runs at $20$ TFLOP/s. Compute (a) the matmul time, (b) the non-matmul time, and (c) the non-matmul share of total runtime *assuming no overlap*. Then (d) state what the number becomes if FA3's ping-pong scheduling perfectly overlaps the softmax with matmul.
+**3.** *(Quantitative.)* Reproduce and extend the chapter's "FLOPs are not fungible" calculation for a smaller head. Take one attention head, full (non-causal) attention, sequence length $N = 4096$, head dimension $d = 64$. Assume the two matmuls cost $4N^2 d$ FLOPs total, the non-matmul softmax work is $\approx 5N^2$ FLOPs, tensor cores run at $312$ TFLOP/s, and the non-matmul FP32 path doing `exp`/max runs at $20$ TFLOP/s. Compute (a) the matmul time, (b) the non-matmul time, and (c) the non-matmul share of total runtime *assuming no overlap*. Then (d) state what the number becomes if FA3's ping-pong scheduling perfectly overlaps the softmax with matmul.
 
 ??? note "Solution"
     (a) Matmul FLOPs and time:
@@ -675,10 +676,10 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
     $$
 
     $$
-    t_{\text{sfu}} = \frac{8.389 \times 10^{7}}{2.0 \times 10^{13}\ \text{FLOP/s}} \approx 4.19 \times 10^{-6}\ \text{s} \approx 4.2\ \mu s.
+    t_{\text{nm}} = \frac{8.389 \times 10^{7}}{2.0 \times 10^{13}\ \text{FLOP/s}} \approx 4.19 \times 10^{-6}\ \text{s} \approx 4.2\ \mu s.
     $$
 
-    (c) With no overlap the total is $t_{\text{mm}} + t_{\text{sfu}} \approx 13.8 + 4.2 = 18.0\ \mu s$, so the non-matmul share is
+    (c) With no overlap the total is $t_{\text{mm}} + t_{\text{nm}} \approx 13.8 + 4.2 = 18.0\ \mu s$, so the non-matmul share is
 
     $$
     \frac{4.2}{18.0} \approx 0.23 = 23\%.
@@ -686,7 +687,7 @@ The library-mapping point that matters most: PyTorch SDPA's `EFFICIENT_ATTENTION
 
     Note the softmax is still only ~1.9% of the FLOP *count* ($8.39\times10^7$ of $4.38\times10^9$), yet ~23% of the *time* — and the share is *larger* than the chapter's $d=128$, $N=8192$ example (~14%) because softmax work scales as $N^2$ while matmul work scales as $N^2 d$, so shrinking $d$ makes the non-matmul fraction of time grow.
 
-    (d) If ping-pong scheduling perfectly overlaps the softmax behind matmul work, the runtime becomes $\max(t_{\text{mm}}, t_{\text{sfu}}) = 13.8\ \mu s$ (the tensor cores are the long pole and the SFU work hides completely underneath them). The softmax's contribution to wall-clock time drops from 23% to effectively 0%, which is exactly the win FA3 chases. (In practice overlap is imperfect, but this is the ceiling.)
+    (d) If ping-pong scheduling perfectly overlaps the softmax behind matmul work, the runtime becomes $\max(t_{\text{mm}}, t_{\text{nm}}) = 13.8\ \mu s$ (the tensor cores are the long pole and the non-matmul work hides completely underneath them). The softmax's contribution to wall-clock time drops from 23% to effectively 0%, which is exactly the win FA3 chases. (In practice overlap is imperfect, but this is the ceiling.)
 
 **4.** In FA2's split-Q warp layout each warp owns a slice of the $B_r$ query rows and needs no inter-warp reduction, whereas FA1's split-K layout forced a shared-memory reduction plus a `__syncthreads()` every inner iteration. (a) Why does split-Q eliminate the reduction — what property of the query-row partition makes the warps independent? (b) What does split-Q now *require* of the $K_j, V_j$ tiles, and why is shared memory well suited to satisfying it? (c) The chapter says the backward pass instead parallelizes over *key* blocks. Give the one-sentence reason the forward and backward pick opposite axes.
 

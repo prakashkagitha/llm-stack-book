@@ -222,14 +222,15 @@ Character-level BPE has a quiet problem: what is your base alphabet? If you init
 
 {{fig:byte-level-no-oov}}
 
-There is one wrinkle. We want to run BPE over a *string-like* representation (the algorithm above manipulates symbols as text), but raw bytes include control characters and whitespace that break tooling. GPT-2's trick is a reversible **bytes-to-unicode** map: assign each of the 256 byte values a distinct, *printable* Unicode character. Printable ASCII bytes map to themselves; the rest (control chars, space, etc.) map to code points starting at U+0100. This is where the famous `Ġ` comes from — byte `0x20` (space) maps to `Ġ` (U+0120), so in GPT-2 output a leading space looks like `Ġthe`.
+There is one wrinkle. We want to run BPE over a *string-like* representation (the algorithm above manipulates symbols as text), but raw bytes include control characters and whitespace that break tooling. GPT-2's trick is a reversible **bytes-to-unicode** map: assign each of the 256 byte values a distinct, *printable* Unicode character. The 188 bytes whose Latin-1 rendering is already printable — 94 ASCII (`0x21`–`0x7E`) plus 94 high bytes (`0xA1`–`0xAC`, `0xAE`–`0xFF`) — map to themselves; the remaining 68 (control chars, space, DEL, `0x80`–`0xA0`, and the soft hyphen `0xAD`) are assigned fresh code points U+0100–U+0143. This is where the famous `Ġ` comes from — byte `0x20` (space) maps to `Ġ` (U+0120), so in GPT-2 output a leading space looks like `Ġthe`.
 
 ```python
 def bytes_to_unicode():
     """Reversible map from the 256 byte values to printable Unicode chars.
 
-    This is GPT-2's exact scheme. ASCII-printable bytes map to themselves;
-    the remaining bytes (control chars, space, DEL, high bytes) get assigned
+    This is GPT-2's exact scheme. The 188 bytes that already render as a
+    printable Latin-1 character map to themselves; the remaining 68 (control
+    chars, space, DEL, 0x80-0xA0, 0xAD) get assigned
     unused code points starting at 256, so EVERY byte becomes a printable char
     that BPE can safely treat as an atomic symbol.
     """
@@ -255,7 +256,7 @@ assert len(set(b2u.values())) == 256   # all 256 bytes -> 256 distinct printable
 # UTF-8) becomes two symbols, which BPE may or may not merge.
 text = "héllo"
 mapped = "".join(b2u[byte] for byte in text.encode("utf-8"))
-print(mapped)   # 'héllo' rendered via the byte map; 'é' -> two glyphs
+print(mapped)   # 'hÃ©llo' — 'é' is 2 UTF-8 bytes, so it becomes 2 glyphs
 ```
 
 The payoff: a byte-level BPE tokenizer can encode *and decode* literally any byte sequence losslessly, including bytes that are not valid UTF-8 (corrupted data, binary blobs). Decoding maps the printable chars back to bytes, then UTF-8-decodes. This robustness is why GPT-2, GPT-3, GPT-4, and Llama-3 use **byte-level** BPE. Be precise about the lineage, though: Llama-1/2 and early Mistral (v0.x) do *not* use GPT-2-style byte-level BPE — they use **SentencePiece BPE** with byte-fallback, a 32k vocabulary, and a `▁` space marker (a related but distinct scheme, covered later). Llama-3 switched to a tiktoken-style byte-level BPE with a 128k vocabulary. So "byte-level BPE" specifically means the GPT-2/tiktoken family here, not every model in the BPE family.
@@ -289,7 +290,7 @@ One line per alternation, left to right:
 - ` ?\p{N}+` — optional leading space plus a run of digits.
 - ` ?[^\s\p{L}\p{N}]+` — optional leading space plus a run of punctuation/symbols.
 - `\s+(?!\S)` — trailing whitespace *not* followed by a non-space character, so a space that precedes a word attaches to that word rather than to the previous chunk.
-- `\s+` — any remaining whitespace run (e.g. a whitespace-only string, or trailing whitespace at end of text).
+- `\s+` — a whitespace run that *is* followed by a non-space and that no earlier alternation could absorb as a leading space: in practice a newline or tab sitting directly before a word (`"a\nb"` → `'a'`, `'\n'`, `'b'`, where `'\n'` is the only chunk this alternation produces). Whitespace-only strings and trailing whitespace at end of text are already consumed by `\s+(?!\S)`, since its lookahead is satisfied at end of string.
 
 `cl100k_base` (GPT-3.5/GPT-4) keeps the same skeleton but tightens several alternations: the contraction group becomes case-insensitive (`(?i:'s|'t|...)`), the letter run may be preceded by a single non-letter/non-digit character rather than only a space, newline runs get their own alternatives, and — the change with the largest downstream effect — ` ?\p{N}+` becomes `\p{N}{1,3}`, digits in groups of at most three. The pre-tokenizer alone, before any BPE merge runs, is what forces GPT-4's 1–3-digit number grouping. (Always read the live pattern from `tiktoken.get_encoding(name)._pat_str` rather than trusting a transcription, including this one.)
 

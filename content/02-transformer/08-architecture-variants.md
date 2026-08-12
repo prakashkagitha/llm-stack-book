@@ -81,14 +81,15 @@ def apply_mlm_mask(input_ids: torch.Tensor,
                                (-100 is ignored by F.cross_entropy)
     """
     B, T = input_ids.shape
+    dev = input_ids.device       # build every helper tensor on the input's device
     # Draw a Bernoulli mask: which positions are selected (15%)
-    selected = torch.rand(B, T) < mask_prob          # (B, T) bool
+    selected = torch.rand(B, T, device=dev) < mask_prob   # (B, T) bool
 
     # Of the selected positions:
     #   80% → [MASK]
     #   10% → random token
     #   10% → unchanged (but still included in loss)
-    rand_roll = torch.rand(B, T)
+    rand_roll = torch.rand(B, T, device=dev)
     replace_with_mask   = selected & (rand_roll < 0.80)
     replace_with_random = selected & (rand_roll >= 0.80) & (rand_roll < 0.90)
     # The rest (0.90–1.0) remain as original — no action needed
@@ -96,7 +97,8 @@ def apply_mlm_mask(input_ids: torch.Tensor,
     masked_input = input_ids.clone()
     masked_input[replace_with_mask]   = mask_token_id
     masked_input[replace_with_random] = torch.randint(
-        0, vocab_size, (replace_with_random.sum().item(),)
+        0, vocab_size, (replace_with_random.sum().item(),),
+        device=dev, dtype=input_ids.dtype,
     )
 
     # Labels: original token at selected positions, -100 elsewhere
@@ -218,7 +220,7 @@ BART (Lewis et al., *BART: Denoising Sequence-to-Sequence Pre-training for Natur
 
 ### Memory Footprint of Encoder-Decoder
 
-A significant practical consideration: encoder-decoder models carry *two* full transformer stacks. T5-large has around 770M parameters split roughly evenly. During generation, the decoder must re-run cross-attention at every step and either recompute or cache the encoder hidden states. If the cross-attention K/V are cached, the memory cost scales as $B \times T_\text{enc} \times d_\text{attn} \times 2 \times N_\text{dec} \times b$ bytes, where $d_\text{attn} = n_\text{heads} \times d_k$ is the attention *inner* dimension, the factor 2 counts K and V, and $b$ is the bytes per element (2 in fp16, 4 in fp32). For a model with $d_\text{attn} = 1024$, 24 decoder layers, and a 1 024-token source:
+A significant practical consideration: encoder-decoder models carry *two* full transformer stacks. T5-large has around 770M parameters, and the split is not even: with 24 layers on each side, every decoder layer carries an extra cross-attention block ($4d_\text{model}^2$ more weights), so the decoder stack is about a third larger than the encoder stack (roughly 400M vs. 300M). During generation, the decoder must re-run cross-attention at every step and either recompute or cache the encoder hidden states. If the cross-attention K/V are cached, the memory cost scales as $B \times T_\text{enc} \times d_\text{attn} \times 2 \times N_\text{dec} \times b$ bytes, where $d_\text{attn} = n_\text{heads} \times d_k$ is the attention *inner* dimension, the factor 2 counts K and V, and $b$ is the bytes per element (2 in fp16, 4 in fp32). For a model with $d_\text{attn} = 1024$, 24 decoder layers, and a 1 024-token source:
 
 $$
 \text{cross-attention KV cache} \approx 1024 \times 1024 \times 2 \times 24 \times 2\text{ bytes (fp16)} \approx 96\text{ MB per batch element}
@@ -420,7 +422,7 @@ if __name__ == "__main__":
 
 ### What Is a Prefix-LM?
 
-A **prefix language model** (prefix-LM) is a decoder-only model with a modified attention mask: the tokens belonging to the *input prompt* (the "prefix") attend to each other **bidirectionally**, while the tokens being *generated* attend causally. The mask is the block-diagonal hybrid we showed earlier.
+A **prefix language model** (prefix-LM) is a decoder-only model with a modified attention mask: the tokens belonging to the *input prompt* (the "prefix") attend to each other **bidirectionally**, while the tokens being *generated* attend causally. The mask is the causal-plus-dense-prefix-block hybrid we showed earlier — note it is *not* block-diagonal: generation tokens still attend to the whole prefix.
 
 The canonical reference is **UniLM** (Dong et al., *Unified Language Model Pre-training for Natural Language Understanding and Generation*, 2019), which pre-trains a *single* shared transformer under three different masks — bidirectional, causal, and sequence-to-sequence (prefix) — by simply switching the mask per batch. Raffel et al.'s T5 paper studies "prefix LM" explicitly as an architectural baseline against the encoder-decoder and the causal decoder, and **UL2** (Tay et al., *UL2: Unifying Language Learning Paradigms*, 2022) folds it into its mixture-of-denoisers as the "S-denoiser" (sequential denoising). The pattern keeps resurfacing because it is the cheapest way to get *encoder-decoder-like bidirectional prompt encoding without paying for a second tower*: the same weights, one KV cache, one stack.
 
@@ -706,7 +708,7 @@ The same `mask_mod` trick answers the mask you will *actually* ship when pretrai
 !!! interview "Interview Corner"
     **Q:** What is the fundamental difference between BERT and GPT architectures, and when would you choose one over the other in a production system?
 
-    **A:** The core difference is the attention mask. BERT uses a **fully bidirectional** mask — every token attends to every other token — making it optimal for *understanding* tasks where you have the complete input available. GPT uses a **causal (lower-triangular)** mask so that token $t$ only attends to tokens $0, \ldots, t-1$, enabling **autoregressive generation**: you can extend the sequence one token at a time.
+    **A:** The core difference is the attention mask. BERT uses a **fully bidirectional** mask — every token attends to every other token — making it optimal for *understanding* tasks where you have the complete input available. GPT uses a **causal (lower-triangular)** mask so that position $t$ attends only to positions $0, \ldots, t$ (itself and everything to its left) and never to the future — which is what makes the prediction read off position $t$ a prediction of token $t+1$, enabling **autoregressive generation**: you can extend the sequence one token at a time.
 
     Choose BERT-style when you need high-quality representations of fixed-length inputs: text classification, named entity recognition, extractive QA, semantic search embeddings. These tasks benefit from the richer per-token context from both directions. Choose GPT-style when you need to **generate** text — summarization, dialogue, code completion, instruction following — or when you want a single unified model that can handle both understanding and generation via prompting. For production deployment, decoder-only models also have a simpler KV-cache story: one cache, one stack, no cross-attention overhead.
 
