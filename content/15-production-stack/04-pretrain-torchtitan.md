@@ -110,7 +110,7 @@ tokenizer_path = "./tokenizer/stack100m-32768"   # the Ch. 15.3 / 14.3 tokenizer
 seq_len         = 2048                        # cfg.model.max_seq_len
 local_batch_size = 32                         # cfg.micro_batch_size (per-rank micro-batch)
 # global batch = local_batch_size * dp_degree * grad_accum; see the batch-size note below
-steps           = 32147                       # cfg.stop_at_step  (stable-phase end; 16.9B tokens)
+steps           = 34332                       # cfg.stop_at_step  (stable-phase end; 18.0B tokens)
 max_norm        = 1.0                         # cfg.grad_clip  (global grad-norm clip)
 seed            = 1337                         # cfg.seed
 compile         = true                        # cfg.compile_model  (torch.compile the model)
@@ -125,10 +125,10 @@ beta1 = 0.9                                    # cfg.betas[0]
 beta2 = 0.95                                   # cfg.betas[1]
 
 [lr_scheduler]
-warmup_steps = 500                            # cfg.warmup_steps
+warmup_steps = 2000                           # cfg.warmup_steps
 decay_ratio  = 0.0                             # NO decay leg in this run — see the note below.
-# decay_ratio is a FRACTION OF `steps`, not of some longer schedule: leaving it at 0.157 here
-# would decay the LR to zero over the LAST ~5,047 of these 32,147 steps. Ch. 14.8 owns the decay.
+# decay_ratio is a FRACTION OF `steps`, not of some longer schedule: leaving it at 0.10 here
+# would decay the LR to zero over the LAST ~3,433 of these 34,332 steps. Ch. 14.8 owns the decay.
 decay_type   = "sqrt"                          # WSD's short sqrt decay leg (MiniCPM-style)
 min_lr_factor = 0.0                            # decays to 0 (cfg.final_frac)
 
@@ -285,19 +285,19 @@ fully_shard(model, mesh=dp_mesh)              # embeddings, final norm, lm_head
 Ch. 14.6's WSD schedule — linear warmup, a long constant "stable" plateau, then a short sqrt/linear
 decay leg — is what torchtitan's scheduler expresses through `warmup_steps` plus `decay_ratio`. The
 `decay_ratio` is the *fraction of total steps spent in the decay leg*; the stable phase is
-everything between warmup and the start of decay. So with `steps = 38147`, `warmup_steps = 500`, and
-`decay_ratio = 0.157` you get 500 warmup / ~31,647 stable / ~6,000 decay — Ch. 14.6's frozen split.
+everything between warmup and the start of decay. So with `steps = 38147`, `warmup_steps = 2000`, and
+`decay_ratio = 0.10` you get 2,000 warmup / ~32,332 stable / ~3,815 decay — Ch. 14.6's frozen split.
 
 But recall the deliberate design decision from Ch. 14.7: **this chapter stops at the end of the
-stable phase** (`stop_at_step = 32147`) and hands a *pre-decay* checkpoint to
+stable phase** (`stop_at_step = 34332`) and hands a *pre-decay* checkpoint to
 [mid-training](../14-capstone/08-mid-training.html), which spends the decay leg annealing on premium
-data. You reproduce that in torchtitan two ways. Either set `steps = 32147` **and**
+data. You reproduce that in torchtitan two ways. Either set `steps = 34332` **and**
 `decay_ratio = 0.0`, so the whole run is warmup + stable and the LR never leaves its plateau (the
 config above does this — it is exactly Ch. 14.7's `mult == 1.0` for every stable step); or keep
-`steps = 38147` with `decay_ratio = 0.157` and let the decay leg run as an integrated mid-training
-anneal. What you must *not* do is the tempting middle — `steps = 32147` with `decay_ratio = 0.157`
-still decays, because the ratio is taken against `steps` itself, giving 500 warmup / ~26,600 stable
-/ ~5,047 decay and handing mid-training an already-annealed checkpoint, exactly the costly
+`steps = 38147` with `decay_ratio = 0.10` and let the decay leg run as an integrated mid-training
+anneal. What you must *not* do is the tempting middle — `steps = 34332` with `decay_ratio = 0.10`
+still decays, because the ratio is taken against `steps` itself, giving 2,000 warmup / ~28,899 stable
+/ ~3,433 decay and handing mid-training an already-annealed checkpoint, exactly the costly
 re-warming case the split exists to avoid. The general theory of why a stable-then-decay shape beats
 cosine here, and why re-warming a decayed checkpoint is costly, is in
 [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
@@ -426,7 +426,7 @@ position — is the same, implemented for the distributed case.
 # Resume is implicit: torchtitan finds the latest step in [checkpoint].folder and continues.
 # To convert a sharded DCP checkpoint to a single consolidated file for export/serving:
 python -m torch.distributed.checkpoint.format_utils dcp_to_torch \
-       ./outputs/stack-100m/checkpoints/step-32147 ./stack-100m-consolidated.pt
+       ./outputs/stack-100m/checkpoints/step-34332 ./stack-100m-consolidated.pt
 ```
 
 ### MFU logging: our `utilization()`, computed every step
@@ -491,8 +491,8 @@ Let us put concrete magnitudes on a torchtitan Stack-100M run so the config abov
     $\approx 3.19\text{e}14 + 9.89\text{e}13 \approx 4.2\text{e}14$ FLOP. At an H100 bf16 peak of
     ~989 TFLOP/s each (8 GPUs ⇒ ~7.9 PFLOP/s peak) and, say, an achieved MFU of 0.45, sustained
     throughput is $\approx 0.45 \times 7.9\text{e}15 = 3.6\text{e}15$ FLOP/s, so a step takes
-    $\approx 4.2\text{e}14 / 3.6\text{e}15 \approx 0.12$ s and the 16.9B-token stable phase
-    ($\approx 32{,}147$ steps) finishes in **on the order of an hour of wall clock**, i.e. 8 GPUs ×
+    $\approx 4.2\text{e}14 / 3.6\text{e}15 \approx 0.12$ s and the 18.0B-token stable phase
+    ($\approx 34{,}332$ steps) finishes in **on the order of an hour of wall clock**, i.e. 8 GPUs ×
     ~1 hr ≈ **8 GPU-hr** plus communication overhead. Read that against the single A100's ~22–29
     GPU-hours carefully, because two different effects are stacked in it. FSDP2 buys the ~8×
     *wall-clock* compression at (approximately) constant GPU-hours — data parallelism never reduces
@@ -534,7 +534,7 @@ tokens:
   micro_batch_size: 8                # per-rank micro-batch (cfg.micro_batch_size analogue)
   batch_accumulation_per_replica: 4  # nanotron DOES expose grad accum natively
   # global batch = dp x micro_batch_size x accumulation x seq_len = 8 x 8 x 4 x 2048 = 524,288 tokens
-  train_steps: 32147                 # stable-phase end (Ch. 14.7 stop_at_step)
+  train_steps: 34332                 # stable-phase end (Ch. 14.7 stop_at_step)
 
 optimizer:
   optimizer_factory:
@@ -545,11 +545,11 @@ optimizer:
   clip_grad: 1.0                     # cfg.grad_clip
   learning_rate_scheduler:
     learning_rate: 3.0e-3            # peak LR
-    lr_warmup_steps: 500             # cfg.warmup_steps
+    lr_warmup_steps: 2000            # cfg.warmup_steps
     lr_decay_style: "1-sqrt"         # WSD-style stable-then-inverse-sqrt decay
-    lr_decay_steps: 6000             # LENGTH of the decay leg (Ch. 14.6's 6000) — not its position
-    lr_decay_starting_step: 32147    # WHERE it starts. Omit this and decay begins right after
-                                     # warmup, flattening the LR to 0 by step ~6,500. Setting it to
+    lr_decay_steps: 3815             # LENGTH of the decay leg (Ch. 14.6's 3,815) — not its position
+    lr_decay_starting_step: 34332    # WHERE it starts. Omit this and decay begins right after
+                                     # warmup, flattening the LR to 0 by step ~5,800. Setting it to
                                      # train_steps keeps this run entirely on the stable plateau;
                                      # Ch. 14.8's anneal owns the leg itself.
     min_decay_lr: 0.0
@@ -584,8 +584,8 @@ so with `dp: 8` and `micro_batch_size: 8` the accumulation that lands on 524,288
 SmolLM recipe used exactly this shape), and `lr_decay_steps` being *absolute* mirrors Ch. 14.7's
 deliberate choice to pass `decay_steps` rather than a fraction — but it is an absolute *length*, not
 an absolute *position*. The position is `lr_decay_starting_step`, which defaults to the end of warmup:
-leave it out and your "long stable plateau" becomes a 6,000-step decay to zero starting at step 500,
-followed by 25,000 steps at LR 0. This is the exact same trap as torchtitan's `decay_ratio`, wearing
+leave it out and your "long stable plateau" becomes a 3,815-step decay to zero starting at step 2,000,
+followed by ~28,500 steps at LR 0. This is the exact same trap as torchtitan's `decay_ratio`, wearing
 different clothes, and the same defense catches it — plot the realized LR. As with torchtitan, the
 field names above are representative of the current schema — nanotron is research code and renames
 things; validate against the examples in the repo you actually cloned.
@@ -622,8 +622,8 @@ torchrun --nproc_per_node=8 pretrain_gpt.py \
   --seq-length 2048 --max-position-embeddings 2048 \
   --tensor-model-parallel-size 1 --pipeline-model-parallel-size 1 \
   --micro-batch-size 8 --global-batch-size 256 \
-  --lr 3.0e-3 --min-lr 0.0 --lr-warmup-iters 500 \
-  --lr-decay-style WSD --lr-wsd-decay-iters 6000 \
+  --lr 3.0e-3 --min-lr 0.0 --lr-warmup-iters 2000 \
+  --lr-decay-style WSD --lr-wsd-decay-iters 3815 \
   --clip-grad 1.0 --bf16 --use-distributed-optimizer \
   --recompute-activations
   # --recompute-activations is shorthand for --recompute-granularity selective, and Megatron's

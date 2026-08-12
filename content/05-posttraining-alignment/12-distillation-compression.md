@@ -718,9 +718,10 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
     **Student forward + backward:**
     - 7B params × 2 bytes = 14 GB for weights.
     - Gradients: another 14 GB in bf16 (28 GB if you keep them in fp32).
+    - fp32 master copy of the weights: 4 bytes/param = 28 GB.
     - Adam optimizer states: two fp32 moments = 8 bytes/param = 56 GB.
     - Activations for the same batch: ≈ 400 MB with gradient checkpointing.
-    - Total student-side memory: roughly 85 GB with bf16 gradients — *just over* a single A100 80GB, which is the trap this arithmetic exists to catch. Switching to 8-bit Adam (2 bytes/param = 14 GB of states) brings the total to ≈ 42 GB and fits comfortably; sharding the optimizer across 2 GPUs with ZeRO-2/FSDP is the other standard answer.
+    - Total student-side memory: 2 + 2 + 4 + 8 = 16 bytes/param, i.e. roughly 112 GB with bf16 gradients — *well over* a single A100 80GB, which is the trap this arithmetic exists to catch. Switching to 8-bit Adam (2 bytes/param = 14 GB of states) drops the total to $10P \approx 70$ GB and squeezes onto one card; sharding the optimizer across 2 GPUs with ZeRO-2/FSDP is the other standard answer.
 
     **Practical setup:** teacher on 2× A100 (tensor parallel), student on 1× A100 with 8-bit Adam (or sharded across 2× A100 with ZeRO-2). To avoid re-running the teacher every epoch you want a logit cache — but caching the *full* distribution is hopeless: 32,000 vocab × 2 bytes = 64 KB per token, i.e. ~64 TB per billion tokens. Cache the **top-k** instead (Section 5.6): $k = 64$ at BF16 values plus `uint16` indices is 256 bytes per token, so 100M tokens costs ~26 GB — the difference between "impossible" and "one NVMe drive."
 

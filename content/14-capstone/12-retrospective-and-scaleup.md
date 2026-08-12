@@ -25,7 +25,7 @@ stacklm-100m/
 
 None of these is a frontier model, and the capstone never pretended otherwise. A 100M model is a *narrow instrument*: within a scaffolded, retrieval-grounded domain it can produce coherent, useful, grounded text; outside that scaffold it hallucinates freely. What is remarkable is not the model's raw quality but that **every layer of the stack that produces a GPT-4-class system is present here in miniature and actually ran** — the tokenizer, the scaling-law fit, the optimizer, the distributed-ready loop, the alignment stack, the agent harness, the quantized deployment.
 
-The single most important lesson the capstone teaches — the one that makes a 100M model in 2026 vastly better than GPT-2 (117M) in 2019 at the same size — is **deliberate over-training**. Chinchilla-optimal for our ~84.5M non-embedding parameters is ~1.7B tokens; we trained on ~20B, roughly 200 tokens/param and ~12× past compute-optimal. That is economically irrational for a model you train and throw away, and completely rational for a model you will *serve*, because you pay training compute once and save inference cost forever. Keep that asymmetry in mind — it reappears in the cost table (over-training is most of the bill) and in the scale-up section (it only gets more extreme at 1B).
+The single most important lesson the capstone teaches — the one that makes a 100M model in 2026 vastly better than GPT-2 (124M) in 2019 at the same size — is **deliberate over-training**. Chinchilla-optimal for our ~84.5M non-embedding parameters is ~1.7B tokens; we trained on ~20B, roughly 200 tokens/param and ~12× past compute-optimal. That is economically irrational for a model you train and throw away, and completely rational for a model you will *serve*, because you pay training compute once and save inference cost forever. Keep that asymmetry in mind — it reappears in the cost table (over-training is most of the bill) and in the scale-up section (it only gets more extreme at 1B).
 
 ---
 
@@ -122,7 +122,7 @@ An NVIDIA A100 (80GB) has a bf16 tensor-core peak of ~312 TFLOP/s dense. You nev
 | **MFU (model FLOPs)** | $(6N + 6Lsd)\times$ tokens/s | Counts attention. The PaLM-style definition. |
 | **HFU (hardware FLOPs)** | model FLOPs **+ recomputation** | With full activation checkpointing you re-run the forward pass: $\text{HFU} \approx \tfrac{8}{6}\,\text{MFU}$. |
 
-The flagship config runs *without* activation checkpointing (Chapter 14.7's table), so for us HFU = model-FLOPs MFU, and the only correction that matters is the 1.31× attention factor. Concretely: a loop logging **MFU(6ND) = 0.45** is really pushing $0.45 \times 1.31 \approx 0.59$ of A100 peak. That is at the *top* of what this shape sustains, and it requires `torch.compile`, a FlashAttention-backed SDPA, and a micro-batch large enough to keep the GEMMs saturated.
+The flagship config runs *without* activation checkpointing (Chapter 14.7's table), so for us HFU = model-FLOPs MFU, and the only correction that matters is the 1.31× attention factor. Concretely: a loop logging **MFU(6ND) = 0.445** is really pushing $0.445 \times 1.31 \approx 0.58$ of A100 peak. That is at the *top* of what this shape sustains, and it requires `torch.compile`, a FlashAttention-backed SDPA, and a micro-batch large enough to keep the GEMMs saturated.
 
 !!! note "Are these GEMMs compute-bound? A roofline check, and what actually hurts at small batch"
 
@@ -130,13 +130,13 @@ The flagship config runs *without* activation checkpointing (Chapter 14.7's tabl
 
     Now the instructive part. Cut the micro-batch 4× to 8 sequences (Chapter 14.7's actual 24 GB-tier setting, $M = 16{,}384$) and the intensity barely moves — it falls only to **~367 FLOP/byte**. Arithmetic intensity for a GEMM is $1/(1/M + 1/K + 1/N)$, so with $K = 512$ and $N = 1408$ it is pinned near 370 (a ceiling of 375) for *any* large $M$; you would have to drop to $M \approx 258$ tokens before it reached the ridge. **Small micro-batches do not hurt you through the roofline.** They hurt you through three other mechanisms, all covered in [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html): (a) **tile and wave quantization** — fewer output tiles means fewer thread blocks, so an A100's 108 SMs run a partial final wave and sit idle, and the shallow $K = 512$ reduction gives each tile little work to hide latency behind; (b) **kernel-launch and pipeline overhead** — 30 layers × roughly ten kernels each is a fixed per-step cost that a smaller batch amortizes over fewer tokens; and (c) a **rising memory-bound share** — RMSNorm, RoPE, SiLU and residual adds are bandwidth-limited regardless of batch, so as GEMM time shrinks their fraction of the step grows. That is the real reason "raise the micro-batch and use gradient accumulation" is the highest-leverage throughput knob in the capstone, and why the 24GB and 16GB tiers in Chapter 14.7 report materially lower MFU.
 
-Putting the pieces together for the 18B-token stable phase. Hardware FLOPs $= 6ND \times 1.31 = (6 \times 1.014\times10^{8} \times 1.8\times10^{10}) \times 1.31 \approx 1.43\times10^{19}$. At a sustained $u = 0.59$ of A100 peak:
+Putting the pieces together for the 18B-token stable phase. Hardware FLOPs $= 6ND \times 1.31 = (6 \times 1.014\times10^{8} \times 1.8\times10^{10}) \times 1.31 \approx 1.43\times10^{19}$. At a sustained $u = 0.582$ of A100 peak:
 
 $$
-t_{\text{pretrain}} = \frac{1.43\times 10^{19}}{0.59 \times 3.12\times 10^{14}} \approx 7.8\times10^{4}\ \text{s} \approx 21.6\ \text{GPU-hours},
+t_{\text{pretrain}} = \frac{1.43\times 10^{19}}{0.582 \times 3.12\times 10^{14}} \approx 7.9\times10^{4}\ \text{s} \approx 21.9\ \text{GPU-hours},
 $$
 
-which corresponds to ~231,500 tokens/s and **MFU(6ND) ≈ 45%** — matching the worked example in Chapter 14.7 almost exactly. Run the same arithmetic at $u = 0.45$ (an un-compiled loop, an unfused attention path, or a smaller micro-batch) and you get **28.4 GPU-hours at MFU(6ND) ≈ 34%**. So the honest planning band is **22–29 GPU-hours for the stable phase**, and the bill below uses the well-tuned end while the re-run tax and the price axis absorb the rest.
+which corresponds to ~227,951 tokens/s and **MFU(6ND) = 44.5%** (58.2% attention-inclusive) — exactly the worked example measured in Chapter 14.7. Run the same arithmetic at $u = 0.45$ (an un-compiled loop, an unfused attention path, or a smaller micro-batch) and you get **28.4 GPU-hours at MFU(6ND) ≈ 34%**. So the honest planning band is **22–29 GPU-hours for the stable phase**, and the bill below uses the well-tuned end while the re-run tax and the price axis absorb the rest.
 
 The following helper turns any measured throughput into a cost — feed it the tokens/sec your loop actually logs, not the theoretical peak.
 
@@ -207,11 +207,11 @@ class Stage:
 
 
 if __name__ == "__main__":
-    tps = 231_500                    # sustained tokens/sec logged by the pretrain loop
+    tps = 227_951                    # sustained tokens/sec logged by the pretrain loop
     hrs = gpu_hours_from_throughput(18e9, tps)
     print(f"stable phase: {hrs:.1f} GPU-hr  "
           f"MFU(6ND)={mfu_6nd(tps):.1%}  peak_frac={peak_fraction(tps, 2048):.1%}")
-    # -> stable phase: 21.6 GPU-hr  MFU(6ND)=45.1%  peak_frac=59.2%
+    # -> stable phase: 21.9 GPU-hr  MFU(6ND)=44.5%  peak_frac=58.2%
 ```
 
 ### 2026 hardware tiers: the same FLOPs, six different bills
@@ -230,7 +230,7 @@ The capstone's flagship tier is a single A100-80GB because that is the cheapest 
 
 Three consequences for this project, and one for the next one:
 
-- **The newest chip is often the cheapest, not just the fastest.** Repricing the 18B-token stable phase onto an H100 at a (deliberately conservative) $u = 0.45$ — small models get *less* efficient on bigger chips because they are more launch-bound and less able to fill the tensor cores — gives $1.43\times10^{19}/(0.45 \times 9.89\times10^{14}) \approx 9.0$ GPU-hours. At USD 2.50/hr that is USD 22.4 against the A100's USD 38.9 at USD 1.80/hr, *and* it finishes in 9 hours instead of 22. Exercise 7 works out the break-even rental price.
+- **The newest chip is often the cheapest, not just the fastest.** Repricing the 18B-token stable phase onto an H100 at a (deliberately conservative) $u = 0.45$ — small models get *less* efficient on bigger chips because they are more launch-bound and less able to fill the tensor cores — gives $1.43\times10^{19}/(0.45 \times 9.89\times10^{14}) \approx 9.0$ GPU-hours. At USD 2.50/hr that is USD 22.4 against the A100's USD 39.4 at USD 1.80/hr, *and* it finishes in 9 hours instead of 22. Exercise 7 works out the break-even rental price.
 - **FP8 is a ≥1B lever, not a 100M one.** Hopper and Blackwell roughly double peak throughput in FP8, and per-tensor/per-block scaling recipes (see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html), and `torchao`'s `float8` integration used by torchtitan) make it usable for pretraining. But the realized end-to-end gain is well under the 2× peak ratio, and at 100M you are not GEMM-limited enough to collect most of it, while you *are* taking on real numerical risk. Turn it on at 1B+, where the GEMMs are fat enough to pay you back.
 - **Consumer cards are a legitimate tier, not a consolation prize.** The flagship's ~22 GB peak (§14.12.5) leaves a 24 GB 4090 no room for fragmentation or the `torch.compile` workspace, so Chapter 14.7's consumer tier drops the micro-batch 4× to 8 sequences and raises gradient accumulation to 32, holding the ~524k-token global batch fixed. Wall-clock roughly triples; the marginal dollar cost of a card you already own is electricity. The owned-hardware scenario in §14.12's cost sweep — the GPU column collapsing to electricity — assumes exactly this.
 - **Memory tier, not model size, decides when you shard.** Hold that thought — it is why the "7B does not fit one GPU" folklore is now hardware-generation-dependent (§14.12.5).
@@ -242,8 +242,8 @@ Every stage of the capstone, priced at an illustrative **USD 1.80/GPU-hour** A10
 | Stage (chapter) | GPU-hr | GPU USD | Non-GPU USD | Stage USD |
 |---|---:|---:|---:|---:|
 | Tokenizer BPE training (14.3) — mostly CPU | 0.3 | 0.54 | — | 0.54 |
-| Scaling-law ladder + data-mixture screen (14.5) | 4.9 | 8.82 | — | 8.82 |
-| **Pretrain, 18B tokens, WSD stable phase (14.7)** | 21.6 | 38.88 | — | 38.88 |
+| Scaling-law ladder + data-mixture screen (14.5) | 5.6 | 10.08 | — | 10.08 |
+| **Pretrain, 18B tokens, WSD stable phase (14.7)** | 21.9 | 39.42 | — | 39.42 |
 | Mid-training: anneal + 8192 ctx + capability, ~2B tok (14.8) | 3.6 | 6.48 | — | 6.48 |
 | SFT on chat template (14.9) | 1.0 | 1.80 | — | 1.80 |
 | DPO preference optimization (14.9) | 1.2 | 2.16 | — | 2.16 |
@@ -251,26 +251,26 @@ Every stage of the capstone, priced at an illustrative **USD 1.80/GPU-hour** A10
 | Agent distillation: teacher traces + SFT (14.10) | 1.0 | 1.80 | 8.00 | 9.80 |
 | Eval + int8/int4 quantization + export (14.11) | 1.2 | 2.16 | — | 2.16 |
 | Object storage + egress (~200 GB, one month) | — | — | 5.00 | 5.00 |
-| **Subtotal** | **37.8** | **68.04** | **13.00** | **81.04** |
-| Re-run reality tax (~25% of GPU USD: OOMs, bad launches, 2 restarts) | — | 17.01 | — | 17.01 |
-| **Grand total** | — | — | — | **≈ USD 98** |
+| **Subtotal** | **38.8** | **69.84** | **13.00** | **82.84** |
+| Re-run reality tax (~25% of GPU USD: OOMs, bad launches, 2 restarts) | — | 17.46 | — | 17.46 |
+| **Grand total** | — | — | — | **≈ USD 100** |
 
 Two of those lines deserve to be *derived* rather than accepted, because they are the ones a reader would otherwise have to take on faith:
 
 **The mid-training line.** Chapter 14.8 slices ~2B tokens into ~1.2B of anneal at `seq_len=2048`, ~0.6B of long-context extension at 8192, and ~0.2B of capability injection at 8192. Applying the attention correction per sub-phase: the 2048 portion costs $6ND \times 1.31 = 9.6\times10^{17}$ hardware FLOPs, and the 8192 portion costs $6ND \times 2.24 = 1.09\times10^{18}$ — the shorter sub-phase is the more expensive one, entirely because of the quadratic attention term. Sum ≈ $2.05\times10^{18}$ FLOPs, and at the reduced $u \approx 0.50$ you sustain once the micro-batch drops 4× to fit 8192-token sequences, that is **3.6 GPU-hours**. The table's number was never a guess.
 
-**The ladder line.** Chapter 14.5 prices the four-rung ladder at **4.11 GPU-hours** and the six-candidate data-mixture screen at a further **0.80** — 4.9 GPU-hours together, or **~13% of the project's 37.8 GPU-hours** (~23% of the flagship pretraining run alone). That is the cheapest insurance in the project: it is what told you 20B tokens was the right budget, and 70/15/10/5 the right mix, before you spent the other ~87%.
+**The ladder line.** Chapter 14.5 prices the four-rung ladder at **4.70 GPU-hours** and the six-candidate data-mixture screen at a further **0.92** — 5.6 GPU-hours together, or **~14% of the project's 38.8 GPU-hours** (~26% of the flagship pretraining run alone). That is the cheapest insurance in the project: it is what told you 20B tokens was the right budget, and 70/15/10/5 the right mix, before you spent the other ~86%.
 
-Four things this table teaches that a bare "USD 98" hides:
+Four things this table teaches that a bare "USD 100" hides:
 
 1. **Pretraining is ~48% of the pre-tax bill and over-training is ~91% of *that*.** A Chinchilla-optimal run (1.7B tokens) would have cost ~2.0 GPU-hours, ~USD 3.7. We deliberately spent the other ~USD 35 of that line — ~USD 42 if you count the mid-training tokens as well (Exercise 1) — to buy a permanently cheaper-to-serve model. That is the deployment-economics trade made *visible*.
 2. **Alignment + agent is cheap; the teacher API is the surprise.** All of SFT+DPO+GRPO+distill is ~USD 19, and USD 8 of that is *not* your GPU at all — it is API calls to a large teacher to generate ReAct trajectories you then filter and distill. At 1B and beyond, teacher/data-generation cost often *exceeds* your own training cost (§14.12.5 puts a number on it).
-3. **The reality tax is real, and 25% is the optimistic version.** No first run of a 30-layer model at high LR survives cleanly. You will hit an OOM from a mis-set gradient-accumulation count, a loss spike from an un-clipped attention logit, a corrupted shard. A practitioner who has done this before pays ~25%; a first-timer pays closer to 50%, which pushes the same bill to ~USD 115. **That gap — not the FLOPs — is why the sticker says "~USD 100."**
+3. **The reality tax is real, and 25% is the optimistic version.** No first run of a 30-layer model at high LR survives cleanly. You will hit an OOM from a mis-set gradient-accumulation count, a loss spike from an un-clipped attention logit, a corrupted shard. A practitioner who has done this before pays ~25%; a first-timer pays closer to 50%, which pushes the same bill to ~USD 118. **That gap — not the FLOPs — is why the sticker says "~USD 100."**
 4. **The bill is a function of three inputs, only one of which is the model.** Tokens, MFU, and USD/GPU-hr. Two of the three are yours to control; the third is a market.
 
 !!! note "Why the bill is a band, not a point"
 
-    The plan quotes **≈USD 90–100** for the whole project at its planning assumptions — a rented A100 at ≈USD 1.80/hr with a practitioner's re-run tax — and that figure is a market price, not a law. Re-run the same table with 2026-typical A100 spot at USD 1.20/hr and it lands at ~USD 70; run it on an H100 (2.4× the throughput at USD 2.50/hr) and it lands at ~USD 62 *and finishes in under half the wall-clock*; run it on an owned 4090 and the GPU column collapses to electricity, leaving the ~USD 13 of API and storage. The USD 98 above is the planning corner — A100 at USD 1.80/hr, a practitioner's re-run tax — and a first-timer on that same tier overshoots it at ~USD 115. Same recipe, same tokens: the ~2× spread is *entirely* GPU market price, kernel quality, and how many times you fat-finger a launch. Quote the number with its assumptions attached: **a dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.**
+    The plan quotes **≈USD 90–100** for the whole project at its planning assumptions — a rented A100 at ≈USD 1.80/hr with a practitioner's re-run tax — and that figure is a market price, not a law. Re-run the same table with 2026-typical A100 spot at USD 1.20/hr and it lands at ~USD 70; run it on an H100 (2.4× the throughput at USD 2.50/hr) and it lands at ~USD 62 *and finishes in under half the wall-clock*; run it on an owned 4090 and the GPU column collapses to electricity, leaving the ~USD 13 of API and storage. The USD 100 above is the planning corner — A100 at USD 1.80/hr, a practitioner's re-run tax — and a first-timer on that same tier overshoots it at ~USD 118. Same recipe, same tokens: the ~2× spread is *entirely* GPU market price, kernel quality, and how many times you fat-finger a launch. Quote the number with its assumptions attached: **a dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.**
 
 {{fig:capstone-cost-anatomy}}
 
@@ -867,15 +867,15 @@ Now the part that is genuinely different at 1B — the non-GPU column:
 
 | Line item | Stack-100M (20B tok) | Stack-1B (200B tok) | Why it moves |
 |---|---:|---:|---|
-| Tokenizer + scaling-law ladder | USD 9.36 | ~USD 100 | re-run the ladder with a higher top rung (§14.12.2) |
-| Pretrain GPU | USD 38.88 | ~USD 1,850 | 98× the FLOPs, ~3× faster hardware |
+| Tokenizer + scaling-law ladder | USD 10.62 | ~USD 100 | re-run the ladder with a higher top rung (§14.12.2) |
+| Pretrain GPU | USD 39.42 | ~USD 1,850 | 98× the FLOPs, ~3× faster hardware |
 | Mid-training GPU | USD 6.48 | ~USD 190 | ~20B tokens of anneal + long-context |
 | Post-training + agent distill GPU | USD 11.16 | ~USD 250 | GRPO is generation-bound; scales worse than FLOPs |
 | Eval + quantize + serve GPU | USD 2.16 | ~USD 60 | bigger harness, more probes |
 | **Data pipeline (CPU + storage)** | USD 5.00 | **~USD 800** | datatrove MinHash over ~1T tokens (order $10^9$ documents); 2–10 TB of shards |
 | **Synthetic / teacher data** | USD 8.00 | **~USD 1,500** | e.g. 10B synthetic tokens at ~USD 0.15 / M tokens |
-| Re-run reality tax (25% of GPU) | USD 17.01 | ~USD 610 | |
-| **Total** | **≈ USD 98** | **≈ USD 5,400** | |
+| Re-run reality tax (25% of GPU) | USD 17.46 | ~USD 610 | |
+| **Total** | **≈ USD 100** | **≈ USD 5,400** | |
 
 Two readings of that table, and the second is the thesis of the whole chapter:
 
@@ -993,7 +993,7 @@ Go run it. Then over-train it. Then, when you are ready, scale it up.
 
     - **Close the loop on your own prediction.** The Ch. 14.5 ladder forecast ≈2.94 ±0.1 nats/token for the flagship, and the run landed in that band — but only because the extrapolation was 1.9× in $N$ and the recipe was byte-identical. Trust a fitted law to ~2–3× past your top rung; before a 1B run, re-run the ladder with a higher top rung rather than stretching this fit 20×.
     - **6ND is a floor, not the bill.** Attention adds $Lsd/N$ on top — **31% for Stack-100M at seq 2048, 124% at 8192, only 10% for a 1B model at $d{=}2048$** — so state which MFU convention you log (6ND, model-FLOPs, or HFU with recomputation). An MFU(6ND) of 0.45 here is ~0.59 of A100 peak; deep-and-thin buys quality per parameter and pays for it per FLOP.
-    - **The "~USD 100 model" itemizes to ~38 GPU-hours at USD 1.80/hr plus ~USD 13 non-GPU and a ~25% re-run tax ≈ USD 98** — and **over-training is ~91% of the pretraining line by design**, bought back many times over in saved inference. On 2026 hardware the same recipe is ~USD 62 on an H100 *and 2.4× faster in wall-clock*: the newest chip is often the cheapest. A dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.
+    - **The "~USD 100 model" itemizes to ~39 GPU-hours at USD 1.80/hr plus ~USD 13 non-GPU and a ~25% re-run tax ≈ USD 100** — and **over-training is ~91% of the pretraining line by design**, bought back many times over in saved inference. On 2026 hardware the same recipe is ~USD 62 on an H100 *and 2.4× faster in wall-clock*: the newest chip is often the cheapest. A dollar figure without a USD/GPU-hr, an MFU, and the MFU's convention is not reproducible.
     - **Reproducibility has six pillars** — RNG *state* (plus dataloader state via `StatefulDataLoader`), a hashed frozen config (Hydra/pydantic) logged to a tracker (W&B/MLflow), a content-addressed data manifest (DVC / HF fingerprints), an environment pin (uv.lock hash + container digest, fail on a dirty git tree), safetensors checkpoints that never unpickle, and a **release** (HF Hub + model card + licence provenance + a pinned `lm-evaluation-harness` commit). Validate with a hermetic 50-step CPU run that reproduces bit-for-bit.
     - **Tied embeddings and safetensors:** `safetensors` refuses *aliased* tensors, and `.contiguous()` does not de-alias — drop `lm_head.weight` before saving and re-tie on load, exactly as HF's `_tied_weights_keys` does. Test it on CPU, because `.cpu()` accidentally hides the bug on a GPU run.
     - **At 1B, data breaks first**: you need 200B–1T tokens, which means `datatrove` / NeMo Curator / dolma rather than a laptop dedup script; repetition past ~4 epochs does not substitute for volume.
@@ -1094,9 +1094,9 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
     - If you train the model and then throw it away (a research probe, a one-off experiment), you get zero inference back, so any tokens beyond Chinchilla-optimal are pure waste — you spent ~12× the compute for a marginal loss improvement you will never amortize. Irrational.
     - If you will *serve* the model to many requests, over-training buys a permanently smaller/cheaper model at your target quality. A better 100M can replace a 200M that would have cost ~2× the FLOPs on *every* one of billions of future requests. You pay the extra training compute once and harvest the inference saving forever. Rational.
 
-    In the cost table this decision is the **pretrain + mid-training lines**: 25.2 GPU-hours / ~USD 45.36, which is ~56% of the pre-tax bill. A Chinchilla-optimal run (1.69B tokens, per the Ch. 14.5 fit) would take ~2.0 GPU-hours / ~USD 3.65, so roughly USD 42 of that USD 45 — about **92%** — is the over-training premium, spent deliberately to lower serving cost. This is the "inference-aware over-training" of Sardana et al. (2024). Note the §14.12.2 corroboration: at 20B tokens the data-penalty term $B/D^\beta \approx 0.19$ nats has fallen below the capacity term $A/N^\alpha \approx 0.30$ nats, i.e. the model is now capacity-limited — which is exactly the point at which further over-training stops paying and a *bigger* model starts to.
+    In the cost table this decision is the **pretrain + mid-training lines**: 25.5 GPU-hours / ~USD 45.90, which is ~55% of the pre-tax bill. A Chinchilla-optimal run (1.69B tokens, per the Ch. 14.5 fit) would take ~2.0 GPU-hours / ~USD 3.65, so roughly USD 42 of that USD 46 — about **92%** — is the over-training premium, spent deliberately to lower serving cost. This is the "inference-aware over-training" of Sardana et al. (2024). Note the §14.12.2 corroboration: at 20B tokens the data-penalty term $B/D^\beta \approx 0.19$ nats has fallen below the capacity term $A/N^\alpha \approx 0.30$ nats, i.e. the model is now capacity-limited — which is exactly the point at which further over-training stops paying and a *bigger* model starts to.
 
-**2.** (Quantitative) The `cost.py` example assumes the stable phase sustained 231,500 tokens/sec, which the chapter says gives 21.6 GPU-hours at MFU(6ND) 45.1% over 18B tokens. Suppose instead your kernels are less well tuned and the loop sustains only **200,000 tokens/sec** on the same 18B-token run. Using the chapter's formulas and constants ($N = 1.014\times10^8$, A100 bf16 peak $= 3.12\times10^{14}$ FLOP/s, USD 1.80/GPU-hr), compute (a) the pretrain GPU-hours, (b) MFU under the 6ND convention, (c) the true fraction of A100 peak being used at `seq_len=2048`, and (d) the pretrain dollar cost. By what fraction does the slower run raise the pretrain bill?
+**2.** (Quantitative) The `cost.py` example assumes the stable phase sustained 227,951 tokens/sec, which the chapter says gives 21.9 GPU-hours at MFU(6ND) 44.5% over 18B tokens. Suppose instead your kernels are less well tuned and the loop sustains only **200,000 tokens/sec** on the same 18B-token run. Using the chapter's formulas and constants ($N = 1.014\times10^8$, A100 bf16 peak $= 3.12\times10^{14}$ FLOP/s, USD 1.80/GPU-hr), compute (a) the pretrain GPU-hours, (b) MFU under the 6ND convention, (c) the true fraction of A100 peak being used at `seq_len=2048`, and (d) the pretrain dollar cost. By what fraction does the slower run raise the pretrain bill?
 
 ??? note "Solution"
 
@@ -1117,7 +1117,7 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
 
     (d) Dollars $= 25.0 \times \text{USD } 1.80 = \text{USD } 45.00$.
 
-    Relative to the tuned run (21.6 GPU-hr, USD 38.88), the slower kernels raise the pretrain bill by $45.00/38.88 - 1 \approx 0.157$, i.e. **~16% more**. Note the ratio is exactly the throughput ratio $231{,}500/200{,}000 = 1.158$: GPU-hours and dollars scale inversely with tokens/sec, which is why the chapter insists a dollar figure is meaningless without a stated MFU *and* its convention.
+    Relative to the tuned run (21.9 GPU-hr, USD 39.42), the slower kernels raise the pretrain bill by $45.00/39.42 - 1 \approx 0.14$, i.e. **~14% more**. Note the ratio is exactly the throughput ratio $227{,}951/200{,}000 \approx 1.14$: GPU-hours and dollars scale inversely with tokens/sec, which is why the chapter insists a dollar figure is meaningless without a stated MFU *and* its convention.
 
 **3.** (Quantitative) Take the `DeepSeekMoEFFN` config from the chapter: `d_model=512`, `d_ff=352`, `n_routed=16`, `n_shared=1`, `k=2`. Each `SwiGLUExpert` has three bias-free linear layers (`w_gate`, `w_up`: $d_{\text{model}}\times d_{\text{ff}}$ each; `w_down`: $d_{\text{ff}}\times d_{\text{model}}$). Compute (a) parameters per expert, (b) total resident expert parameters, (c) active expert parameters per token, and (d) compare (c) against the dense Stack-100M SwiGLU MLP (`intermediate=1408`). Does the MoE block use less compute per token than the dense block? Then (e): if you replaced all 30 blocks' MLPs this way, what happens to the *whole model's* parameter count, and what does that do to the memory analysis in §14.12.5?
 

@@ -792,7 +792,7 @@ See [Observability, Logging & LLMOps](../12-production-mlops/02-observability-ll
 - **Jiang et al., "LLM-Blender: Ensembling Large Language Models with Pairwise Ranking and Generative Fusion," ACL 2023** — foundational work on ensembling and routing across LLMs.
 - **Chen et al., "FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance," 2023** — introduces the LLM cascade framework and cost-quality trade-off analysis.
 - **Vllm project (Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention," SOSP 2023)** — the continuous batching and KV-cache management paper underlying most open-source serving stacks.
-- **Dao et al., "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning," ICLR 2024** — understanding IO-efficient attention is prerequisite to understanding why KV-cache reuse saves so much.
+- **Dao, "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning," 2023** — understanding IO-efficient attention is prerequisite to understanding why KV-cache reuse saves so much.
 - **Lin et al., "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration," MLSys 2024** — the quantisation method most commonly used in quantised fallback deployments.
 - **SGLang RadixAttention (Zheng et al., "SGLang: Efficient Execution of Structured Language Model Programs," 2024)** — prefix cache reuse at the serving-system level, complementing provider-side caching.
 - **GPTCache (GitHub: zilliztech/GPTCache)** — open-source semantic cache library with pluggable vector stores and embedding backends, useful as a reference implementation.

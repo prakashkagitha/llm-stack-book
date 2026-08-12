@@ -368,13 +368,13 @@ The `missing_eos_penalty` knob is worth internalizing: without it, a policy lear
 ### PPOTrainer's memory footprint
 
 PPO is expensive: you hold *four* models simultaneously — the trained policy, the trained critic (`value_model`, itself a full backbone plus scalar head, not just a head bolted onto the policy), the frozen reference, and the frozen reward model — plus optimizer states for the two trainable ones. For a 7B policy in bf16:
-- Policy + optimizer states (Adam): roughly $7 \times 10^9 \times 2 + 7 \times 10^9 \times 8 = 70$ GB
+- Policy + gradients + optimizer states (Adam): roughly $7 \times 10^9 \times (2 + 2 + 4 + 8) = 7 \times 10^9 \times 16 = 112$ GB
 - Reference model (inference-only, bf16): ~14 GB
 - Reward model (frozen, bf16): ~14 GB
-- Critic: ~14 GB of bf16 weights **plus its own Adam states** (~56 GB), so ~70 GB — it is trained just like the policy
+- Critic: ~14 GB of bf16 weights **plus its own gradients, fp32 master weights, and Adam states** (~98 GB), so ~112 GB — it is trained just like the policy
 - Activations and rollout buffer: varies
 
-Summing the four models gives $70 + 14 + 14 + 70 \approx 170$ GB of weights and optimizer state for a 7B policy, before activations and rollout buffers — three A100-80GB cards at an absolute minimum, and four in practice. This cost motivated the GRPO and DPO approaches that eliminate the critic (and, with verifiable rewards, the reward model too — leaving a single trainable model).
+Summing the four models gives $112 + 14 + 14 + 112 \approx 250$ GB of weights, gradients, and optimizer state for a 7B policy, before activations and rollout buffers — four A100-80GB cards at an absolute minimum, and five or six in practice. This cost motivated the GRPO and DPO approaches that eliminate the critic (and, with verifiable rewards, the reward model too — leaving a single trainable model).
 
 {{fig:rl-trainer-memory-footprint}}
 
@@ -1046,25 +1046,25 @@ Report the two log-ratios, the implicit reward margin, and the final loss. Is th
 
     (c) Prompts that are always solved or never solved waste rollout compute — you pay for $G$ generations but get no gradient. Effective GRPO training wants prompts of intermediate difficulty (mixed success within a group), which maximizes `train/reward_std` and hence the useful signal. This is why curated, difficulty-balanced datasets (and curriculum/filtering) matter, and it connects to the practitioner tip that small $G$ gives noisy baselines: with few samples you also more often land on the all-correct or all-wrong degenerate cases.
 
-**5.** The chapter estimates full-FT PPO memory for a 7B model at ~170 GB. (a) Reproduce the four-model figure (policy + Adam, critic + Adam, reference, reward model) using the chapter's byte accounting, then redo the calculation for a **13B** model. (b) With that 13B number, how many A100-80GB cards does full-FT PPO minimally need? (c) Explain, in memory terms, how switching to GRPO + LoRA lets the same 13B model train on a single 80 GB card.
+**5.** The chapter estimates full-FT PPO memory for a 7B model at ~250 GB. (a) Reproduce the four-model figure (policy + Adam, critic + Adam, reference, reward model) using the chapter's byte accounting, then redo the calculation for a **13B** model. (b) With that 13B number, how many A100-80GB cards does full-FT PPO minimally need? (c) Explain, in memory terms, how switching to GRPO + LoRA lets the same 13B model train on a single 80 GB card.
 
 ??? note "Solution"
 
-    (a) The chapter's accounting for a *trained* model under full fine-tuning is bf16 weights (2 bytes/param) plus Adam optimizer states (8 bytes/param, i.e. fp32 first + second moment), giving 10 bytes/param; a *frozen* model is inference-only bf16 (2 bytes/param). PPO trains two models (policy and critic) and freezes two (reference and reward model), so the bill is $10 + 10 + 2 + 2 = 24$ bytes/param.
+    (a) The chapter's accounting for a *trained* model under full fine-tuning is bf16 weights (2 bytes/param) plus bf16 gradients (2 bytes/param) plus fp32 master weights (4 bytes/param) plus Adam optimizer states (8 bytes/param, i.e. fp32 first + second moment), giving 16 bytes/param; a *frozen* model is inference-only bf16 (2 bytes/param). PPO trains two models (policy and critic) and freezes two (reference and reward model), so the bill is $16 + 16 + 2 + 2 = 36$ bytes/param.
 
     7B check:
-    $$\underbrace{70}_{\text{policy+Adam}} + \underbrace{70}_{\text{critic+Adam}} + \underbrace{14}_{\text{ref}} + \underbrace{14}_{\text{RM}} = 168 \text{ GB},$$
-    i.e. the chapter's ~170 GB, before activations and rollout buffers.
+    $$\underbrace{112}_{\text{policy+Adam}} + \underbrace{112}_{\text{critic+Adam}} + \underbrace{14}_{\text{ref}} + \underbrace{14}_{\text{RM}} = 252 \text{ GB},$$
+    i.e. the chapter's ~250 GB, before activations and rollout buffers.
 
-    13B, i.e. $13\times10^9 \times 24$ bytes:
-    $$\underbrace{130}_{\text{policy+Adam}} + \underbrace{130}_{\text{critic+Adam}} + \underbrace{26}_{\text{ref}} + \underbrace{26}_{\text{RM}} = 312 \text{ GB},$$
+    13B, i.e. $13\times10^9 \times 36$ bytes:
+    $$\underbrace{208}_{\text{policy+Adam}} + \underbrace{208}_{\text{critic+Adam}} + \underbrace{26}_{\text{ref}} + \underbrace{26}_{\text{RM}} = 468 \text{ GB},$$
     before activations and rollout buffers.
 
-    (b) $312 / 80 = 3.9$, so **at least four** A100-80GB cards just to hold the parameters and optimizer state — and realistically five or six once activations, the rollout buffer, and FSDP's gather buffers are counted. (If you keep only the policy and reference in mind you get 156 GB and are tempted to answer "two," but that ignores the critic and reward model that PPO must hold simultaneously — the whole reason GRPO exists.)
+    (b) $468 / 80 = 5.85$, so **at least six** A100-80GB cards just to hold the parameters, gradients, and optimizer state — and realistically eight once activations, the rollout buffer, and FSDP's gather buffers are counted. (If you keep only the policy and reference in mind you get 234 GB and are tempted to answer "three," but that ignores the critic and reward model that PPO must hold simultaneously — the whole reason GRPO exists.)
 
     (c) GRPO + LoRA collapses this on three fronts:
     - **No value head / critic.** GRPO replaces the learned value function with the group-mean baseline, so there is no critic model or its optimizer states to hold.
-    - **Optimizer states only on adapters.** Only the LoRA delta is trainable, so the 8-bytes/param Adam cost applies to a few million adapter params, not all 13B. The frozen base is just 26 GB in bf16 (or ~6.5 GB under QLoRA 4-bit).
+    - **Optimizer states only on adapters.** Only the LoRA delta is trainable, so the 14-bytes/param gradient + fp32 master weight + Adam cost applies to a few million adapter params, not all 13B. The frozen base is just 26 GB in bf16 (or ~6.5 GB under QLoRA 4-bit).
     - **Free reference.** As in Exercise 1, the reference is the base model with adapters disabled — no second copy.
 
     What remains is roughly one copy of the base weights plus tiny adapter optimizer states plus rollout activations, which fits in 80 GB (and gradient checkpointing / QLoRA give further headroom).

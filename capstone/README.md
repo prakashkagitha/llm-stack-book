@@ -143,25 +143,25 @@ subset, not the full 20B-token run.
 | Stage (chapter) | GPU-hr | Stage $ |
 |---|---:|---:|
 | Tokenizer BPE (14.3, mostly CPU) | 0.3 | 0.54 |
-| Scaling-law ladder {4M,9M,19M,43M} (14.5) | 4.5 | 8.10 |
-| **Pretrain, 20B tokens, WSD stable (14.7)** | 22.0 | 39.60 |
-| Mid-training: 8192 ctx + anneal, ~3B tok (14.8) | 4.5 | 8.10 |
+| Scaling-law ladder {4M,9M,19M,43M} + data-mixture screen (14.5) | 4.9 | 8.82 |
+| **Pretrain, 18B tokens, WSD stable (14.7)** | 21.6 | 38.88 |
+| Mid-training: anneal + 8192 ctx + capability, ~2B tok (14.8) | 3.6 | 6.48 |
 | SFT (14.9) | 1.0 | 1.80 |
 | DPO (14.9) | 1.2 | 2.16 |
 | GRPO / narrow RLVR (14.9) | 3.0 | 5.40 |
 | Agent distillation: teacher traces + SFT (14.10) | 1.0 | 9.80 (incl. teacher API) |
 | Eval + int8/int4 quant + export (14.11) | 1.2 | 2.16 |
 | Storage + egress (~200 GB, one month) | — | 5.00 |
-| **Subtotal** | **38.7** | **82.66** |
-| Re-run reality tax (~25% of GPU $) | — | 17.40 |
-| **Grand total** | | **≈ $100** |
+| **Subtotal** | **37.8** | **81.04** |
+| Re-run reality tax (~25% of GPU $) | — | 17.01 |
+| **Grand total** | | **≈ $98** |
 
 **Over-training thesis:** Chinchilla-optimal for 100M ≈ 2B tokens (~$4 pretrain);
 we train ~20B (~200 tok/param, ~10× compute-optimal). You pay training compute
 *once* and save inference *forever* — for a model you will serve, compute-optimal
 ≠ deployment-optimal. Break-even (serving FLOPs = pretrain FLOPs) is ~234M requests.
 
-**Memory ladder (quantization):** fp32 ≈406MB → bf16 ≈203MB → int8 (row) ≈102MB →
+**Memory ladder (quantization):** fp32 ≈405MB → bf16 ≈203MB → int8 (row) ≈102MB →
 int4 (group=64) ≈63MB. Model + 2048-token KV cache (GQA) ≈ 100MB — runs on a laptop.
 
 ## Back to the chapters

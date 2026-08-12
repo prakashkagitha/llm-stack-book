@@ -8,7 +8,7 @@ final size and token budget (Ch. 14.5), and the Muon+AdamW optimizer plus the WS
 
 By the end of this chapter you will have a complete, resumable, single-GPU training loop that takes
 `Stack100M`, `PackedMemmapDataset`, the Muon+AdamW pair, and the WSD schedule, and turns them into
-a ~20 GPU-hour job on one A100 that ends with `ckpt_stable.pt` — a real ~100M-parameter language
+a ~22 GPU-hour job on one A100 that ends with `ckpt_stable.pt` — a real ~100M-parameter language
 model, deliberately left *undecayed* so that [mid-training](../14-capstone/08-mid-training.html) can
 spend the decay phase on premium data. We will do the memory accounting honestly (including the
 tensor that actually dominates it, which is not the one most people count), measure *how well* the
@@ -25,7 +25,7 @@ Training loops fail in boring, expensive ways: a crash three hours before the en
 checkpoint, a silent NaN nobody notices until the next morning, a batch-size bug that quietly
 halves the effective learning rate, an out-of-memory error at step 12,000 because the *one* tensor
 you never budgeted for grew with the batch, a forgotten keyword argument that lets the model attend
-across document boundaries for 17 billion tokens. The job of this chapter is to make each of those
+across document boundaries for 18 billion tokens. The job of this chapter is to make each of those
 failure modes structurally impossible, not just "usually fine."
 
 Here is the data flow we are wiring together — the shape every subsection below fills in:
@@ -110,7 +110,7 @@ class PackedMemmapDataset(torch.utils.data.Dataset):
     def __init__(self, shard_dir: str, bos_id: int | None = None): ...
 
 # stacklm/optim/   (Ch. 14.6 — Muon+AdamW hybrid, WSD schedule, MuonClip/QK-clip)
-def build_optimizers(model, muon_lr=6e-3, adamw_lr=3e-3,
+def build_optimizers(model, muon_lr=0.02, adamw_lr=3e-3,
                      weight_decay=0.1, betas=(0.9, 0.95)) -> "tuple[Muon, torch.optim.AdamW]": ...
 def wsd_lr(step: int, *, peak_lr: float, warmup_steps: int, total_steps: int,
            decay_steps: int | None = None, decay_frac: float = 0.2,
@@ -136,7 +136,7 @@ class StackTokenizer:
     1. **Dropping `seq_ids`.** `Stack100M._build_mask` builds the no-cross-document mask from
        `seq_ids`, *not* from `position_ids`. Pass `seq_ids=None` and the model takes its
        plain-causal fast path, so every packed window lets token 1900 of document C attend to
-       document A — for the entire 17-billion-token run. PLAN.md §2 mandates document isolation
+       document A — for the entire 18-billion-token run. PLAN.md §2 mandates document isolation
        precisely because this leaks statistics across unrelated texts. It is invisible in the loss
        curve (it *lowers* training loss slightly, by leaking context), so assert it at startup.
     2. **Dropping `position_ids`.** Then RoPE indexes `arange(T)` and every document after the
@@ -192,18 +192,18 @@ class TrainConfig:
     num_workers: int = 4
 
     # --- optimizer & schedule: Ch. 14.6's frozen table, verbatim ---
-    muon_peak_lr: float = 6e-3     # 2-D hidden matrices (RMS-matched Newton-Schulz update)
-    adamw_peak_lr: float = 3e-3    # = muon/2: tied embedding + 1-D norm/QK-norm gains
+    muon_peak_lr: float = 0.02     # 2-D hidden matrices (RMS-matched Newton-Schulz update)
+    adamw_peak_lr: float = 3e-3    # ≈ muon/6.7: tied embedding + 1-D norm/QK-norm gains
     weight_decay: float = 0.1
     betas: tuple = (0.9, 0.95)
     grad_clip: float = 1.0
     qk_clip_tau: float = 30.0      # MuonClip threshold; 30 because QK-norm is ON
     qk_clip_every: int = 200       # logit drift is slow; measuring is not free
     qk_probe_seqs: int = 4         # sequences in the fixed QK-clip probe batch
-    warmup_steps: int = 500
+    warmup_steps: int = 2_000
     total_steps: int = 38_147      # ceil(20e9 / 524,288) — the FULL budget, shapes the curve
-    decay_steps: int = 6_000       # the WSD decay leg = Ch. 14.8's mid-training window
-    stop_at_step: int = 32_147     # THIS chapter stops here: 16.9B tokens, LR still at plateau
+    decay_steps: int = 3_815       # the WSD decay leg = Ch. 14.8's mid-training window
+    stop_at_step: int = 34_332     # THIS chapter stops here: 18.0B tokens, LR still at plateau
 
     # --- run mechanics ---
     device: str = "cuda"
@@ -237,22 +237,24 @@ later section's arithmetic uses.
 ($20\times10^9 / 524{,}288$), which Ch. 14.5's fitted scaling law chose by deliberately
 over-training past the ~2B-token Chinchilla-optimal point for
 [Stack-100M](../14-capstone/05-mini-scaling-laws.html). It defines the *shape* of the WSD curve:
-500 warmup / 31,647 stable / 6,000 decay, exactly Ch. 14.6's frozen split. **`stop_at_step =
-32{,}147` is not a typo:** it is $38{,}147 - 6{,}000$. WSD's decay leg is where
+2,000 warmup / 32,332 stable / 3,815 decay (`decay_frac = 0.10`), exactly Ch. 14.6's frozen split.
+**`stop_at_step = 34{,}332` is not a typo:** it is $38{,}147 - 3{,}815$. WSD's decay leg is where
 [mid-training](../14-capstone/08-mid-training.html) anneals the model onto a higher-quality data
-mix, so this chapter runs only warmup + stable — 16.85B tokens — and hands over a checkpoint whose
-learning rate is still at its plateau, leaving 3.15B tokens of decay for Ch. 14.8. Saving a
+mix, so this chapter runs only warmup + stable — 18.0B tokens — and hands over a checkpoint whose
+learning rate is still at its plateau, leaving 2.0B tokens of decay for Ch. 14.8. Saving a
 *pre-decay* checkpoint is a deliberate design decision, not an accident: resuming from a
 fully-decayed checkpoint would force an LR re-warm and cost you loss you then have to claw back
 (Ibrahim et al., 2024; see Ch. 14.8).
 
 **Two peak learning rates, one curve.** Ch. 14.6 routes 2-D hidden matrices to Muon and the tied
-embedding plus every 1-D gain to AdamW. The two peaks are `6e-3` and `3e-3` — a **2:1 ratio, not an
-order of magnitude**. That is the whole payoff of Muon's RMS-matching scale $0.2\sqrt{\max(m,n)}$:
-it puts the orthogonalized update in the same decade as AdamW's, so you tune one number and derive
-the other. (The factor of two is not RMS-related; it is insurance on the row-sparse embedding
-gradient.) What the two groups *share* is the shape of the WSD schedule, and the loop below
-preserves the ratio by storing each group's base LR once and multiplying by a single scalar.
+embedding plus every 1-D gain to AdamW. The two peaks are `0.02` and `3e-3` — an **empirical ~6.7:1
+ratio**, measured by Ch. 14.6's ladder sweep, not derived. Muon's RMS-matching scale
+$0.2\sqrt{\max(m,n)}$ buys *shape invariance* — one number governs all 210 matrices regardless of
+their dimensions — it does **not** put the two groups on a shared learning rate; the much smaller
+AdamW peak is insurance on the row-sparse embedding gradient. Collapsing the two peaks onto one
+scalar is, per Ch. 14.6, the single most common Muon bug. What the two groups *share* is the shape
+of the WSD schedule, and the loop below preserves the ratio by storing each group's base LR once
+and multiplying by a single scalar.
 
 **`loss_chunk = 8192`.** Ch. 14.4 ships the chunked fused loss head but leaves it off
 (`loss_chunk = 0`) so that chapter's tests can inspect the logit tensor. Pretraining turns it on.
@@ -571,7 +573,7 @@ def all_params_of(optimizers):
 
 
 def attach_base_lrs(optimizers):
-    """Record each group's peak LR once, at build time: Muon 6e-3, AdamW 3e-3
+    """Record each group's peak LR once, at build time: Muon 0.02, AdamW 3e-3
     (Ch. 14.6). Only the *shape* of the WSD curve is shared, not the value."""
     for opt in optimizers:
         for g in opt.param_groups:
@@ -579,7 +581,7 @@ def attach_base_lrs(optimizers):
 
 
 def set_lr(optimizers, step, cfg):
-    """Apply this step's WSD multiplier to both optimizers, preserving the 2:1 ratio."""
+    """Apply this step's WSD multiplier to both optimizers, preserving the ~6.7:1 ratio."""
     mult = wsd_lr(step, peak_lr=1.0, warmup_steps=cfg.warmup_steps,
                   total_steps=cfg.total_steps, decay_steps=cfg.decay_steps)
     for opt in optimizers:
@@ -589,12 +591,12 @@ def set_lr(optimizers, step, cfg):
 ```
 
 Calling `wsd_lr` with `peak_lr=1.0` turns it into a pure multiplier in $[0, 1]$ — warmup ramps it
-linearly from $1/500$ to 1 over the first 500 steps, the stable phase holds it at 1, and the decay
-leg would bring it to 0. That single scalar scales Muon's `6e-3` and AdamW's `3e-3` identically. Two
-consequences worth stating: passing `decay_steps=6_000` explicitly (rather than a `decay_frac`) is
-what makes the decay leg *absolute*, so it stays 6,000 steps even if you re-budget `total_steps`;
-and because this chapter stops at 32,147 — the first decay step — `mult` is exactly 1.0 for every
-step from 500 to 32,146. This run never enters the decay branch at all. Ch. 14.8 does.
+linearly from $1/2000$ to 1 over the first 2,000 steps, the stable phase holds it at 1, and the decay
+leg would bring it to 0. That single scalar scales Muon's `0.02` and AdamW's `3e-3` identically. Two
+consequences worth stating: passing `decay_steps=3_815` explicitly (rather than a `decay_frac`) is
+what makes the decay leg *absolute*, so it stays 3,815 steps even if you re-budget `total_steps`;
+and because this chapter stops at 34,332 — the first decay step — `mult` is exactly 1.0 for every
+step from 2,000 to 34,331. This run never enters the decay branch at all. Ch. 14.8 does.
 
 Crucially, `clip_grad_norm_` is computed **once, jointly, over every parameter** — Muon-bound and
 AdamW-bound alike — because the point of global-norm clipping is to catch a *model-wide* gradient
@@ -808,7 +810,7 @@ where, note, `loss_chunk` buys more memory than checkpointing does.
 
 ## Crash-Safety: Checkpoints, Resume, and NaN Guards
 
-A ~20 GPU-hour job on a rented A100 *will* occasionally be interrupted — a spot-instance reclaim, a
+A ~22 GPU-hour job on a rented A100 *will* occasionally be interrupted — a spot-instance reclaim, a
 driver hiccup, you closing your laptop — and it may occasionally poison itself with a NaN. Both
 need to be survivable.
 
@@ -1180,14 +1182,16 @@ def utilization(n_params, tokens_per_sec, cfg, peak_flops=A100_BF16_PEAK,
     $\approx 181.7$ TFLOP/s, **MFU $\approx 58.2\%$**.
 
     **Projected wall-clock.** Utilization changes; wall-clock does not, because it comes from
-    tokens/s. This chapter's 32,147 steps are
-    $32{,}147 \times 524{,}288 \approx 16.85\times10^9$ tokens:
+    tokens/s. This chapter's 34,332 steps are
+    $34{,}332 \times 524{,}288 \approx 18.0\times10^9$ tokens:
     $$
-    \frac{16.85\times10^9}{227{,}951} \approx 73{,}940\text{ s} \approx 20.5 \text{ GPU-hours},
+    \frac{18.0\times10^9}{227{,}951} \approx 78{,}964\text{ s} \approx 21.9 \text{ GPU-hours},
     $$
-    plus roughly 3.8 more GPU-hours for Ch. 14.8's 6,000 decay steps ($\approx 3.15\times10^9$
-    tokens): **≈24.4 GPU-hours for the full 20B-token budget**. At roughly USD 1.50/GPU-hour that is
-    about USD 37, inside the plan's ~USD 25–50 figure and mid-band of its 22–29 GPU-hour
+    plus roughly 3.6 more GPU-hours for Ch. 14.8's 3,815 decay steps ($\approx 2.0\times10^9$
+    tokens — more than $2.0\times10^9 / 227{,}951$ would suggest, because ~0.8B of that leg runs at
+    `seq_len = 8192`, where tokens/s is lower; Ch. 14.12 prices it at 3.6):
+    **≈25.5 GPU-hours for the full 20B-token budget**. At roughly USD 1.50/GPU-hour that is
+    about USD 38, inside the plan's ~USD 25–50 figure and mid-band of its 22–29 GPU-hour
     envelope. Reaching the *lower* end means pushing tokens/s up via a larger micro-batch (which
     `loss_chunk` now permits), `torch.compile`, and fused kernels — all "on the order of," never a
     guaranteed benchmark.
@@ -1332,9 +1336,9 @@ def log_metrics(cfg, log_path, **record):
 At initialization, cross-entropy over a fresh 32,768-token vocabulary starts at essentially
 $\ln(32{,}768) \approx 10.4$ nats/token — the model is guessing uniformly. Warmup and the first few
 hundred steps drop this quickly, since the easiest signal (token frequency statistics) is learned
-almost immediately; by the end of the 500-step warmup, loss is typically already down to something
+almost immediately; by the end of the 2,000-step warmup, loss is typically already down to something
 on the order of low-to-mid single digits of nats/token. Through the long **stable** phase, loss
-decreases slowly and fairly smoothly — this is the bulk of the 32,147 steps this chapter runs, and
+decreases slowly and fairly smoothly — this is the bulk of the 34,332 steps this chapter runs, and
 the log-loss-vs-log-tokens curve should look close to a straight line, the empirical signature the
 scaling law in Ch. 14.5 was fit from. This chapter therefore *ends* on a plateau, with train loss in
 the ballpark of the low 3s nats/token and no dramatic final drop — that drop belongs to the decay
@@ -1495,7 +1499,7 @@ def main(cfg: TrainConfig):
                     data_seed=cfg.seed)
     print(f"stable phase done: {step} steps, {tokens_seen:,} tokens, "
           f"{skipped_total} skipped. LR still at plateau -> ckpt_stable.pt "
-          f"(Ch. 14.8 runs the 6,000-step WSD decay leg from here).")
+          f"(Ch. 14.8 runs the 3,815-step WSD decay leg from here).")
 
 
 if __name__ == "__main__":
@@ -1572,7 +1576,7 @@ for i in range(cfg.grad_accum_steps):
 ```
 
 launched with `torchrun --nproc_per_node=8 -m stacklm.train`. Eight GPUs at near-linear scaling
-turns a ~24-GPU-hour single-A100 run into roughly ~3 wall-clock hours on 8 — the *cost* in GPU-hours
+turns a ~22-GPU-hour single-A100 run into roughly ~3 wall-clock hours on 8 — the *cost* in GPU-hours
 is unchanged, only the wall clock improves, which is the entire point of DDP: it does not reduce
 total compute or per-GPU memory pressure. Three things must change in the surrounding code, and all
 three are easy to forget: the data stream must be sharded by rank (above), only rank 0 should write
@@ -1728,8 +1732,8 @@ bf16 tensor-core throughput and the extra accumulation steps; nothing else in `t
       full-block checkpointing HFU ≈ 1.33 × MFU. Activation checkpointing keeps the
       *block-boundary* activations and recomputes what is *inside* each block — a 3–8× cut for ~33%
       more FLOPs, not an `n_layers`-fold cut.
-    - This chapter deliberately **stops at step 32,147, before the decay**: `ckpt_stable.pt` is
-      handed to mid-training with the LR still at plateau, so WSD's high-value 6,000-step decay leg
+    - This chapter deliberately **stops at step 34,332, before the decay**: `ckpt_stable.pt` is
+      handed to mid-training with the LR still at plateau, so WSD's high-value 3,815-step decay leg
       is spent on premium data. Expect final train loss on the order of **2.8–3.2 nats/token** only
       *after* Ch. 14.8 — never treat that, or any illustrative number here, as a benchmark to hit.
 
@@ -1842,7 +1846,7 @@ inside the accumulation loop.
 `micro_batch_size = 4` and `seq_len = 1024`, and you want a **reduced** effective batch of exactly
 262,144 tokens per optimizer step with a total token budget of $2\times10^9$ tokens. Compute (a) the
 `grad_accum_steps` you must set, (b) `total_steps`, and (c) — keeping the flagship's *decay
-fraction* $6{,}000/38{,}147$ — the `decay_steps` and the `stop_at_step` at which this tier's
+fraction* $3{,}815/38{,}147$ — the `decay_steps` and the `stop_at_step` at which this tier's
 pretraining run should hand off to mid-training.
 
 ??? note "Solution"
@@ -1859,14 +1863,14 @@ pretraining run should hand off to mid-training.
     $$
 
     **(c) Decay and hand-off.** The flagship decay fraction is
-    $6{,}000/38{,}147 \approx 0.15729$, so
+    $3{,}815/38{,}147 \approx 0.10001$, so
     $$
-    \texttt{decay\_steps} = \operatorname{round}(0.15729 \times 7630) = 1{,}200,
-    \qquad \texttt{stop\_at\_step} = 7630 - 1200 = 6{,}430.
+    \texttt{decay\_steps} = \operatorname{round}(0.10001 \times 7630) = 763,
+    \qquad \texttt{stop\_at\_step} = 7630 - 763 = 6{,}867.
     $$
-    Pretraining therefore covers $6{,}430 \times 262{,}144 \approx 1.69\times10^9$ tokens and
-    mid-training spends the remaining 1,200 steps ($\approx 0.31\times10^9$ tokens) on the annealed
-    mix. Pass `decay_steps=1_200` to `wsd_lr` directly rather than a fraction — the absolute
+    Pretraining therefore covers $6{,}867 \times 262{,}144 \approx 1.80\times10^9$ tokens and
+    mid-training spends the remaining 763 steps ($\approx 0.20\times10^9$ tokens) on the annealed
+    mix. Pass `decay_steps=763` to `wsd_lr` directly rather than a fraction — the absolute
     argument wins, and it keeps the leg fixed if you later re-budget `total_steps`.
 
 **4.** During a flagship A100 run you measure a full-optimizer-step time of `dt = 1.8 s`. Using the
@@ -1899,9 +1903,9 @@ checkpointing?
     $$
     \frac{20\times10^9}{291{,}271} \approx 68{,}665\text{ s} \approx 19.1 \text{ GPU-hours},
     $$
-    of which this chapter's 32,147 steps are
-    $16.85\times10^9 / 291{,}271 \approx 16.1$ GPU-hours and Ch. 14.8's decay leg the remaining
-    ~3.0 — just under the 22–29 GPU-hour envelope, consistent with a faster step time than
+    of which this chapter's 34,332 steps are
+    $18.0\times10^9 / 291{,}271 \approx 17.2$ GPU-hours and Ch. 14.8's decay leg the remaining
+    ~1.9 — just under the 22–29 GPU-hour envelope, consistent with a faster step time than
     the worked example's 2.3 s.
 
     **What activation checkpointing changes.** It cannot change (b) or (c) *as definitions*, because
@@ -1977,7 +1981,7 @@ to `0`, and how would you make the function refuse rather than misbehave?
 
     **(c) The pad.** `sorted()` on filenames is lexical, and lexical order agrees with numeric order
     only when every stamp has the same width. `step_9999.pt` sorts *after* `step_10000.pt` unpadded;
-    seven digits keeps them aligned past 9,999,999 steps, comfortably beyond this run's 32,147.
+    seven digits keeps them aligned past 9,999,999 steps, comfortably beyond this run's 34,332.
 
     **(d) `keep_last = 0`.** `lst[:-0]` is `lst[:0]`, i.e. the empty list — so nothing is pruned and
     checkpoints accumulate forever, the exact opposite of what was asked. (It is the same reason

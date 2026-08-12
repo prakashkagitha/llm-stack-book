@@ -451,7 +451,7 @@ Dimensions are already chosen to cooperate: 512, 1408, and 64 are all multiples 
 The pretraining pass is the headline, but it is not the bill. There is exactly **one** itemized cost table in this book — [Chapter 14.12's](../14-capstone/12-retrospective-and-scaleup.html), which derives every line and re-prices it onto 2026 hardware. Here is its shape so you know what you are signing up for:
 
 - **Pretraining (Ch. 14.7):** 18B tokens, ≈22–29 GPU-hr, ≈USD 25–50. Roughly half the project.
-- **Everything else on a GPU:** scaling ladder (Ch. 14.5), mid-training's ~2B tokens split 1.2B @ 2048 and ~0.8B @ 8192 (Ch. 14.8, ~3.5 GPU-hr), SFT + DPO + GRPO (Ch. 14.9), agent distillation (Ch. 14.10), eval + quantization (Ch. 14.11) — together **≈13 GPU-hr, ≈USD 25**.
+- **Everything else on a GPU:** scaling ladder (Ch. 14.5), mid-training's ~2B tokens split 1.2B @ 2048 and ~0.8B @ 8192 (Ch. 14.8, ~3.5 GPU-hr), SFT + DPO + GRPO (Ch. 14.9), agent distillation (Ch. 14.10), eval + quantization (Ch. 14.11) — together **≈16 GPU-hr, ≈USD 29**.
 - **Non-GPU:** the teacher-model API for ReAct trajectories (~USD 8) plus object storage and egress for ~200 GB of shards and checkpoints (~USD 5) — **≈USD 13**, and at 1B scale this category *overtakes* the GPU bill.
 - **Re-run reality tax:** ~25% of the GPU spend for OOMs, bad launches, and restarts. Grand total **≈USD 90–100** — which is why the sticker says "the ~USD 100 model."
 

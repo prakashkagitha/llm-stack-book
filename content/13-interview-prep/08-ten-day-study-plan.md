@@ -219,10 +219,10 @@ Day 4's pen-and-paper exercise — counting a GPT's parameters — deserves its 
     **KV cache.** For a sequence of $S = 4096$ tokens, batch $B = 1$, in fp16 (2 bytes), the cache stores K and V for every layer:
 
     $$
-    \text{bytes} = 2\,(\text{K,V}) \times L \times S \times d \times 2\,(\text{fp16}) = 2 \times 32 \times 4096 \times 4096 \times 2 \approx 4.3\text{ GB}.
+    \text{bytes} = 2\,(\text{K,V}) \times L \times S \times d \times 2\,(\text{fp16}) = 2 \times 32 \times 4096 \times 4096 \times 2 \approx 2.15\text{ GB}.
     $$
 
-    That single number — roughly **4 GB of KV cache for one 4k-token sequence** — explains why GQA, paged attention, and quantized KV exist. If an interviewer asks "why can't I just batch 100 of these on one 80 GB GPU?", you now answer with arithmetic, not hand-waving. See [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
+    That single number — roughly **2 GB of KV cache for one 4k-token sequence** — explains why GQA, paged attention, and quantized KV exist. If an interviewer asks "why can't I just batch 100 of these on one 80 GB GPU?", you now answer with arithmetic, not hand-waving. See [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
 
 ### Days 5–6: Pretraining, Scaling, and Efficiency
 
@@ -352,7 +352,7 @@ The last two days are about *consolidation and logistics*, not new learning. Cra
 
 **Morning of**
 
-- [ ] No new material. Glance once at the must-know one-liners (FLOPs $= 6ND$, 20 tokens/param, $\hat{y}-y$, $1/\sqrt{d_k}$, KV cache $\approx$ 4 GB / 4k seq).
+- [ ] No new material. Glance once at the must-know one-liners (FLOPs $= 6ND$, 20 tokens/param, $\hat{y}-y$, $1/\sqrt{d_k}$, KV cache $\approx$ 2 GB / 4k seq).
 - [ ] Eat something with protein. Hydrate. Arrive or log in 10 minutes early.
 - [ ] Re-read the "Reset Your Nerves" page below.
 - [ ] Have your questions-for-the-interviewer ready. Asking good questions signals seniority and genuine interest.
@@ -386,7 +386,7 @@ You have done the work. The ten days of spaced, interleaved, retrieval-based pra
     - **Recognition is not retrieval.** Self-test against flashcards and quiz yourself; do not re-read chapters. The wince when you *almost* knew something is your highest-value signal.
     - **Space and interleave.** Ten short days beat one long cram because each successful recall increases memory strength $S$; shuffle topics so practice matches the interleaved reality of a real loop.
     - **Front-load the plan.** Fundamentals and the transformer first (most-asked, they anchor everything), training/efficiency/alignment in the middle, integrated system-design and behavioral mocks last.
-    - **Memorize the load-bearing numbers:** $\partial\mathcal{L}/\partial z = \hat{y}-y$, attention scale $1/\sqrt{d_k}$, training FLOPs $\approx 6ND$, Chinchilla ~20 tokens/param, and "KV cache $\approx$ 4 GB per 4k-token sequence" for a 7B model.
+    - **Memorize the load-bearing numbers:** $\partial\mathcal{L}/\partial z = \hat{y}-y$, attention scale $1/\sqrt{d_k}$, training FLOPs $\approx 6ND$, Chinchilla ~20 tokens/param, and "KV cache $\approx$ 2 GB per 4k-token sequence" for a 7B model.
     - **Drill must-build code cold:** causal attention + KV cache, a reverse-mode autodiff node, the DPO loss, top-p sampling, and logistic-regression-from-scratch.
     - **The final 48 hours are for consolidation, not new content.** Run mocks, review only your wince-cards, rehearse STAR stories out loud, fix logistics — and protect your sleep, which is when learning is actually stored.
     - **On the day: clarify before solving, think out loud, reframe nerves as excitement, and remember it's a conversation between two engineers.** A grounded "here's how I'd figure it out" beats a confident bluff.

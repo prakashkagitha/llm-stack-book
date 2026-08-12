@@ -185,7 +185,7 @@ def dpo_loss(policy_chosen_logps, policy_rejected_logps,
     return loss, chosen_reward, reject_reward
 ```
 
-And the training step that wires the reference model in. The reference is frozen, so its forward pass runs under `torch.no_grad()`; in production you usually *precompute* `ref_*_logps` once over the whole dataset and cache them, which removes the reference model from the hot loop entirely: one fewer forward pass per step and one fewer copy of the weights. Be precise about that saving — a frozen bf16 reference is ~2 bytes/param, which is about *half the weight memory* but only ~10% of the total weight + gradient + Adam-state footprint of a full fine-tune (~18–20 bytes/param), and less again once activations are counted.
+And the training step that wires the reference model in. The reference is frozen, so its forward pass runs under `torch.no_grad()`; in production you usually *precompute* `ref_*_logps` once over the whole dataset and cache them, which removes the reference model from the hot loop entirely: one fewer forward pass per step and one fewer copy of the weights. Be precise about that saving — a frozen bf16 reference is ~2 bytes/param, which is about *half the weight memory* but only ~12% of the total weight + gradient + Adam-state footprint of a full fine-tune (~16 bytes/param: 2 bf16 weight + 2 bf16 grad + 4 fp32 master + 4 $m$ + 4 $v$), and less again once activations are counted.
 
 ```python
 def dpo_training_step(policy, ref_model, batch, beta=0.1):

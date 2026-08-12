@@ -319,9 +319,9 @@ The KV-cache trade-off is a *systems* answer the interviewer will reward: with $
 !!! example "Worked example: KV-cache size, and why GQA matters"
     Take a model with $L = 32$ layers, $h = 32$ heads, head dimension $d_h = 128$ (so model dim $d = 4096$), serving in bf16 (2 bytes). The KV cache stores **2** tensors (K and V) per layer per token.
 
-    **Per token, full MHA:** $2 \times L \times h \times d_h \times 2\text{ bytes} = 2 \times 32 \times 32 \times 128 \times 2 = 2{,}097{,}152$ bytes $\approx$ **2 MiB per token**.
+    **Per token, full MHA:** $2 \times L \times h \times d_h \times 2\text{ bytes} = 2 \times 32 \times 32 \times 128 \times 2 = 524{,}288$ bytes $\approx$ **0.5 MiB per token**.
 
-    For a single sequence of **8{,}192 tokens**: $8192 \times 2\text{ MiB} = 16\text{ GiB}$ — for *one* request's KV cache. That is most of an A100-40GB before you've batched anything. **Now switch to GQA with 8 KV groups** instead of 32 heads: the K/V projection shrinks by $32/8 = 4\times$, so the cache drops to **4 GiB**, letting you batch ~4× more concurrent requests on the same card. This single architectural choice is the difference between serving 1 user and 4 — which is exactly why every production LLM since ~2023 uses GQA or MLA. The throughput consequences are worked out in [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
+    For a single sequence of **8{,}192 tokens**: $8192 \times 0.5\text{ MiB} = 4\text{ GiB}$ — for *one* request's KV cache. That is a tenth of an A100-40GB gone before you've batched anything. **Now switch to GQA with 8 KV groups** instead of 32 heads: the K/V projection shrinks by $32/8 = 4\times$, so the cache drops to **1 GiB**, letting you batch ~4× more concurrent requests on the same card. This single architectural choice is the difference between serving 1 user and 4 — which is exactly why every production LLM since ~2023 uses GQA or MLA. The throughput consequences are worked out in [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
 
 ### Embeddings: what they are and why dot products mean "similar"
 

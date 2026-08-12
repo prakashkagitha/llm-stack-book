@@ -73,20 +73,20 @@ See [Beyond Attention: SSMs, Mamba, RWKV & Linear Attention](../02-transformer/1
 Empirically established power-law relationships between model performance (test loss) and model size ($N$), dataset size ($D$), and compute ($C$). The key finding: loss scales as $L \propto N^{-\alpha}$ and $L \propto D^{-\beta}$ with roughly constant exponents, suggesting that bigger models are always better if given proportionally more data.
 
 **Hoffmann et al., "Training Compute-Optimal Large Language Models" (Chinchilla), 2022.**
-Re-ran the Kaplan scaling analysis more carefully and found that the optimal allocation of a fixed compute budget $C = 6ND$ is approximately equal numbers of parameters $N$ and tokens $D$: for every doubling of model size, you should double the training tokens. This overturned the common practice of under-training large models, directly influencing LLaMA's training recipe.
+Re-ran the Kaplan scaling analysis more carefully and found that the optimal allocation of a fixed compute budget $C = 6ND$ gives approximately equal scaling *exponents* to parameters $N$ and tokens $D$ ($N_{\text{opt}}, D_{\text{opt}} \propto C^{0.5}$), which pins their ratio at roughly 20 tokens per parameter: for every doubling of model size, you should double the training tokens. This overturned the common practice of under-training large models, directly influencing LLaMA's training recipe.
 
 !!! example "Worked example: Chinchilla optimal sizing"
-    Suppose you have a compute budget of $C = 10^{23}$ FLOPs (roughly what it costs to train a 70 B parameter model on 1 T tokens using the $6ND$ approximation).
+    Suppose you have a compute budget of $C = 10^{23}$ FLOPs (roughly what it costs to train a 70 B parameter model on 240 B tokens using the $6ND$ approximation).
 
-    Under Chinchilla's equal-allocation rule: $N_{\text{opt}} \approx \sqrt{C / 6}$.
+    Under Chinchilla's $\approx 20$ tokens-per-parameter rule, $D = 20N$, so $C = 6ND = 120N^2$ and $N_{\text{opt}} \approx \sqrt{C / 120}$.
 
     $$
-    N_{\text{opt}} = \sqrt{\frac{10^{23}}{6}} \approx \sqrt{1.67 \times 10^{22}} \approx 4.1 \times 10^{11} \approx 410\text{B parameters}
+    N_{\text{opt}} = \sqrt{\frac{10^{23}}{120}} \approx \sqrt{8.3 \times 10^{20}} \approx 2.9 \times 10^{10} \approx 29\text{B parameters}
     $$
 
-    Correspondingly $D_{\text{opt}} \approx C / (6 N_{\text{opt}}) \approx 10^{23} / (6 \times 4.1\times10^{11}) \approx 4\times10^{10}$ tokens (40 B tokens).
+    Correspondingly $D_{\text{opt}} \approx C / (6 N_{\text{opt}}) \approx 10^{23} / (6 \times 2.9\times10^{10}) \approx 5.8\times10^{11}$ tokens (580 B tokens) — about 20 tokens per parameter, as expected.
 
-    In practice, inference cost makes smaller models more economical to deploy, so practitioners often train a smaller model (e.g., 7 B) on far more tokens than Chinchilla-optimal (e.g., 1–2 T tokens), accepting a small loss penalty for major inference savings. LLaMA 2 7B was trained for about 2 T tokens — roughly 30$\times$ more than the compute-optimal point.
+    In practice, inference cost makes smaller models more economical to deploy, so practitioners often train a smaller model (e.g., 7 B) on far more tokens than Chinchilla-optimal (e.g., 1–2 T tokens versus the ~140 B tokens a 7 B model wants at the compute-optimal point), accepting a small loss penalty for major inference savings. LLaMA 2 7B was trained for about 2 T tokens — roughly 14$\times$ more than the compute-optimal point.
 
 See [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html) for the full curve-fitting methodology.
 

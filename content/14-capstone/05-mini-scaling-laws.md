@@ -132,17 +132,17 @@ Norms are *not* rescaled. Applying a $1/d$ scaling to RMSNorm gains is not muP �
 
 Our optimizer is the Muon + AdamW hybrid from [Chapter 14.6](../14-capstone/06-optimizer-and-schedule.html), which splits the parameters into three groups that map cleanly onto that prescription:
 
-- **Muon — the 2D hidden matrices.** Muon orthogonalizes the momentum and rescales by $0.2\sqrt{\max(m,n)}$ (the RMS-matching trick, Liu et al., *Muon is Scalable*, 2025). The orthogonalized update's spectral norm is set by the *shape* and the rescaling divides that shape dependence out, so Muon's peak LR is far closer to width-invariant than Adam's. Chapter 14.6 *measures* it — a $\times 2$ sweep on this chapter's S4 rung, transferred across batch size — and lands on **`muon_lr = 6e-3`**. We use that number, hold it constant across every rung, and re-verify width-invariance with a short probe at S1 and S3 rather than assuming it.
-- **AdamW, tied embedding/head.** The tied table is simultaneously the input embedding (muP: $\Theta(1)$) and the readout (muP: $\Theta(1/d)$), which muP does not cleanly cover. We follow the **readout** rule, $\eta \propto 1/d_{\text{model}}$, because the output side is where the width-dependent logit scale actually bites, anchored at the target's $3\times10^{-3}$ (= `muon_lr / 2`, the 2:1 ratio Chapter 14.6 fixes) with base width $d_{\text{base}}=512$.
+- **Muon — the 2D hidden matrices.** Muon orthogonalizes the momentum and rescales by $0.2\sqrt{\max(m,n)}$ (the RMS-matching trick, Liu et al., *Muon is Scalable*, 2025). The orthogonalized update's spectral norm is set by the *shape* and the rescaling divides that shape dependence out, so Muon's peak LR is far closer to width-invariant than Adam's. Chapter 14.6 *measures* it — a $\times 2$ sweep on this chapter's S4 rung, transferred across batch size — and lands on **`muon_lr = 0.02`**. We use that number, hold it constant across every rung, and re-verify width-invariance with a short probe at S1 and S3 rather than assuming it.
+- **AdamW, tied embedding/head.** The tied table is simultaneously the input embedding (muP: $\Theta(1)$) and the readout (muP: $\Theta(1/d)$), which muP does not cleanly cover. We follow the **readout** rule, $\eta \propto 1/d_{\text{model}}$, because the output side is where the width-dependent logit scale actually bites, anchored at the target's $3\times10^{-3}$ ($\approx$ `muon_lr / 6.7`, the empirical ~6.7:1 ratio Chapter 14.6 fixes) with base width $d_{\text{base}}=512$.
 - **AdamW, norms and 1D.** Width-independent, held at $3\times10^{-3}$ on every rung.
 
 | Rung | `d_model` | Muon peak | AdamW tied head $=3\times10^{-3}\cdot\frac{512}{d}$ | AdamW norms/1D |
 |---|---|---|---|---|
-| S1 | 192 | $6\times10^{-3}$ | $8.0\times10^{-3}$ | $3.0\times10^{-3}$ |
-| S2 | 256 | $6\times10^{-3}$ | $6.0\times10^{-3}$ | $3.0\times10^{-3}$ |
-| S3 | 320 | $6\times10^{-3}$ | $4.8\times10^{-3}$ | $3.0\times10^{-3}$ |
-| S4 | 448 | $6\times10^{-3}$ | $3.4\times10^{-3}$ | $3.0\times10^{-3}$ |
-| *target* | *512* | $6\times10^{-3}$ | $3.0\times10^{-3}$ | $3.0\times10^{-3}$ |
+| S1 | 192 | $2\times10^{-2}$ | $8.0\times10^{-3}$ | $3.0\times10^{-3}$ |
+| S2 | 256 | $2\times10^{-2}$ | $6.0\times10^{-3}$ | $3.0\times10^{-3}$ |
+| S3 | 320 | $2\times10^{-2}$ | $4.8\times10^{-3}$ | $3.0\times10^{-3}$ |
+| S4 | 448 | $2\times10^{-2}$ | $3.4\times10^{-3}$ | $3.0\times10^{-3}$ |
+| *target* | *512* | $2\times10^{-2}$ | $3.0\times10^{-3}$ | $3.0\times10^{-3}$ |
 
 Everything else is fixed by the run's own step count: **linear warmup for `min(2000, 5% of steps)`**, a constant stable phase, then the WSD $1-\sqrt{\cdot}$ **decay over the final 20%** to ~0, exactly as in Chapter 14.6. Weight decay 0.1 (0.0 on 1D), betas $(0.9,0.95)$, grad-clip 1.0, bf16.
 
@@ -304,8 +304,8 @@ def build_runs():
 #     comment). Muon's peak is width-invariant; the tied embedding/head follows
 #     muP's READOUT rule, eta ~ 1/d_model; norms/1D stay width-independent. -----
 D_BASE   = 512            # muP base width = the target's d_model
-MUON_LR  = 6e-3           # measured on the S4 rung in Ch. 14.6
-ADAMW_LR = MUON_LR / 2    # 3e-3 at the base width (Ch. 14.6's 2:1 ratio)
+MUON_LR  = 0.02           # measured on the S4 rung in Ch. 14.6
+ADAMW_LR = 3e-3           # at the base width (Ch. 14.6's empirical ~6.7:1 ratio)
 
 def rung_lrs(cfg) -> dict:
     return dict(muon=MUON_LR,
@@ -393,7 +393,7 @@ def run_one(run, data_dir, out_path, device="cuda"):
     micro_bs   = min(MICRO_BS, run["batch_tokens"] // SEQ_LEN)
     grad_accum = run["batch_tokens"] // (micro_bs * SEQ_LEN)
     assert micro_bs * grad_accum * SEQ_LEN == run["batch_tokens"]
-    lrs = rung_lrs(c)                                 # Muon 6e-3; AdamW head 3e-3*512/d
+    lrs = rung_lrs(c)                                 # Muon 0.02; AdamW head 3e-3*512/d
     out = pretrain(
         model, train, device=device,
         steps=run["steps"], total_steps=run["steps"],  # schedule ends at THIS run's D
@@ -952,7 +952,7 @@ One honest caveat before you crank tokens/param to the moon: the Chinchilla form
     - **Fit your own law; don't import constants.** $E$, $A$, $B$, $\alpha$, $\beta$ depend on your corpus, tokenizer and frozen recipe. A four-rung ladder (~4M/9M/19M/44M) under the *identical* Stack recipe costs ~4.7 GPU-hours (~USD 8, ~12% of the flagship) and de-risks the whole 20B-token commitment.
     - **$6ND$ is a 57%-error approximation at 100M and a 260%-error one at 4M.** Cost your sweep with $6N_{\text{nonembed}} + 6 L s\, d + 6 d V$ per token — blocks + causal attention + tied head (identically $6N_{\text{total}} + 6Lsd$ for a tied embedding, which is how Ch. 14.1 writes it). The correction is *rung-dependent* (3.60× → 1.57× up our ladder), so $6ND$ "IsoFLOP" slices are not iso-compute.
     - **Say which parameter count you fit, and make compute consistent with it.** Kaplan used non-embedding $N$; Chinchilla used total $N$; Pearce & Song (2024) show that mismatch is a primary driver of the $C^{0.73}$ vs $C^{0.50}$ discrepancy, worst below 1B. We fit $N_{\text{nonembed}}$ *and* count the head's FLOPs explicitly — and the plan's "200 tokens/parameter" is on *total* parameters (237 on non-embedding).
-    - **Freeze everything but $N$ and $D$ — except LR and batch, which must move.** Give every rung a schedule that decays to zero at *its own* token count (the Kaplan confound); hold Muon at the measured $6\times10^{-3}$ (its RMS-matched update is near width-invariant), scale only the tied readout as $1/d_{\text{model}}$ and leave norms/1D width-independent (that, not "scale everything," is what muP prescribes); and size the batch for $\ge$ ~2000 steps and $\le$ the critical batch size.
+    - **Freeze everything but $N$ and $D$ — except LR and batch, which must move.** Give every rung a schedule that decays to zero at *its own* token count (the Kaplan confound); hold Muon at the measured $2\times10^{-2}$ (its RMS-matched update is near width-invariant), scale only the tied readout as $1/d_{\text{model}}$ and leave norms/1D width-independent (that, not "scale everything," is what muP prescribes); and size the batch for $\ge$ ~2000 steps and $\le$ the critical batch size.
     - **Fit in log space with `logsumexp` + Huber loss**, constrain the exponents, multi-start (or better, use variable projection — `vpnls`, `ml-scalefit`), and judge the fit by *held-out extrapolation*, not raw constants: our $A$ ranged 58–430 against a true 124, while the extrapolated loss landed within ~0.1 nats and a held-out top rung within ~0.09.
     - **Two methods, one story.** Parametric $\beta/(\alpha+\beta) \approx 0.45$ and IsoFLOP $a \approx 0.49$ bracket the family's true $0.463$. On noise-free data our parabolas were accurate to <1%; with 1% run noise $a$ spanned 0.44–0.57. Czech et al. (2026) document real systematic biases in the method — require agreement on the story, not the digit.
     - **Predicted Stack-100M loss: ~3.13 nats (±0.1) at Chinchilla's ~20 tok/total-param (2.03B tokens), ~2.94 at the plan's 20B.** Project your live stable-phase curve in $D^{-\beta}$ coordinates, subtract the ladder's measured WSD decay drop, and compare; a >0.3-nat miss means a bug, and the triage table tells you which one.

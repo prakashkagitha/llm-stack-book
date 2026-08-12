@@ -667,7 +667,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
 
 - **Zhong et al., "DistServe: Disaggregating Prefill and Decoding for Goodput-Optimized Large Language Model Serving," OSDI 2024.** The foundational paper for disaggregated serving; includes the formal goodput optimization and KV transfer analysis.
 - **Patel et al., "Splitwise: Efficient Generative LLM Inference Using Phase Splitting," ISCA 2024 (Microsoft Research).** Formalizes the heterogeneous hardware argument and coins "prompt phase" / "token phase" terminology.
-- **Agrawal et al., "Sarathi-Serve: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills," OSDI 2024.** Demonstrates chunked prefill in a production-oriented scheduler with careful measurement of the TTFT-ITL tradeoff.
+- **Agrawal et al., "Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve," OSDI 2024.** Demonstrates chunked prefill in a production-oriented scheduler with careful measurement of the TTFT-ITL tradeoff.
 - **Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention," SOSP 2023.** The vLLM paper; PagedAttention is the KV-cache memory management substrate on which chunked prefill and disaggregation are built.
 - **vLLM documentation: "Chunked Prefill" and "Disaggregated Prefill."** The vLLM project documentation covers both features with configuration examples and benchmark guidance.
 - **SGLang GitHub repository (lm-sys/sglang).** SGLang's scheduler source code is an excellent reference for how chunked prefill interacts with RadixAttention prefix caching in a production system.

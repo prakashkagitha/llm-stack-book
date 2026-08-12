@@ -796,8 +796,8 @@ Alert thresholds to set:
 
     **Recent advances (2023–2026)**
 
-    - [Zhong et al., *DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving* (2024)](https://arxiv.org/abs/2401.09670) — formalises "goodput" (SLO-attaining requests/s) and shows disaggregating prefill and decode onto separate GPU pools yields up to 4.5× better goodput.
-    - [Agrawal et al., *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve* (2024)](https://arxiv.org/abs/2403.02310) — chunked prefill + stall-free scheduling; up to 6.9× higher throughput over vLLM at the same TTFT SLO on multi-GPU deployments.
+    - [Zhong et al., *DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving* (2024)](https://arxiv.org/abs/2401.09670) — formalises "goodput" (SLO-attaining requests/s) and shows disaggregating prefill and decode onto separate GPU pools yields up to 7.4× more requests served under tight SLOs.
+    - [Agrawal et al., *Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve* (2024)](https://arxiv.org/abs/2403.02310) — chunked prefill + stall-free scheduling; 2.6× higher serving capacity for Mistral-7B on one A100 and up to 5.6× for Falcon-180B with pipeline parallelism, versus vLLM.
     - [Qin et al., *Mooncake: A KVCache-centric Disaggregated Architecture for LLM Serving* (2024)](https://arxiv.org/abs/2407.00079) — Best Paper at FAST 2025; the production architecture behind Kimi, disaggregates KV cache across DRAM/SSD/NIC to boost throughput 59–498% in real traces.
     - [Yuan et al., *LLM Inference Unveiled: Survey and Roofline Model Insights* (2024)](https://arxiv.org/abs/2402.16363) — systematic roofline-model survey of quantization, batching, and parallelism strategies with an open-source LLM-Viewer analysis tool.
 
@@ -818,7 +818,7 @@ Alert thresholds to set:
 - **Yu et al., "Orca: A Distributed Serving System for Transformer-Based Generative Models"**, OSDI 2022. Introduces continuous batching (iteration-level scheduling) and quantifies the throughput gains.
 - **Sheng et al., "FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU"**, ICML 2023. Shows how to trade latency for throughput on memory-constrained hardware via offloading.
 - **Pope et al., "Efficiently Scaling Transformer Inference"**, MLSys 2023 (Google). Detailed analysis of model parallelism strategies and hardware trade-offs for serving large models at scale.
-- **Agrawal et al., "Sarathi-Serve: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills"**, OSDI 2024. Quantifies the prefill-decode interference problem and the benefit of chunked prefill for latency.
+- **Agrawal et al., "Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve"**, OSDI 2024. Quantifies the prefill-decode interference problem and the benefit of chunked prefill for latency.
 - **vLLM project** (github.com/vllm-project/vllm): The reference open-source implementation; its metrics endpoint is the best way to observe the concepts in this chapter in a real system.
 - **LLM-Perf Leaderboard** (HuggingFace): Community benchmarks for tokens/s and cost across models, hardware, and quantization levels — useful for calibrating the numbers in this chapter against real measurements.
 

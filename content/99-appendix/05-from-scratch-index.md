@@ -517,7 +517,7 @@ class GPT(nn.Module):
 
 **Parameter count:** a model with $d=768$, 12 heads, 12 layers, vocab 50257 has:
 $$
-12 \times (4 \times 768^2 + 2 \times 768^2 \times 4 + 2 \times 768) + 50257 \times 768 \approx 117\text{M params}
+12 \times (4 \times 768^2 + 2 \times 768^2 \times 4 + 2 \times 768) + 50257 \times 768 \approx 124\text{M params}
 $$
 — the GPT-2 small configuration.
 
