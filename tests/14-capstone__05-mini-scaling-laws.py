@@ -212,7 +212,10 @@ def gpu_hours(flops: float, peak_flops_per_s: float = 312e12,
               mfu: float = 0.35) -> float:
     """Wall-clock on ONE accelerator. 312 TFLOP/s ~ A100 bf16 dense peak. MFU is
     measured against the FULL model FLOPs above -- the only honest denominator.
-    Ch. 14.1 derives the 0.30-0.45 band for this shape; Ch. 14.7 measures it."""
+    Ch. 14.1's FLAGSHIP band is 0.45-0.58 in this attention-inclusive convention
+    (equivalently 0.34-0.45 under 6ND); Ch. 14.7 measures 0.582. The 0.35 default
+    is the deliberately conservative figure we cost the tiny LADDER rungs at --
+    they are launch- and memory-bound and utilize far less than the target."""
     return flops / (peak_flops_per_s * mfu) / 3600.0
 
 # --- exercise block #2 (the chapter's own S2-by-hand worked example, sec 3) --
@@ -294,8 +297,8 @@ if __name__ == "__main__":
           f"= {100*ladder/big:4.1f}% of the flagship ({big:.3e})")
     print(f"ladder wall-clock (1xA100, 35% MFU) = {gpu_hours(ladder):.2f} GPU-hr "
           f"~ USD {gpu_hours(ladder)*1.75:.2f}")
-    print(f"flagship = {gpu_hours(big, mfu=0.45):.0f}/{gpu_hours(big):.0f}/"
-          f"{gpu_hours(big, mfu=0.30):.0f} GPU-hr at MFU 0.45/0.35/0.30")
+    print(f"flagship = {gpu_hours(big, mfu=0.58):.0f}/{gpu_hours(big, mfu=0.52):.0f}/"
+          f"{gpu_hours(big, mfu=0.45):.0f} GPU-hr at MFU 0.58/0.52/0.45")
 
 # --- exercise block #3: cross-check against the chapter's printed console dump
 # (block #4 in the numbering -- a ```text``` block, not Python; verified here
@@ -508,7 +511,7 @@ def slice_configs(C, n=7, span=0.6):
     coarse = [family(d) for d in range(64, 1345, 64)]
     losses = [_law(c.nonembed_params(), C / flops_per_token(c)["total"]) for c in coarse]
     N_c = coarse[int(np.argmin(losses))].nonembed_params()
-    return [min((family(d) for d in range(64, 2049, 32)),
+    return [min((family(d) for d in range(64, 2049, 64)),
                 key=lambda c: abs(math.log(c.nonembed_params() / t)))
             for t in N_c * np.logspace(-span, span, n)]
 
@@ -569,8 +572,10 @@ _section("Block #11: live-monitor decay-drop + stable-phase projection")
 
 def measure_decay_drop(curves, decay_frac=0.20) -> float:
     """Median (loss at start of decay) - (final loss) across the ladder rungs.
-    `curves` is a list of (tokens, val_loss) sequences from ladder_results.jsonl.
-    Expect a tenth of a nat at this scale -- but YOUR ladder tells you, free."""
+    `curves` is a list of (tokens_seq, loss_seq) PAIRS -- one pair per rung.
+    run_sweep.py saves each curve TRANSPOSED, as [(tokens, loss), ...], so load
+    them with `[list(zip(*row["curve"])) for row in rows]` or you will unpack the
+    wrong axis. Expect a tenth of a nat here -- but YOUR ladder tells you, free."""
     drops = []
     for tok, loss in curves:
         tok, loss = np.asarray(tok, float), np.asarray(loss, float)

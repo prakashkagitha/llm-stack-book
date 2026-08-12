@@ -9,8 +9,10 @@ import numpy as np
 
 def measure_decay_drop(curves, decay_frac: float = 0.20) -> float:
     """Median (loss at start of decay) - (final loss) across the ladder rungs.
-    `curves` is a list of (tokens, val_loss) sequences from ladder_results.jsonl.
-    Expect a tenth of a nat at this scale -- but YOUR ladder tells you."""
+    `curves` is a list of (tokens_seq, loss_seq) PAIRS -- one pair per rung.
+    run_sweep.py saves each curve TRANSPOSED, as [(tokens, loss), ...], so load
+    them with `[list(zip(*row["curve"])) for row in rows]` or you will unpack the
+    wrong axis. Expect a tenth of a nat here -- but YOUR ladder tells you."""
     drops = []
     for tok, loss in curves:
         tok, loss = np.asarray(tok, float), np.asarray(loss, float)

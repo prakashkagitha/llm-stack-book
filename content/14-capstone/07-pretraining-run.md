@@ -207,6 +207,9 @@ class TrainConfig:
 
     # --- run mechanics ---
     device: str = "cuda"
+    peak_flops: float = 312e12     # MFU denominator: A100 80GB SXM bf16 dense.
+                                   # 165e12 on a 4090, 65e12 on a T4 (fp16) -- change
+                                   # it with the tier or every MFU number is wrong.
     activation_checkpointing: bool = False
     compile_model: bool = True
     eval_every: int = 500
@@ -279,9 +282,13 @@ Two one-line settings belong next to the autocast context and are easy to forget
 ```python
 import torch
 
-torch.backends.cudnn.benchmark = True          # fixed shapes every step -> algo cache is a win
-torch.set_float32_matmul_precision("high")     # TF32 tensor cores for the fp32 ops that remain
-                                               # (RMSNorm reductions, the fp32 optimizer math)
+torch.backends.cudnn.benchmark = True          # nanoGPT-inherited boilerplate: cuDNN's autotuner
+                                               # picks CONVOLUTION algorithms, so it is a no-op for
+                                               # a conv-free transformer. Harmless; keep the habit.
+torch.set_float32_matmul_precision("high")     # TF32 tensor cores for the fp32 MATMULS outside the
+                                               # autocast region -- e.g. Muon's Newton-Schulz
+                                               # iterations on fp32 2-D gradients. It does not touch
+                                               # reductions (RMSNorm) or elementwise optimizer math.
 
 autocast_ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16)
 ```
@@ -425,7 +432,9 @@ def _chunk_ce(h, w, t, cap: float):
 def fused_ce_z_loss(hidden, weight, targets, z_coef: float,
                     chunk: int = 8192, soft_cap: float = 0.0):
     """Returns (cross_entropy, z_loss), each a mean over VALID positions.
-    Numerically equal to the unchunked path; peak logit memory is chunk*V and no
+    The CE term is numerically equal to the unchunked path; the z-term is
+    normalized over valid positions rather than over all B*T positions (a
+    deliberate difference -- see below). Peak logit memory is chunk*V and no
     longer grows with batch size. Gradients w.r.t. both `hidden` and the (tied)
     `weight` accumulate correctly because autograd sums every checkpointed call."""
     h = hidden.reshape(-1, hidden.shape[-1])         # (B*T, d)
@@ -735,12 +744,34 @@ block's working set (a few hundred MB): a **3–8× cut**, not a 30× one.
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 
+def _drop_block_prefix(module, state_dict, prefix, local_metadata):
+    """Save hook: `blocks.0.block.attn.wq.weight` -> `blocks.0.attn.wq.weight`."""
+    for k in [k for k in state_dict if k.startswith(prefix + "block.")]:
+        state_dict[prefix + k[len(prefix + "block."):]] = state_dict.pop(k)
+    return state_dict
+
+
+def _add_block_prefix(state_dict, prefix, *args):
+    """Load pre-hook: the exact inverse, applied before this module's children
+    are visited, so an un-wrapped checkpoint loads into a wrapped model."""
+    for k in [k for k in state_dict if k.startswith(prefix)]:
+        state_dict[prefix + "block." + k[len(prefix):]] = state_dict.pop(k)
+
+
 class CheckpointedBlock(nn.Module):
     """Wraps one Stack100M transformer block so its *internal* activations are
     recomputed in the backward pass instead of held for the whole forward pass."""
     def __init__(self, block: nn.Module):
         super().__init__()
         self.block = block
+        # Keep state_dict keys IDENTICAL to the unwrapped model. Without these two
+        # hooks every parameter is silently renamed `blocks.0.block.*`, so a
+        # checkpoint written on a tier with checkpointing ON cannot be loaded by a
+        # tier with it OFF -- `ckpt_stable.pt` would stop being portable into
+        # Ch. 14.8. PyTorch's own `checkpoint_wrapper` registers exactly this pair
+        # of hooks to hide its `_checkpoint_wrapped_module.` prefix.
+        self._register_state_dict_hook(_drop_block_prefix)
+        self._register_load_state_dict_pre_hook(_add_block_prefix)
 
     def forward(self, x, cos, sin, **kw):
         if self.training:
@@ -982,6 +1013,12 @@ train_loader = build_loader(cfg.shard_dir, cfg, tok,
                             start_sample=step * samples_per_step)
 ```
 
+This arithmetic is exact only under one convention, which the loop must honour everywhere: the
+saved `step` is the number of steps **completed**, i.e. the index of the next step to run. Save the
+index of the step that just finished instead and every resume re-consumes 256 samples, re-applies
+one update, and double-counts 524,288 tokens — a silent off-by-one that the rehearsal below is
+designed to catch.
+
 !!! warning "Common pitfall: reading the data cursor out of the loader"
 
     It is tempting to ask the loader where it is and save *that*. Do not, for two reasons.
@@ -1053,8 +1090,8 @@ reason to skip the check.
     21 against a fresh run that never stopped. On a correctly wired loop these should match to
     within tight floating-point tolerance — the same op sequence on the same inputs with the same
     RNG state is deterministic, though exact bit-equality also requires
-    `torch.use_deterministic_algorithms(True)` and `cudnn.benchmark = False`, which cost throughput
-    and are worth turning on only for this test. If they diverge materially, something in the
+    `torch.use_deterministic_algorithms(True)` (plus `CUBLAS_WORKSPACE_CONFIG=:4096:8`), which costs
+    throughput and is worth turning on only for this test. If they diverge materially, something in the
     checkpoint is incomplete — almost always the data position or Muon's momentum buffers.
 
 ## Measuring Throughput: MFU, HFU, and Where 6ND Breaks
@@ -1097,9 +1134,10 @@ $$
 
 where the second term is the PaLM paper's $12 \cdot L \cdot H \cdot Q \cdot T$ (with
 $H \cdot Q = d_{\text{model}}$) halved, because a causal kernel computes only the lower triangle.
-The ratio of the two terms is roughly $T / (6 \cdot d_{\text{model}})$ — negligible for a wide,
-short-context model, and *not* negligible for Stack-100M, which PLAN.md §1 deliberately makes
-**deep and thin**.
+The ratio of the two terms is $n_{\text{layers}} T d_{\text{model}} / N$, which for a standard
+transformer ($N \approx 12 \cdot n_{\text{layers}} \cdot d_{\text{model}}^2$) is roughly
+$T / (12 \cdot d_{\text{model}})$ — negligible for a wide, short-context model, and *not* negligible
+for Stack-100M, which PLAN.md §1 deliberately makes **deep and thin**.
 
 ```python
 # stacklm/train_utils.py
@@ -1334,14 +1372,14 @@ from stacklm.checkpoint import load_checkpoint, save_checkpoint, save_rolling
 from stacklm.train_utils import (accumulate, evaluate, sample_text, log_metrics,
                                  enable_activation_checkpointing, maybe_qk_clip,
                                  utilization, all_params_of, attach_base_lrs,
-                                 set_lr, A100_BF16_PEAK, BATCH_KEYS)
+                                 set_lr, BATCH_KEYS)
 
 
 def main(cfg: TrainConfig):
     torch.manual_seed(cfg.seed)
     torch.cuda.manual_seed_all(cfg.seed)
-    torch.backends.cudnn.benchmark = True            # fixed shapes every step
-    torch.set_float32_matmul_precision("high")       # TF32 for the remaining fp32 math
+    torch.backends.cudnn.benchmark = True            # no-op without convolutions; harmless
+    torch.set_float32_matmul_precision("high")       # TF32 for fp32 matmuls outside autocast
 
     tok = StackTokenizer.load(cfg.tokenizer_path)
     assert tok.pad_id == 32761, "Ch. 14.3 puts the nine specials in the FINAL nine ids"
@@ -1424,7 +1462,7 @@ def main(cfg: TrainConfig):
         tokens_seen += tokens_this_step
         tokens_per_sec = tokens_this_step / dt
         mfu, hfu = utilization(n_params, tokens_per_sec, cfg,
-                               peak_flops=A100_BF16_PEAK,
+                               peak_flops=cfg.peak_flops,   # NOT hard-coded: see the tier table
                                recompute_factor=recompute_factor)
 
         val_loss = None
@@ -1442,10 +1480,14 @@ def main(cfg: TrainConfig):
                     skipped=skipped_total,
                     peak_gb=torch.cuda.max_memory_allocated() / 2**30)
 
-        if step % cfg.ckpt_every == 0 and step > 0:
+        # Increment FIRST: from here on `step` counts COMPLETED steps, which is
+        # exactly the index the resume path must start from (`start_sample =
+        # step * samples_per_step`). Checkpointing the just-finished index would
+        # replay that step's 256 samples and its update on every resume.
+        step += 1
+        if step % cfg.ckpt_every == 0:
             save_rolling(model, optimizers, cfg, step=step, tokens_seen=tokens_seen,
                          keep_last=cfg.keep_last_ckpts)
-        step += 1
 
     # ---- hand off to mid-training ------------------------------------------
     save_checkpoint(f"{cfg.ckpt_dir}/ckpt_stable.pt", model, optimizers,
@@ -1559,8 +1601,11 @@ afterward.
 
 ## Compute Tiers: A100, RTX 4090, and Free Colab
 
-The same `train.py` and `TrainConfig` serve all three compute tiers documented in the capstone plan
-— only the numbers change.
+The same `train.py` and `TrainConfig` serve the A100 and 4090 tiers with **only the numbers
+changing** — `micro_batch_size`, `grad_accum_steps`, `activation_checkpointing`, and `peak_flops`
+(hard-coding the A100's 312 TFLOP/s would report a 4090's MFU almost 2× too low). The T4 needs one
+genuine *code* branch on top of that — fp16 autocast plus a `GradScaler` — for the reason spelled
+out below the table.
 
 | Tier | GPU | VRAM | bf16 dense peak | precision | micro-batch × seq | grad accum | eff. batch | act. ckpt | est. wall-clock | est. cost |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -1578,7 +1623,9 @@ A 4090's 24GB has to hold fp32 master weights (~406 MB), gradients (~406 MB), Mu
 roughly 4 GB of block activations plus ~2 GB for the head plus ~1.3 GB of persistent state —
 comfortably inside 24 GB *without* activation checkpointing, which is why the table marks it
 optional rather than required. That is a direct consequence of the chunked head: at `loss_chunk = 0`
-the head alone was 7.5 GB at this micro-batch and checkpointing was mandatory. If you have headroom,
+the head alone was 7.5 GB at this micro-batch — roughly a third of the card, before its fp32
+gradient in backward — which left so little headroom that activation checkpointing was the standard
+advice rather than a tuning knob. If you have headroom,
 raise `micro_batch_size` to 16 and drop `grad_accum_steps` to 16 — same 524,288-token effective
 batch, fewer kernel launches, better MFU. If you OOM, the safe fallback is 8 × 32 with checkpointing
 on, or `loss_chunk = 4096`. The ~2–4× wall-clock versus the A100 comes from the 4090's lower dense
@@ -1977,8 +2024,9 @@ $6ND$; and (d) the largest `micro_batch_size` whose unchunked loss head alone wo
     \;\Rightarrow\; B \approx 27.
     $$
     Since the rest of the job needs roughly 5–6 GB, the realistic unchunked ceiling is around
-    $B \approx 8\text{–}10$ — which is exactly why the 4090 tier used `micro_batch_size = 8` and
-    mandatory activation checkpointing before `loss_chunk` existed.
+    $B \approx 8\text{–}10$ — which is exactly why the 4090 tier used `micro_batch_size = 8`, and
+    why, before `loss_chunk` existed, activation checkpointing was the usual way to buy back enough
+    headroom to survive fragmentation at that ceiling.
 
 **8.** Scale-out (implementation). The DDP snippet wraps only the *last* micro-batch in the
 accumulation window in a synchronizing context and the earlier ones in `model.no_sync()`. Rewrite

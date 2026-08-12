@@ -30,7 +30,7 @@ That timing is a gift. If the last few percent of tokens matter most, then the *
 
 ### The mid-training budget
 
-We slice a ~2B-token window off the ~20B-token budget for all three moves combined — about **10%** of total tokens, and exactly the `decay_frac = 0.10` leg that Ch. 14.7's `StackConfig` reserved (3,815 of 38,147 steps). A representative split (illustrative; tune per [Chapter 14.5](../14-capstone/05-mini-scaling-laws.html)):
+We slice a ~2B-token window off the ~20B-token budget for all three moves combined — about **10%** of total tokens, and exactly the `decay_frac = 0.10` leg that [Chapter 14.6](../14-capstone/06-optimizer-and-schedule.html)'s frozen schedule reserved (3,815 of 38,147 steps), which Ch. 14.7 then declines to spend. A representative split (illustrative; tune per [Chapter 14.5](../14-capstone/05-mini-scaling-laws.html)):
 
 | Sub-phase | Tokens | Steps @ 524,288 tok | `seq_len` | Purpose |
 |---|---|---|---|---|
@@ -38,7 +38,7 @@ We slice a ~2B-token window off the ~20B-token budget for all three moves combin
 | B. Long-context extend | ~0.6B | 1,144 | 8192 | RoPE rescale, ~23% → ~5% of peak |
 | C. Capability injection | ~0.2B | 381 | 8192 | concentrated math/code at the LR floor |
 
-That is **3,813** optimizer steps, which is Ch. 14.7's 3,815-step decay leg up to floor division. The LR decays *monotonically across all three* sub-phases — mid-training is one continuous WSD decay, just with the data mix and sequence length changing underneath it. (The exact boundary multipliers, 0.2253 and 0.0513, fall out of the $1-\sqrt{t}$ shape; Exercise 3 derives them.)
+That is **3,813** optimizer steps, which is Ch. 14.7's 3,815-step decay leg up to floor division. The LR decays *monotonically across all three* sub-phases — mid-training is one continuous WSD decay, just with the data mix and sequence length changing underneath it. (The exact boundary multipliers, 0.2254 and 0.0513, fall out of the $1-\sqrt{t}$ shape; Exercise 3 derives them.)
 
 {{fig:midtrain-continuous-decay-spine}}
 
@@ -75,8 +75,14 @@ from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 
 from stacklm.data import PackedMemmapDataset          # Ch. 14.2
 
-# Sub-phase A: the annealing mix. Keys are shard-directory names written by the
-# tokenize+pack pass (Ch. 14.2) and recorded in the data manifest.
+# Sub-phase A: the annealing mix. Keys are shard-directory names under
+# `data/mid/<name>_2048`. Ch. 14.2's `build_corpus` driver writes ONE interleaved
+# train/val corpus, so a per-source mixture needs a per-source pass first: the
+# same `build_shards` call at seq_len=2048, one output directory per source, no
+# length filter (see "Repacking for sub-phase B" for the 8192 version).
+# `instruct_flav` is not a new corpus either -- it is the QA/how-to raw text of
+# Cosmopedia v1's `wikihow` + `khanacademy` configs, shaped like instructions but
+# NOT instruction/response pairs (that is Ch. 14.9).
 ANNEAL_MIX = {
     "fineweb_edu":   0.40,
     "cosmopedia_v2": 0.30,
@@ -95,8 +101,8 @@ LONGCTX_MIX = {
     "cosmopedia_v2":    0.10,   # deliberately SHORT: the anti-drift anchor
 }
 CAPABILITY_MIX = {
-    "finemath":         0.30,
-    "starcoder_repo":   0.30,
+    "arxiv_proofpile2": 0.30,   # the math source that IS packed at 8192; FineMath
+    "starcoder_repo":   0.30,   # is short-form and lives only in the 2048 shards
     "cosmopedia_v2":    0.25,
     "fineweb_edu_long": 0.15,
 }
@@ -195,7 +201,7 @@ if __name__ == "__main__":
     # progress 100%  ->  lr_mult 0.0000
 ```
 
-Notice the shape: half the LR is gone by the 25% mark and the last three-quarters of the decay window runs at under 30% of peak. That long low-LR tail is where the premium data gets *committed*. Feeding math and code into that tail (sub-phase C) is why we schedule capability injection last.
+Notice the shape: half the LR is gone by the 25% mark and the last half of the decay window runs at under 30% of peak. That long low-LR tail is where the premium data gets *committed*. Feeding math and code into that tail (sub-phase C) is why we schedule capability injection last.
 
 !!! warning "Common pitfall: one multiplier, two peak learning rates"
 
@@ -341,7 +347,7 @@ from collections import defaultdict
 import numpy as np
 
 from stacklm.data import (DataMixEntry, PackedMemmapDataset, build_shards,
-                          stream_source)                       # Ch. 14.2
+                          load_hf_stream, stream_source)       # Ch. 14.2
 from stacklm.tokenizer import StackTokenizer                   # Ch. 14.3
 
 MIN_DOC_TOKENS = 4096          # half the target window; see the assertion below
@@ -397,24 +403,34 @@ def verify_positions(shard_dir: str, seq_len: int, floor: int = 4096,
         f"rescaling would train on positions the data never reaches.")
 
 
-# The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records (name, hf_path,
-# weight, domain). The first three are genuinely long; the fourth is a
-# length-FILTERED slice of a pretrain source; the last is the deliberately SHORT
-# anti-drift anchor. `weight` is the sub-phase-B mixture weight consumed later
-# by `build_mixture_loader`.
+# The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records — full loading
+# coordinates, not just repo ids: three of these repos are multi-config (no
+# default) and starcoderdata stores text under `content` and is sharded by
+# language, so an entry missing those fields raises or yields nothing (Ch. 14.2,
+# "the dataset id is not enough"). The first three sources are genuinely long;
+# the fourth is a length-FILTERED slice of a pretrain source; the last is the
+# deliberately SHORT anti-drift anchor. `weight` is the sub-phase-B mixture
+# weight consumed later by `build_mixture_loader`.
 LONG_SOURCES = [
-    (DataMixEntry("starcoder_repo",   "bigcode/starcoderdata",     0.35, "code"),  True),
-    (DataMixEntry("books_pg19",       "deepmind/pg19",             0.25, "web"),   False),
-    (DataMixEntry("arxiv_proofpile2", "EleutherAI/proof-pile-2",   0.15, "math"),  False),
-    (DataMixEntry("fineweb_edu_long", "HuggingFaceFW/fineweb-edu", 0.15, "web"),   False),
-    (DataMixEntry("cosmopedia_v2",    "HuggingFaceTB/cosmopedia",  0.10, "synthetic"), False),
+    (DataMixEntry("starcoder_repo", "bigcode/starcoderdata", 0.35, "code",
+                  hf_data_dir="python", text_column="content", gated=True), True),
+    (DataMixEntry("books_pg19", "deepmind/pg19", 0.25, "web"), False),
+    (DataMixEntry("arxiv_proofpile2", "EleutherAI/proof-pile-2", 0.15, "math",
+                  hf_config="arxiv"), False),
+    (DataMixEntry("fineweb_edu_long", "HuggingFaceFW/fineweb-edu", 0.15, "web",
+                  hf_config="sample-100BT"), False),
+    (DataMixEntry("cosmopedia_v2", "HuggingFaceTB/smollm-corpus", 0.10, "synthetic",
+                  hf_config="cosmopedia-v2"), False),   # v2 is NOT in the `cosmopedia` repo
 ]
 
 
 def main(out_root: str, seq_len: int, tokenizer_path: str):
     tok = StackTokenizer.load(tokenizer_path)             # Ch. 14.3, vocab 32768
     for entry, repo_level in LONG_SOURCES:
-        raw = stream_source(entry)                        # Ch. 14.2 streaming reader
+        # Repo-level grouping needs the RAW rows (`repo_name`, `path`, `content`);
+        # `stream_source` normalizes every row to {"text","source","domain"} and
+        # drops exactly the fields the grouping keys on.
+        raw = load_hf_stream(entry) if repo_level else stream_source(entry)
         docs = repo_level_documents(raw) if repo_level else raw
         if entry.name != "cosmopedia_v2":     # the short-form anchor stays unfiltered
             docs = length_filtered(docs, tok)
@@ -435,7 +451,7 @@ if __name__ == "__main__":
     main(a.out, a.seq_len, a.tokenizer)
 ```
 
-Nothing about the on-disk format changes: the shards stay `uint16` (the largest position id, 8191, is well under 65535) and stay position-free, because `segments_from_bos` reconstructs both `seq_ids` and `position_ids` from the tokens themselves. That is *why* `verify_positions` goes through `PackedMemmapDataset` rather than globbing for a `.pos.bin` file that the default writer never produces.
+Nothing about the on-disk format changes: the shards stay `uint16` (the dtype bounds *token ids*, and Ch. 14.3's vocabulary is 32,768, well under 65,535 — window length never enters into it) and stay position-free, because `segments_from_bos` reconstructs both `seq_ids` and `position_ids` from the tokens themselves. That is *why* `verify_positions` goes through `PackedMemmapDataset` rather than globbing for a `.pos.bin` file that the default writer never produces.
 
 With those shards in hand, sub-phase B's mixture is honest about which sources are long:
 
@@ -481,7 +497,7 @@ At `micro_bs = 32`, `T = 2048` that mask is $32 \times 2048^2 = 1.34\times10^8$ 
 
 There are two production answers in 2026, and you should know both.
 
-**Option 1 — FlexAttention (PyTorch-native).** `torch.nn.attention.flex_attention` (PyTorch 2.5+) lets you express the mask as a *predicate* on indices, `mask_mod(b, h, q_idx, kv_idx) -> bool`, and compiles it into a fused, block-sparse Triton kernel. `create_block_mask` evaluates the predicate once per $128 \times 128$ block and stores only which blocks are non-empty — so memory goes from $O(T^2)$ to $O((T/128)^2)$, and *fully masked blocks are never computed at all*. Document masking is the canonical example, and it makes short documents **faster**, not slower. (The module also ships `and_masks` / `or_masks` combinators, so you can build the causal predicate and the same-document predicate separately and compose them; we inline both for clarity.)
+**Option 1 — FlexAttention (PyTorch-native).** `torch.nn.attention.flex_attention` (PyTorch 2.5+) lets you express the mask as a *predicate* on indices, `mask_mod(b, h, q_idx, kv_idx) -> bool`, and compiles it into a fused, block-sparse Triton kernel. `create_block_mask` evaluates the predicate over the index grid and reduces it per $128 \times 128$ block, storing only which blocks are non-empty — so the *stored* mask is $O((T/128)^2)$ instead of $O(T^2)$, and *fully masked blocks are never computed by the attention kernel at all*. (Construction itself still touches every index pair, which is why you build the `BlockMask` once per micro-batch and reuse it across all 30 layers rather than rebuilding it inside `Attention.forward`.) Document masking is the canonical example, and it makes short documents **faster**, not slower. (The module also ships `and_masks` / `or_masks` combinators, so you can build the causal predicate and the same-document predicate separately and compose them; we inline both for clarity.)
 
 ```python
 # capstone/stacklm/model/doc_attention.py
@@ -573,14 +589,14 @@ The final sub-phase (C) runs at the LR floor and pushes the mixture hard toward 
 
 | Source | Sub-phase C weight |
 |---|---|
-| FineMath / OpenWebMath | 30% |
+| arXiv / proof-pile-2 (math-dense, from sub-phase B's shards) | 30% |
 | StarCoder (repo-level, from sub-phase B's shards) | 30% |
 | Cosmopedia v2 (STEM-heavy slice) | 25% |
-| FineWeb-Edu | 15% |
+| FineWeb-Edu (length-filtered slice) | 15% |
 
 This is a small budget (~0.2B tokens) at a low, still-nonzero LR — enough to sharpen number-and-symbol handling without over-fitting or wrecking general fluency. It is honest to call this what it is: **not** turning Stack-100M into a math model, but giving a 100M model *just enough* arithmetic and code grounding that the RLVR run in [Chapter 14.9](../14-capstone/09-post-training.html) (narrow GRPO on verifiable integer arithmetic, following GRPO from DeepSeekMath, Shao et al., 2024) and the ReAct agent (Yao et al., 2022) in [Chapter 14.10](../14-capstone/10-agentic-narrow.html) have a base to reinforce. At 100M params you cannot inject a capability the model has no capacity for; you can only make sure the capacity you have is pointed at the right target. That is "narrow but real."
 
-Capability injection reuses the exact same loop and schedule — it is simply sub-phase C's mixture, applied while the LR finishes its decay to the floor. Because it runs at `seq_len = 8192` on the sub-phase-B shards, it needs no new repack: only a mixture dict.
+Capability injection reuses the exact same loop and schedule — it is simply sub-phase C's mixture, applied while the LR finishes its decay to the floor. Because it runs at `seq_len = 8192` on the sub-phase-B shards, it needs no new repack: only a mixture dict. That constraint is also why the math weight rides on **arXiv / proof-pile-2** rather than FineMath: `build_mixture_loader` opens `data/mid/<name>_8192`, and the only 8192-packed math shards the repack pass built are the arXiv ones (this is the "double-duty" flagged when we sourced them). FineMath is short-form and exists only at 2048; putting it in `CAPABILITY_MIX` would mean another repack pass — a defensible choice, but not a free one, and it must be paid before the loader can open the directory.
 
 ### Why this ordering
 
@@ -844,7 +860,7 @@ What CI does **not** cover, and cannot: the real 8192 shapes, the FlexAttention 
 
     Two honest caveats, in opposite directions. Document-block-diagonal masking makes the attention term *smaller* than the table says whenever the packed window holds short documents, since FlexAttention never computes fully-masked blocks — that discount is real for sub-phase A and, by construction, nearly absent for B and C, whose documents fill the window (Exercise 7(c)). Against that, two mechanisms cost wall-clock at 8192 that the FLOP count does not see: rebuilding the `BlockMask` once per micro-batch, and the one Dynamo recompile at the A→B boundary. What does *not* hurt is the shape change itself — `micro_bs × seq_len` is held at 65,536, so the GEMMs keep the same $(65{,}536 \times d)$ shape and the attention kernel's arithmetic intensity actually *improves* with longer sequences. Budget ~3 GPU-hours and measure.
 
-    **Reconciling with Ch. 14.7.** That chapter's cost table prices the 3,815-step decay leg at ~2.4 GPU-hours by extrapolating the *2048-token* step rate across all of it. Sub-phases B and C run at 8192, where FLOPs/token is 1.7× higher, so ~3.1 GPU-hours (~USD 6–9) is the honest line item — a small slice that keeps the whole project inside its canonical **≈35 GPU-hour, ~USD 90–100** envelope, itemized in Ch. 14.12. For that slice you get the sharpest single quality jump in the run, a 4× context window, and a math/code floor: the best marginal return on compute anywhere in the pipeline, which is exactly why mid-training is worth its own chapter.
+    **Reconciling with Ch. 14.7.** That chapter's cost table prices the decay leg by extrapolating its measured *2048-token* step rate (≈228k tokens/s) across all of it, which for this 2.0B-token window would be ~2.4 GPU-hours. Sub-phases B and C run at 8192, where FLOPs/token is 1.7× higher, so ~3.1 GPU-hours (~USD 3–6 at the same USD 1–2/GPU-hr rate) is the honest line item — a small slice that keeps the whole project inside its canonical **≈35 GPU-hour, ~USD 90–100** envelope, itemized in Ch. 14.12. For that slice you get the sharpest single quality jump in the run, a 4× context window, and a math/code floor: the best marginal return on compute anywhere in the pipeline, which is exactly why mid-training is worth its own chapter.
 
 You should expect the held-out loss to fall visibly across sub-phase A — on the order of a couple tenths of a nat below where the stable phase plateaued — with most of the drop concentrated in the low-LR tail. Long-context sub-phase B will *raise* the average loss slightly (8192-token prediction on books and whole repositories is genuinely harder than 2048-token snippets, and the mix itself changed), which is expected and correct, not a regression; the loss-versus-position curve is the metric that shows the extension worked even as the scalar average ticks up. Capability sub-phase C nudges arithmetic and code perplexity down at the cost of a hair of general-web perplexity — the trade we are deliberately making. Report these as *illustrative* movements; never quote a fabricated benchmark. The honest evaluation lives in [Chapter 14.11](../14-capstone/11-evaluation-and-serving.html).
 
@@ -864,7 +880,7 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 
     - **Mid-training is the phase between pretraining and post-training** (OLMo 2): still self-supervised next-token prediction, but on upgraded data, at longer context, with concentrated capabilities. It resumes from a *pre-decay* stable checkpoint — never a fully-decayed one.
     - **The WSD decay phase is where you spend your best data.** Most committed loss reduction happens during decay, so annealing on a premium mix (more Cosmopedia, math, code, instruction-flavored text) buys a large quality jump for ~10% of the token budget — here, 3,813 steps at a 524,288-token batch.
-    - **Run one continuous decay across all sub-phases, scaling each optimizer group by the same multiplier.** Muon (`6e-3`) and AdamW (`3e-3`) have different peaks — one decade apart, not one order of magnitude, because RMS matching already put them on the same scale. Apply `wsd_decay_multiplier` to each, and never reset the schedule at a sub-phase boundary or you create decay cliffs.
+    - **Run one continuous decay across all sub-phases, scaling each optimizer group by the same multiplier.** Muon (`6e-3`) and AdamW (`3e-3`) have different peaks — a 2:1 ratio, well *within* one decade, because RMS matching already put them on the same scale. Apply `wsd_decay_multiplier` to each, and never reset the schedule at a sub-phase boundary or you create decay cliffs.
     - **Long-context extension is three changes, not one.** Rescale the RoPE base with the NTK rule $\theta' = \theta\, s^{d/(d-2)}$ (10000 → ~42000 for 2048→8192, $d{=}64$); **repack shards at 8192 from genuinely long documents**; and **swap the dense mask for FlexAttention or varlen FlashAttention**. Skip any one and the sub-phase is theatre.
     - **Check the data — and the loop — before you launch.** With per-document position resets, the largest position the model ever sees is the longest *document*, so assert `max(position_ids) > 4096` on the sub-phase-B shards. Then make sure the training loop actually *passes* `position_ids`, or the model quietly uses contiguous `arange` and the whole argument collapses.
     - **Long documents must be sourced, not assumed.** Repo-level StarCoder concatenation, PG-19 books, and arXiv from proof-pile-2 supply real length; keep ~10% short-form data mixed in (ProLong, Llama 3) so short-context quality does not drift — and check the per-source epoch count before you upsample a small corpus into memorization.
@@ -905,7 +921,7 @@ You should expect the held-out loss to fall visibly across sub-phase A — on th
 
     **Go deeper**
 
-    - [HuggingFaceTB/cosmopedia](https://huggingface.co/datasets/HuggingFaceTB/cosmopedia) — the synthetic-textbook dataset this chapter's anneal mix leans on for dense, knowledge-rich tokens (and, being short-form, deliberately *not* the long-context source).
+    - [HuggingFaceTB/smollm-corpus](https://huggingface.co/datasets/HuggingFaceTB/smollm-corpus) (config `cosmopedia-v2`) — the synthetic-textbook dataset this chapter's anneal mix leans on for dense, knowledge-rich tokens (and, being short-form, deliberately *not* the long-context source). Cosmopedia **v1** lives in the separate [`HuggingFaceTB/cosmopedia`](https://huggingface.co/datasets/HuggingFaceTB/cosmopedia) repo, whose `wikihow` / `khanacademy` configs supply the instruction-flavored slice.
     - [deepmind/pg19](https://huggingface.co/datasets/deepmind/pg19) and [EleutherAI/proof-pile-2](https://huggingface.co/datasets/EleutherAI/proof-pile-2) — the public-domain books and arXiv/math corpora that supply sub-phase B's genuinely long documents.
     - [Aman Arora, *How LLMs Scaled from 512 to 2M Context: A Technical Deep Dive* (2025)](https://amaarora.github.io/posts/2025-09-21-rope-context-extension.html) — a worked, visual walkthrough of position interpolation, NTK-aware scaling, and YaRN that pairs well with this chapter's RoPE-rescale derivation.
 

@@ -35,6 +35,8 @@ def training_flops_6nd(cfg, n_tokens: float) -> float:
 def gpu_hours(flops: float, peak_flops_per_s: float = 312e12,
               mfu: float = 0.35) -> float:
     """Wall-clock on ONE accelerator. 312 TFLOP/s ~ A100 bf16 dense peak. MFU is
-    measured against the FULL model FLOPs above -- the only honest denominator
-    (Ch. 14.1 derives the 0.30-0.45 band; Ch. 14.7 measures it on the real run)."""
+    measured against the FULL model FLOPs above -- the only honest denominator.
+    Ch. 14.1's FLAGSHIP band is 0.45-0.58 attention-inclusive (0.34-0.45 under
+    6ND) and Ch. 14.7 measures 0.582; the 0.35 default is the conservative
+    figure we cost the tiny LADDER rungs at, which utilize far less."""
     return flops / (peak_flops_per_s * mfu) / 3600.0

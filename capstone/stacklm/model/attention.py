@@ -70,7 +70,8 @@ class Attention(nn.Module):
         if record is not None:
             with torch.no_grad():
                 if self.record_exact:
-                    # Exact, but materializes (B, n_heads, T, T) and gives up SDPA.
+                    # Exact, but materializes (B, n_heads, T, T) NEXT TO the fused
+                    # kernel below: SDPA still runs, its memory win does not survive.
                     att = (q.float() @ k.float().transpose(-2, -1)) * scale
                     causal = torch.tril(torch.ones(T, T, dtype=torch.bool, device=x.device))
                     att = att.masked_fill(~causal, float("-inf"))

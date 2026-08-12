@@ -55,7 +55,9 @@ SPLIT_PATTERN_UNICODE = (
     r"|\s+"                               # any remaining whitespace
 )
 # stdlib-`re` port: \p{L} ~ [^\W\d_], \p{N} ~ \d (differs only on Nl/No, e.g.
-# Roman numerals and vulgar fractions, which land in the punctuation branch).
+# Roman numerals and vulgar fractions: `\w` accepts them, so they land in the
+# LETTER branch here -- unbounded and glued to adjacent letters -- instead of
+# the 3-digit-capped number branch).
 SPLIT_PATTERN_STDLIB = (
     r"(?i:'s|'t|'re|'ve|'m|'ll|'d)"
     r"|(?:[^\r\n\w]|_)?[^\W\d_]+"

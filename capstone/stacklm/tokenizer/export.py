@@ -75,8 +75,11 @@ def to_hf_tokenizer(tok: StackTokenizer):
         pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False),
     ])
     hf.decoder = decoders.ByteLevel()
-    # Added tokens get ids AFTER the model vocab, i.e. exactly 32759.. -- which
-    # is why the shortfall padding matters: len(vocab) must be 32759.
+    # Added tokens get ids AFTER the model vocab, so the block starts at
+    # len(vocab) = 256 + len(merges) (= 32759 in the healthy, no-shortfall case).
+    # The shortfall padding is what makes len(vocab) + len(special_to_id) ==
+    # vocab_size, and because the <|unused_N|> fillers come FIRST in
+    # special_to_id, the nine real specials stay pinned to 32759..32767.
     hf.add_special_tokens([AddedToken(s, special=True, normalized=False)
                            for s in tok.special_to_id])
 

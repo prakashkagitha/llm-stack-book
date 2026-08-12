@@ -10,7 +10,13 @@ from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 
 from ..data import PackedMemmapDataset
 
-# Sub-phase A: the annealing mix (Ch. 14.8). Keys are shard-directory names.
+# Sub-phase A: the annealing mix (Ch. 14.8). Keys are shard-directory names under
+# `data/mid/<name>_2048`. Ch. 14.2's `build_corpus` driver writes ONE interleaved
+# train/val corpus, so a per-source mixture needs a per-source pass first: the same
+# `build_shards` call at seq_len=2048, one output directory per source, no length
+# filter. `instruct_flav` is the QA/how-to raw text of Cosmopedia v1's `wikihow` +
+# `khanacademy` configs -- shaped like instructions, but NOT instruction/response
+# pairs (that is Ch. 14.9).
 ANNEAL_MIX = {
     "fineweb_edu":   0.40,
     "cosmopedia_v2": 0.30,
@@ -29,9 +35,11 @@ LONGCTX_MIX = {
     "cosmopedia_v2":    0.10,
 }
 
-# Sub-phase C: capability injection at the LR floor.
+# Sub-phase C: capability injection at the LR floor. Every key must exist at
+# seq_len=8192, i.e. must have been built by scripts/repack_long.py -- FineMath is
+# short-form and lives only in the 2048 shards, so arXiv/proof-pile-2 carries math.
 CAPABILITY_MIX = {
-    "finemath":         0.30,
+    "arxiv_proofpile2": 0.30,
     "starcoder_repo":   0.30,
     "cosmopedia_v2":    0.25,
     "fineweb_edu_long": 0.15,

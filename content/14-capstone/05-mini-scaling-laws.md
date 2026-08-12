@@ -226,7 +226,10 @@ def gpu_hours(flops: float, peak_flops_per_s: float = 312e12,
               mfu: float = 0.35) -> float:
     """Wall-clock on ONE accelerator. 312 TFLOP/s ~ A100 bf16 dense peak. MFU is
     measured against the FULL model FLOPs above -- the only honest denominator.
-    Ch. 14.1 derives the 0.30-0.45 band for this shape; Ch. 14.7 measures it."""
+    Ch. 14.1's FLAGSHIP band is 0.45-0.58 in this attention-inclusive convention
+    (equivalently 0.34-0.45 under 6ND); Ch. 14.7 measures 0.582. The 0.35 default
+    is the deliberately conservative figure we cost the tiny LADDER rungs at --
+    they are launch- and memory-bound and utilize far less than the target."""
     return flops / (peak_flops_per_s * mfu) / 3600.0
 ```
 
@@ -297,6 +300,18 @@ def build_runs():
         r["warmup_steps"] = min(2000, max(50, round(0.05 * r["steps"])))
     return runs
 
+# --- muP-style per-rung learning rates (checklist item 5: in the config, not a
+#     comment). Muon's peak is width-invariant; the tied embedding/head follows
+#     muP's READOUT rule, eta ~ 1/d_model; norms/1D stay width-independent. -----
+D_BASE   = 512            # muP base width = the target's d_model
+MUON_LR  = 6e-3           # measured on the S4 rung in Ch. 14.6
+ADAMW_LR = MUON_LR / 2    # 3e-3 at the base width (Ch. 14.6's 2:1 ratio)
+
+def rung_lrs(cfg) -> dict:
+    return dict(muon=MUON_LR,
+                adamw_head=ADAMW_LR * D_BASE / cfg.d_model,
+                adamw_norms=ADAMW_LR)
+
 if __name__ == "__main__":
     runs = build_runs()
     for r in runs:
@@ -310,8 +325,10 @@ if __name__ == "__main__":
           f"= {100*ladder/big:4.1f}% of the flagship ({big:.3e})")
     print(f"ladder wall-clock (1xA100, 35% MFU) = {gpu_hours(ladder):.2f} GPU-hr "
           f"~ USD {gpu_hours(ladder)*1.75:.2f}")
-    print(f"flagship = {gpu_hours(big, mfu=0.45):.0f}/{gpu_hours(big):.0f}/"
-          f"{gpu_hours(big, mfu=0.30):.0f} GPU-hr at MFU 0.45/0.35/0.30")
+    # The flagship is costed on Ch. 14.1's attention-inclusive band, not the
+    # ladder's conservative 0.35 -- same denominator, a bigger, better-fed model.
+    print(f"flagship = {gpu_hours(big, mfu=0.58):.0f}/{gpu_hours(big, mfu=0.52):.0f}/"
+          f"{gpu_hours(big, mfu=0.45):.0f} GPU-hr at MFU 0.58/0.52/0.45")
 ```
 
 The printout is the sweep you are about to run — 17 jobs, none of them degenerate:
@@ -336,10 +353,10 @@ S1  fixed C=1.34e+17 D= 1.5729B tpp= 400.0  batch= 262144 steps=  6000
 S2  fixed C=2.01e+17 D= 1.3738B tpp= 150.0  batch= 262144 steps=  5240
 17 runs; ladder = 1.846e+18 FLOPs = 11.6% of the flagship (1.593e+19)
 ladder wall-clock (1xA100, 35% MFU) = 4.70 GPU-hr ~ USD 8.22
-flagship = 32/41/47 GPU-hr at MFU 0.45/0.35/0.30
+flagship = 24/27/32 GPU-hr at MFU 0.58/0.52/0.45
 ```
 
-Every rung gets 2,000–7,000 steps, so its WSD warmup/stable/decay phases all mean something; the batch never exceeds the critical size; and the same `batch_tokens()` rule, evaluated at the flagship's 20B tokens, returns exactly the plan's 0.5M-token batch — hence Chapter 14.6's 38,147 steps. **The sweep is ~12% of the flagship compute, about 4.7 GPU-hours, roughly USD 8** — which is precisely the "scaling ladder ~4–5 GPU-hours, ~USD 8" line in Chapter 14.1's cost table. Note the honest scale effect: at the frontier a scaling ladder is well under 1% of the target run. Here the top rung (44M) is half the target (84.5M), so the ladder is an unavoidably larger fraction — but 12% of a day-and-a-half run to know the answer before you spend the other 88% is still the best trade in the project.
+Every rung gets 2,000–7,000 steps, so its WSD warmup/stable/decay phases all mean something; the batch never exceeds the critical size; and the same `batch_tokens()` rule, evaluated at the flagship's 20B tokens, returns exactly the plan's 0.5M-token batch — hence Chapter 14.6's 38,147 steps. **The sweep is ~12% of the flagship compute, about 4.7 GPU-hours, roughly USD 8** — the ~4–5 GPU-hour, ~USD 9 scaling-ladder line (ladder plus the data-mixture screen below) in [Chapter 14.12](../14-capstone/12-retrospective-and-scaleup.html)'s itemized cost table, the only one in the book. Note the honest scale effect: at the frontier a scaling ladder is well under 1% of the target run. Here the top rung (44M) is half the target (84.5M), so the ladder is an unavoidably larger fraction — but 12% of a day-and-a-half run to know the answer before you spend the other 88% is still the best trade in the project.
 
 !!! warning "Match the LR decay to each run's own token count"
     The single most common way to poison a scaling ladder is to reuse one long learning-rate schedule and read off intermediate losses. A run whose [WSD or cosine decay](../03-pretraining/10-lr-schedules-hparams.html) has not finished evaluates *worse than it truly is*, which inflates the high-token losses and biases the fit toward "make the model bigger" — the exact Kaplan confound Chinchilla diagnosed. Every rung gets its **own** schedule that decays to zero at *its* $D$: a short run gets a short stable phase and its own decay tail, which is why `build_runs()` computes `steps` and `warmup_steps` per run and passes them down.
@@ -357,7 +374,7 @@ from stacklm.data import PackedMemmapDataset          # Ch. 14.2 memmap shards
 from stacklm.train import pretrain                    # Ch. 14.7 loop
 from stacklm.scaling.sweep import build_runs, rung_lrs
 
-SEQ_LEN, MICRO_BS = 2048, 16                          # 32,768 tokens per micro-batch
+SEQ_LEN, MICRO_BS = 2048, 16                          # <= 32,768 tokens per micro-batch
 
 def run_one(run, data_dir, out_path, device="cuda"):
     c = run["cfg"]
@@ -370,16 +387,23 @@ def run_one(run, data_dir, out_path, device="cuda"):
     train = PackedMemmapDataset(os.path.join(data_dir, "train"))
     val   = PackedMemmapDataset(os.path.join(data_dir, "val"))
 
-    grad_accum = max(1, run["batch_tokens"] // (MICRO_BS * SEQ_LEN))
+    # The micro-batch must ADAPT: the smallest designed batch is 2**14 = 8
+    # sequences, so a fixed 16-sequence micro-batch would silently round
+    # grad_accum to 1 and double that run's real batch (and halve its steps).
+    micro_bs   = min(MICRO_BS, run["batch_tokens"] // SEQ_LEN)
+    grad_accum = run["batch_tokens"] // (micro_bs * SEQ_LEN)
+    assert micro_bs * grad_accum * SEQ_LEN == run["batch_tokens"]
     lrs = rung_lrs(c)                                 # Muon 6e-3; AdamW head 3e-3*512/d
     out = pretrain(
         model, train, device=device,
         steps=run["steps"], total_steps=run["steps"],  # schedule ends at THIS run's D
-        micro_batch_size=MICRO_BS, grad_accum=grad_accum,
+        micro_batch_size=micro_bs, grad_accum=grad_accum,
         muon_lr=lrs["muon"], adamw_lr=lrs["adamw_head"],
         warmup_steps=run["warmup_steps"], decay_frac=0.20,
         weight_decay=0.1, grad_clip=1.0, qk_clip_every=200,
-        log_every=max(1, run["steps"] // 200),        # ~200 curve points for the monitor
+        log_every=max(1, run["steps"] // 200),        # PRINT cadence only:
+        # `pretrain` appends to loss_history every step regardless, which is
+        # exactly why the token axis below is i * batch_tokens.
         eval_dataset=val, seed=1234,
     )
     row = dict(name=c.name, N=run["N"], D=run["D"], C=run["C"],
@@ -596,11 +620,13 @@ from stacklm.scaling.flops import flops_per_token
 def slice_configs(C, n=7, span=0.6):
     """Seven real configs for one IsoFLOP slice: coarse-scan for the valley,
     then span +/- `span` decades of N around it. CENTERING MATTERS -- an
-    off-centre grid is one of the documented biases of the parabola method."""
+    off-centre grid is one of the documented biases of the parabola method.
+    Both grids step d_model by 64 = head_dim, so every pick is a BUILDABLE model
+    (d=160 would be 2.5 attention heads and LadderConfig.n_heads would assert)."""
     coarse = [family(d) for d in range(64, 1345, 64)]
     losses = [_law(c.nonembed_params(), C / flops_per_token(c)["total"]) for c in coarse]
     N_c = coarse[int(np.argmin(losses))].nonembed_params()
-    return [min((family(d) for d in range(64, 2049, 32)),
+    return [min((family(d) for d in range(64, 2049, 64)),   # d % head_dim == 0
                 key=lambda c: abs(math.log(c.nonembed_params() / t)))
             for t in N_c * np.logspace(-span, span, n)]
 
@@ -703,8 +729,10 @@ import numpy as np
 
 def measure_decay_drop(curves, decay_frac=0.20) -> float:
     """Median (loss at start of decay) - (final loss) across the ladder rungs.
-    `curves` is a list of (tokens, val_loss) sequences from ladder_results.jsonl.
-    Expect a tenth of a nat at this scale -- but YOUR ladder tells you, free."""
+    `curves` is a list of (tokens_seq, loss_seq) PAIRS -- one pair per rung.
+    run_sweep.py saves each curve TRANSPOSED, as [(tokens, loss), ...], so load
+    them with `[list(zip(*row["curve"])) for row in rows]` or you will unpack the
+    wrong axis. Expect a tenth of a nat here -- but YOUR ladder tells you, free."""
     drops = []
     for tok, loss in curves:
         tok, loss = np.asarray(tok, float), np.asarray(loss, float)
@@ -725,7 +753,9 @@ def project_final_loss(tokens, losses, total_tokens, beta, decay_drop,
     slope, intercept = np.polyfit(x, l[keep], 1)  # ... so a straight line fits
     return float(intercept + slope * total_tokens ** (-beta) - decay_drop)
 
-# Hour two of the flagship: ~1.5B tokens in (7% of the run).
+# Hour two of the flagship: ~1.5B tokens in (7% of the run). `ladder_curves` is
+# the saved [(tokens, loss), ...] of each rung, transposed into the (tokens_seq,
+# loss_seq) pairs measure_decay_drop() expects.
 projected = project_final_loss(live_tokens, live_losses, total_tokens=2.0e10,
                                beta=beta, decay_drop=measure_decay_drop(ladder_curves))
 print(f"projected final loss {projected:.3f}  vs  ladder prediction 2.94 +/- 0.10")
@@ -855,7 +885,7 @@ $$
 C_{\text{lifetime}} = \underbrace{c(N)\, D_{\text{train}}}_{\text{train once}} \;+\; \underbrace{2 N D_{\text{infer}}}_{\text{serve forever}}
 $$
 
-subject to hitting a **target loss** $L^\star$, where $c(N)$ is the full per-token training cost from the table above. Every generated token costs $\approx 2N$ FLOPs and the KV cache scales with $N$ (see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html) and [Inference Economics](../07-inference-serving/12-inference-economics.html)). The larger $D_{\text{infer}}$ is, the more it pays to **shrink $N$** and **grow $D_{\text{train}}$** to buy back the loss you gave up. This is the inference-aware regime formalized by Sardana, Frankle et al. (*Beyond Chinchilla-Optimal*, 2024), and it is why Llama-3-8B saw ~15T tokens (~1900 tok/param), two orders of magnitude past Chinchilla.
+subject to hitting a **target loss** $L^\star$, where $c(N)$ is the full per-token training cost from the table above. Every generated token costs $\approx 2N$ FLOPs, and the KV cache grows with $n_{\text{layers}} \times n_{\text{kv}} \times d_{\text{head}}$ — sublinearly in $N$, which is why the objective below prices only the $2N D_{\text{infer}}$ FLOPs (see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html) and [Inference Economics](../07-inference-serving/12-inference-economics.html)). The larger $D_{\text{infer}}$ is, the more it pays to **shrink $N$** and **grow $D_{\text{train}}$** to buy back the loss you gave up. This is the inference-aware regime formalized by Sardana, Frankle et al. (*Beyond Chinchilla-Optimal*, 2024), and it is why Llama-3-8B saw ~15T tokens (~1900 tok/param), two orders of magnitude past Chinchilla.
 
 Here is the decision made concrete with the ladder's own numbers:
 
@@ -865,7 +895,7 @@ Here is the decision made concrete with the ladder's own numbers:
     | **compute-optimal** | $d$=768, $L$=40 | 249.7M | 7.86B | ~31 | **~2.91** | $2 \times 249.7\text{M}$ |
     | **our choice** | $d$=512, $L$=30 | 84.5M | 20.0B | 237 | **~2.94** | $2 \times 84.5\text{M}$ |
 
-    Same training budget ($1.59\times10^{19}$ FLOPs under the full cost model, by construction — it is a single genuine IsoFLOP slice, which it only *is* because we used the full cost model on both sides). The over-trained 84.5M model is **only ~0.03 nats/token worse** — a difference you would struggle to detect in generated text — yet it is **barely a third of the size**: every future forward pass costs $84.5/249.7 \approx 0.34\times$ as much, a **~66% permanent cut** to inference FLOPs, latency, activation memory, and KV-cache footprint (which shrinks again from 40 layers to 30). You pay the extra training tokens **once**; you collect the inference savings on **every request for the life of the model**. For a model destined to run quantized on a laptop, that trade is not close.
+    Same training budget ($1.59\times10^{19}$ FLOPs under the full cost model, by construction — it is a single genuine IsoFLOP slice, which it only *is* because we used the full cost model on both sides). The over-trained 84.5M model is **only ~0.03 nats/token worse** — a difference you would struggle to detect in generated text — yet it is **barely a third of the size**: every future forward pass costs $84.5/249.7 \approx 0.34\times$ as much — a **~66% permanent cut** to inference FLOPs and to weight-bound decode latency. The memory savings are real but smaller, because they scale with different quantities: activation memory goes like $n_{\text{layers}} \cdot d_{\text{model}}$ ($30\times512$ vs $40\times768$, a **50% cut**), and the KV cache goes like $n_{\text{layers}} \cdot n_{\text{kv}} \cdot d_{\text{head}}$ (7,680 vs 10,240 elements per token, a **25% cut** — depth is the only term that moves). Quote each against its own scaling, never one headline percentage against all four. You pay the extra training tokens **once**; you collect the inference savings on **every request for the life of the model**. For a model destined to run quantized on a laptop, that trade is not close.
 
     The absolute loss *levels* carry the fit's ±0.1-nat uncertainty. The **~0.03-nat penalty and the 0.34× size ratio do not** — they are set by the exponents and the fixed FLOP constraint, so they hold whether the true floor is 2.9 or 3.0. Compute-optimal is the right target if you will train a model and (nearly) never run it; the instant you plan to *serve* it, slide down the size axis and over-train.
 
@@ -1022,9 +1052,9 @@ One honest caveat before you crank tokens/param to the moon: the Chinchilla form
     \text{head} = 6 d V = 6 \times 256 \times 32768 = 5.033\times10^{7}.
     $$
 
-    Total $= 1.462\times10^{8}$ FLOPs/token $= \mathbf{2.66\times}$ the $6ND$ figure. The *head alone* costs slightly more than the entire block stack at this rung. A sweep costed with $6ND$ under-budgets every S2 run by 2.66× and every S4 run by only 1.77× — which is why the two rungs' "equal-$C$" runs are not equal at all.
+    Total $= 1.462\times10^{8}$ FLOPs/token $= \mathbf{2.66\times}$ the $6ND$ figure. The *head alone* ($5.03\times10^{7}$) already costs almost as much as the entire block stack ($5.50\times10^{7}$) at this rung — and one rung down, at S1, it costs strictly more. A sweep costed with $6ND$ under-budgets every S2 run by 2.66× and every S4 run by only 1.77× — which is why the two rungs' "equal-$C$" runs are not equal at all.
 
-**4.** *(Quantitative.)* Cost the **flagship** run two ways: `Stack-100M` ($N_{\text{nonembed}} = 84{,}541{,}440$, $N_{\text{total}} = 101{,}318{,}656$, $L$=30, $s$=2048, $V$=32768) at the plan's $D = 2.0\times10^{10}$ tokens. Compute (a) tokens per parameter under both conventions; (b) $C$ under $6N_{\text{nonembed}}D$ and under the full model, and verify the full model equals Chapter 14.1's $(6N_{\text{total}} + 6Lsd)D$; (c) single-A100 wall-clock across the 0.30–0.45 MFU band (peak 312 TFLOP/s); (d) the number of optimizer steps at the plan's 524,288-token batch.
+**4.** *(Quantitative.)* Cost the **flagship** run two ways: `Stack-100M` ($N_{\text{nonembed}} = 84{,}541{,}440$, $N_{\text{total}} = 101{,}318{,}656$, $L$=30, $s$=2048, $V$=32768) at the plan's $D = 2.0\times10^{10}$ tokens. Compute (a) tokens per parameter under both conventions; (b) $C$ under $6N_{\text{nonembed}}D$ and under the full model, and verify the full model equals Chapter 14.1's $(6N_{\text{total}} + 6Lsd)D$; (c) single-A100 wall-clock across the 0.45–0.59 *attention-inclusive* MFU band (Chapter 14.1's convention; peak 312 TFLOP/s); (d) the number of optimizer steps at the plan's 524,288-token batch.
 
 ??? note "Solution"
     **(a) Tokens per parameter.** $2.0\times10^{10} / 1.01318656\times10^{8} = \mathbf{197.4}$ per *total* parameter — the plan's "~200 tokens/parameter." On non-embedding parameters the same budget is $2.0\times10^{10}/8.454\times10^{7} = \mathbf{236.6}$. Same run, two numbers; always say which.

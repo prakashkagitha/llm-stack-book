@@ -149,7 +149,7 @@ matching the spec's "$\approx 101.4$M" exactly. Roughly 83.4% of the parameters 
     |---|---|---|---|---|
     | A100-hours for 20B tokens | 57 | 36 | 28 | 25 |
 
-    PLAN §0's canonical **≈22–29 GPU-hr** stable-phase band is the well-utilized end of this table: it needs $\approx$50–58% model-FLOPs utilization, which at 100M requires `torch.compile`, fused cross-entropy and a FlashAttention kernel all switched on (Ch. 14.7 measures what you actually get, and lands at 58.2% attention-inclusive). At \$1–2/GPU-hr the dollar envelope is **\$25–\$50**. This formula is also the denominator of Ch. 14.7's MFU meter — use the three-term version there, or your MFU will read 37% high.
+    PLAN §0's canonical **≈22–29 GPU-hr** stable-phase band is the well-utilized end of this table: it needs $\approx$49–65% model-FLOPs utilization ($14.2/29$ to $14.2/22$), which at 100M requires `torch.compile`, fused cross-entropy and a FlashAttention kernel all switched on (Ch. 14.7 measures what you actually get, and lands at 58.2% attention-inclusive — 24.4 h, inside the band). At \$1–2/GPU-hr the dollar envelope is **\$25–\$50**. This formula is also the *numerator* of Ch. 14.7's MFU meter (MFU = FLOP/token × tokens/s ÷ peak FLOP/s; the peak is the denominator) — use the three-term version there, or your MFU will read 36% low, because bare $6N_{\text{body}}$ is only 64% of the true count.
 
     **KV cache per token.** GQA stores $K$ *and* $V$ for $n_{kv}=2$ heads of $d_h=64$ across $L=30$ layers, in bf16 (2 bytes):
     $$
@@ -334,7 +334,7 @@ class KVCache:
         return (self.k.numel() + self.v.numel()) * self.k.element_size()
 ```
 
-For `StackConfig()`, `KVCache(cfg, batch_size=1, max_seq=2048, dtype=torch.bfloat16).nbytes()` prints `31457280` — the 30 MiB we computed by hand above. Run it; matching a hand estimate to a measured integer is the habit this whole chapter is trying to build.
+For `StackConfig()`, `KVCache(cfg, batch_size=1, max_seq=2048, device="cpu", dtype=torch.bfloat16).nbytes()` prints `31457280` — the 30 MiB we computed by hand above. Run it; matching a hand estimate to a measured integer is the habit this whole chapter is trying to build.
 
 !!! warning "Common pitfall: SDPA's `is_causal=True` is TOP-LEFT aligned"
 
@@ -436,7 +436,7 @@ class Attention(nn.Module):
 
 !!! warning "Common pitfall: instrumentation that costs more than the model"
 
-    `record=` materializes attention scores, which is exactly what FlashAttention exists to avoid. Even tiled at 256 queries, the probe holds $(B, H, 256, T)$ fp32 — 268 MB at the A100 micro-batch ($B{=}16$, $H{=}8$, $T{=}2048$), *per layer*. Never leave it on for the training micro-batch. The correct pattern is a **probe batch**: every $N$ steps, run one forward with $B{=}1, T{=}512$ under `no_grad` with `record={}`, log the per-head maxima, throw it away. If even that is too much, Ch. 14.6's QK-clip can trigger on the cheap proxy $\max|q|\cdot\max|k|\cdot\sqrt{d_h}/\sqrt{d_h}$ per head — an upper bound computed from the $q,k$ tensors alone, with no score matrix at all.
+    `record=` materializes attention scores, which is exactly what FlashAttention exists to avoid. Even tiled at 256 queries, the probe holds $(B, H, 256, T)$ fp32 — 268 MB at the A100 micro-batch ($B{=}16$, $H{=}8$, $T{=}2048$), *per layer*. Never leave it on for the training micro-batch. The correct pattern is a **probe batch**: every $N$ steps, run one forward with $B{=}1, T{=}512$ under `no_grad` with `record={}`, log the per-head maxima, throw it away. If even that is too much, Ch. 14.6's QK-clip can trigger on the cheap Cauchy–Schwarz proxy $\max\|q\|\cdot\max\|k\|/\sqrt{d_h}$ per head (the max taken over batch and positions) — a genuine upper bound on the scaled logit, computed from the $q,k$ tensors alone in $O(BHTd_h)$ work, with no score matrix at all.
 
 Three more implementation notes worth internalizing.
 
@@ -456,7 +456,9 @@ The mask is then the conjunction of "causal" and "same document". This is the si
 def build_doc_causal_mask(seq_ids, T, kv_len, start_pos, device):
     """Bool mask (B|1, 1, T, kv_len); True = attend. None = plain causal fast path.
     Positions, not indices: correct for square prefill, rectangular decode, and
-    chunked prefill alike -- which is what makes the is_causal footgun unreachable."""
+    chunked prefill alike -- which is what makes the is_causal footgun unreachable.
+    `seq_ids` (when given) must span the whole KV prefix, i.e. have kv_len columns;
+    that is the packer's (B, T) tensor in the training case, where kv_len == T."""
     if seq_ids is None and kv_len == T and start_pos == 0:
         return None                                  # let SDPA use is_causal=True
     q_pos = torch.arange(start_pos, start_pos + T, device=device)
@@ -797,7 +799,7 @@ if __name__ == "__main__":
     nope = [i for i in range(cfg.n_layers) if not cfg.uses_rope(i)]
     assert nope == [3, 7, 11, 15, 19, 23, 27] and len(nope) == 7
 
-    # 4. the FLOP model Ch. 14.7's MFU meter divides by (three terms, not one)
+    # 4. the FLOP model Ch. 14.7's MFU meter multiplies tokens/s by (three terms, not one)
     def flops_per_token(c, N_body, T):
         return 6 * N_body + 6 * c.n_layers * c.d_model * T + 6 * c.vocab_size * c.d_model
     assert flops_per_token(cfg, 84_576_512, 2048) == 796_866_048
@@ -1097,7 +1099,7 @@ The design point (LFM2's own recipe): use *mostly* conv blocks with a *few* atte
 
     - **Deep-and-thin is the small-model bet**: at fixed 100M params, 30 layers × 512 width beats shallow-wide (MobileLLM, 2024); depth = sequential reasoning steps, which is what small models are bottlenecked on. The width-per-layer ratio $d/L \approx 17$ is ~4× thinner than GPT-2-small's ~64.
     - **The exact config is frozen** (PLAN §1): `vocab 32768, d_model 512, n_layers 30, 8 heads / 2 KV heads, head_dim 64, SwiGLU 1408, tied embeddings` → **exactly 101,353,728 params**, of which **84,576,512** is the non-embedding body and 16,777,216 the tied embedding. Reproduce that integer by hand, then assert it in CI. Each of the three cheap choices pays twice: **GQA (2 KV heads)** saves ~11.8M params *and* cuts the KV cache 4× (15 KiB/token, 30 MiB at 2048); **tied embeddings** save a sixth of the model; **a 32k vocab** frees ~9M params (≈3 blocks) versus 50k *and* shrinks the training logit tensor.
-    - **$6ND$ under-counts by 57% at this shape.** Use FLOPs/token $= 6N_{\text{body}} + 6LdT + 6Vd = 7.97\times10^8$: attention adds +37% (the ratio is $T/(\kappa d) = 0.37$, and 1.49 at the 8192 mid-training context), the tied `lm_head` adds +20%. That is $1.59\times10^{19}$ FLOPs for 20B tokens — 25–45 A100-hours depending on realized MFU, and the correct denominator for Ch. 14.7's MFU meter.
+    - **The honest budget is 57% larger than bare $6ND$ at this shape** (equivalently, $6ND$ captures only 64% of it). Use FLOPs/token $= 6N_{\text{body}} + 6LdT + 6Vd = 7.97\times10^8$: attention adds +37% (the ratio is $T/(\kappa d) = 0.37$, and 1.49 at the 8192 mid-training context), the tied `lm_head` adds +20%. That is $1.59\times10^{19}$ FLOPs for 20B tokens — 25–45 A100-hours depending on realized MFU, and the correct numerator for Ch. 14.7's MFU meter.
     - **Stability is engineered, not hoped for**: pre-norm + RMSNorm (fp32); **QK-norm** bounds the scaled attention logit by $8\|\gamma_q\|_\infty\|\gamma_k\|_\infty$ — $\pm 8$ at init, but $\gamma$ is learned, which is exactly why Ch. 14.6 adds QK-clip on top; **z-loss** on the log-partition, normalized over *valid* tokens like CE; optional Gemma-2 soft-caps applied on *both* train and inference paths; $1/\sqrt{2L}$ residual-init scaling for the deep stack.
     - **RoPE + NoPE-every-4th-layer** (SmolLM3, 2025; Kazemnejad et al., 2023) with **explicit `position_ids`** — the indirection that makes document packing, incremental decode, and the 2048→8192 context extension all work from one code path.
     - **Correct masking is a model responsibility.** Document-aware packing needs a causal-AND-same-document mask and per-document position resets; incremental decode needs a bottom-right-aligned mask, because SDPA's `is_causal=True` is *top-left* aligned and silently reads only position 0. `flex_attention`'s `create_block_mask` (block-sparse, fused, `score_mod`-capable) and `flash_attn_varlen_func` + `cu_seqlens` are the two production answers.
@@ -1188,7 +1190,7 @@ If you read only five things after this chapter, read them in this order:
     - tied `lm_head`: $6 \times 32768 \times 512 = 100{,}663{,}296$ (**+20%**);
     - total $= 796{,}866{,}048 \approx 7.97\times10^{8}$ FLOP/token.
 
-    (b) $7.97\times10^8 \times 2\times10^{10} = 1.59\times10^{19}$ FLOPs, versus $6ND = 1.01\times10^{19}$ — bare $6ND$ under-counts by **57%**.
+    (b) $7.97\times10^8 \times 2\times10^{10} = 1.59\times10^{19}$ FLOPs, versus $6ND = 1.01\times10^{19}$ — the true budget is **57% larger** than bare $6ND$, which captures only $1.01/1.59 \approx 64\%$ of it.
 
     (c) A100 peak $\times$ 3600 s $= 1.123\times10^{18}$ FLOP/hour, so hours $= 14.2/\text{MFU}$. At 40% that is **35.5 GPU-hours** (not the 22.6 that $6ND$ alone predicts). To land inside PLAN §0's 22–29 GPU-hour band you need MFU between $14.2/29 \approx 49\%$ and $14.2/22 \approx 65\%$; the measured loop's 58% attention-inclusive utilization gives 24.4 h, comfortably inside. At \$1–2/GPU-hr the \$25–\$50 envelope holds, and Ch. 14.7 measures which end you land on.
 

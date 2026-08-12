@@ -70,12 +70,20 @@ def generate_text(model, tokenizer, prompt: str, max_new_tokens: int = 64,
     assert ids.shape[1] + max_new_tokens <= model.cfg.max_seq_len, (
         "prompt + generation exceeds the context; call model.rebuild_rope() or "
         "truncate — Ch. 14.4's generate() asserts this too, loudly.")
-    eos = tokenizer.eos_id if stop_id is None else stop_id
+    # THE DEFAULT STOP IS <|end|>, NOT <|eos|>. Ch. 14.9 supervises the closing
+    # <|end|> of every assistant turn ("learn to STOP the turn") and leaves
+    # <|eos|> masked out of the loss, so the model is never trained to emit it in
+    # a chat frame. Stop on <|eos|> and a chat-framed probe never terminates: it
+    # burns the whole token budget and glues a hallucinated next turn onto every
+    # completion, which alone is enough to zero out §4.3's exact match. Ch.
+    # 14.9's rollouts and Ch. 14.10's agent loop stop on <|end|> for the same
+    # reason. Pass `stop_id=tokenizer.eos_id` for base-LM (unframed) continuation.
+    stop = tokenizer.special_token_id("<|end|>") if stop_id is None else stop_id
     out = model.generate(ids, max_new_tokens=max_new_tokens, temperature=temperature,
-                         top_p=top_p, top_k=top_k, eos_id=eos)
+                         top_p=top_p, top_k=top_k, eos_id=stop)
     new = out[0, ids.shape[1]:].tolist()                        # new tokens only
-    if eos in new:                                              # 14.4's generate emits the
-        new = new[:new.index(eos)]                              # stop token; drop it
+    if stop in new:                                             # 14.4's generate emits the
+        new = new[:new.index(stop)]                             # stop token; drop it
     text = tokenizer.decode(new)
     return (text, len(new)) if return_n_tokens else text
 
@@ -89,7 +97,7 @@ def generate_fn(model, tokenizer, prompt, max_new_tokens=64, temperature=0.0, **
 
 !!! tip "Practitioner tip: the KV cache is not a rounding error at 100M"
 
-    `KVCache(cfg, batch_size=1, max_seq=2048, device="cpu", dtype=torch.bfloat16).nbytes()` returns **31,457,280** bytes — 30 MiB, or ≈31.5 MB. Hold that next to the ≈63 MB int4 weight budget we will fight for in §7: at the pretrain context the cache is *half the model*. Small models are relatively *more* KV-bound than large ones, because the cache scales with layers × context while the weights scale with layers × width². Keep the cache in **bf16** (Ch. 14.4's default): keys and values are activations, re-read once per step and never accumulated, so fp32 doubles the cost for no benefit. Exercise 7 works out where the cache overtakes the weights. Everything past that — fp8/int8 KV quantization, paged blocks, prefix reuse — is a serving-systems problem and lives in [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html) and [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html).
+    `KVCache(cfg, batch_size=1, max_seq=2048, device="cpu", dtype=torch.bfloat16).nbytes()` returns **31,457,280** bytes — 30 MiB, or ≈31.5 MB. Hold that next to the ≈63 MB int4 weight budget we will fight for in §7: at the pretrain context the cache is *half the model*. Small models are relatively *more* KV-bound than large ones, because the cache scales with layers × context while the weights scale with layers × width². Keep the cache in **bf16** — and check that you actually did. `KVCache`'s *class* default is `dtype=torch.bfloat16`, but Ch. 14.4's `generate()` allocates it as `KVCache(self.cfg, B, total, p.device, p.dtype)` with `p = next(self.parameters())`, i.e. it follows the model's parameter dtype. On this chapter's fp32 CPU path that silently gives you an **fp32** cache at 30,720 B/token, so `generate()` needs an explicit `dtype=torch.bfloat16` to hit the number above. Keys and values are activations, re-read once per step and never accumulated, so fp32 doubles the cost for no benefit. Exercise 7 works out where the cache overtakes the weights. Everything past that — fp8/int8 KV quantization, paged blocks, prefix reuse — is a serving-systems problem and lives in [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html) and [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html).
 
 {{tool:kv-cache-budgeter}}
 
@@ -366,9 +374,14 @@ def eval_mc_probe(model, tokenizer, mc_set: list[dict] = TINY_MC_SET,
                   device="cpu") -> dict:
     """Reports BOTH metrics `lm-evaluation-harness` reports:
       acc      — raw summed log-prob (the harness's `acc`)
-      acc_norm — summed log-prob divided by the continuation's UTF-8 BYTE length
-                 (the harness's `acc_norm`), removing the length bias that
-                 otherwise favours whichever option tokenizes shortest.
+      acc_norm — summed log-prob divided by the continuation's UTF-8 BYTE length,
+                 removing the length bias that otherwise favours whichever option
+                 tokenizes shortest. Note the deliberate deviation:
+                 `lm-evaluation-harness` normalizes its `acc_norm` by the
+                 continuation's CHARACTER length (`float(len(choice))`) and
+                 reports the byte-normalized variant separately as `acc_bytes`.
+                 We use bytes because they are the tokenizer-independent unit
+                 (§3's bits-per-byte argument); the two coincide on ASCII.
     If they disagree, your choices are length-imbalanced and the raw number is
     measuring string length as much as knowledge."""
     n_raw = n_norm = 0
@@ -543,7 +556,7 @@ Thirty hand-written tasks are enough to be informative and small enough that you
 
     Three open-source harnesses do this properly; graduate to them once your probe set outgrows a Python list.
 
-    - **`lm-evaluation-harness`** (EleutherAI) — the de-facto standard for log-likelihood/cloze tasks; backs the Hugging Face Open LLM Leaderboard. You plug in a custom model by subclassing `lm_eval.api.model.LM` and implementing exactly two primitives — `loglikelihood(requests)` and `generate_until(requests)` — which are *precisely* `sequence_logprob` and `generate_text` from this chapter. Not a coincidence: those two primitives span nearly all static LLM evaluation.
+    - **`lm-evaluation-harness`** (EleutherAI) — the de-facto standard for log-likelihood/cloze tasks; backs the Hugging Face Open LLM Leaderboard. You plug in a custom model by subclassing `lm_eval.api.model.LM` and implementing its three abstract primitives — `loglikelihood(requests)`, `loglikelihood_rolling(requests)`, and `generate_until(requests)`. The first and last are *precisely* `sequence_logprob` and `generate_text` from this chapter; the middle one is §3's `compute_perplexity` in request form (it is what backs the perplexity/bits-per-byte tasks). Not a coincidence: those primitives span nearly all static LLM evaluation. Omit `loglikelihood_rolling` and the subclass will not even instantiate — it is `@abc.abstractmethod` like the other two.
     - **`lighteval`** (Hugging Face) — a lighter, more hackable harness with first-class custom-task and custom-model entry points; good when you want your own metric without forking a large codebase.
     - **`inspect_ai`** (UK AI Safety Institute) — the framework built for *agentic* evaluation: solvers, tool sandboxes, scorers, and full trace logging with a viewer. It formalizes exactly the decomposition in `eval_agent` (per-step tool records, turn limits, scorer-per-metric). If your agent eval grows past one file, port it rather than reinventing the trace format. See [Reasoning, Coding & Agentic Evals](../11-evaluation/04-reasoning-coding-agentic-evals.html) and [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html).
 
@@ -568,7 +581,7 @@ Thirty hand-written tasks are enough to be informative and small enough that you
 
 The single most important artifact of this chapter is not a number — it is a paragraph. Every probe measures a narrow slice; the reader of your model card needs the slices assembled into an honest picture. Write it down explicitly, next to the numbers:
 
-- **Stack-100M is a narrow tool, not a general oracle.** At ~101M parameters and ~20B training tokens, it sits roughly three orders of magnitude below a frontier model in both parameters and effective training FLOPs. It will confidently state incorrect facts, struggle with multi-step reasoning beyond what narrow RLVR explicitly trained, and its "knowledge" is a lossy compression of a filtered web+synthetic corpus, not a queryable database.
+- **Stack-100M is a narrow tool, not a general oracle.** At ~101M parameters and ~20B training tokens, it sits roughly three to four orders of magnitude below a frontier model in parameters, and — because training compute scales as $C \approx 6ND$ — roughly **six to seven** orders of magnitude below it in training FLOPs ($6 \times 1.01\text{e}8 \times 2\text{e}10 \approx 1.2\text{e}19$, against the $\sim$1e25–1e26 of a frontier run). It will confidently state incorrect facts, struggle with multi-step reasoning beyond what narrow RLVR explicitly trained, and its "knowledge" is a lossy compression of a filtered web+synthetic corpus, not a queryable database.
 - **What it is reliably good at** is precisely the narrow, scaffolded tasks it was pointed at: short-form chat in the SFT/DPO style, two-digit arithmetic *in the trained format*, and grounded retrieval-QA when the answer is handed to it in context — the ReAct loop from [14.10](10-agentic-narrow.html) exists specifically because retrieval + a small model beats a small model alone on knowledge-heavy questions.
 - **What it is not good at**: long-horizon reasoning, closed-book trivia outside the training mix's coverage, arithmetic outside the operand range RLVR saw, code beyond the toy StarCoder-subset flavor, and — like every language model — it will hallucinate fluently with no internal uncertainty signal a downstream system can cheaply detect.
 - **The agent is format-reliable and policy-fragile.** Quote the §4.4 decomposition explicitly: a model that emits well-formed tool calls 95% of the time and solves 40% of tasks is *not* "40% as good as a real agent" — it has memorized a grammar and is guessing at a policy. Say that, because an integrator who sees only the EM number will add guardrails in the wrong place.
@@ -616,11 +629,13 @@ RTN's virtue is that it is a single pass over the weights with no calibration da
 
 $$
 \hat w_{:,q} = \operatorname{quant}(w_{:,q}), \qquad
-\delta = \frac{w_{:,q} - \hat w_{:,q}}{[H^{-1}]_{qq}}, \qquad
-w_{:,j} \mathrel{-}= \delta \cdot [H^{-1}]_{qj} \;\; \forall\, j > q
+\delta = \frac{w_{:,q} - \hat w_{:,q}}{[H_F^{-1}]_{qq}}, \qquad
+w_{:,j} \mathrel{-}= \delta \cdot [H_F^{-1}]_{qj} \;\; \forall\, j > q
 $$
 
-The update spreads each column's quantization error onto the columns not yet quantized, weighted by how strongly the Hessian says those columns interact — an efficient, layer-local instance of the classic Optimal Brain Surgeon idea (LeCun et al., 1990; Hassibi & Stork, 1993) applied to quantization instead of pruning. The payoff is that GPTQ can push to 4 or even 3 bits with far less quality loss than RTN, at the cost of calibration data and $O(d_{in}^3)$ work per layer for the Hessian inverse (real GPTQ batches this via Cholesky decomposition; the sketch below is the pedagogical, unoptimized version):
+Read the subscript carefully: $H_F^{-1}$ is the inverse of the Hessian **restricted to the not-yet-quantized columns** $F = \{q, \dots, d_{in}\}$, which is *not* the corresponding block of the single full inverse $H^{-1}$ (block inversion gives $H_F^{-1} = A_{FF} - A_{F E}A_{EE}^{-1}A_{EF}$ with $A = H^{-1}$ and $E$ the already-quantized complement). Using rows of $H^{-1}$ directly computes a different — and wrong — compensation for every $q \ge 1$. GPTQ's Cholesky factorization is what makes the whole *sequence* of restricted inverses available at once: row $q$ of the upper Cholesky factor $T$ of $H^{-1}$, normalized by $T_{qq}$, is exactly $[H_F^{-1}]_{q,F}/[H_F^{-1}]_{qq}$. Cholesky here is a **correctness device that also happens to be fast**, not merely an optimization.
+
+The update spreads each column's quantization error onto the columns not yet quantized, weighted by how strongly the Hessian says those columns interact — an efficient, layer-local instance of the classic Optimal Brain Surgeon idea (LeCun et al., 1990; Hassibi & Stork, 1993) applied to quantization instead of pruning. The payoff is that GPTQ can push to 4 or even 3 bits with far less quality loss than RTN, at the cost of calibration data and $O(d_{in}^3)$ work per layer for the inverse and its factorization (real GPTQ additionally batches the column loop and updates lazily in blocks; the sketch below is the pedagogical, unoptimized version):
 
 ```python
 import torch
@@ -632,9 +647,9 @@ def gptq_quantize_column_by_column(W: torch.Tensor, X_calib: torch.Tensor, bits:
     W: (d_out, d_in) weight matrix. X_calib: (n_samples, d_in) calibration
     activations captured from a real forward pass on held-out text.
 
-    Pedagogical: real GPTQ batches columns and uses a running Cholesky
-    factorization for speed. For production use GPTQModel or llm-compressor
-    (Section 9) — do not ship this."""
+    Pedagogical: real GPTQ batches columns and defers updates in blocks for
+    speed. For production use GPTQModel or llm-compressor (Section 9) — do not
+    ship this."""
     d_out, d_in = W.shape
     W = W.clone().float()
 
@@ -642,6 +657,12 @@ def gptq_quantize_column_by_column(W: torch.Tensor, X_calib: torch.Tensor, bits:
     H = 2 * (X_calib.T @ X_calib) / X_calib.shape[0]
     H += damp * torch.eye(d_in, device=W.device)          # damping for stability
     H_inv = torch.linalg.inv(H)
+    # NOT a speed trick: row q of the upper Cholesky factor T of H^-1, divided by
+    # T[q, q], equals the row of the inverse of the Hessian RESTRICTED to the
+    # not-yet-quantized columns {q..d_in} — which is the quantity OBS's update
+    # actually calls for. Using H_inv's own rows would be a different (wrong)
+    # compensation for every q >= 1.
+    T = torch.linalg.cholesky(H_inv, upper=True)
 
     qmax = 2 ** (bits - 1) - 1
     for q in range(d_in):
@@ -649,20 +670,20 @@ def gptq_quantize_column_by_column(W: torch.Tensor, X_calib: torch.Tensor, bits:
         scale = col.abs().max() / qmax if col.abs().max() > 0 else 1.0
         q_col = torch.clamp(torch.round(col / scale), -qmax, qmax)
         w_hat = q_col * scale
-        error = (col - w_hat) / H_inv[q, q]                # per-output-row error
+        error = (col - w_hat) / T[q, q]                    # per-output-row error
         W[:, q] = w_hat
         if q + 1 < d_in:
             # Spread the reconstruction error onto not-yet-quantized columns.
-            W[:, q + 1:] -= torch.outer(error, H_inv[q, q + 1:])
+            W[:, q + 1:] -= torch.outer(error, T[q, q + 1:])
     return W
 ```
 
 ### 6.3 AWQ: protect the salient channels instead of correcting for them
 
-**AWQ** (Lin, Tang, Tang, Yang, Dang & Han, *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration*, 2023; MLSys 2024 Best Paper) takes a cheaper angle. Its empirical observation: a small fraction of *input channels* (about 0.1–1% in practice) receive systematically large activation magnitudes and disproportionately affect the layer's output — quantization error on the weights feeding those channels hurts far more than error elsewhere. Rather than correcting errors after the fact like GPTQ, AWQ **protects the salient channels before quantizing** by rescaling: it multiplies weight columns corresponding to high-activation channels by a per-channel scale $s>1$ (making them larger and therefore relatively less perturbed by rounding) and divides the corresponding activations by the same $s$ — leaving the mathematical output of $W^\top x$ unchanged while shifting quantization error away from the channels that matter most:
+**AWQ** (Lin, Tang, Tang, Yang, Dang & Han, *AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration*, 2023; MLSys 2024 Best Paper) takes a cheaper angle. Its empirical observation: a small fraction of *input channels* (about 0.1–1% in practice) receive systematically large activation magnitudes and disproportionately affect the layer's output — quantization error on the weights feeding those channels hurts far more than error elsewhere. Rather than correcting errors after the fact like GPTQ, AWQ **protects the salient channels before quantizing** by rescaling: it multiplies weight columns corresponding to high-activation channels by a per-channel scale $s>1$ (making them larger and therefore relatively less perturbed by rounding) and divides the corresponding activations by the same $s$ — leaving the mathematical output of $Wx$ unchanged while shifting quantization error away from the channels that matter most (with $W \in \mathbb{R}^{d_{out} \times d_{in}}$ and $s \in \mathbb{R}^{d_{in}}$, the convention the code below uses):
 
 $$
-y = W^\top x = (W \cdot \operatorname{diag}(s))^\top (x / s)
+y = Wx = (W \operatorname{diag}(s))\,(x / s)
 $$
 
 The scale vector $s$ is found by a small grid search over a single exponent $\alpha$ (with $s = a^{\alpha}$ for per-channel activation magnitudes $a$), using calibration data but no backprop and no Hessian inversion — substantially cheaper than GPTQ while empirically competitive at 4-bit. That is a good default when calibration compute is tight, which is exactly our situation on a single rented GPU.
@@ -862,7 +883,8 @@ class QuantizedLinear(nn.Module):
     def weight(self) -> torch.Tensor:
         """Compatibility shim for Ch. 14.4, which reaches for `.weight` in two
         places: `fused_ce_z_loss(x, self.lm_head.weight, ...)` when
-        `cfg.loss_chunk > 0`, and `estimate_params()`'s `tok_emb.weight.numel()`.
+        `cfg.loss_chunk > 0`, and `num_params(non_embedding=True)`'s
+        `tok_emb.weight.numel()`.
         Without this property both raise AttributeError the moment the model is
         quantized — a sibling chapter's documented API breaking silently.
 
@@ -1134,7 +1156,12 @@ Everything in §6–§7 is a *claim* about quality: "int8 is free, int4 costs so
 """stacklm/eval/sweep.py — run the full battery across quantization settings."""
 import copy
 
-from stacklm.serve.quantize import quantize_stacklm, state_dict_bytes
+from stacklm.eval.ppl import compute_perplexity                        # Section 3
+from stacklm.eval.probes import (eval_arithmetic, eval_mc_probe,       # Section 4
+                                 eval_retrieval_qa)
+from stacklm.eval.agent import eval_agent                              # Section 4.4
+from stacklm.infer import generate_fn                                  # Section 2
+from stacklm.serve.quantize import quantize_stacklm, state_dict_bytes  # Section 7
 
 
 def evaluate_quantization_sweep(fp32_model, tok, val_shard_dir, probes, *,
@@ -1288,11 +1315,11 @@ if __name__ == "__main__":
     Every piece measured or computed above, for a generation call with a 2048-token context at int4:
 
     - **Quantized weights**: ≈63.3 MB (§7 table — 50.66 MB packed int4 + 12.66 MB fp32 scales/zero-points), plus 0.14 MB of fp32 RMSNorm scales.
-    - **KV cache** (Ch. 14.4's `KVCache`), GQA with `n_kv_heads=2`, `head_dim=64`, 30 layers, bf16: per token per layer, K and V together are $2 \times 2 \times 64 = 256$ elements × 2 B = **512 B**; across 30 layers, **15,360 B ≈ 15 KB/token**; at the full 2048-token context, ≈**31.5 MB**. (Leave the cache in fp32 and it is 63 MB — as big as the weights.)
+    - **KV cache** (Ch. 14.4's `KVCache`), GQA with `n_kv_heads=2`, `head_dim=64`, 30 layers, bf16: per token per layer, K and V together are $2 \times 2 \times 64 = 256$ elements × 2 B = **512 B**; across 30 layers, **15,360 B ≈ 15 KB/token**; at the full 2048-token context, ≈**31.5 MB**. Mind the default: `generate()` allocates the cache in the model's *parameter* dtype (§2), which on this fp32 CPU path is fp32 — 30,720 B/token and ≈63 MB at 2048, as big as the weights — until you pass `dtype=torch.bfloat16` explicitly.
     - **Transient dequantization buffer**: `QuantizedLinear.forward` materializes one fp32 weight at a time. The largest is the tied head, $32768 \times 512 \times 4\ \text{B} = 67$ MB — *bigger than the entire quantized model*. This is the reference path's real cost, and the reason `dequantize_rows` exists for the embedding direction.
     - **Activations** (single-token decode): a few MB at most.
 
-    Total steady-state: **on the order of 100 MB** of resident memory to hold the entire model plus a full 2048-token conversation, with a transient peak set by the largest dequantized layer. That is the concrete payoff of stacking GQA (4× smaller KV cache than plain MHA), a right-sized 32768-token vocabulary, and int4 weight quantization — each individually a modest win, compounding into "runs anywhere." State the context length whenever you quote it: at the 8192-token context mid-training unlocks, the cache alone is 126 MB (Exercise 7).
+    Total steady-state: **on the order of 100 MB** of resident memory to hold the entire model plus a full 2048-token conversation with a bf16 cache (≈130 MB if you leave the cache at the parameter dtype, as `generate()` does by default), with a transient peak set by the largest dequantized layer. That is the concrete payoff of stacking GQA (4× smaller KV cache than plain MHA), a right-sized 32768-token vocabulary, and int4 weight quantization — each individually a modest win, compounding into "runs anywhere." State the context length whenever you quote it: at the 8192-token context mid-training unlocks, the cache alone is 126 MB (Exercise 7).
 
 ### 9.1 int4 weights are not int4 speed — and our reference path is *slower*
 
@@ -1393,7 +1420,7 @@ Read what it wrote. That is the actual point of the entire capstone — not the 
     - Perplexity measures predictive fit to held-out text and nothing else; it is not comparable across tokenizers (use bits-per-byte), and it can stay flat while a capability collapses — multi-step evals *magnify* damage that averaging hides, roughly as $(1-\epsilon)^k$ over $k$ steps.
     - Derive metrics from signals the harness actually emits. Ch. 14.10's loop returns as soon as an emission parses as `final` *and* force-synthesizes a final-looking answer when the step budget runs out, so "did it cap?" is `len(assistant) > max_steps`, not "was the last action non-final" — the latter is dead code and a structurally-zero `cap_rate`.
     - RTN is a fast, calibration-free baseline; GPTQ (Frantar et al., 2022) redistributes each column's error onto not-yet-quantized columns via the layer's Hessian; AWQ (Lin et al., 2023) protects high-activation channels by rescaling and folds $1/s$ into the preceding norm. AWQ's search must optimize *output* error after de-scaling — a weight-space proxy on the scaled matrix is monotone in the search variable and degenerates into a no-op.
-    - **Tied embeddings break naively.** Replacing `lm_head` with a quantized module severs the alias to `tok_emb`, leaving a 67 MB fp32 table in the export. Detect the tie by `data_ptr()`, replace the embedding with a row-gathering view over the quantized head's buffers, give the quantized modules a `.weight` property so Ch. 14.4's `fused_ce_z_loss`/`estimate_params` call sites keep working, and assert the *deduplicated* byte count of the actual `state_dict`.
+    - **Tied embeddings break naively.** Replacing `lm_head` with a quantized module severs the alias to `tok_emb`, leaving a 67 MB fp32 table in the export. Detect the tie by `data_ptr()`, replace the embedding with a row-gathering view over the quantized head's buffers, give the quantized modules a `.weight` property so Ch. 14.4's `fused_ce_z_loss`/`num_params` call sites keep working, and assert the *deduplicated* byte count of the actual `state_dict`.
     - Exact accounting for Stack-100M's 101.32M quantizable parameters: fp32 ≈405MB → bf16 ≈203MB → int8 ≈102MB (4.0×) → int4/g64 ≈63MB (6.4×, counting the 12.66MB of fp32 scales/zero-points honestly — 20% of the total, which is why "int4 = 8×" is a lie). Add the KV cache before quoting a memory number: 15 KB/token, 31.5 MB at 2048 in bf16, 126 MB at 8192.
     - int4 weights shrink memory, not FLOPs. A dequantize-then-matmul path is *slower than fp32 eager* — it pays a full fp32 round-trip per token, including a 67 MB dequantize of the tied head at every decode step. Real throughput needs fused integer kernels: **torchao** (`quantize_(model, Int4WeightOnlyConfig(...))` + `torch.compile`), **llm-compressor**/**compressed-tensors** for GPTQ/AWQ into vLLM, and **GGUF + llama.cpp** for CPU/edge — with the caveat that converting a not-quite-Llama architecture silently corrupts NoPE and QK-norm unless you diff logits against the reference.
     - The payoff of the entire capstone is two commands: `python -m stacklm.serve.export --bits 4` then `python -m stacklm.serve.cli --bits 4`, and text your own model produced on your own machine.
@@ -1420,7 +1447,7 @@ Read what it wrote. That is the actual point of the entire capstone — not the 
     - [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) — the production reference for fused, quantized CPU/edge inference; `convert_hf_to_gguf.py`, `llama-quantize`, `llama-server`.
     - [ModelCloud/GPTQModel](https://github.com/ModelCloud/GPTQModel) — actively maintained GPTQ/AWQ/GGUF toolkit with Transformers, vLLM, and SGLang integration.
     - [huggingface/safetensors](https://github.com/huggingface/safetensors) — the pickle-free, mmap-able tensor format §7.4 exports to; its refusal to store aliased tensors is a free correctness check on the embedding tie.
-    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the cloze-scoring framework §4.2 borrows from; plug in a custom model by implementing `loglikelihood` and `generate_until`.
+    - [EleutherAI/lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) — the cloze-scoring framework §4.2 borrows from; plug in a custom model by implementing `loglikelihood`, `loglikelihood_rolling`, and `generate_until`.
     - [huggingface/lighteval](https://github.com/huggingface/lighteval) — lighter, hackable harness with first-class custom-task/custom-model entry points.
     - [UKGovernmentBEIS/inspect_ai](https://github.com/UKGovernmentBEIS/inspect_ai) — the UK AI Safety Institute's framework for agentic evaluation: solvers, tool sandboxes, scorers, and a trace viewer; the right home for §4.4 once it outgrows one file.
 
@@ -1496,7 +1523,7 @@ Read what it wrote. That is the actual point of the entire capstone — not the 
 
     (b) The shown choices are near-uniform in length (`" H2O"`, `" CO2"`, `" NaCl"`, `" O2"`; `" Paris"`, `" Berlin"`, `" Madrid"`, `" Rome"`), so the length bias is roughly constant across options and cancels out of the arg-max. The construction ("small enough to eyeball every item") maintains this invariant by hand.
 
-    (c) `acc_norm` divides the summed log-probability by `len(choice.encode("utf-8"))` — the continuation's **byte** length — matching `lm-evaluation-harness`'s `acc_norm`. Bytes are the more defensible denominator because token counts are a property of *your tokenizer*, not of the answer: the same string can be 2 tokens under one BPE and 5 under another, so token-normalized scores are not comparable across models, while byte-normalized ones are. (Bytes are also what bits-per-byte uses, for the same reason.) Reporting both is the discipline: if `acc` and `acc_norm` disagree, your option set is length-imbalanced and the raw number is partly measuring string length.
+    (c) `acc_norm` divides the summed log-probability by `len(choice.encode("utf-8"))` — the continuation's **byte** length. (Deliberate deviation, flagged in the docstring: `lm-evaluation-harness`'s own `acc_norm` divides by the continuation's *character* length and exposes the byte-normalized version under the separate name `acc_bytes`; the two agree on ASCII choices, which is all `TINY_MC_SET` contains.) Bytes are the more defensible denominator because token counts are a property of *your tokenizer*, not of the answer: the same string can be 2 tokens under one BPE and 5 under another, so token-normalized scores are not comparable across models, while byte-normalized ones are. (Bytes are also what bits-per-byte uses, for the same reason.) Reporting both is the discipline: if `acc` and `acc_norm` disagree, your option set is length-imbalanced and the raw number is partly measuring string length.
 
 **5.** Compute the KV-cache budget the way §9's worked example does, using the same GQA config (`n_kv_heads = 2`, `head_dim = 64`, 30 layers, bf16 = 2 bytes/element). (a) Bytes per token per layer, and per token across all layers. (b) Total cache for a **512-token** context. (c) The chapter says GQA gives a "4× smaller KV cache than plain multi-head attention." What would the same 512-token cache cost under plain MHA, and what does that imply about the number of query heads? (d) `KVCache` preallocates the full `max_seq_len` buffer at construction. What does that cost at 512 tokens of *actual* use with `max_seq_len = 2048`, and why is it still the right design?
 

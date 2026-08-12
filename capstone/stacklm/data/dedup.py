@@ -163,8 +163,10 @@ def near_dedup_stream(docs: Iterable[dict], num_perm: int = 128, bands: int = 16
     the index, measured at ~512 B/signature plus ~3.3 KB/document of LSH buckets
     (16 bands), i.e. ~1.9 GB at the 500k default.
 
-    HARD CEILING: past `index_capacity` the index stops growing and near-dup
-    recall for every later document silently drops to zero. We log loudly once.
+    HARD CEILING: past `index_capacity` the index stops growing. Later documents
+    are still *checked* against everything already indexed, but nothing new is
+    added, so duplicates that only occur among post-ceiling documents are never
+    detected -- recall degrades from full to partial, silently. We log once.
     At 20B tokens (~20M documents) this ceiling is what forces the `datatrove`
     path -- do not just raise the number.
     """
@@ -182,10 +184,11 @@ def near_dedup_stream(docs: Iterable[dict], num_perm: int = 128, bands: int = 16
             store.append(sig)
         elif not warned:
             warned = True
-            log.warning("near_dedup_stream: index_capacity=%d reached; near-dup "
-                        "recall is now ZERO for the rest of this stream. Shard the "
-                        "input or switch to datatrove's MinhashDedup* pipeline.",
-                        index_capacity)
+            log.warning("near_dedup_stream: index_capacity=%d reached; the index "
+                        "is frozen, so duplicates among the REMAINING documents "
+                        "are no longer detected (only matches against the first "
+                        "%d are). Shard the input or switch to datatrove's "
+                        "MinhashDedup* pipeline.", index_capacity, index_capacity)
         yield doc
 
 

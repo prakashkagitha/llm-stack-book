@@ -128,7 +128,7 @@ $$
 \eta^{\text{Muon}}_{\max} = \mathbf{0.02}, \qquad \eta^{\text{AdamW}}_{\max} = \mathbf{3\text{e-}3},
 $$
 
-a ratio of about **6.7:1**. Treat that ratio as **empirical, not derived** — it is the band the reference recipes live in (Moonlight and `nanochat` both run Muon in the low $10^{-2}$s with a much smaller embedding LR), and it is the pair Ch. 14.7's `TrainConfig` ships. The reason the embedding wants the smaller number is concrete: its gradient is row-sparse, so a rare token's row receives a full-magnitude Adam update from the handful of batches that contain it, and a smaller step is cheap insurance against those rows thrashing. The practical point is that you tune a *line* — one LR and a fixed ratio — not a plane.
+a ratio of about **6.7:1**. Treat that ratio as **empirical, not derived** — it comes out of the sweep in the next section, and it is the pair Ch. 14.7's `TrainConfig` ships. Be careful here, because this is where people import the wrong number: **a Muon learning rate is only meaningful together with the update scale it multiplies.** The reference implementations do not all use Moonshot's $0.2\sqrt{\max(m,n)}$ — Keller Jordan's `Muon` (and the `modded-nanogpt` / `nanochat` line that follows it) uses an aspect-ratio factor instead, which leaves the update's per-element RMS near $1/\sqrt{\max(m,n)}$ rather than at $0.2$. The same numeric LR therefore means a very different step in the two conventions. Compare *per-element step sizes* ($\eta \times$ update RMS), never raw learning rates, when you carry a number across repos. The reason the embedding wants the smaller number is concrete: its gradient is row-sparse, so a rare token's row receives a full-magnitude Adam update from the handful of batches that contain it, and a smaller step is cheap insurance against those rows thrashing. The practical point is that you tune a *line* — one LR and a fixed ratio — not a plane.
 
 ```python
 # stacklm/optim/muon.py  (continued)
@@ -275,7 +275,7 @@ The peak LR is the most consequential number in this chapter, and "0.02-ish, lik
 
 **Step 2 — read the curve, then back off one grid point.** Plot final held-out loss vs peak LR. You get a U: too low and the model is under-trained at this step count; too high (`3.2e-2` here) and the loss either spikes or plateaus above the minimum. Take the argmin — `1.6e-2` — then step *one grid point down*, to `8e-3`. The full run is ~40× longer than the probe, and the highest LR that survives 1,000 steps is not always the highest LR that survives 38,147.
 
-**Step 3 — transfer across batch size.** The probe ran at 65,536 tokens/step; the real run is 524,288, an 8× increase. Below the critical batch size, the standard rule of thumb for adaptive/normalized updates is $\eta \propto \sqrt{B}$ ([Chapter 3.10](../03-pretraining/10-lr-schedules-hparams.html)), so multiply by $\sqrt{8} \approx 2.83$: $8\text{e-}3 \times 2.83 = 2.26\text{e-}2$. Round down to **`0.02`** — which is exactly `TrainConfig.muon_peak_lr`, and squarely inside the band Moonlight and `nanochat` report.
+**Step 3 — transfer across batch size.** The probe ran at 65,536 tokens/step; the real run is 524,288, an 8× increase. Below the critical batch size, the standard rule of thumb for adaptive/normalized updates is $\eta \propto \sqrt{B}$ ([Chapter 3.10](../03-pretraining/10-lr-schedules-hparams.html)), so multiply by $\sqrt{8} \approx 2.83$: $8\text{e-}3 \times 2.83 = 2.26\text{e-}2$. Round down to **`0.02`** — which is exactly `TrainConfig.muon_peak_lr`. Note that this number is measured *in this chapter's parameterization* (update RMS $0.2$); if you cross-check it against a reference repo, convert to per-element step size first, for the reason given above.
 
 **Step 4 — transfer across width.** The 43M rung is narrower than `d_model = 512`. Two defensible options: (a) **muP** width scaling, which says matrix-like parameters want $\eta \propto 1/\text{fan\_in}$ ([Chapter 3.10](../03-pretraining/10-lr-schedules-hparams.html)); or (b) rely on the fact that Muon's RMS-matched update has a *fixed* per-element magnitude by construction, which makes its LR far closer to width-invariant than Adam's — this is one of Muon's practical selling points. We take (b) and then *verify* with a 200-step confirmation run at full width and full batch: if the loss curve at step 200 is not monotone-decreasing and the grad-norm log is not flat, drop the LR by 2× and repeat.
 
@@ -370,21 +370,21 @@ The projection rescale moved the max logit by 0.4% — that residue is entirely 
 
 Before you can clip, you need the per-head maximum logit — and this is *not* free, contrary to what a casual reading of the Kimi recipe suggests. `Stack-100M`'s fast path is `F.scaled_dot_product_attention`, which dispatches to a FlashAttention-style kernel ([FlashAttention I: IO-Awareness & The Online Softmax](../04-kernels-efficiency/02-flash-attention-1.html)). That kernel's entire point is that it **never materializes** the $(B, H, T, T)$ score matrix. There is no `.amax()` to take, because there is nothing to take it of.
 
-If you want the exact maximum you must fall back to eager attention and build the score tensor. At the capstone's `micro_batch_size = 32`, `n_heads = 8`, `T = 2048`, in fp32:
+If you want the exact maximum you must build that score tensor yourself, *alongside* the fused kernel — SDPA still computes the output, you just also pay for a second $QK^\top$ and the memory to hold it. At the capstone's `micro_batch_size = 32`, `n_heads = 8`, `T = 2048`, in fp32:
 
 $$
 32 \times 8 \times 2048 \times 2048 \times 4\ \text{bytes} \;=\; 4.29\ \text{GB} \quad\textbf{per layer},
 $$
 
-2.15 GB in bf16, plus $O(T^2)$ FLOPs and the loss of FlashAttention's memory win. Doing that every step, on every micro-batch, of all 30 layers is not a rounding error; it is a different training run.
+2.15 GB in bf16, plus $O(T^2)$ FLOPs and the loss of FlashAttention's memory win for that pass. Doing that every step, on every micro-batch, of all 30 layers is not a rounding error; it is a different training run.
 
 The capstone therefore offers **three tiers**, and defaults to the cheap one:
 
-| Tier | What it computes | Cost | Keeps SDPA? |
+| Tier | What it computes | Cost | Memory win kept? |
 |---|---|---|---|
 | 0 — weight-only | $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ | free, no forward pass | yes |
 | 1 — **default** | $\max_i\lVert q_i\rVert \cdot \max_j\lVert k_j\rVert / \sqrt{d_h}$ | $O(BHTd_h)$, no $T^2$ tensor | yes |
-| 2 — exact | $\max_{ij} s_{ij}$ over the causal mask | $O(BHT^2)$, 4.3 GB/layer | **no** |
+| 2 — exact | $\max_{ij} s_{ij}$ over the causal mask | $O(BHT^2)$, 4.3 GB/layer | **no** (SDPA still runs; the score tensor is built beside it) |
 
 Tiers 0 and 1 are Cauchy–Schwarz *upper* bounds, so they fire the clip slightly early — a conservative error, which is what you want in a safety net. Tier 1 is tight in practice because attention keys and queries are not adversarially aligned. Here is the real plumbing in `stacklm/model/attention.py`:
 
@@ -396,7 +396,8 @@ scale = 1.0 / (self.head_dim ** 0.5)
 if record is not None:
     with torch.no_grad():
         if self.record_exact:
-            # Tier 2: exact, but materializes (B, n_heads, T, T) and gives up SDPA.
+            # Tier 2: exact, but materializes (B, n_heads, T, T) NEXT TO the
+            # fused kernel below -- SDPA still runs; the memory win does not.
             att = (q.float() @ k.float().transpose(-2, -1)) * scale
             causal = torch.tril(torch.ones(T, T, dtype=torch.bool, device=x.device))
             att = att.masked_fill(~causal, float("-inf"))
@@ -493,12 +494,16 @@ In `Stack-100M`, `n_heads = 8` query heads share `n_kv_heads = 2` key/value head
 def _clip_projections_(attn, s_max, tau: float) -> int:
     """No-QK-norm path (Kimi K2): per-query-head W_Q, per-KV-head shared W_K.
 
+    Returns 0/1 for the LAYER, not a head count -- both clip paths must report the
+    same unit or `qk_clip_`'s trigger log silently changes scale (by up to n_heads)
+    when you flip `qk_norm`, and the whole point of that log is its trend.
+
     Attribute names (n_heads, n_kv_heads, head_dim, groups) are exactly those of
     stacklm.model.attention.Attention -- keep them stable across chapters.
     """
     hd = attn.head_dim
     group = attn.groups                          # q-heads per kv-head (= 4)
-    fired = 0
+    fired = False
 
     # (1) Per-query-head scale on W_Q.
     for h in range(attn.n_heads):
@@ -506,7 +511,7 @@ def _clip_projections_(attn, s_max, tau: float) -> int:
             continue                             # this head is fine
         eta = (tau / float(s_max[h])) ** 0.5     # sqrt so q AND k share it
         attn.wq.weight[h * hd:(h + 1) * hd].mul_(eta)
-        fired += 1
+        fired = True
 
     # (2) Per-KV-head scale on the SHARED W_K, using the group's worst logit.
     for kv in range(attn.n_kv_heads):
@@ -515,7 +520,7 @@ def _clip_projections_(attn, s_max, tau: float) -> int:
             continue
         eta = (tau / s_grp) ** 0.5
         attn.wk.weight[kv * hd:(kv + 1) * hd].mul_(eta)
-    return fired
+    return int(fired)
 ```
 
 The head that *set* the group maximum lands exactly at $\tau$; the other three query heads in its group get their shared key scaled by the same amount and so are pulled slightly further below $\tau$ — a conservative, safe outcome. Exercise 4 walks the arithmetic. In this configuration the shipped $\tau = 100$ is a genuine, load-bearing safety net.
@@ -525,7 +530,7 @@ The head that *set* the group maximum lands exactly at $\tau$; the other three q
 
 ### The third lever: attention soft-capping
 
-`StackConfig` already carries `attn_soft_cap` (default `0.0` = off). Set it to `50.0` and the attention scores pass through Gemma-2's $c\tanh(s/c)$ before the softmax: a smooth, differentiable ceiling that makes blow-up *impossible* rather than merely corrected-after-the-fact. Its cost is that the naive implementation materializes the score matrix and abandons SDPA — the same $T^2$ tax as Tier-2 recording. The modern answer is PyTorch's **FlexAttention** (`torch.nn.attention.flex_attention`), which lets you express the cap as a `score_mod` function that the compiler fuses *into* a FlashAttention-style kernel, keeping the memory win ([Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)).
+`StackConfig` already carries `attn_soft_cap` (default `0.0` = off). Set it to `50.0` and the attention scores pass through Gemma-2's $c\tanh(s/c)$ before the softmax: a smooth, differentiable ceiling that makes blow-up *impossible* rather than merely corrected-after-the-fact. Its cost is that the naive implementation materializes the score matrix and abandons SDPA outright (unlike Tier-2 recording, which at least keeps the fused kernel) — the same $T^2$ memory tax, plus the loss of the fast path. The modern answer is PyTorch's **FlexAttention** (`torch.nn.attention.flex_attention`), which lets you express the cap as a `score_mod` function that the compiler fuses *into* a FlashAttention-style kernel, keeping the memory win ([Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html)).
 
 The three levers form a clean hierarchy, and you should be able to say which is which in an interview:
 
@@ -703,13 +708,15 @@ Four details that bite people:
 
 1. **Average, don't sum.** We divide the loss by `GRAD_ACCUM` *inside* the loop so the gradient magnitude — and thus the effective LR — is independent of how many micro-steps we chose; change the accumulation count and the run behaves identically.
 
-2. **Clip globally — but know what the clip actually does to Muon.** The grad-norm clip runs over *all* parameters at once, `max_norm = 1.0`; clipping each optimizer's group separately would let one group's blow-up hide behind the other's normal-sized gradients. Here is the non-obvious part. Global clipping multiplies every gradient by one scalar $c < 1$, and `zeropower_via_newtonschulz5` begins by dividing its input by $\lVert X\rVert_F$ — so the orthogonalized direction is **exactly invariant** to that rescale. Scale all gradients by $c$ and the Muon update is unchanged (up to how $c$ perturbs the momentum EMA on subsequent steps). **Grad clipping is close to a no-op for the 210 Muon-routed matrices.** It bites the AdamW group, where the spike survives: with $\beta_2 = 0.95$, a one-step $10\times$ gradient spike raises $\sqrt{v}$ by only $\sqrt{0.95 + 0.05\cdot 100} \approx 2.4\times$, so the update still grows ~4× and clipping genuinely helps.
+2. **Clip globally — but know what the clip actually does to Muon.** The grad-norm clip runs over *all* parameters at once, `max_norm = 1.0`; clipping each optimizer's group separately would let one group's blow-up hide behind the other's normal-sized gradients. Here is the non-obvious part. `zeropower_via_newtonschulz5` begins by dividing its input by $\lVert X\rVert_F$, and the RMS-matching scale then pins the per-element step at $0.2\,\eta$ whatever the gradient's size — so **the clip cannot make a Muon step smaller**. Rescale the *whole* Nesterov direction by $c$ and the update is unchanged. A clip that fires on a single step does even less than that: it scales $g_t$ but not the momentum buffer, which already holds unclipped history, so $d_t = (1+\mu)g_t + \mu^2 B_{t-1}$ becomes $c(1+\mu)g_t + \mu^2 B_{t-1}$ — the spike is re-weighted against ~20 steps of history, which *does* tilt the orthogonalized direction, but never shortens the step. **Grad clipping is close to a no-op for the 210 Muon-routed matrices: it can steer them, it cannot brake them.**
+
+    It matters more for the AdamW group — though not in the way the folklore says. AdamW's update is $m/(\sqrt{v}+\epsilon)$, and a spike enters *both* moments at once. From a steady state $m \approx 1$, $v \approx 1$, a single step with $|g| = 10$ gives $m = 0.9(1) + 0.1(10) = 1.9$ and $\sqrt{v} = \sqrt{0.95 + 0.05\cdot 100} \approx 2.44$, so the update on the spike step is $1.9/2.44 \approx 0.8$ — Adam's own normalization already absorbs it. What Adam does *not* absorb is the tail: the inflated $v$ decays with time constant $1/(1-\beta_2) = 20$ steps, so the next ~20 updates to the embedding and the gains are suppressed by roughly that factor. Clipping is what keeps one bad batch out of the second moment for the next twenty steps.
 
     The consequence for what you monitor: for the Muon group, the clip is not the spike defense — the *pre-clip norm it returns* is. That log, the non-finite-gradient skip guard (Ch. 14.7), and the QK-clip trigger count are your three real sensors. This is why item 1 of the divergence checklist above is item 1.
 
 3. **`record` is a `dict`, not a tensor.** It maps `layer_idx -> (n_heads,)`. It is created fresh each time and thrown away; there is no `.zero_()` and no persistent buffer to forget to reset. (Ch. 14.7 uses the preallocated-tensor variant, which *does* need the `zero_()` — `qk_clip_` accepts both.)
 
-4. **QK-clip is post-step.** It reads weights *after* `.step()`. With Tier-1 harvesting it is cheap enough to run every step; with Tier-2 it must be gated by `qk_clip_every`. Doing Tier 2 every step on every micro-batch is the mistake that turns a 0.05% safety net into a 10%+ tax (Exercise 8).
+4. **QK-clip is post-step.** It reads weights *after* `.step()`. With Tier-1 harvesting it is cheap enough to run every step; with Tier-2 it must be gated by `qk_clip_every`. Doing Tier 2 every step on every micro-batch is the mistake that turns a ~0.02% safety net into a 10%+ tax (Exercise 8).
 
 ### Why 524,288 tokens, and the critical batch size
 
@@ -768,7 +775,7 @@ $$
 
     **But the launch count.** $210 \text{ matrices} \times 5 \text{ iters} \times 4 \text{ kernels} \approx 4{,}200$ launches per step. Batched by the three shape classes: $3 \times 5 \times 4 = 60$. That is the difference between "0.33% as predicted" and "several percent, why is Muon slow."
 
-    **QK-clip amortized cost.** Tier 1 costs $O(BHTd_h)$ — two norms and a max over tensors you already have — so running it inside the normal forward every step is a fraction of a percent. A Tier-2 exact probe every 200 steps adds one forward pass, $\approx \frac{1}{3}\times\frac{1}{200} \approx 0.17\%$ of training compute (a forward is ~1/3 of forward+backward), plus ~4.3 GB of transient memory per layer.
+    **QK-clip amortized cost.** Tier 1 costs $O(BHTd_h)$ — two norms and a max over tensors you already have — so running it inside the normal forward every step is a fraction of a percent. A Tier-2 exact probe every 200 steps adds one forward pass on a *single micro-batch* — one eighth of a step's tokens, since `GRAD_ACCUM = 8` — so $\approx \frac{1}{3}\times\frac{1}{8}\times\frac{1}{200} \approx 0.02\%$ of training compute (a forward is ~1/3 of forward+backward), plus ~4.3 GB of transient memory per layer. (Exercise 8 prices the same probe at $\approx0.006\%$ because it counts only the *extra* $QK^\top$ matmul, not the whole probe forward.)
 
 The takeaway: Muon buys faster convergence for essentially free *compute* at this scale — the Newton–Schulz iterations are dwarfed by the transformer's own matmuls — provided you do not squander it on kernel launches.
 
@@ -793,16 +800,16 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     The stability problem is **attention-logit blow-up**: Muon's equal-direction updates let the query/key path grow until $\max q^\top k/\sqrt{d_h}$ saturates the softmax and NaNs the loss in bf16. The fix depends on your architecture, and this is the part people get wrong. Kimi K2's **MuonClip** rescales $W_Q$ and $W_K$ by $\sqrt{\tau/S_{\max}}$ after any step where a head's max logit exceeded $\tau$ — with GQA, the shared key slice is scaled once by its group's worst logit, not once per query head, or you'd shrink it four times over. But that only works if you *don't* have QK-norm. With QK-norm, RMSNorm is scale-invariant, so rescaling $W_Q$ is provably a no-op; the logit is bounded a priori by $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ and the only free scale is the learned gains — so you clip *those*, and you pick $\tau$ relative to that bound, not by copying Kimi's 100.
 
-    One more thing I'd volunteer: harvesting $S_{\max}$ isn't free — the exact max forces you off FlashAttention and materializes a $(B,H,T,T)$ tensor — so you either use the Cauchy–Schwarz bound $\max\lVert q\rVert\max\lVert k\rVert/\sqrt{d_h}$, which keeps the fused kernel, or measure exactly every few hundred steps. And global grad clipping won't save you here: Newton–Schulz normalizes its input by the Frobenius norm, so the Muon update is invariant to a uniform gradient rescale. The clip protects the AdamW group; for Muon, the pre-clip norm is a *sensor*, not a fix.
+    One more thing I'd volunteer: harvesting $S_{\max}$ isn't free — the exact max means materializing a $(B,H,T,T)$ score tensor beside the fused kernel, which throws away FlashAttention's memory win — so you either use the Cauchy–Schwarz bound $\max\lVert q\rVert\max\lVert k\rVert/\sqrt{d_h}$, which costs nothing extra, or measure exactly every few hundred steps. And global grad clipping won't save you here: Newton–Schulz normalizes its input by the Frobenius norm and RMS matching fixes the step size, so a clip changes which *direction* Muon takes, never how far it goes. The clip protects the AdamW group's moment estimates; for Muon, the pre-clip norm is a *sensor*, not a fix.
 
 !!! key "Key Takeaways"
     - **Muon orthogonalizes the momentum update** of 2D weight matrices via ~5 Newton–Schulz iterations (a matmul-only approximation to the $UV^\top$ polar factor), setting all singular values to ~1 so the update pushes equally in every direction — faster per-token convergence than AdamW on attention/MLP matrices.
     - The standard **hybrid is mandatory**: Muon for the 210 2D hidden matrices, **AdamW for the tied embedding, all RMSNorm/QK-norm gains, and every 1D param**. Route by `p.ndim == 2` (and "not the embedding").
     - A **RMS-matching scale** of $0.2\sqrt{\max(m,n)}$ makes Muon's LR *shape-invariant* (one number for all 210 matrices) and lands the update RMS at 0.2. It does **not** equalize the two groups: capstone peaks are Muon **0.02**, AdamW **3e-3** — an empirical ~6.7:1. Drive both off one `wsd_lr(..., peak_lr=1.0)` multiplier; setting one shared LR on both is the classic bug.
     - **FLOP overhead ≠ wall-clock overhead.** Newton–Schulz is 0.33% of the step's FLOPs but ~4,200 kernel launches; `torch.compile` it or use `batched_muon=True` to bucket the three shape classes into `bmm`s (~60 launches), then *measure* `optimizer.step()`.
-    - **Global grad-clip is nearly a no-op for the Muon group** — Newton–Schulz normalizes by $\lVert X\rVert_F$, so the update is invariant to a uniform gradient rescale. Clip anyway (it protects the AdamW group), but treat the *pre-clip norm it returns* as your sensor, not the clip as your defense.
+    - **Global grad-clip cannot brake the Muon group** — Newton–Schulz normalizes by $\lVert X\rVert_F$ and RMS matching pins the step at $0.2\,\eta$, so a clip only re-weights the clipped gradient against the (unclipped) momentum history; it never shortens the step. Clip anyway (it keeps a spike out of AdamW's moment estimates), but treat the *pre-clip norm it returns* as your sensor, not the clip as your defense.
     - **Under QK-norm, rescaling $W_Q$/$W_K$ is a no-op** — RMSNorm is scale-invariant. The logit obeys $|s| \le \sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ (= 8 at init for `Stack-100M`), so the **QK-clip scales the learned gains** by $\sqrt{\tau/S_{\max}}$. Kimi K2's per-head, GQA-aware $W_Q/W_K$ clip is the *alternative* you use when QK-norm is off.
-    - **Measuring $S_{\max}$ costs real money**: the exact max forces eager attention and a $(B,H,T,T)$ tensor (~4.3 GB/layer at micro-batch 32). Default to the Cauchy–Schwarz bound (SDPA-safe, cheap enough to run every step); gate exact readings behind `qk_clip_every = 200`. $\tau = 100$ ships and is *inert* under QK-norm; use $\tau = 30$ when you want a sensor.
+    - **Measuring $S_{\max}$ costs real money**: the exact max materializes a $(B,H,T,T)$ tensor beside the fused kernel (~4.3 GB/layer at micro-batch 32), forfeiting FlashAttention's memory win and paying a second $QK^\top$. Default to the Cauchy–Schwarz bound (SDPA-safe, cheap enough to run every step); gate exact readings behind `qk_clip_every = 200`. $\tau = 100$ ships and is *inert* under QK-norm; use $\tau = 30$ when you want a sensor.
     - **WSD (Warmup–Stable–Decay)** replaces cosine: linear warmup, a long **constant-LR stable phase you can extend at will**, then a $1-\sqrt{}$ **decay to ~0** — and clamp `progress` to 1.0 or you will return a negative LR past the horizon.
     - The **decay phase is the mid-training annealing phase** ([Chapter 14.8](../14-capstone/08-mid-training.html)): low LR + higher-quality data yields a sharp loss drop for little compute — a hook cosine can't cleanly provide. Ch. 14.7 therefore stops *before* decay and hands over a pre-decay checkpoint.
     - Frozen `Stack-100M` numbers: **524,288-token batch** (32 × 2048 × 8), **38,147 steps**, **2,000 warmup / 32,332 stable / 3,815 decay** (`decay_frac = 0.10`), weight decay 0.1 (0.0 on 1D), global grad-clip 1.0, betas (0.9, 0.95), bf16 with no loss scaler.
@@ -862,7 +869,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     **(d)** What it buys: **shape invariance**. Without it, `1408×512`, `512×512`, and `128×512` matrices have raw update RMS $0.0266$, $0.0442$, and $0.0442$ respectively, so a single learning rate would move them by different relative amounts and Muon would need a per-shape LR. With it, every one of the 210 matrices moves at per-element RMS $0.2$, so the whole group is governed by one scalar you can sweep. The constant $0.2$ itself is empirical: it is where AdamW's *measured* update RMS sits on transformer weight matrices (the idealized $m/(\sqrt{v}+\epsilon)\approx 1$ holds only for a stationary gradient with matched EMA windows; with $\beta_1=0.9$ vs $\beta_2=0.95$ and non-stationary LM gradients the observed value is more like $0.2$–$0.4$).
 
-    What it does **not** buy: a shared learning rate. The AdamW group here is not a set of hidden matrices — it is the tied embedding plus every 1D gain, with completely different gradient statistics (row-sparse for the embedding; a single scalar per feature for the gains). The ~6.7:1 ratio between $0.02$ and $3\text{e-}3$ is an empirical calibration from the reference recipes, not a consequence of the RMS algebra. The practical rule is: RMS matching lets you tune a *line* (one LR + a fixed ratio) instead of a plane. Forget the scale entirely and Muon's raw update has RMS $\approx 0.027$ — a "normal" LR barely moves the weights and training looks dead.
+    What it does **not** buy: a shared learning rate. The AdamW group here is not a set of hidden matrices — it is the tied embedding plus every 1D gain, with completely different gradient statistics (row-sparse for the embedding; a single scalar per feature for the gains). The ~6.7:1 ratio between $0.02$ and $3\text{e-}3$ is an empirical calibration from this chapter's sweep, not a consequence of the RMS algebra (and note that $0.02$ is a number in *this* parameterization — under a different update-scale convention the same step size carries a different LR). The practical rule is: RMS matching lets you tune a *line* (one LR + a fixed ratio) instead of a plane. Forget the scale entirely and Muon's raw update has RMS $\approx 0.027$ — a "normal" LR barely moves the weights and training looks dead.
 
 **3.** Suppose you re-budget the run to **30B tokens** at the same **524,288-token** effective batch, keeping `warmup_steps = 2_000` and `decay_frac = 0.10`. (a) How many total optimizer steps? (b) Give the warmup / stable / decay step counts. (c) Using the $1-\sqrt{\cdot}$ decay, what Muon LR and what AdamW LR are in effect at **one quarter** of the way through the decay phase? (d) At which step would Ch. 14.7's pretraining script hand over its pre-decay checkpoint?
 
@@ -1020,7 +1027,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
 **8.** *(Cost accounting.)* Your training loop records the exact per-head max logit (Tier 2) on **every** micro-batch of **every** step, with `micro_batch_size = 32`, `seq_len = 2048`, `n_heads = 8`, `n_layers = 30`, `grad_accum_steps = 8`, in fp32. (a) You computed the per-layer score-tensor size in §"Harvesting $S_{\max}$": **4.29 GB**. Explain why it does *not* accumulate across the 30 layers, and what the real damage is instead. (b) Roughly how many extra FLOPs per optimizer step does the score matmul cost, versus the model's $6ND \approx 3.19\times10^{14}$? (c) Give two ways to cut this by more than 100× and state what each gives up.
 
 ??? note "Solution"
-    **(a)** It does not accumulate because the tensor is built inside `torch.no_grad()` and dropped as soon as `amax` is taken, so at most one (transiently two, counting the `masked_fill` copy) lives at a time — there is no autograd graph holding a reference. The real damage is different and worse: to build it at all you must take the eager branch, which means you have given up FlashAttention's memory savings *for that pass* and you pay a repeated 4.3 GB allocator spike that can fragment the 80GB pool and OOM a run that was otherwise comfortable.
+    **(a)** It does not accumulate because the tensor is built inside `torch.no_grad()` and dropped as soon as `amax` is taken, so at most one (transiently two, counting the `masked_fill` copy) lives at a time — there is no autograd graph holding a reference. The real damage is different and worse: building it at all means materializing the full score matrix *next to* the fused kernel (SDPA still runs — look at the code, the Tier-2 block falls through to the same `scaled_dot_product_attention` call), so you have given up FlashAttention's memory savings *for that pass* and you pay a repeated 4.3 GB allocator spike that can fragment the 80GB pool and OOM a run that was otherwise comfortable.
 
     **(b)** The $QK^\top$ product is $2BHT^2d_h$ FLOP per layer:
     $$
@@ -1038,8 +1045,10 @@ It is worth stating plainly why each alternative was rejected, because an interv
 **9.** *(The clip that isn't.)* A colleague reports that their Muon run spikes badly at step 4,000, and proposes tightening the global gradient clip from `max_norm = 1.0` to `0.25`. (a) Using the first line of `zeropower_via_newtonschulz5`, argue precisely what effect that change has on the update applied to the 210 Muon-routed matrices. (b) What effect does it have on the AdamW group? Quantify roughly, using $\beta_2 = 0.95$ and a one-step $10\times$ gradient spike. (c) What *should* they change instead?
 
 ??? note "Solution"
-    **(a)** Essentially none. `zeropower_via_newtonschulz5` starts with `X = G / (G.norm() + 1e-7)`, so the iteration sees a Frobenius-normalized matrix and the returned orthogonal factor satisfies $O(cG) = O(G)$ for any $c > 0$. Global clipping multiplies *every* gradient by one scalar $c = \texttt{max\_norm}/\lVert g\rVert$, so the Nesterov direction $g + \mu B$ is scaled by $c$ (once the momentum buffer has equilibrated) and the orthogonalized update is unchanged. The only residual effect is second-order: on a step where clipping fires, that step contributes less to the momentum EMA relative to its unclipped neighbours, subtly changing the buffer's mix over the next $\sim 1/(1-\mu) = 20$ steps. Tightening $1.0 \to 0.25$ therefore does almost nothing to the hidden matrices — which is where the spike almost certainly lives.
+    **(a)** It cannot shrink the step at all. `zeropower_via_newtonschulz5` starts with `X = G / (G.norm() + 1e-7)`, so the returned orthogonal factor satisfies $O(cD) = O(D)$ for any $c > 0$, and the RMS-matching scale then fixes the applied update at per-element RMS $0.2\,\eta$ no matter how large the gradient was. Tightening $1.0 \to 0.25$ therefore changes the *magnitude* of the update applied to the 210 hidden matrices by exactly nothing — and those hidden matrices are where the spike almost certainly lives.
 
-    **(b)** Adam is also scale-invariant in the *steady state* (a persistent rescale of $g$ cancels between $m$ and $\sqrt{v}$), but a **transient** spike is not removed, because $v$ lags. With $\beta_2 = 0.95$ and a normal $g^2 \approx 1$, a single step with $g^2 = 100$ gives $v \approx 0.95(1) + 0.05(100) = 5.95$, so $\sqrt{v} \approx 2.44$ while $|g| = 10$: the update grows by about $10/2.44 \approx 4\times$ instead of $10\times$. Clipping caps exactly that residual $4\times$. So the clip genuinely protects the tied embedding and the 1D gains, and tightening it is not useless — it is just aimed at the wrong 16% of the parameters.
+    It does perturb the *direction*, and on precisely the step in question: the clip scales the current gradient but not the momentum buffer, which still holds unclipped history. With `buf = mu*buf + g`, the orthogonalized direction is $d_t = g_t + \mu B_t = (1+\mu)g_t + \mu^2 B_{t-1}$, and clipping turns it into $c(1+\mu)g_t + \mu^2 B_{t-1}$, which is *not* proportional to $d_t$ unless the buffer is empty (or the clip has been firing at the same $c$ long enough for the buffer to equilibrate). What a tighter clip actually does, then, is down-weight the spiking batch against ~$1/(1-\mu) = 20$ steps of accumulated history — a re-weighting, not a brake.
+
+    **(b)** Adam is scale-invariant in the *steady state* (a persistent rescale of $g$ cancels between $m$ and $\sqrt{v}$), and — this is the part people get backwards — it damps a *single-step* spike too, because the numerator is the first moment $m$, not the raw gradient. From a steady state $m \approx 1$, $v \approx 1$, one step with $|g| = 10$ gives $m = 0.9(1) + 0.1(10) = 1.9$ and $v = 0.95(1) + 0.05(100) = 5.95$, so $\sqrt{v} \approx 2.44$ and the update on that step is $1.9/2.44 \approx 0.78$ — slightly *smaller* than a normal step, not $10\times$ larger. The damage is delayed rather than immediate: $v$ stays inflated for $\sim 1/(1-\beta_2) = 20$ steps, so the following ~20 updates to the tied embedding and the 1D gains are *starved* relative to what an unspiked $v$ would have given, and the spike's direction sits in $m$ for $\sim 1/(1-\beta_1) = 10$ steps. (Even a spike sustained for many steps only ever pushes $m/\sqrt{v}$ to about $1.1$ before it settles back to 1 — Adam simply never turns a $10\times$ gradient into a $10\times$ step.) So the clip does genuinely protect the AdamW group — by keeping the bad batch out of both moments — but it buys much less than the "$10\times$ gradient ⇒ $10\times$ step" intuition suggests, and it is aimed at the wrong 16% of the parameters.
 
     **(c)** Three things, in order. (i) **Log the pre-clip norm** — `clip_grad_norm_` returns it — and find the step where it jumps, which will predate the loss spike. (ii) **Add the non-finite skip guard** (Ch. 14.7): if `torch.isfinite(grad_norm)` is false, discard the step entirely rather than writing NaN into the parameters *and* into all 210 Muon momentum buffers, which is unrecoverable. (iii) **Set `qk_clip_tau = 30`** and watch the trigger count: if the spike is attention-logit growth, that log will have been rising for hundreds of steps. If it has, the fix is a lower Muon peak or a longer warmup, not a tighter clip.

@@ -18,7 +18,7 @@ This chapter builds directly on the deeper book. If you have not read them, keep
 
 ## Where post-training fits, and what it costs at 100M
 
-The cost asymmetry between the three stages is the whole reason the recipe looks the way it does — so let us *derive* it rather than assert it, reusing the $6ND$ accounting and MFU machinery from Chapter 14.7. Fix $N = 1.01\times10^{8}$ parameters and an A100-80GB at 312 bf16 TFLOP/s peak. Assume ~35% MFU on the dense training passes ($\approx 1.1\times10^{14}$ FLOP/s effective) and a deliberately pessimistic ~10% on cacheless autoregressive generation ($\approx 3.1\times10^{13}$ FLOP/s), since decoding at batch 8 is memory-bound.
+The cost asymmetry between the three stages is the whole reason the recipe looks the way it does — so let us *derive* it rather than assert it, reusing the $6ND$ accounting and MFU machinery from Chapter 14.7. Fix $N = 1.01\times10^{8}$ parameters and an A100-80GB at 312 bf16 TFLOP/s peak. Assume ~35% MFU on the dense training passes ($\approx 1.1\times10^{14}$ FLOP/s effective) and a deliberately pessimistic ~10% on cacheless autoregressive generation ($\approx 3.1\times10^{13}$ FLOP/s), since 30 thin layers × 64 sequential decode steps make generation kernel-launch- and small-GEMM-bound rather than throughput-bound. (Note that the *roofline* is not the problem here: because we keep no KV cache, every decode step is a prefill-shaped GEMM over $G\times T\approx 8\times 94$ token positions, so arithmetic intensity is high and the pass is nominally compute-bound. The realized fraction is low for launch-overhead reasons, not bandwidth ones.)
 
 | Stage | Volume (flagship) | Compute, derived | A100-hr | What it changes |
 |---|---|---|---|---|
@@ -190,7 +190,10 @@ class PackedSFTDataset(Dataset):
             labels = [tid if m == 1 else IGNORE for tid, m in zip(ids, mask)]
             ids_buf.extend(ids); lbl_buf.extend(labels); seg_buf.extend([seg]*len(ids))
             seg += 1
-        # Pad the ragged tail up to a whole number of blocks with <|pad|>/IGNORE.
+        # Keep a whole number of blocks: the ragged tail (< `block` tokens) is
+        # DROPPED, exactly as in pretraining packing. The `max(1, ...)` and the
+        # pad loop only fire in the degenerate case of a corpus shorter than one
+        # block, where we pad a single window with <|pad|>/IGNORE instead.
         n = max(1, len(ids_buf) // block) * block
         while len(ids_buf) < n:
             ids_buf.append(tok.pad_id); lbl_buf.append(IGNORE); seg_buf.append(seg)
@@ -283,7 +286,18 @@ Two details in that loop are worth naming. `loss_sum.backward()` on an *unnormal
 
 !!! warning "Common pitfall: the off-by-one mask that silently trains on the prompt"
 
-    The mask must land on the *target* position after the causal shift. A classic bug is to mask `logits`/`labels` before shifting, or to mark the assistant role token `<|assistant|>` as supervised. Both leak prompt tokens into the loss or, worse, teach the model to *emit* the role marker mid-turn. Always assert the invariant: after shifting, every non-`IGNORE` label id equals an assistant-turn token id. A one-line `assert (shift_labels[shift_labels!=-100] == ids[:,1:][shift_labels!=-100]).all()` on a debug batch catches this instantly.
+    The mask must land on the *target* position after the causal shift. A classic bug is to mask `logits`/`labels` before shifting, or to mark the assistant role token `<|assistant|>` as supervised. Both leak prompt tokens into the loss or, worse, teach the model to *emit* the role marker mid-turn. Assert *both* halves of the invariant on a debug batch, because they fail independently:
+
+    ```python
+    # (1) alignment: a surviving label must sit at the position it labels.
+    keep = shift_labels != -100
+    assert (shift_labels[keep] == ids[:, 1:][keep]).all()          # catches a MIS-SHIFT
+    # (2) content: no structural role marker may ever be a supervised target.
+    asst_id = tok.special_token_id(SPECIAL["assistant"])
+    assert (shift_labels != asst_id).all()                         # catches a MIS-MASK
+    ```
+
+    Assertion (1) is worth stating precisely: because `PackedSFTDataset` builds `labels` co-located with `ids`, it is a tautology *unless the shift is wrong* — which is exactly the mis-shift bug it exists to catch, and nothing more. It will happily pass on a mask that supervises `<|assistant|>`. That is what (2) is for.
 
     The same invariant is worth checking in *any* framework you use. TRL's `SFTTrainer` implements assistant-only masking with `assistant_only_loss=True`, which requires the tokenizer's chat template to wrap assistant content in a `{% generation %}` block so that `apply_chat_template(..., return_assistant_tokens_mask=True)` can return the mask. If the template lacks that block, the flag silently trains on everything — print one decoded batch and check.
 
@@ -587,7 +601,7 @@ Note the contrast with SFT: here `loss / grad_accum` *is* correct, because `dpo_
 
 ### Length bias, and the variant zoo
 
-Look again at `sequence_logprob`: it returns a raw **sum** of token log-probabilities. Every token contributes a negative number, so *longer responses have systematically lower sequence log-probability*, and the DPO margin conflates "better" with "shorter." Which way this biases the model depends on your data. With UltraFeedback, whose chosen responses are systematically *longer* than its rejected ones, the objective must fight the length term to satisfy the preference — and the easiest way to raise $\log\pi_\theta(y_w)$ across a long sequence is to raise the probability of generic filler, which is one mechanism behind DPO's well-known **verbosity drift**. With pairs mined at fixed `max_new`, lengths are much better matched and the bias is milder.
+Look again at `sequence_logprob`: it returns a raw **sum** of token log-probabilities, so DPO's implicit reward $\beta\log\frac{\pi_\theta(y)}{\pi_{\text{ref}}(y)}$ is an *unnormalized* sum of per-token log-ratios. Note first what is *not* the problem: the "every token contributes a negative number" baseline appears identically in $\pi_\theta$ and $\pi_{\text{ref}}$ and **cancels inside each response's log-ratio** — at initialization $\pi_\theta=\pi_{\text{ref}}$, every log-ratio is exactly 0, and the margin is 0 no matter how long the responses are. The real defect is that the implicit reward is not *comparable across lengths* and does not match the length-normalized average log-likelihood that generation actually optimizes: a longer response simply offers more tokens over which the optimizer can cheaply accumulate margin, a few hundredths of a nat at a time. That is the documented mechanism behind DPO's well-known **verbosity drift** — the bias runs toward *longer* outputs, and it is sharpest on data like UltraFeedback, whose chosen responses are systematically longer than its rejected ones, so the cheapest way to open a margin is to raise the probability of generic filler across a long winner. With pairs mined at fixed `max_new`, lengths are much better matched and the effect is milder.
 
 The remedies, in increasing order of departure from vanilla DPO:
 
@@ -825,7 +839,7 @@ def grpo_train(sft_model, tok, *, iterations=200, group_size=8, prompts_per_iter
 
 A few implementation notes that matter for correctness.
 
-**The importance ratio.** `old_lp` holds the log-probs *under the policy that generated the rollouts*, cached before any update — this is what makes the inner-epoch updates valid off-policy corrections rather than a bug. On the very first inner step $\rho\equiv 1$ (new = old), so `torch.min` and the clip are no-ops and the update is a plain group-relative REINFORCE step; the clipping only bites once the policy has moved. If you set `inner_epochs=1` the algorithm degenerates (correctly) to on-policy REINFORCE with a group baseline, and you can delete the ratio machinery entirely.
+**The importance ratio.** `old_lp` holds the log-probs *under the policy that generated the rollouts*, cached for every group before any update — this is what makes the subsequent updates valid off-policy corrections rather than a bug. Only on the **first gradient step of an iteration** is $\rho\equiv 1$ (new = old), so there `torch.min` and the clip are no-ops and the update is a plain group-relative REINFORCE step; the clipping bites from the second step onward. Note that the inner loop calls `opt.step()` once per *group*, not once per inner epoch, so a single iteration already takes `prompts_per_iter` steps: even at `inner_epochs=1`, groups 2…16 are trained against an `old_lp` the policy has already moved away from, and the ratio is doing real work on 15/16 of the data. You could delete the ratio machinery only if you also accumulated gradients across all groups and stepped once per inner epoch — and then only for `inner_epochs=1`.
 
 **The KL term.** We use the **k3 unbiased estimator** $e^{\log r}-\log r-1$ with $\log r = \log\pi_{\text{ref}} - \log\pi_\theta$ (always non-negative, low variance) rather than the naive log-ratio; since the samples come from $\pi_\theta$, this estimates $\mathbb{D}_{\text{KL}}(\pi_\theta\,\|\,\pi_{\text{ref}})$, which is the direction the objective asks for. This is the standard choice discussed in [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html). Note that DAPO *removes* the KL term entirely for long-horizon reasoning runs, on the argument that the policy is supposed to move far from the SFT reference. At 100M we keep it: our whole strategy is a narrow gain without collateral damage to general chat, and the KL leash is what buys that.
 
@@ -889,6 +903,9 @@ Drop it into `grpo_train` by replacing the `for _ in range(prompts_per_iter)` ro
 groups, tries = collect_nondegenerate_groups(
     policy, tok, rng, target_groups=prompts_per_iter, group_size=group_size,
     reward_fn=reward_fn, max_new=max_new, temperature=temperature, device=device)
+# The filter drops degenerate groups internally, so recover the health metrics
+# from `tries` — otherwise n_degenerate stays 0 forever and the log lies.
+n_degenerate = tries - len(groups)
 for seqs, gmask, rewards, Tp in groups:
     n_correct += int((rewards >= 1.0).sum().item()); n_total += group_size
     adv = (rewards - rewards.mean()) / (rewards.std() + 1e-6)
@@ -898,7 +915,7 @@ for seqs, gmask, rewards, Tp in groups:
     batch_adv.append(adv);   batch_oldlp.append(old_lp)
 ```
 
-That change has a reporting consequence that is not a footnote: `n_correct / n_total` is now conditioned on a *filtered* population that excludes both the all-wrong and the all-right prompts, so it is biased toward 50% and will look flat while the model genuinely improves. Evaluate on a fixed held-out prompt set (Ch. 14.11) and treat the training curve purely as a health signal.
+Two reporting consequences follow, neither a footnote. First, the loop's `degen {n_degenerate}/{prompts_per_iter}` denominator must become `tries` — the number of prompts *drawn* — since `prompts_per_iter` is now the number of groups *kept*; the ratio `tries / len(groups)` the table calls for is exactly that log line read as a fraction. Second, `n_correct / n_total` is now conditioned on a *filtered* population that excludes both the all-wrong and the all-right prompts, so it is biased toward 50% and will look flat while the model genuinely improves. Evaluate on a fixed held-out prompt set (Ch. 14.11) and treat the training curve purely as a health signal.
 
 Two further 2026 developments are worth knowing even though we do not need them at 100M. **GSPO** (Group Sequence Policy Optimization; Zheng et al., Qwen team, 2025) replaces the per-token importance ratio with a **length-normalized sequence-level** ratio, $\rho_i = \big(\pi_\theta(o_i\mid q)/\pi_{\theta_{\text{old}}}(o_i\mid q)\big)^{1/|o_i|}$, and clips at the sequence level. The motivation is that per-token ratios accumulate variance over long rollouts and interact badly with MoE routing changes between the rollout and training policies; at 64-token completions on a dense 100M model, neither problem bites. And **entropy collapse** — the policy's per-token entropy sliding toward zero over an RLVR run, after which every sample in a group is identical and learning stops dead — is the failure mode most likely to end your run. The `logp/tok` metric printed by the loop above is your early warning; the remedies are the ones already in the loop (keep the KL leash on, keep `temperature` at 1.0, do not over-train) plus, at larger scale, explicit entropy regularization. See [Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html).
 

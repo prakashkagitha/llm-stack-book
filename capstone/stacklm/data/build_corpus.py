@@ -30,9 +30,9 @@ def encode_batched(docs, tokenizer, batch: int = 1024):
 
     Every fast encoder in the ecosystem is a BATCH API -- Ch. 14.3's
     `encode_corpus` (multiprocessing.Pool over documents), HF `tokenizers`'
-    `encode_batch`, `tiktoken`'s `encode_ordinary_batch`. Calling `encode` one
-    document at a time leaves the ~7x process-parallel speedup on the table, and
-    at 84 GB of text that is ~4 core-hours instead of ~35 minutes.
+    `encode_batch`, `tiktoken`'s `encode_ordinary_batch`. Handing them one
+    document at a time is what leaves their parallelism on the table, and at
+    ~83.5 GB of text that is Ch. 14.3's ~3.9 core-hours instead of ~28 minutes.
     """
     encode_batch = getattr(tokenizer, "encode_batch", None)
     buf = []
@@ -42,7 +42,9 @@ def encode_batched(docs, tokenizer, batch: int = 1024):
         id_lists = (encode_batch(texts) if encode_batch is not None
                     else [tokenizer.encode(t) for t in texts])
         for d, ids in zip(buf, id_lists):
-            yield {**d, "ids": list(ids)}
+            # HF `tokenizers` returns Encoding objects (not iterable); plain
+            # encoders return lists of ints. Normalize both to a list.
+            yield {**d, "ids": list(getattr(ids, "ids", ids))}
         buf.clear()
 
     for doc in docs:

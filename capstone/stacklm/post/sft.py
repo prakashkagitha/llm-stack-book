@@ -27,7 +27,8 @@ class PackedSFTDataset(Dataset):
             seg_buf.extend([seg] * len(ids))
             seg += 1
         n = max(1, (len(ids_buf) // block)) * block
-        # pad to a whole number of blocks
+        # Keep whole blocks: the ragged tail is dropped. The pad loop below only
+        # fires when the whole corpus is shorter than one block.
         while len(ids_buf) < n:
             ids_buf.append(tok.pad_id)
             lbl_buf.append(IGNORE)

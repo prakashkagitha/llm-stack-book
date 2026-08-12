@@ -102,7 +102,7 @@ def count_params(cfg: StackConfig) -> dict:
 
 def toy_config() -> StackConfig:
     """Tiny CONFIG for the CPU smoke test -- exercises every code path (GQA 4:2,
-    QK-norm, NoPE-every-4) at a scale that trains in seconds."""
+    QK-norm, NoPE-every-2) at a scale that trains in seconds."""
     cfg = StackConfig(
         vocab_size=256,       # raw-byte-ish; the toy tokenizer trains a small vocab
         d_model=64,

@@ -89,8 +89,6 @@ def stream_hf(entry: DataMixEntry, probe: int = 8) -> Iterator[dict]:
             yield {"text": text, "source": entry.name, "domain": entry.domain}
 
 
-_dup_cache: dict = {}
-
 _VOCAB = {
     "web": ["photosynthesis", "converts", "sunlight", "into", "chemical", "energy",
             "plants", "use", "carbon", "dioxide", "and", "water", "to", "produce",
@@ -107,22 +105,27 @@ _VOCAB = {
 
 def synthetic_corpus(entry: DataMixEntry, n_docs: int = 2000) -> Iterator[dict]:
     """Deterministic in-process corpus with injected exact (every 97th) and near
-    (every 53rd) duplicates, so the dedup stages have something real to catch."""
+    (every 53rd) duplicates, so the dedup stages have something real to catch.
+
+    `dup_cache` is CALL-local, not a module global: a global would survive across
+    calls, so the second call in the same process would take the duplicate branch
+    at i=0, consume no RNG, and desynchronise the whole seeded stream."""
     seed = int(hashlib.blake2b(entry.name.encode(), digest_size=4).hexdigest(), 16)
     rng = random.Random(seed)
     vocab = _VOCAB[entry.domain]
+    dup_cache: dict = {}
     for i in range(n_docs):
-        if entry.domain in _dup_cache and i % 97 == 0:
-            text = _dup_cache[entry.domain]                        # exact duplicate
-        elif entry.domain in _dup_cache and i % 53 == 0:
-            base = _dup_cache[entry.domain].split()                # near-duplicate
+        if entry.domain in dup_cache and i % 97 == 0:
+            text = dup_cache[entry.domain]                         # exact duplicate
+        elif entry.domain in dup_cache and i % 53 == 0:
+            base = dup_cache[entry.domain].split()                 # near-duplicate
             for _ in range(max(1, len(base) // 20)):
                 base[rng.randrange(len(base))] = rng.choice(vocab)
             text = " ".join(base)
         else:
             n_words = rng.randint(60, 400)
             text = " ".join(rng.choice(vocab) for _ in range(n_words)) + "."
-            _dup_cache[entry.domain] = text
+            dup_cache[entry.domain] = text
         doc_id = hashlib.sha1(f"{entry.name}-{i}".encode()).hexdigest()[:12]
         yield {"text": text, "source": entry.name, "domain": entry.domain, "doc_id": doc_id}
 

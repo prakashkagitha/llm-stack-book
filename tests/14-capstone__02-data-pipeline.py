@@ -142,8 +142,6 @@ def stream_source(entry: DataMixEntry, offline: bool = False,
     yield from synthetic_corpus(entry, n_docs=n_docs)
 
 
-_dup_cache: dict = {}
-
 _VOCAB = {
     "web": ["photosynthesis", "converts", "sunlight", "into", "chemical", "energy",
             "plants", "use", "carbon", "dioxide", "and", "water", "to", "produce",
@@ -162,18 +160,19 @@ def synthetic_corpus(entry: DataMixEntry, n_docs: int = 2000) -> Iterator[dict]:
     seed = int(hashlib.blake2b(entry.name.encode(), digest_size=4).hexdigest(), 16)
     rng = random.Random(seed)
     vocab = _VOCAB[entry.domain]
+    dup_cache: dict = {}          # CALL-local: a module global would break the seed
     for i in range(n_docs):
-        if entry.domain in _dup_cache and i % 97 == 0:
-            text = _dup_cache[entry.domain]                        # exact duplicate
-        elif entry.domain in _dup_cache and i % 53 == 0:
-            base = _dup_cache[entry.domain].split()                # near-duplicate
+        if entry.domain in dup_cache and i % 97 == 0:
+            text = dup_cache[entry.domain]                         # exact duplicate
+        elif entry.domain in dup_cache and i % 53 == 0:
+            base = dup_cache[entry.domain].split()                 # near-duplicate
             for _ in range(max(1, len(base) // 20)):
                 base[rng.randrange(len(base))] = rng.choice(vocab)
             text = " ".join(base)
         else:
             n_words = rng.randint(60, 400)
             text = " ".join(rng.choice(vocab) for _ in range(n_words)) + "."
-            _dup_cache[entry.domain] = text
+            dup_cache[entry.domain] = text
         doc_id = hashlib.sha1(f"{entry.name}-{i}".encode()).hexdigest()[:12]
         yield {"text": text, "source": entry.name, "domain": entry.domain, "doc_id": doc_id}
 
@@ -427,9 +426,10 @@ def near_dedup_stream(docs: Iterable[dict], num_perm: int = 128, bands: int = 16
             store.append(sig)
         elif not warned:
             warned = True
-            log.warning("near_dedup_stream: index_capacity=%d reached; near-dup "
-                        "recall is now ZERO for the rest of this stream.",
-                        index_capacity)
+            log.warning("near_dedup_stream: index_capacity=%d reached; the index "
+                        "is frozen, so duplicates among the REMAINING documents "
+                        "are no longer detected (only matches against the first "
+                        "%d are).", index_capacity, index_capacity)
         yield doc
 
 
@@ -459,7 +459,6 @@ assert lsh_candidate_prob(0.5, 16, 8) < 0.1 < lsh_candidate_prob(0.8, 16, 8)
 
 # End to end on the injected duplicates: every 97th doc is an exact repeat and
 # every 53rd is a ~5% edit, so both stages must actually remove documents.
-_dup_cache.clear()
 _raw = list(synthetic_corpus(_by_name["fineweb_edu"], n_docs=300))
 _after_exact = list(exact_dedup(_raw))
 _after_near = list(near_dedup_stream(_after_exact, threshold=0.8))
@@ -737,7 +736,6 @@ class PackedMemmapDataset(Dataset):
 
 # --- exercise blocks #7-#8 -------------------------------------------------
 _tmp = tempfile.mkdtemp(prefix="ch142_shards_")
-_dup_cache.clear()
 _shard_docs = list(synthetic_corpus(_by_name["fineweb_edu"], n_docs=40))
 _n_shards = build_shards(_shard_docs, _tok, _tmp, seq_len=64, tokens_per_shard=64 * 4)
 assert _n_shards >= 2, "small tokens_per_shard must produce several shards"
@@ -786,7 +784,9 @@ def encode_batched(docs, tokenizer, batch: int = 1024):
         id_lists = (encode_batch(texts) if encode_batch is not None
                     else [tokenizer.encode(t) for t in texts])
         for d, ids in zip(buf, id_lists):
-            yield {**d, "ids": list(ids)}
+            # HF `tokenizers` returns Encoding objects (not iterable); plain
+            # encoders return lists of ints. Normalize both to a list.
+            yield {**d, "ids": list(getattr(ids, "ids", ids))}
         buf.clear()
 
     for doc in docs:
@@ -914,7 +914,6 @@ def build_corpus(out_dir, tokenizer, total_tokens=TOTAL_TOKEN_BUDGET, entries=No
 
 # --- exercise blocks #9-#10 ------------------------------------------------
 # The chapter's ten-second toy runner, at the sizes it prescribes.
-_dup_cache.clear()
 _out = tempfile.mkdtemp(prefix="stack100m_toy_")
 _manifest = build_corpus(_out, _tok,
                          total_tokens=200_000,      # 20B in the real run
@@ -945,7 +944,6 @@ assert _manifest["holdout"]["tokens"] > 0
 
 # Interleaving really is interleaved: code documents must appear early, not only
 # after 85% of the stream (the "accidental curriculum" the chapter warns about).
-_dup_cache.clear()
 _stats: dict = {}
 _mixed = list(interleave_budgeted(STACK100M_MIX, _tok, 100_000, offline=True,
                                   seed=1337, stats=_stats))
@@ -988,12 +986,10 @@ def dedup_all_sources(entries=None, offline: bool = True, num_perm: int = 128,
 
 
 # --- exercise block #11 ----------------------------------------------------
-_dup_cache.clear()
 _small_mix = [DataMixEntry(e.name, e.hf_path, e.weight, e.domain) for e in STACK100M_MIX]
 _gen = dedup_all_sources(_small_mix, offline=True)
 assert iter(_gen) is _gen, "must return a generator, not a materialized list"
 _kept_docs = list(_gen)
-_dup_cache.clear()
 _all_raw = sum(len(list(stream_source(e, offline=True, n_docs=2000))) for e in _small_mix)
 assert 0 < len(_kept_docs) < _all_raw, (len(_kept_docs), _all_raw)
 assert {d["domain"] for d in _kept_docs} == {"web", "synthetic", "code", "math"}

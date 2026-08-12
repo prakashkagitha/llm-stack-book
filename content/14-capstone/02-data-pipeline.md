@@ -71,7 +71,7 @@ Wall-clock is $C / (\text{MFU}\times\text{peak})$, so the budget table is:
 | GPU (bf16 dense peak) | 40% MFU | 50% MFU | 58% MFU |
 |---|---:|---:|---:|
 | **A100 80GB (312 TFLOP/s)** — the flagship tier | ≈ 35 hr | ≈ 28 hr | **≈ 24 hr** |
-| H100 SXM (≈ 495 TFLOP/s dense) | ≈ 22 hr | ≈ 18 hr | ≈ 15 hr |
+| H100 SXM (≈ 989 TFLOP/s dense) | ≈ 11 hr | ≈ 9.0 hr | ≈ 7.7 hr |
 
 `capstone/PLAN.md` fixes the flagship tier as **a single A100 80GB, 22–29 GPU-hours, USD 25–50**, and the bolded cell is where Ch. 14.7's measured loop lands: a `torch.compile`d, FlashAttention-backed step at ≈228k tokens/s is **44.5% MFU under the $6ND$ convention and 58.2% under the $6N+\text{attn}$ convention** — one run, two numbers — giving $2\times10^{10}/2.28\times10^{5} \approx 8.8\times10^{4}$ s ≈ **24.4 A100-hours** for the full 20B tokens, the same figure as $C/(0.582\times3.12\times10^{14})$. That sits mid-band in PLAN's envelope; reaching the lower end means pushing tokens/s up, not inventing utilization. At USD 1–2/A100-hour that is roughly USD 25–50, comfortably inside "the USD 100 model" once you add mid-training's decay phase and the failed first attempt everybody has. The H100 row is a comparison, not a requirement. Ch. 14.7 measures; Ch. 14.12 does the final cost accounting.
 
@@ -104,9 +104,9 @@ We follow the recipe popularized by HuggingFace's SmolLM series: a large base of
 
 !!! warning "Common pitfall: the dataset id is not enough"
 
-    Three of the four entries above will fail — or, far worse, *silently succeed and yield nothing* — if you pass only the repo id to `load_dataset`.
+    Every one of the four entries above will fail — or, far worse, *silently succeed on the wrong data* — if you pass only the repo id to `load_dataset`.
 
-    - **Multi-config repos have no default.** `HuggingFaceFW/fineweb-edu`, `HuggingFaceTB/finemath`, and `HuggingFaceTB/smollm-corpus` all ship several configs; calling `load_dataset(repo, split="train")` without `name=` raises a `ValueError` listing the available configs. Pick deliberately: FineWeb-Edu's default config is the full multi-terabyte dump, while `sample-100BT` is a pre-sampled 100B-token slice — far more than the 14B we need and vastly cheaper to stream. FineMath exposes quality tiers (`finemath-3plus`, `finemath-4plus`, and `infiwebmath-*` variants); higher tiers are smaller and cleaner.
+    - **Multi-config repos need `name=`, and they fail in two different ways.** `HuggingFaceTB/smollm-corpus` and `HuggingFaceTB/finemath` declare *no* default config, so `load_dataset(repo, split="train")` raises a `ValueError` listing the available configs — loud, and easy to fix. `HuggingFaceFW/fineweb-edu` *does* declare a `default` config (the full multi-terabyte dump), so the same call **succeeds** and quietly starts streaming terabytes; that is the more dangerous case. Pick deliberately: `sample-100BT` is a pre-sampled 100B-token slice — far more than the 14B we need and vastly cheaper to stream. FineMath exposes quality tiers (`finemath-3plus`, `finemath-4plus`, and `infiwebmath-*` variants); higher tiers are smaller and cleaner.
     - **"Cosmopedia v2" is not in the `cosmopedia` repo.** `HuggingFaceTB/cosmopedia` is *v1* (configs `web_samples_v1`, `web_samples_v2`, `stories`, `stanford`, `openstax`, `khanacademy`, `auto_math_text`, `wikihow`). The v2 regeneration that SmolLM2 actually trained on lives in `HuggingFaceTB/smollm-corpus` under config `cosmopedia-v2`.
     - **The text column is not always `text`.** `bigcode/starcoderdata` stores source under **`content`**. A pipeline that does `row.get("text", "")` against it drops every single row and produces a corpus with 0% code — with no error, no warning, and no way to notice until your model cannot write a `for` loop. This is why the code below *asserts* on non-empty output instead of using `.get(..., "")`.
     - **Some sources are gated.** `bigcode/starcoderdata` requires accepting terms on the Hub and `huggingface_hub.login()` first; it is also sharded by language via `data_dir=`, so you request `python` (or `java`, `javascript`, …) rather than the whole 800GB. The newer `bigcode/the-stack-v2` family stores *file pointers* rather than file contents, and requires a separate fetch from Software Heritage's S3 bucket to materialize the code — a real pipeline step, not a `load_dataset` call. `starcoderdata` is the lower-friction choice at our scale.
@@ -245,8 +245,6 @@ Because `stream_hf` is a generator, `load_dataset` does not actually fire until 
 The synthetic generator is deliberately small and deterministic (seeded per source), and it intentionally injects a handful of exact and near-duplicate documents — so the deduplication code below has something real to catch even when there is no network:
 
 ```python
-_dup_cache: dict = {}
-
 _VOCAB = {
     "web": ["photosynthesis", "converts", "sunlight", "into", "chemical", "energy",
             "plants", "use", "carbon", "dioxide", "and", "water", "to", "produce",
@@ -265,22 +263,28 @@ def synthetic_corpus(entry: DataMixEntry, n_docs: int = 2000) -> Iterator[dict]:
     """Deterministic in-process corpus with injected exact (every 97th) and near
     (every 53rd) duplicates, so the dedup stages have something real to catch.
     It teaches the model nothing -- it exists so every downstream stage is
-    exercised by CI as a hermetic stand-in for the real streams."""
+    exercised by CI as a hermetic stand-in for the real streams.
+
+    `dup_cache` is CALL-local, not a module global: a global would survive across
+    calls, so the second call in the same process would take the duplicate branch
+    at i=0, consume no RNG, and desynchronise the whole seeded stream -- two
+    "identical" builds in one process would then disagree."""
     seed = int(hashlib.blake2b(entry.name.encode(), digest_size=4).hexdigest(), 16)
     rng = random.Random(seed)
     vocab = _VOCAB[entry.domain]
+    dup_cache: dict = {}
     for i in range(n_docs):
-        if entry.domain in _dup_cache and i % 97 == 0:
-            text = _dup_cache[entry.domain]                        # exact duplicate
-        elif entry.domain in _dup_cache and i % 53 == 0:
-            base = _dup_cache[entry.domain].split()                # near-duplicate
+        if entry.domain in dup_cache and i % 97 == 0:
+            text = dup_cache[entry.domain]                         # exact duplicate
+        elif entry.domain in dup_cache and i % 53 == 0:
+            base = dup_cache[entry.domain].split()                 # near-duplicate
             for _ in range(max(1, len(base) // 20)):
                 base[rng.randrange(len(base))] = rng.choice(vocab)
             text = " ".join(base)
         else:
             n_words = rng.randint(60, 400)
             text = " ".join(rng.choice(vocab) for _ in range(n_words)) + "."
-            _dup_cache[entry.domain] = text
+            dup_cache[entry.domain] = text
         doc_id = hashlib.sha1(f"{entry.name}-{i}".encode()).hexdigest()[:12]
         yield {"text": text, "source": entry.name, "domain": entry.domain, "doc_id": doc_id}
 ```
@@ -573,8 +577,10 @@ def near_dedup_stream(docs: Iterable[dict], num_perm: int = 128, bands: int = 16
     the index, measured at ~512 B/signature plus ~3.3 KB/document of LSH buckets
     (16 bands), i.e. ~1.9 GB at the 500k default.
 
-    HARD CEILING: past `index_capacity` the index stops growing and near-dup
-    recall for every later document silently drops to zero. We log loudly once.
+    HARD CEILING: past `index_capacity` the index stops growing. Later documents
+    are still *checked* against everything already indexed, but nothing new is
+    added, so duplicates that only occur among post-ceiling documents are never
+    detected -- recall degrades from full to partial, silently. We log once.
     At 20B tokens (~20M documents) this ceiling is what forces the `datatrove`
     path -- do not just raise the number.
     """
@@ -592,10 +598,11 @@ def near_dedup_stream(docs: Iterable[dict], num_perm: int = 128, bands: int = 16
             store.append(sig)
         elif not warned:
             warned = True
-            log.warning("near_dedup_stream: index_capacity=%d reached; near-dup "
-                        "recall is now ZERO for the rest of this stream. Shard the "
-                        "input or switch to datatrove's MinhashDedup* pipeline.",
-                        index_capacity)
+            log.warning("near_dedup_stream: index_capacity=%d reached; the index "
+                        "is frozen, so duplicates among the REMAINING documents "
+                        "are no longer detected (only matches against the first "
+                        "%d are). Shard the input or switch to datatrove's "
+                        "MinhashDedup* pipeline.", index_capacity, index_capacity)
         yield doc
 
 
@@ -614,7 +621,7 @@ def near_dedup(docs, num_perm: int = 128, bands: int = 16,
 | `SignatureStore` rows (`uint32`) | 512 B | ~0.26 GB |
 | LSH buckets (16 bands × `bytes` key + list) | ~3.3 KB | ~1.66 GB |
 
-So the *buckets*, not the signatures, dominate — a ~1.9 GB index at the 500k default, and ~7.6 GB if you naively raise `index_capacity` to 2M. (With tuple signatures and tuple band keys, the same 2M index would be ~25 GB; that is the representation lesson, quantified.) A 20M-document corpus does not fit under any of these, and the failure is *silent*: once the store is full the code keeps yielding documents and simply stops detecting duplicates. Hence the loud one-shot log, and hence the production path below.
+So the *buckets*, not the signatures, dominate — a ~1.9 GB index at the 500k default, and ~7.6 GB if you naively raise `index_capacity` to 2M. (With tuple signatures and tuple band keys, the same 2M index would be ~25 GB; that is the representation lesson, quantified.) A 20M-document corpus does not fit under any of these, and the failure is *silent*: once the store is full the code keeps yielding documents and stops learning new ones, so duplicates that appear only among the post-ceiling documents sail straight through (matches against the first `index_capacity` documents are still caught). Hence the loud one-shot log, and hence the production path below.
 
 !!! warning "Common pitfall: MinHash band/row choice silently changes your recall"
 
@@ -1044,9 +1051,9 @@ def encode_batched(docs, tokenizer, batch: int = 1024):
 
     Every fast encoder in the ecosystem is a BATCH API -- Ch. 14.3's
     `encode_corpus` (multiprocessing.Pool over documents), HF `tokenizers`'
-    `encode_batch`, `tiktoken`'s `encode_ordinary_batch`. Calling `encode` one
-    document at a time leaves the process-parallel speedup on the table, and at
-    84 GB of text that is ~4 core-hours instead of ~35 minutes.
+    `encode_batch`, `tiktoken`'s `encode_ordinary_batch`. Handing them one
+    document at a time is what leaves their parallelism on the table, and at
+    ~83.5 GB of text that is Ch. 14.3's ~3.9 core-hours instead of ~28 minutes.
     """
     encode_batch = getattr(tokenizer, "encode_batch", None)
     buf = []
@@ -1056,7 +1063,9 @@ def encode_batched(docs, tokenizer, batch: int = 1024):
         id_lists = (encode_batch(texts) if encode_batch is not None
                     else [tokenizer.encode(t) for t in texts])
         for d, ids in zip(buf, id_lists):
-            yield {**d, "ids": list(ids)}
+            # HF `tokenizers` returns Encoding objects (not iterable); plain
+            # encoders return lists of ints. Normalize both to a list.
+            yield {**d, "ids": list(getattr(ids, "ids", ids))}
         buf.clear()
 
     for doc in docs:
@@ -1201,7 +1210,7 @@ def build_corpus(out_dir, tokenizer, total_tokens=TOTAL_TOKEN_BUDGET, entries=No
 
 Three details are worth dwelling on.
 
-**Tokenize once, and in batches.** The budget is in *tokens*, so the driver must know each document's token count; tokenizing in `_source_pipeline` and carrying `ids` forward (which `pack_documents` picks up) avoids encoding the whole corpus twice. Batching matters as much as not repeating: a serial `encode`-per-document pass over the ~84 GB this budget implies runs at Ch. 14.3's measured ~5.8 MB/s, i.e. **≈4 core-hours**, while its `encode_corpus` with `multiprocessing.Pool(16)` measures ~39.8 MB/s, i.e. **≈35 minutes**. Run that pass on a cheap CPU box *before* you rent the GPU — the `.bin` shards are the hand-off, and the pretraining loop should never call `encode` at all.
+**Tokenize once, and in batches.** The budget is in *tokens*, so the driver must know each document's token count; tokenizing in `_source_pipeline` and carrying `ids` forward (which `pack_documents` picks up) avoids encoding the whole corpus twice. Batching matters as much as not repeating: a serial `encode`-per-document pass over the ~83.5 GB this budget implies runs at Ch. 14.3's measured 5.89 MB/s, i.e. **≈3.9 core-hours**, while its `encode_corpus` with `multiprocessing.Pool(16)` measures 48.9 MB/s, i.e. **≈28 minutes**. Run that pass on a cheap CPU box *before* you rent the GPU — the `.bin` shards are the hand-off, and the pretraining loop should never call `encode` at all.
 
 **Held-out by document hash, not by slicing.** Taking "the last 1% of shards" as validation is the standard way to contaminate an eval set: packed windows straddle document boundaries, so the same document can appear in both splits. Hashing the document text routes a document *atomically* to exactly one split, deterministically, on every rebuild — and any hashed-to-holdout document beyond the `holdout_tokens` cap is dropped entirely rather than falling back into training. See [Chapter 14.11](../14-capstone/11-evaluation-and-serving.html) and the contamination discussion in Ch. 3.2 for why this matters more than it looks.
 
@@ -1283,13 +1292,13 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
 
     **Mix breakdown.** 20B tokens split 70/15/10/5 gives exactly 14.0B (FineWeb-Edu), 3.0B (Cosmopedia v2), 2.0B (StarCoder), and 1.0B (FineMath) tokens — the weights were chosen to divide the budget cleanly.
 
-    **Raw text volume.** Ch. 14.3 *measures* the `Stack-100M` byte-level BPE at **4.196 bytes/token** on held-out prose, so the budget in bytes is
+    **Raw text volume.** Ch. 14.3 *measures* the `Stack-100M` byte-level BPE at **4.177 bytes/token** on its held-out split, so the budget in bytes is
 
     $$
-    20\times10^{9}\ \text{tokens} \times 4.196\ \tfrac{\text{bytes}}{\text{token}} \approx 8.4\times10^{10}\ \text{bytes} \approx 84\ \text{GB}
+    20\times10^{9}\ \text{tokens} \times 4.177\ \tfrac{\text{bytes}}{\text{token}} \approx 8.35\times10^{10}\ \text{bytes} \approx 83.5\ \text{GB}
     $$
 
-    of *kept* raw UTF-8 text — on the order of 20M documents at FineWeb-Edu's average length. That ratio is domain-dependent (Ch. 14.3 measures ~3.89 bytes/token on Python and ~4.84 on plain English), so the 10% StarCoder slice pulls the corpus a little under 84 GB in practice; use 84 GB as the planning figure. The raw volume you must *stream and filter* to end up with 84 GB of kept text is substantially larger: quality filtering and deduplication routinely discard the large majority of raw Common Crawl. That is exactly why sourcing is a streaming pass over a much bigger corpus, not a one-shot download.
+    of *kept* raw UTF-8 text — on the order of 20M documents at FineWeb-Edu's average length. That ratio is domain-dependent (on the same held-out text Ch. 14.3 measures 4.267 bytes/token on prose and 3.981 inside fenced code blocks), so the 10% StarCoder slice pulls the corpus slightly below the prose-only figure; use ~84 GB as the round planning number. The raw volume you must *stream and filter* to end up with ~84 GB of kept text is substantially larger: quality filtering and deduplication routinely discard the large majority of raw Common Crawl. That is exactly why sourcing is a streaming pass over a much bigger corpus, not a one-shot download.
 
     **Sequence count.** At `SEQ_LEN=2048`, the token budget divides *exactly*:
 
@@ -1300,12 +1309,14 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
     **Shard sizes.** Each `uint16` token occupies 2 bytes, so the packed corpus is $20\times10^{9}\times 2 = 4.0\times10^{10}$ bytes = **40 GB** — tokens only; the derived positions cost 0 bytes on disk and two numpy ops per item on read. Sharding at ~100M tokens/shard gives `seqs_per_shard = 100_000_000 // 2048 = 48{,}828` sequences/shard (≈99.99M tokens after flooring), so the corpus splits into
 
     $$
-    \left\lceil \frac{9{,}765{,}625}{48{,}828} \right\rceil = 200 \text{ shards of } \approx 200\ \text{MB each.}
+    \left\lceil \frac{9{,}765{,}625}{48{,}828} \right\rceil = 201 \text{ shards: } 200 \text{ full ones of } \approx 200\ \text{MB, plus a 25-sequence remainder.}
     $$
 
-    200 shards of manageable size are easy to distribute, resume, and spot-check individually — a corruption in one shard costs you 0.5% of the run, not the whole thing (see [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html) for the training-time half of this story).
+    (200 full shards cover $200\times48{,}828 = 9{,}765{,}600$ sequences; `ShardWriter.close()` flushes the last 25 as a tiny 201st shard. Call it "≈200 shards" when planning, but expect the runt.)
 
-    **CPU budget for the build.** Tokenizing 84 GB is ~35 minutes on 16 cores (Ch. 14.3); MinHashing ~20M documents is ~44 core-hours single-threaded, which is why dedup goes through `datatrove` with `tasks=64`. Neither of these should overlap with GPU rental — the whole point of the `.bin` hand-off is that data prep is a CPU job and training is a GPU job. Section 1 has the GPU side of the budget.
+    ~200 shards of manageable size are easy to distribute, resume, and spot-check individually — a corruption in one shard costs you 0.5% of the run, not the whole thing (see [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html) for the training-time half of this story).
+
+    **CPU budget for the build.** Tokenizing 83.5 GB is ~28 minutes on 16 cores (Ch. 14.3's `multiprocessing.Pool(16)` path at 48.9 MB/s); MinHashing ~20M documents is ~44 core-hours single-threaded, which is why dedup goes through `datatrove` with `tasks=64`. Neither of these should overlap with GPU rental — the whole point of the `.bin` hand-off is that data prep is a CPU job and training is a GPU job. Section 1 has the GPU side of the budget.
 
 ## Key Takeaways & Further Reading
 
@@ -1315,8 +1326,8 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
     - $C = 6ND$ undercounts this shape. Attention costs $\approx 6\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}}$ FLOPs/token — 31% on top of $6N$ at $d_{\text{model}}=512$, $n_{\text{ctx}}=2048$ — putting the real budget near $1.6\times10^{19}$ FLOPs, i.e. ≈24 A100-hours at the 58% MFU Ch. 14.7 measures (the same run reports 44.5% under the $6ND$ convention). Always state which convention you are quoting.
     - A dataset id is not a loading recipe: multi-config repos need `name=`, StarCoder's text column is `content` (not `text`), Cosmopedia **v2** lives in `HuggingFaceTB/smollm-corpus`, and gated repos need `huggingface_hub.login()`. Assert on non-empty output; a silently empty source is the worst failure mode in a data pipeline.
     - Dedup is two-stage: cheap streaming exact-hash catches mirrors and boilerplate; MinHash + LSH banding catches near-duplicates in near-linear time by estimating Jaccard from signature agreement (Broder, 1997). The `(bands, rows)` split *is* the similarity threshold, via the $(1/b)^{1/r}$ S-curve.
-    - Representation decides feasibility: a signature as a tuple of 128 Python ints is ~4.9 KB, as a `uint32` row it is 512 B; a streaming LSH index costs ~1.9 GB at 500k documents and its buckets — not its signatures — dominate. Past `index_capacity` recall silently drops to zero, which is precisely why the 20M-document corpus goes through `datatrove`'s four-stage `MinhashDedupSignature → Buckets → Cluster → Filter` pipeline: it spills to disk, checkpoints between stages, and clusters globally instead of greedily.
-    - A corpus needs a *driver*, not just stages: per-source token budgets, weighted interleaving (so code appears from step 0), batched tokenization (~35 min on 16 cores vs ~4 core-hours serially), a reservoir shuffle before sharding, a document-hash held-out split that can never straddle a boundary, and a `manifest.json` recording realized mix, revisions, filter hash, and seed.
+    - Representation decides feasibility: a signature as a tuple of 128 Python ints is ~4.9 KB, as a `uint32` row it is 512 B; a streaming LSH index costs ~1.9 GB at 500k documents and its buckets — not its signatures — dominate. Past `index_capacity` the index freezes and duplicates among the later documents go silently undetected, which is precisely why the 20M-document corpus goes through `datatrove`'s four-stage `MinhashDedupSignature → Buckets → Cluster → Filter` pipeline: it spills to disk, checkpoints between stages, and clusters globally instead of greedily.
+    - A corpus needs a *driver*, not just stages: per-source token budgets, weighted interleaving (so code appears from step 0), batched tokenization (~28 min on 16 cores vs ~3.9 core-hours serially), a reservoir shuffle before sharding, a document-hash held-out split that can never straddle a boundary, and a `manifest.json` recording realized mix, revisions, filter hash, and seed.
     - Packing requires document-aware attention masking; the per-document position reset is *bookkeeping*. The model does index its RoPE tables with `position_ids`, but RoPE is relative, so shifting one segment's clock by a constant changes nothing given a correct block-diagonal mask. Cross-document attention is the actual bug.
     - Store tokens only. `seq_ids` and `position_ids` are recovered from `input_ids == bos_id` with a `cumsum` and a `maximum.accumulate`, saving 40 GB on a 20B-token corpus and the page cache to match — `uint16` memmap shards of ~200 MB, 200 of them, served by the OS page cache rather than application RAM.
 
@@ -1379,9 +1390,11 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
 **3.** (Quantitative + implementation) The chapter stores only `tokens.bin`, deriving positions on read. (a) Prove that the stored `position_ids` array is redundant — show that `segments_from_bos` recovers the same document segmentation from the tokens alone, and explain the one case where the derived positions differ from the stored ones and why it does not matter for `Stack-100M`. (b) Compute the disk saved on the 20B-token corpus. (c) Under what change to the model would the stored array stop being redundant?
 
 ??? note "Solution"
-    (a) `pack_documents` emits `<bos> body <eos>` for every chunk, and the BPE tokenizer never produces `bos_id` from ordinary text (it is a reserved special token that `encode` only recognizes when the caller passes it explicitly — see Ch. 14.3), so `input_ids == bos_id` is true at exactly the document starts, the same positions where the stored `position_ids` reset to 0. Hence `cumsum(input_ids == bos_id)` and `cumsum(position_ids == 0)` induce the *same* partition of the window into segments, and the block-diagonal mask built from either is identical.
+    (a) `pack_documents` emits `<bos> body <eos>` for every chunk, and the BPE tokenizer never produces `bos_id` from ordinary text (it is a reserved special token that `encode` only recognizes when the caller passes it explicitly — see Ch. 14.3), so `input_ids == bos_id` is true at exactly the document starts, the same positions where the stored `position_ids` reset to 0. Hence `cumsum(input_ids == bos_id)` and `cumsum(position_ids == 0)` induce the *same* partition of the window into segments, and the block-diagonal mask built from either is identical — with one exception, the trailing padded window (below).
 
     The one difference is a window whose first document is a *tail* carried over from the previous window (window 2 in the worked example, which starts at document B's position 3). The stored array says `[3, 0, 1, …]`; the derived array says `[0, 0, 1, …]`. `Stack100M.forward` really does use this array — `cos = self.rope_cos[position_ids]` — so it is not ignored; it is *shift-invariant*. RoPE contributes only through $i-j$ within a segment, and both arrays give the same within-segment differences, so every attention logit inside the tail is unchanged. Note the derived version has a second, mundane virtue: it can never index outside the rotary tables, because it restarts at 0 in every window.
+
+    There is one genuine exception, worth knowing before you assert `np.array_equal` in a test: the **final padded window**. `pack_documents` flushes it with `buf_pos.extend([0] * pad_n)`, so under the stored array every pad token looks like a fresh segment start (`cumsum(position_ids == 0)` increments at each pad), while the derived version sees no `bos_id` at the pads and folds them into the last real document. The two segmentations therefore disagree on that single window (the last one `pack_documents` emits for a split) — harmlessly, because pads are only ever *attended from*, never attended *to* by a real token (they sit at the end of a causal window), and the training loop masks the loss on pad targets. If you want bit-identical stored and derived arrays, do not pad the position clock with zeros; the cheaper fix is to not store positions at all, which is what the chapter does.
 
     (b) One `uint16` per token: $20\times10^{9}\times 2 = 4.0\times10^{10}$ bytes = **40 GB saved**, halving the corpus from 80 GB to 40 GB — and halving the read bandwidth and page-cache pressure during training.
 
@@ -1392,7 +1405,7 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
 ??? note "Solution"
     (a) Config A (`rows=8, bands=16`) at $J=0.9$: $0.9^{8} = 0.43047$, so $P_A = 1-(0.56953)^{16}$; since $(0.56953)^{16} = e^{-9.01} \approx 1.2\times10^{-4}$, $P_A \approx 0.9999$. Config B (`rows=16, bands=8`): $0.9^{16} = 0.18530$, so $P_B = 1-(0.81470)^{8} = 1 - e^{-1.640} \approx 0.806$. Thresholds: A $=(1/16)^{1/8}\approx 0.71$; B $=(1/8)^{1/16}\approx 0.88$; C $=(1/14)^{1/8}\approx 0.72$. At $J=0.9$, A flags the pair essentially always while B misses it about one time in five. Fewer, fatter bands raise the effective threshold and *lower* recall; more, thinner bands lower it, catching more true near-duplicates at the cost of spurious candidates that the explicit `threshold=0.8` re-check then filters. C sits essentially where A does (0.72 vs 0.71) — FineWeb's 14×8 and our 16×8 target the same "≈75% similar or more" region; the difference is 112 vs 128 permutations, i.e. signature cost, not semantics.
 
-    (b) Per kept document the index costs $512 + 3{,}300 = 3{,}812$ B. The exact-dedup set runs over the *whole* corpus, not just the index, so it costs $20\times10^{6}\times 83 \approx 1.7$ GB regardless. That leaves $24 - 1.7 = 22.3$ GB, hence $22.3\times10^{9}/3{,}812 \approx 5.85\times10^{6}$: set `index_capacity ≈ 5{,}500{,}000` and keep the rest as headroom for the interpreter, the shuffle buffer, and page cache. That covers **~28%** of a 20M-document corpus. Beyond it, `near_dedup_stream` stops inserting: it still yields every document, still spends ~8 ms MinHashing each one, and detects nothing — recall for the remaining ~72% of the corpus is exactly zero, and the only evidence is the one-shot `log.warning`. Two legitimate fixes: shard the input and dedup each shard independently (accepting missed cross-shard duplicates), or use `datatrove`, whose signatures live on disk keyed by bucket so there is no in-RAM ceiling at all. Raising `index_capacity` until the box swaps is not a fix.
+    (b) Per kept document the index costs $512 + 3{,}300 = 3{,}812$ B. The exact-dedup set runs over the *whole* corpus, not just the index, so it costs $20\times10^{6}\times 83 \approx 1.7$ GB regardless. That leaves $24 - 1.7 = 22.3$ GB, hence $22.3\times10^{9}/3{,}812 \approx 5.85\times10^{6}$: set `index_capacity ≈ 5{,}500{,}000` and keep the rest as headroom for the interpreter, the shuffle buffer, and page cache. That covers **~28%** of a 20M-document corpus. Beyond it, `near_dedup_stream` stops inserting: it still spends ~8 ms MinHashing each remaining document and still catches the ones that duplicate something in the frozen index, but nothing new is ever indexed — so duplicates *among* the remaining ~72% of the corpus go entirely undetected, and the only evidence is the one-shot `log.warning`. Two legitimate fixes: shard the input and dedup each shard independently (accepting missed cross-shard duplicates), or use `datatrove`, whose signatures live on disk keyed by bucket so there is no in-RAM ceiling at all. Raising `index_capacity` until the box swaps is not a fix.
 
 **5.** (Implementation) The driver runs dedup *within* each source. In production you also want a cross-source pass, since Cosmopedia occasionally paraphrases facts that also appear in FineWeb-Edu. Implement `dedup_all_sources(entries, offline=True)` that concatenates every mix entry's stream, applies quality filtering, then exact dedup, then cross-source near-dedup, and returns the kept documents. Explain (a) why the exact pass must come before the near pass, and (b) why the streaming generator form matters at 20B tokens.
 

@@ -49,7 +49,12 @@ import torch
 # ----------------------------------------------------------------------------
 import collections
 
-DataMixEntry = collections.namedtuple("DataMixEntry", ["name", "hf_path", "weight", "domain"])
+DataMixEntry = collections.namedtuple(
+    "DataMixEntry",
+    ["name", "hf_path", "weight", "domain", "hf_config", "hf_data_dir",
+     "text_column", "revision", "gated"],
+    defaults=(None, None, "text", "main", False),
+)
 
 
 class PackedMemmapDataset:
@@ -85,6 +90,10 @@ def stream_source(*args, **kwargs):
     raise NotImplementedError("stub: real streaming needs network access (HF datasets)")
 
 
+def load_hf_stream(*args, **kwargs):
+    raise NotImplementedError("stub: real streaming needs network access (HF datasets)")
+
+
 class StackTokenizer:
     """Stand-in for the Ch. 14.3 BPE tokenizer -- whitespace-split is enough to
     exercise `length_filtered`'s token-count logic deterministically."""
@@ -103,6 +112,7 @@ _stacklm_data.PackedMemmapDataset = PackedMemmapDataset
 _stacklm_data.DataMixEntry = DataMixEntry
 _stacklm_data.build_shards = build_shards
 _stacklm_data.stream_source = stream_source
+_stacklm_data.load_hf_stream = load_hf_stream
 _stacklm_tokenizer = types.ModuleType("stacklm.tokenizer")
 _stacklm_tokenizer.StackTokenizer = StackTokenizer
 sys.modules["stacklm"] = _stacklm
@@ -124,8 +134,14 @@ from torch.utils.data import ConcatDataset, DataLoader, WeightedRandomSampler
 
 from stacklm.data import PackedMemmapDataset          # Ch. 14.2
 
-# Sub-phase A: the annealing mix. Keys are shard-directory names written by the
-# tokenize+pack pass (Ch. 14.2) and recorded in the data manifest.
+# Sub-phase A: the annealing mix. Keys are shard-directory names under
+# `data/mid/<name>_2048`. Ch. 14.2's `build_corpus` driver writes ONE interleaved
+# train/val corpus, so a per-source mixture needs a per-source pass first: the
+# same `build_shards` call at seq_len=2048, one output directory per source, no
+# length filter (see "Repacking for sub-phase B" for the 8192 version).
+# `instruct_flav` is not a new corpus either -- it is the QA/how-to raw text of
+# Cosmopedia v1's `wikihow` + `khanacademy` configs, shaped like instructions but
+# NOT instruction/response pairs (that is Ch. 14.9).
 ANNEAL_MIX = {
     "fineweb_edu":   0.40,
     "cosmopedia_v2": 0.30,
@@ -144,8 +160,8 @@ LONGCTX_MIX = {
     "cosmopedia_v2":    0.10,   # deliberately SHORT: the anti-drift anchor
 }
 CAPABILITY_MIX = {
-    "finemath":         0.30,
-    "starcoder_repo":   0.30,
+    "arxiv_proofpile2": 0.30,   # the math source that IS packed at 8192; FineMath
+    "starcoder_repo":   0.30,   # is short-form and lives only in the 2048 shards
     "cosmopedia_v2":    0.25,
     "fineweb_edu_long": 0.15,
 }
@@ -351,7 +367,7 @@ from collections import defaultdict
 import numpy as np
 
 from stacklm.data import (DataMixEntry, PackedMemmapDataset, build_shards,
-                          stream_source)                       # Ch. 14.2
+                          load_hf_stream, stream_source)       # Ch. 14.2
 from stacklm.tokenizer import StackTokenizer                   # Ch. 14.3
 
 MIN_DOC_TOKENS = 4096          # half the target window; see the assertion below
@@ -407,24 +423,34 @@ def verify_positions(shard_dir: str, seq_len: int, floor: int = 4096,
         f"rescaling would train on positions the data never reaches.")
 
 
-# The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records (name, hf_path,
-# weight, domain). The first three are genuinely long; the fourth is a
-# length-FILTERED slice of a pretrain source; the last is the deliberately SHORT
-# anti-drift anchor. `weight` is the sub-phase-B mixture weight consumed later
-# by `build_mixture_loader`.
+# The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records — full loading
+# coordinates, not just repo ids: three of these repos are multi-config (no
+# default) and starcoderdata stores text under `content` and is sharded by
+# language, so an entry missing those fields raises or yields nothing (Ch. 14.2,
+# "the dataset id is not enough"). The first three sources are genuinely long;
+# the fourth is a length-FILTERED slice of a pretrain source; the last is the
+# deliberately SHORT anti-drift anchor. `weight` is the sub-phase-B mixture
+# weight consumed later by `build_mixture_loader`.
 LONG_SOURCES = [
-    (DataMixEntry("starcoder_repo",   "bigcode/starcoderdata",     0.35, "code"),  True),
-    (DataMixEntry("books_pg19",       "deepmind/pg19",             0.25, "web"),   False),
-    (DataMixEntry("arxiv_proofpile2", "EleutherAI/proof-pile-2",   0.15, "math"),  False),
-    (DataMixEntry("fineweb_edu_long", "HuggingFaceFW/fineweb-edu", 0.15, "web"),   False),
-    (DataMixEntry("cosmopedia_v2",    "HuggingFaceTB/cosmopedia",  0.10, "synthetic"), False),
+    (DataMixEntry("starcoder_repo", "bigcode/starcoderdata", 0.35, "code",
+                  hf_data_dir="python", text_column="content", gated=True), True),
+    (DataMixEntry("books_pg19", "deepmind/pg19", 0.25, "web"), False),
+    (DataMixEntry("arxiv_proofpile2", "EleutherAI/proof-pile-2", 0.15, "math",
+                  hf_config="arxiv"), False),
+    (DataMixEntry("fineweb_edu_long", "HuggingFaceFW/fineweb-edu", 0.15, "web",
+                  hf_config="sample-100BT"), False),
+    (DataMixEntry("cosmopedia_v2", "HuggingFaceTB/smollm-corpus", 0.10, "synthetic",
+                  hf_config="cosmopedia-v2"), False),   # v2 is NOT in the `cosmopedia` repo
 ]
 
 
 def main(out_root: str, seq_len: int, tokenizer_path: str):
     tok = StackTokenizer.load(tokenizer_path)             # Ch. 14.3, vocab 32768
     for entry, repo_level in LONG_SOURCES:
-        raw = stream_source(entry)                        # Ch. 14.2 streaming reader
+        # Repo-level grouping needs the RAW rows (`repo_name`, `path`, `content`);
+        # `stream_source` normalizes every row to {"text","source","domain"} and
+        # drops exactly the fields the grouping keys on.
+        raw = load_hf_stream(entry) if repo_level else stream_source(entry)
         docs = repo_level_documents(raw) if repo_level else raw
         if entry.name != "cosmopedia_v2":     # the short-form anchor stays unfiltered
             docs = length_filtered(docs, tok)

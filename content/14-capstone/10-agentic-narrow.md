@@ -502,7 +502,7 @@ tool or give a final answer. Tools: search(query,k), calc(expr).<|end|>
 <|user|>What is the publication year of RoFormer, multiplied by 2? Use the corpus.<|end|>
 <|assistant|>Thought: I need the publication year of RoFormer. I'll search the corpus.
 <|tool_call|>{"tool": "search", "args": {"query": "RoFormer publication year", "k": 2}}<|end|>
-<|tool_result|>[1] Reference note 16. In the Stack-100M project notes, the publication year of RoFormer is 2021. ... [2] ...<|end|>
+<|tool_result|>[1] Configuration record 16: the publication year of RoFormer is 2021. Downstream stages ... [2] Configuration record 13: the publication year of Adam is 2014. ...<|end|>
 <|assistant|>Thought: Now I compute 2021*2 with the calculator.
 <|tool_call|>{"tool": "calc", "args": {"expr": "2021*2"}}<|end|>
 <|tool_result|>4042<|end|>
@@ -992,7 +992,7 @@ def make_stub_teacher(tasks):
     return teacher
 ```
 
-Trace the `double` shape once: step 1 sees zero observations and emits `search("RoFormer publication year", k=2)`; the environment returns the reference note; step 2 sees one observation, extracts `2021`, emits `calc("2021*2")`; the environment returns `4042`; step 3 sees two observations, `op` is not `None` and `n_calc == 1`, so it answers `4042`. `normalize("4042") == normalize(task.gold)` and the trace is kept. Run over all 200 training tasks the stub keeps **200/200**, spread across all four shapes.
+Trace the `double` shape once: step 1 sees zero observations and emits `search("RoFormer publication year", k=2)`; the environment returns the configuration record; step 2 sees one observation, extracts `2021`, emits `calc("2021*2")`; the environment returns `4042`; step 3 sees two observations, `op` is not `None` and `n_calc == 1`, so it answers `4042`. `normalize("4042") == normalize(task.gold)` and the trace is kept. Run over all 200 training tasks the stub keeps **200/200**, spread across all four shapes.
 
 And now the assertion the section implicitly promised — the CI test that makes "hermetic, exercises every code path" a *checked* claim rather than a hope:
 
@@ -1090,7 +1090,7 @@ Test (1) is the one that matters most: a stub whose policy silently fails produc
     | special-token markers (3 assistant opens/closes, 2 tool-result opens/closes) | 10 | ~10 | 104 |
     | **total** | | | **1020** |
 
-    At the byte-level BPE's roughly **4 characters/token** on this text, the pool mean of 1474 characters is about **370 tokens/trace**, of which about **120** are loss-bearing — a supervised fraction near **0.32**, because two-thirds of every trace is text the environment wrote. So 600 traces is $600 \times 370 \approx 222{,}000$ tokens total and about **72k supervised tokens**.
+    At the byte-level BPE's roughly **4 characters/token** on this text, the pool mean of 1474 characters is about **370 tokens/trace**, of which about **120** are loss-bearing — a supervised fraction near **0.32**, because two-thirds of every trace is text the model must read but never produce: the environment's observations are ~43% of the characters, and the system/user preamble plus the masked role markers are the other ~25%. So 600 traces is $600 \times 370 \approx 222{,}000$ tokens total and about **72k supervised tokens**.
 
     (Characters are the tokenizer-independent quantity, which is why we report them; the *token* fraction shifts with your vocabulary, because tool-call JSON and bare integers tokenize less efficiently than prose. Measure it once on your own SFT set — the diagnostic below depends on your measured baseline, not on ours.)
 
@@ -1463,7 +1463,12 @@ def grpo_agent_step(policy, ref, opt, tok, env, task, *, group_size=8,
     for _ in range(group_size):
         answer, tr = run_agent(policy, tok, task.question, env,
                                max_steps=max_steps, temperature=temperature)
-        n_steps = sum(1 for role, _ in tr if role == "assistant")
+        # Clamp: when the loop exhausts `max_steps`, run_agent appends ONE more
+        # assistant entry for the forced synthesis, so the raw count can reach
+        # max_steps + 1 and the penalty would exceed lambda. The reward is
+        # defined with steps/max_steps <= 1, so count the forced turn as the
+        # last step rather than as an extra one.
+        n_steps = min(sum(1 for role, _ in tr if role == "assistant"), max_steps)
         rewards.append(trajectory_reward(answer, task.gold, n_steps, max_steps, lam))
         traces.append(tr)
 

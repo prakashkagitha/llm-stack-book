@@ -388,12 +388,16 @@ print("dense (n_layers, n_heads) tensor input matches the dict-keyed input exact
 def _clip_projections_(attn, s_max, tau: float) -> int:
     """No-QK-norm path (Kimi K2): per-query-head W_Q, per-KV-head shared W_K.
 
+    Returns 0/1 for the LAYER, not a head count -- both clip paths must report the
+    same unit or `qk_clip_`'s trigger log silently changes scale (by up to n_heads)
+    when you flip `qk_norm`, and the whole point of that log is its trend.
+
     Attribute names (n_heads, n_kv_heads, head_dim, groups) are exactly those of
     stacklm.model.attention.Attention -- keep them stable across chapters.
     """
     hd = attn.head_dim
     group = attn.groups                          # q-heads per kv-head (= 4)
-    fired = 0
+    fired = False
 
     # (1) Per-query-head scale on W_Q.
     for h in range(attn.n_heads):
@@ -401,7 +405,7 @@ def _clip_projections_(attn, s_max, tau: float) -> int:
             continue                             # this head is fine
         eta = (tau / float(s_max[h])) ** 0.5     # sqrt so q AND k share it
         attn.wq.weight[h * hd:(h + 1) * hd].mul_(eta)
-        fired += 1
+        fired = True
 
     # (2) Per-KV-head scale on the SHARED W_K, using the group's worst logit.
     for kv in range(attn.n_kv_heads):
@@ -410,7 +414,7 @@ def _clip_projections_(attn, s_max, tau: float) -> int:
             continue
         eta = (tau / s_grp) ** 0.5
         attn.wk.weight[kv * hd:(kv + 1) * hd].mul_(eta)
-    return fired
+    return int(fired)
 
 
 print("\n=== Block #10: _clip_projections_ (no-QK-norm, GQA-aware clip path) ===")
