@@ -54,7 +54,7 @@ $$
 \begin{bmatrix} q_{2i} \\ q_{2i+1} \end{bmatrix}_{\text{rotated}} = \begin{bmatrix} \cos(m\,\theta_i) & -\sin(m\,\theta_i) \\ \sin(m\,\theta_i) & \cos(m\,\theta_i) \end{bmatrix} \begin{bmatrix} q_{2i} \\ q_{2i+1} \end{bmatrix}
 $$
 
-where $m$ is the absolute position and $\theta_i = b^{-2i/d}$ with base $b = 10{,}000$ by default. The key insight is that the dot product $q_m \cdot k_n$ depends only on the *relative* position $m - n$, because the rotation matrices satisfy $R_m^\top R_n = R_{m-n}$.
+where $m$ is the absolute position and $\theta_i = b^{-2i/d}$ with base $b = 10{,}000$ by default. The key insight is that the dot product $q_m \cdot k_n$ depends only on the *relative* position $m - n$, because the rotation matrices satisfy $R_m^\top R_n = R_{n-m}$ (transposing a rotation negates its angle, so $R_m^\top = R_{-m}$).
 
 The problem for extrapolation: at training time, $m$ never exceeds $T_{\text{train}}$. The angles $m \theta_i$ stay within $[0, T_{\text{train}} \theta_i]$. For the low-frequency dimensions (large $i$, tiny $\theta_i$) this range can be small — those dimensions barely rotate even within the training window. For the high-frequency dimensions the rotation is well-covered: because $\cos$ and $\sin$ are $2\pi$-periodic, a dimension whose wavelength $\lambda_i = 2\pi/\theta_i$ is much shorter than $T_{\text{train}}$ has already swept every phase thousands of times. When you push $m > T_{\text{train}}$, it is therefore the *low*-frequency dimensions — the ones that never completed even a single rotation during training — that enter completely unseen phase territory, causing attention to produce pathological scores. The high-frequency dimensions wrap harmlessly onto phases the model saw densely.
 
@@ -116,8 +116,8 @@ def build_yarn_freqs(
     base: float,
     orig_max_seq_len: int,
     target_max_seq_len: int,
-    beta_fast: float = 32.0,   # high-freq boundary (wavelengths)
-    beta_slow: float = 1.0,    # low-freq boundary
+    beta_fast: float = 32.0,   # high-freq boundary, in rotations over the orig window
+    beta_slow: float = 1.0,    # low-freq boundary, in rotations
 ) -> torch.Tensor:
     """
     YaRN frequency computation.
@@ -131,10 +131,17 @@ def build_yarn_freqs(
     # Wavelength for each dimension: λ = 2π / θ_i
     wavelengths = 2 * math.pi / inv_freq
 
-    # Ramp function: 0 for high-freq dims (leave unchanged), 1 for low-freq (full scale)
-    ramp = (wavelengths - orig_max_seq_len / beta_fast) / (
-        orig_max_seq_len / beta_slow - orig_max_seq_len / beta_fast
-    )
+    # Number of rotations each dimension completes over the ORIGINAL window: r = L / λ.
+    # High-freq dims spin many times (r large); low-freq dims under-rotate (r < 1).
+    rotations = orig_max_seq_len / wavelengths
+
+    # Ramp function: 0 for high-freq dims (leave unchanged), 1 for low-freq (full scale).
+    # YaRN ramps linearly in the ROTATION COUNT, not in the wavelength: with the paper's
+    # extrapolation weight γ(r) = (r - β_slow) / (β_fast - β_slow), this is 1 - γ(r).
+    # (Ramping in λ instead would be linear in 1/r -- same two clamp endpoints, badly
+    #  wrong interior: at dim pair i=33, r ≈ 5.6, YaRN interpolates 85% but linear-in-λ
+    #  would interpolate only 15%, leaving the whole mid-band nearly un-interpolated.)
+    ramp = (beta_fast - rotations) / (beta_fast - beta_slow)
     ramp = ramp.clamp(0.0, 1.0)
 
     # Blend: high-freq → no interpolation (extrapolate), low-freq → full PI
@@ -434,7 +441,7 @@ full softmax-normalised attention output for its Q chunk.
 
 The key algorithmic insight is that FlashAttention's *online softmax accumulation* is associative: you can accumulate the numerator sums and the log-sum-exp denominators independently across rounds and produce the exact same result as if all KV blocks were available at once. No approximation is involved.
 
-Communication volume per round: $2 \times (T/N) \times d \times 2\;\text{bytes}$ per direction (sending K and V). With $N = 8$ GPUs and $T = 128{,}000$, $d = 4096$: each round moves $128{,}000/8 \times 4096 \times 2 \times 2 = 256\;\text{MB}$ per GPU. On NVLink at 400 GB/s this takes ~0.6 ms; a single attention kernel at this scale takes much longer, so the overlap is effective.
+Communication volume per round: $2 \times (T/N) \times d \times 2\;\text{bytes}$ per direction (sending K and V). With $N = 8$ GPUs and $T = 128{,}000$, $d = 4096$: each round moves $128{,}000/8 \times 4096 \times 2 \times 2 = 262\;\text{MB}$ (250 MiB) per GPU. On NVLink at 400 GB/s this takes ~0.6 ms; a single attention kernel at this scale takes much longer, so the overlap is effective.
 
 ```python
 # Pseudocode sketch of ring attention forward pass
@@ -546,7 +553,7 @@ def ring_attention_forward(
     return output_acc
 ```
 
-Verifying correctness: run this ring implementation on a toy problem (e.g. `world_size=4`, `T_local=8`, `H=2`, `D=16`, random `q`/`k`/`v` in fp32) under `torchrun --nproc_per_node=4`, gather the per-rank `output_acc` back into a full `(T, H, D)` tensor in rank order, and compare it against a single-device reference over the un-sharded sequence: `torch.nn.functional.scaled_dot_product_attention(q, k, v, is_causal=True)`. The two should agree to within ~1e-5 in fp32 (~1e-2 in bf16). This is also the fastest way to catch the causal-masking bug: without the `fully_future` skip, rank 0 -- whose queries may attend only to their own block -- still receives every other rank's future KV chunk, softmaxes an all -inf row into NaN, and returns NaN for its entire output, so the reference comparison fails immediately with `nan`.
+Verifying correctness: run this ring implementation on a toy problem (e.g. `world_size=4`, `T_local=8`, `H=2`, `D=16`, random `q`/`k`/`v` in fp32) under `torchrun --nproc_per_node=4`, gather the per-rank `output_acc` back into a full `(T, H, D)` tensor in rank order, and compare it against a single-device reference over the un-sharded sequence. Note that `scaled_dot_product_attention` expects the sequence in dim `-2`, so the ring layout `(T, H, D)` must be transposed on the way in and back on the way out — `F.scaled_dot_product_attention(q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1), is_causal=True).transpose(0, 1)`. Handing it the `(T, H, D)` tensors directly does *not* raise: SDPA silently reads them as `(batch=T, seq=H, emb=D)` and builds an `H x H` causal mask over heads, so the "reference" is garbage and will never match a correct ring output. The two should agree to within ~1e-5 in fp32 (~1e-2 in bf16). This is also the fastest way to catch the causal-masking bug: without the `fully_future` skip, rank 0 -- whose queries may attend only to their own block -- still receives every other rank's future KV chunk, softmaxes an all -inf row into NaN, and returns NaN for its entire output, so the reference comparison fails immediately with `nan`.
 
 ### The Libraries That Implement This
 
@@ -571,7 +578,7 @@ In practice, the two approaches compose: one might use tensor parallelism for we
 
     Configuration: 70 B parameter model, $d_{\text{model}} = 8192$, 80 layers, 64 heads, GQA with 8 KV heads, $d_{\text{head}} = 128$, batch size = 1 sequence of 128 K tokens, bf16 (2 bytes).
 
-    **Model weights (parameters):** 70 B × 2 bytes = **140 GB**. Requires at minimum 8 × A100 80 GB GPUs under model parallelism.
+    **Model weights (parameters):** 70 B × 2 bytes = **140 GB** — already 2 × A100 80 GB just to *hold* the weights. The training footprint is far larger: mixed-precision Adam also keeps bf16 gradients, an fp32 master copy, and two fp32 moments, ≈16 bytes/param ≈ **1.1 TB**, i.e. at least 14 × A100 80 GB before a single activation, which is why weights and optimizer state are sharded (ZeRO-3/FSDP) across the parallel group.
 
     **Activations per attention layer (without ring attention):**
     - Q, K, V projections: under GQA, Q is $64 \times 128 = 8192$ wide but K and V are only $8 \times 128 = 1024$ wide each, so $128{,}000 \times (8192 + 1024 + 1024) \times 2 \approx 2.6\;\text{GB}$
@@ -753,7 +760,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 - **Peng et al., "YaRN: Efficient Context Window Extension of Large Language Models" (2023)** — introduces frequency-ramped interpolation and temperature correction; practical state of the art.
 - **Liu et al., "Ring Attention with Blockwise Transformers for Near-Infinite Context" (2023)** — ring attention paper; the foundational sequence-parallelism approach.
 - **Dao et al., "FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning" (2023)** — the varlen API for document packing is documented here.
-- **Anthropic, "Claude's Long Context" (technical reports, 2024)** — high-level discussion of training recipes for very long contexts (100 K+).
+- **Fu et al., "Data Engineering for Scaling Language Models to 128K Context" (2024)** — shows that the *data mixture* (domain balance and length upsampling), not just the positional rescale, determines whether a 128 K extension takes; a concrete continued-pretraining recipe at ~5 B tokens.
 - **LongBench (Bai et al., 2023) and LongBench v2 (2024)** — comprehensive long-context evaluation benchmarks covering summarisation, QA, few-shot learning, and code; more demanding than needle-in-haystack alone.
 - **Hsieh et al., "RULER: What's the Real Context Size of Your Long-Context Language Models?" (NVIDIA, 2024)** — synthetic, contamination-free, length-configurable tasks; introduces effective context length.
 - **HELMET (Princeton, 2024–2025)** — argues synthetic retrieval correlates poorly with downstream long-context ability; evaluates RAG, many-shot ICL, summarisation and citation tasks instead.
@@ -785,7 +792,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 
     (c) RoPE encodes position as a rotation angle $m\theta_i$. During training, $m$ never exceeds $T_{\text{train}}$, so each dimension's angle stays inside $[0, T_{\text{train}}\theta_i]$. The high-frequency dimensions ($\theta_i \approx 1$) are fine: their wavelength $2\pi/\theta_i$ is only a handful of tokens, so they wrapped through every phase thousands of times inside the training window and $\cos/\sin$ periodicity makes any larger $m$ land on a phase already seen. The damage comes from the *low*-frequency dimensions (large $i$, tiny $\theta_i$), whose wavelengths exceed $T_{\text{train}}$: at $d=128$, $b=10{,}000$, $T_{\text{train}}=4{,}096$ the last pair only sweeps $\approx 0.47$ rad — under 8% of one period — so pushing $m > T_{\text{train}}$ drives it into phase territory the model genuinely never saw, producing pathological attention scores even though the rotation itself is perfectly well-defined.
 
-    (d) RoPE's dot product $q_m \cdot k_n$ depends only on the *relative* position $m-n$ (because $R_m^\top R_n = R_{m-n}$), and every angle is a linear function of position. Position Interpolation exploits this linearity: rescaling the input position $m \mapsto m' = m \cdot T_{\text{train}}/T_{\text{target}}$ maps the whole target window back into the trained angle range $[0, T_{\text{train}}\theta_i]$, so no dimension ever sees an out-of-distribution phase.
+    (d) RoPE's dot product $q_m \cdot k_n$ depends only on the *relative* position $m-n$ (because $R_m^\top = R_{-m}$, so $R_m^\top R_n = R_{n-m}$), and every angle is a linear function of position. Position Interpolation exploits this linearity: rescaling the input position $m \mapsto m' = m \cdot T_{\text{train}}/T_{\text{target}}$ maps the whole target window back into the trained angle range $[0, T_{\text{train}}\theta_i]$, so no dimension ever sees an out-of-distribution phase.
 
 **3.** A model has $d = 128$, RoPE base $b = 10{,}000$, and was trained at $T_{\text{train}} = 4{,}096$. You want to extend to $T_{\text{target}} = 32{,}768$ (an 8x extension).
 
@@ -850,7 +857,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
 
 ??? note "Solution"
     (a) Each GPU holds $T/N = 128{,}000/8 = 16{,}000$ tokens. Per round it sends both a K chunk and a V chunk, each of size $16{,}000 \times 4096$ values at 2 bytes:
-    $$2 \times (T/N) \times d \times 2\ \text{bytes} = 2 \times 16{,}000 \times 4096 \times 2 = 262{,}144{,}000\ \text{bytes} \approx 256\ \text{MB per GPU per round},$$
+    $$2 \times (T/N) \times d \times 2\ \text{bytes} = 2 \times 16{,}000 \times 4096 \times 2 = 262{,}144{,}000\ \text{bytes} \approx 262\ \text{MB (exactly 250 MiB) per GPU per round},$$
     matching the chapter's figure.
 
     (b) Rank $r$'s queries occupy global positions $[\,r\,T_{\text{local}},\ (r+1)T_{\text{local}} - 1\,]$ where $T_{\text{local}} = T/N$. A KV block belonging to source rank $j$ occupies positions starting at $j\,T_{\text{local}}$. The block is `fully_future` (skipped) exactly when its start lies past the last local query:

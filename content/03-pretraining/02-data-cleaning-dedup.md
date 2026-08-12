@@ -143,7 +143,7 @@ def passes_heuristic_filters(text: str) -> bool:
 
 ### Line-Level and Paragraph-Level Filtering
 
-Some noise lives at the sub-document level. For example, a Wikipedia article is mostly high quality, but the "References" section at the bottom is mostly citation boilerplate. C4 drops any line containing the phrase "javascript must be enabled" (a cookie/warning banner). RefinedWeb removes lines that contain mostly non-alphabetic characters or that are very short (under 20 characters) and lack terminal punctuation.
+Some noise lives at the sub-document level. For example, a Wikipedia article is mostly high quality, but the "References" section at the bottom is mostly citation boilerplate. C4 drops any line containing the word "javascript" (Raffel et al. adopted this rule because so many crawled pages carried "please enable Javascript" warning banners). RefinedWeb removes lines that contain mostly non-alphabetic characters or that are very short (under 20 characters) and lack terminal punctuation.
 
 A practical approach: split each document into paragraphs, apply per-paragraph filters, then reassemble and re-check document-level minimums. This keeps the good parts of a noisy document rather than discarding the whole thing.
 
@@ -239,8 +239,11 @@ import re
 EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b"
 )
+# NOTE: a leading \b would make the optional "+1 " and "(415)" prefixes dead --
+# there is no word boundary before "+" or "(", so the match would start at the
+# first digit and leave a stray "+" / "(" behind. Use a negative lookbehind.
 PHONE_RE = re.compile(
-    r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b"
+    r"(?<![\w+(])(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}(?!\d)"
 )
 SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 IP_RE = re.compile(
@@ -266,6 +269,7 @@ def redact_pii(text: str) -> str:
 # Example:
 # redact_pii("Contact me at alice@example.com or 555-867-5309.")
 # -> "Contact me at EMAIL_ADDRESS or PHONE_NUMBER."
+# redact_pii("Call +1 (415) 555-2671 now")   -> "Call PHONE_NUMBER now"
 ```
 
 Regex handles structured PII well. Unstructured PII (names, addresses, partial account numbers) requires an NER model. The Dolma pipeline uses a combination of regex rules and a model-based tagger, and exposes the whole thing as a `pii_*` tagger you can run over a corpus; `datatrove` ships the equivalent as a `PIIFormatter` block that rewrites emails and IP addresses in place rather than dropping the document. For anything beyond email/phone/IP, the mature open-source tool is **Microsoft Presidio** (`presidio-analyzer` + `presidio-anonymizer`), which combines regex recognizers, checksum validators (so a 16-digit string is only flagged as a credit card if it passes the Luhn check), context words, and a spaCy/transformers NER backend, and lets you register custom recognizers:
@@ -450,14 +454,14 @@ This is an S-shaped function: pairs with similarity below a threshold $t^* \appr
     t^* \approx \left(\frac{1}{b}\right)^{1/r} = \left(\frac{1}{16}\right)^{1/8} = 16^{-1/8} = 2^{-1/2} \approx 0.707
     $$
 
-    So $b = 16, r = 8$ actually places the S-curve inflection near $0.71$ Jaccard -- slightly *below* the 0.8 target, not at it. That is a deliberately conservative choice: it turns pairs down to about $0.71$ into candidates, and the exact signature-match verification step (the `est_j >= threshold` check with `threshold = 0.8` in the code below) then discards those that fall short of 0.8. Sizing the bands so the LSH threshold sits just under your true target is standard practice -- you would rather pay to verify a few extra candidates than miss a genuine duplicate.
+    So $b = 16, r = 8$ actually places the S-curve inflection near $0.71$ Jaccard -- slightly *below* the 0.8 target, not at it. That is a deliberately conservative choice: it turns pairs down to about $0.71$ into candidates, and the verification step (the `est_j >= threshold` check with `threshold = 0.8` in the code below) then discards those that fall short of 0.8. Note that `est_j` is MinHash's *estimate* of Jaccard, not the true set Jaccard: with $k = 128$ its standard error at $J = 0.8$ is $\sqrt{0.8 \times 0.2 / 128} \approx 0.035$, so a pair sitting exactly at $0.8$ is kept only about half the time. If you need a sharp boundary, verify the surviving candidates with the exact shingle-set Jaccard (`exact_jaccard` in the code below) — that recomputation, not the $O(k)$ signature comparison, is the genuinely expensive part. Sizing the bands so the LSH threshold sits just under your true target is standard practice -- you would rather pay to verify a few extra candidates than miss a genuine duplicate.
 
     - For a pair with $s = 0.80$: $P(\text{candidate}) = 1 - (1 - 0.80^8)^{16} = 1 - (1 - 0.168)^{16} \approx 1 - 0.053 = 0.947$. Nearly all such pairs become candidates.
     - For a pair with $s = 0.50$: $P(\text{candidate}) = 1 - (1 - 0.50^8)^{16} = 1 - (1 - 0.0039)^{16} \approx 1 - 0.939 = 0.061$. Only ~6% of these reach the verification step, limiting false-positive work.
 
     If you instead wanted the inflection right at 0.8, pick fewer, longer bands -- e.g. $b = 8, r = 16$ gives $t^* = 8^{-1/16} = 2^{-3/16} \approx 0.878$, catching only very close duplicates. The $(b, r)$ split is the knob that trades recall against verification cost.
 
-    With $N = 10^9$ documents, the number of (band, hash-bucket) entries is $N \times b = 1.6 \times 10^{10}$. Collisions in a bucket trigger the expensive Jaccard verification step — but because the threshold is high, the number of buckets with more than one document is small.
+    With $N = 10^9$ documents, the number of (band, hash-bucket) entries is $N \times b = 1.6 \times 10^{10}$. Collisions in a bucket trigger the pairwise Jaccard verification step, which is quadratic in bucket size — but because the threshold is high, the number of buckets with more than one document is small.
 
 {{fig:lsh-banding-scurve}}
 
@@ -756,7 +760,7 @@ Deduplication is not just about storage efficiency — it has measurable effects
 
 1. **Reduced memorization.** Carlini et al. (2021, "Extracting Training Data from Large Language Models") showed that verbatim memorization scales with duplication frequency. Removing near-duplicates is the most effective tool against training data extraction attacks.
 
-2. **Improved perplexity and downstream performance.** Lee et al. (2022) showed that training on deduplicated data achieves the same loss as training on more data without deduplication — or equivalently, that deduplication improves sample efficiency by roughly 1.5–2x on their benchmarks.
+2. **Improved perplexity and downstream performance.** Lee et al. (2022) report that models trained on deduplicated data reach the same or better perplexity and downstream accuracy in *fewer* training steps, while emitting memorized training text roughly 10x less often. They do not publish a single sample-efficiency multiplier, and you should be suspicious of one: the size of the win depends entirely on how duplicated your corpus was to begin with, which is why the ablation harness below measures it on *your* data.
 
 3. **Better calibration.** When a model has seen the same passage many times, it assigns disproportionately high probability to that passage regardless of context. This hurts calibration and can cause models to hallucinate by completing "familiar" sequences even when they are wrong in context.
 
@@ -791,8 +795,8 @@ tok = GPT2TokenizerFast.from_pretrained("gpt2")
 tok.pad_token = tok.eos_token
 
 def build_model(n_layer=12, n_embd=768, n_head=12):
-    # ~124M GPT-2 small. Shrink (n_layer=4, n_embd=256, n_head=4 -> ~11M)
-    # for a CPU/laptop toy run.
+    # ~124M GPT-2 small. Shrink (n_layer=4, n_embd=256, n_head=4 -> ~16M,
+    # of which 12.9M is the 50257-row embedding table) for a CPU/laptop toy run.
     cfg = GPT2Config(vocab_size=len(tok), n_positions=1024, n_ctx=1024,
                      n_embd=n_embd, n_layer=n_layer, n_head=n_head)
     return GPT2LMHeadModel(cfg).to(DEVICE)
@@ -889,10 +893,10 @@ def run_ablation(raw_docs, clean_docs, heldout_docs, mc_examples,
 
 **Hardware spectrum and expected magnitudes.**
 
-- *Laptop / CPU toy* (~11M model via `build_model(4, 256, 4)`, `block=256`, `steps=500`, a few tens of MB of text): runs in minutes. The held-out PPL delta is directionally correct but noisy; benchmark accuracy sits at chance (HellaSwag `acc_norm` ~25%, PIQA ~50%) -- too small to move the benchmark, so read the PPL delta only.
+- *Laptop / CPU toy* (~16M model via `build_model(4, 256, 4)`, `block=256`, `steps=500`, a few tens of MB of text): runs in minutes. The held-out PPL delta is directionally correct but noisy; benchmark accuracy sits at chance (HellaSwag `acc_norm` ~25%, PIQA ~50%) -- too small to move the benchmark, so read the PPL delta only.
 - *Single GPU* (A100/4090, 124M model, `bs=8`, `block=1024`, `steps=122000` ~ 1B tokens, ~7 hours): expect a held-out PPL improvement of roughly **5-15%** for filtered+deduped vs raw; the benchmark move is small and often within noise at this scale, so average over 3 seeds.
 - *8-GPU node* (DDP, 160M model, effective `bs=64`, 5-10B tokens, a few hours): the PPL gap is clear and HellaSwag/PIQA `acc_norm` typically moves **+1-3 points**.
-- *Multi-node* (1B params, 30B+ tokens): this is the DCLM/FineWeb regime where good filtering vs raw CommonCrawl moves an aggregate benchmark suite by **several points** reliably -- the scale at which the published 1.5-2x sample-efficiency and downstream gains show up cleanly.
+- *Multi-node* (1B params, 30B+ tokens): this is the DCLM/FineWeb regime where good filtering vs raw CommonCrawl moves an aggregate benchmark suite by **several points** reliably -- the scale at which the published sample-efficiency and downstream gains show up cleanly.
 
 **Verification -- establish a noise floor first.** Before trusting a raw-vs-clean delta, train two models on the *same* corpus with different seeds; the PPL gap between them is your noise floor. Only a raw-vs-clean delta that exceeds that floor is real. This same-data control is why single-GPU ablations should report a 3-seed mean rather than a single number. The multiple-choice scorer above is the length-normalized log-likelihood metric implemented by [`EleutherAI/lm-evaluation-harness`](https://github.com/EleutherAI/lm-evaluation-harness) (`acc_norm`) — note the denominator is the choice's character length, not its token count, which is why the code divides by `len(end)`; for publishable numbers run that harness rather than the toy scorer, which omits its request-batching and prompt templates.
 
@@ -1074,7 +1078,7 @@ Three things this buys you over hand-rolled scripts, and they are the reasons th
     The heuristics in the table encode assumptions about English prose. Two of them are language-specific in a way that makes them misfire badly on other languages:
 
     - **Stop-word coverage $\geq 0.10$.** The `STOP_WORDS` set is English function words ("the", "of", "and", ...). A perfectly clean German, Finnish, or Vietnamese document contains essentially none of them, so `stop_word_frac` is near $0$ and the document is dropped as a "word list" even though it is high-quality prose. Without a LangID gate you would silently delete most non-English text.
-    - **Mean word length in $[3.0, 10.0]$.** This is calibrated to English. Agglutinative or compounding languages (Finnish, German, Turkish) routinely exceed a mean of $10$ characters per word; languages written without spaces between words (Chinese, Japanese, Thai) break `text.split()` in the opposite direction. Either way the filter's threshold is meaningless without knowing the language.
+    - **Mean word length in $[3.0, 10.0]$.** This is calibrated to English. Agglutinative or compounding languages (Finnish, German, Turkish) routinely exceed a mean of $10$ characters per word; languages written without spaces between words (Chinese, Japanese, Thai) break `text.split()` far more severely in the *same* direction — an entire clause or sentence comes back as a single "word", so `mean_word_len` is tens of characters and the upper bound rejects the document outright. Either way the filter's threshold is meaningless without knowing the language.
 
     LangID first lets the pipeline (a) route each document to the correct per-language thresholds (or the correct stop-word list), and (b) for an English-centric corpus, cheaply discard non-English documents *before* spending any compute on heuristics that would reject them anyway for the wrong reason. This is exactly the CCNet ordering: LangID, then per-language filtering. It also makes per-language token accounting possible, which is what enables later upsampling of low-resource languages.
 
@@ -1152,7 +1156,7 @@ Three things this buys you over hand-rolled scripts, and they are the reasons th
 
     For contrast, the $16\times8$ split gives $P(\text{candidate}\mid s{=}0.6) = 1 - (1 - 0.6^{8})^{16} \approx 0.24$.
 
-    **(c) Interpretation.** Lowering $t^{*}$ from $0.707$ to $0.420$ makes the banding far more permissive: a moderately similar pair ($s = 0.6$) becomes a candidate $\sim 99\%$ of the time instead of $\sim 24\%$. This **raises recall** (fewer genuine near-duplicates slip through) but **greatly raises verification cost**, because many more pairs — including ones far below the $0.8$ target — collide in a band and must go through the exact `est_j >= threshold` check. The number of (band, bucket) entries is $N \times b$: doubling $b$ from $16$ to $32$ literally doubles the number of hashed entries and buckets that must be built and scanned. The $(b, r)$ split is the knob trading recall against verification/index cost; you size it so $t^{*}$ sits just below your true similarity target, not far below it.
+    **(c) Interpretation.** Lowering $t^{*}$ from $0.707$ to $0.420$ makes the banding far more permissive: a moderately similar pair ($s = 0.6$) becomes a candidate $\sim 99\%$ of the time instead of $\sim 24\%$. This **raises recall** (fewer genuine near-duplicates slip through) but **greatly raises verification cost**, because many more pairs — including ones far below the $0.8$ target — collide in a band and must go through the `est_j >= threshold` check. The number of (band, bucket) entries is $N \times b$: doubling $b$ from $16$ to $32$ literally doubles the number of hashed entries and buckets that must be built and scanned. The $(b, r)$ split is the knob trading recall against verification/index cost; you size it so $t^{*}$ sits just below your true similarity target, not far below it.
 
 **5.** The document-level heuristics catch a page whose *bigrams* repeat, but not a page assembled from many identical *lines* (e.g. a navigation footer duplicated across sections). Implement a Gopher-style `duplicate_line_fraction(text)` — the fraction of non-empty lines that are exact repeats of an earlier identical line — add it to `compute_heuristics` as `dup_line_frac`, and add a `dup_line_frac <= 0.30` check to `passes_heuristic_filters`. Show it rejects a document that is mostly a repeated footer.
 

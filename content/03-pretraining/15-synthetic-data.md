@@ -87,10 +87,17 @@ class BatchGenerator:
         return self.llm.generate(prompts, sp)   # -> [RequestOutput]; .outputs[0].text
 
     def chat_prompt(self, user_msg: str) -> str:
-        """Render the model's chat template -- instruct models need it."""
-        return self.tokenizer.apply_chat_template(
+        """Render the model's chat template -- instruct models need it.
+        EVERY instruction in this chapter goes through here before generation;
+        handing an instruct model a bare instruction puts it in raw-completion
+        mode, where it continues your document instead of obeying it."""
+        s = self.tokenizer.apply_chat_template(
             [{"role": "user", "content": user_msg}],
             tokenize=False, add_generation_prompt=True)
+        # Llama-3.x-style templates emit a leading BOS, and vLLM tokenizes the
+        # string it is handed with add_special_tokens=True -> a SECOND BOS and
+        # an out-of-distribution prefix. Strip the template's copy.
+        return s.removeprefix(self.tokenizer.bos_token or "")
 
 # llm = BatchGenerator()   # every `llm` below is this object
 ```
@@ -132,10 +139,13 @@ def build_prompts(docs, cfg: WrapConfig):
     """Yield (doc_id, doc, style, prompt) for batched generation. We carry the
     source `doc` through so the writer can emit it alongside its rephrasing."""
     for doc_id, doc in docs:
-        doc = doc[: cfg.max_input_chars]
+        # Truncate ONLY the copy that goes into the prompt. The yielded `doc`
+        # stays full-length: it is re-emitted as the "natural" record, and
+        # silently amputating it would corrupt the real half of the corpus.
+        trunc = doc[: cfg.max_input_chars]
         for _ in range(cfg.styles_per_doc):
             style = random.choice(list(STYLE_PROMPTS))
-            yield doc_id, doc, style, STYLE_PROMPTS[style].format(doc=doc)
+            yield doc_id, doc, style, STYLE_PROMPTS[style].format(doc=trunc)
 
 def rephrase_corpus(docs, llm, cfg: WrapConfig):
     """
@@ -144,7 +154,7 @@ def rephrase_corpus(docs, llm, cfg: WrapConfig):
     what dominates cost when rewriting trillions of tokens.
     """
     items = list(build_prompts(docs, cfg))
-    prompts = [p for (_, _, _, p) in items]
+    prompts = [llm.chat_prompt(p) for (_, _, _, p) in items]
     outputs = llm.generate(
         prompts,
         sampling_params=dict(temperature=cfg.temperature,
@@ -275,7 +285,7 @@ def dedup_key(text: str, n: int = 8) -> str:
 
 def generate_textbook(seeds, llm, seen=None):
     seen = seen if seen is not None else set()
-    prompts = [make_generation_prompt(s) for s in seeds]
+    prompts = [llm.chat_prompt(make_generation_prompt(s)) for s in seeds]
     outs = llm.generate(prompts, sampling_params=dict(
         temperature=1.0, top_p=0.95, max_tokens=1500))  # high entropy = diversity
     for out in outs:
@@ -296,7 +306,7 @@ Note the deliberately high temperature and `top_p`: for *expository* generation 
 
 ## Recipe 3 — Instruction- and QA-Augmented Pretraining
 
-A third recipe blurs the line between pretraining and post-training: inject **instruction-formatted** data (questions, tasks, and their answers) directly into the *pretraining* mix. The UL2 / FLAN line of work and, more pointedly, the "instruction pretraining" results show that interleaving QA pairs derived from raw text during pretraining improves both the base model's quality and its downstream instruction-following — the model arrives at the SFT stage already fluent in the question-answer shape.
+A third recipe blurs the line between pretraining and post-training: inject **instruction-formatted** data (questions, tasks, and their answers) directly into the *pretraining* mix. (Note this is *not* the FLAN recipe: FLAN-style instruction tuning happens *after* pretraining, on a fully trained base model.) The **Instruction Pre-Training** results (Cheng et al., 2024) show that interleaving QA pairs derived from raw text *during* pretraining improves both the base model's quality and its downstream instruction-following — the model arrives at the SFT stage already fluent in the question-answer shape. The same idea appears in production as instruction data folded into the late-pretraining **anneal** / mid-training phase (see [Data Mixing, Domain Weighting & Curriculum](../03-pretraining/14-data-mixing-curriculum.html)).
 
 The mechanism is **reading-comprehension synthesis**: for each raw passage, generate questions whose answers are *grounded in that passage*, then train on `passage → questions+answers`. Because the answers come from the passage, grounding is strong and hallucination is low — this is closer to WRAP than to free generation.
 
@@ -318,7 +328,8 @@ PASSAGE:
 """
 
 def synth_qa(passages, llm, k=3):
-    prompts = [QA_SYNTH_PROMPT.format(k=k, passage=p[:4000]) for p in passages]
+    prompts = [llm.chat_prompt(QA_SYNTH_PROMPT.format(k=k, passage=p[:4000]))
+               for p in passages]
     outs = llm.generate(prompts, sampling_params=dict(
         temperature=0.7, max_tokens=512))
     for p, out in zip(passages, outs):
@@ -401,7 +412,7 @@ def distill_reasoning(problems, llm, K=8, max_keep_per_problem=2):
                "\n\nThink step by step, then give the final answer "
                "in \\boxed{}.")
         for _ in range(K):
-            prompts.append(cot); owners.append(i)
+            prompts.append(llm.chat_prompt(cot)); owners.append(i)
 
     outs = llm.generate(prompts, sampling_params=dict(
         temperature=0.8, top_p=0.95, max_tokens=2048))  # entropy -> diverse traces
@@ -467,7 +478,10 @@ def user_turn_prefix(tokenizer) -> str:
     rendered = tokenizer.apply_chat_template(
         [{"role": "user", "content": "\x00"}],
         tokenize=False, add_generation_prompt=False)
-    return rendered.split("\x00")[0]        # e.g. "<|im_start|>user\n"
+    prefix = rendered.split("\x00")[0]      # e.g. "<|im_start|>user\n"
+    # Drop the template's BOS: vLLM re-adds special tokens when it tokenizes
+    # the string, and a doubled BOS is an out-of-distribution prefix.
+    return prefix.removeprefix(tokenizer.bos_token or "")
 
 def magpie_pairs(llm, n=1024):
     tok = llm.tokenizer
@@ -662,6 +676,11 @@ def verify_shard(records, edu_head, embed_fn, judge_llm=None):
         seen_prefixes.add(fp)
         out.append(r)
     stats["after_dedup"] = len(out)
+    # A shard CAN be emptied by stages 1-2, and sklearn refuses a 0-row matrix
+    # ("Found array with 0 sample(s)"). Bail out before stage 3 kills the job.
+    if not out:
+        stats["after_quality"] = stats["out"] = 0
+        return out, stats
 
     # Stage 3: quality classifier (one batched embedding + linear head)
     embeds = embed_fn([r["text"] for r in out])
@@ -680,8 +699,9 @@ def llm_judge_ok(judge_llm, text: str) -> bool:
     """Ask a judge model for a factuality/coherence verdict. Expensive -> last."""
     prompt = ("Is the following passage coherent and free of obvious factual "
               "errors? Answer YES or NO.\n\n" + text[:3000])
-    verdict = judge_llm.generate([prompt], sampling_params=dict(
-        temperature=0.0, max_tokens=4))[0].outputs[0].text.strip().upper()
+    verdict = judge_llm.generate([judge_llm.chat_prompt(prompt)],
+        sampling_params=dict(
+            temperature=0.0, max_tokens=4))[0].outputs[0].text.strip().upper()
     return verdict.startswith("YES")
 ```
 
@@ -911,7 +931,7 @@ The throughline across all six: **synthetic data converts compute into targeted,
                    "\n\nThink step by step, then give the final answer "
                    "in \\boxed{}.")
             for _ in range(K):
-                prompts.append(cot); owners.append(i)
+                prompts.append(llm.chat_prompt(cot)); owners.append(i)
 
         outs = llm.generate(prompts, sampling_params=dict(
             temperature=0.8, top_p=0.95, max_tokens=2048))

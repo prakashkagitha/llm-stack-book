@@ -596,7 +596,11 @@ Real queries are rarely "find similar vectors." They are "find similar vectors *
 Modern systems (Qdrant, Milvus) use **filtered HNSW** variants that consult the predicate *during* graph traversal, skipping non-matching nodes while still using them as bridges for connectivity. This is the production frontier and a great thing to mention in a design round.
 
 ```python
-# Minimal real-library usage: FAISS HNSW with a re-ranking refine stage.
+# Minimal real-library usage: FAISS HNSW on unit-normalized vectors.
+# (No refine stage is needed here: IndexHNSWFlat already stores and scores
+#  full float32 vectors, so there is no quantization error left to recover.
+#  Re-ranking belongs on a *compressed* base index -- see the factory-string
+#  example below, where `RFlat` wraps an OPQ+IVF+PQ pipeline.)
 # pip install faiss-cpu
 import faiss, numpy as np
 
@@ -605,7 +609,7 @@ rng = np.random.default_rng(0)
 xb = rng.standard_normal((N, d)).astype("float32")
 faiss.normalize_L2(xb)                  # cosine == inner product on unit vectors
 
-# Build: HNSW with M=32 links, then wrap with exact refinement.
+# Build: HNSW with M=32 links per node.
 index = faiss.IndexHNSWFlat(d, 32, faiss.METRIC_INNER_PRODUCT)
 index.hnsw.efConstruction = 200         # higher => better graph, slower build
 index.add(xb)
@@ -704,7 +708,7 @@ The filtering caveat from above applies here too: with a selective `WHERE`, an H
 
 ## Putting It Together: A Tiny End-to-End Benchmark
 
-To cement the tradeoffs, here is a self-contained harness that builds Flat, IVF, PQ, and HNSW over the same data and reports each method's recall@10 against the exact baseline. Running it is the fastest way to *feel* the triangle.
+To cement the tradeoffs, here is a self-contained harness that builds Flat, IVF, and HNSW over the same data and reports each method's recall@10 against the exact baseline. Running it is the fastest way to *feel* the triangle.
 
 ```python
 import numpy as np, time

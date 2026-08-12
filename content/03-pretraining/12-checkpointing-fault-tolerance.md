@@ -37,15 +37,18 @@ On a single GPU, saving a checkpoint with `torch.save(state_dict, path)` is stra
 
 ### The Sharding Problem
 
-In FSDP (Fully Sharded Data Parallel), each rank holds a disjoint shard of every parameter. Rank $r$ holds parameters indexed roughly as:
+In FSDP (Fully Sharded Data Parallel), each rank holds a disjoint shard of every parameter. The split is *contiguous*, not round-robin: FSDP1 flattens all parameters of a wrapped unit into a single 1-D `FlatParameter` of $P$ elements and hands rank $r$ the half-open index range
 
 $$
-\text{shard}_r = \left\{ w_i : i \bmod N_{\text{ranks}} = r \right\}
+\text{shard}_r = \left\{ w_i : r C \le i < (r{+}1) C \right\},
+\qquad C = \left\lceil P / N_{\text{ranks}} \right\rceil
 $$
+
+with the last rank's chunk zero-padded up to $C$. (FSDP2's `fully_shard` does the same thing per parameter, splitting each tensor along dim 0.) That contiguity is what makes the `(offset, length)` chunk descriptors used by DCP and DTensor — two sections below — expressible at all; a strided partition would need one descriptor per element.
 
 If we naively call `torch.save` on each rank's local shard, we produce $N_{\text{ranks}}$ separate files that cannot be loaded without the same $N_{\text{ranks}}$ configuration. Changing cluster size during a resume becomes impossible.
 
-There are two canonical approaches:
+There are three canonical approaches:
 
 | Strategy | Description | Trade-offs |
 |---|---|---|
@@ -441,9 +444,9 @@ class AsyncCheckpointer:
         self.save_fn = save_fn
         self.interval = checkpoint_interval
         self.root_dir = root_dir
-        initialized = dist.is_available() and dist.is_initialized()
-        self.rank = dist.get_rank() if initialized else 0
-        self.world_size = dist.get_world_size() if initialized else 1
+        self._distributed = dist.is_available() and dist.is_initialized()
+        self.rank = dist.get_rank() if self._distributed else 0
+        self.world_size = dist.get_world_size() if self._distributed else 1
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._pending_error: Exception | None = None
@@ -526,7 +529,11 @@ class AsyncCheckpointer:
         # Snapshot — this blocks, but is fast (GPU->CPU copy)
         t0 = time.time()
         model_state, optim_state = self._snapshot_to_cpu(model, optimizer)
-        dist.barrier()  # All ranks finish snapshot before any continues
+        if self._distributed:
+            # All ranks finish their snapshot before any continues. Guarded:
+            # a bare dist.barrier() in the single-process case raises
+            # "Default process group has not been initialized".
+            dist.barrier()
         print(f"[async ckpt] snapshot took {time.time() - t0:.1f}s, "
               f"background write starting...")
 
@@ -568,9 +575,11 @@ Production systems use more sophisticated shared-memory mechanisms
 
 import torch
 from torch.futures import Future
+from torch.distributed._shard._utils import narrow_tensor_by_index
 from torch.distributed.checkpoint.storage import (
     StorageWriter, StorageReader, WriteResult,
 )
+from torch.distributed.checkpoint.planner import LoadItemType, WriteItemType
 from torch.distributed.checkpoint.metadata import Metadata, MetadataIndex
 from io import BytesIO
 
@@ -612,9 +621,16 @@ class InMemoryWriter(StorageWriter):
         results = []
         for item in plan.items:
             data = planner.resolve_data(item)
-            buf = BytesIO()
-            torch.save(data, buf)
-            blob = buf.getvalue()
+            if item.type == WriteItemType.BYTE_IO:
+                # Non-tensor entries (step counter, scheduler state, DTensor
+                # metadata) arrive as an already-pickled BytesIO. Store the raw
+                # bytes, exactly as FileSystemWriter does — do NOT torch.save
+                # the stream object, or the reader cannot hand it back.
+                blob = data.getvalue()
+            else:
+                buf = BytesIO()
+                torch.save(data, buf)
+                blob = buf.getvalue()
             self._buffers[_key(item.index)] = blob
             results.append(
                 WriteResult(index=item.index, size_in_bytes=len(blob),
@@ -654,8 +670,25 @@ class InMemoryReader(StorageReader):
     def read_data(self, plan, planner):
         for req in plan.items:
             blob = _IN_MEMORY_STORE[_key(req.storage_index)]
-            data = torch.load(BytesIO(blob), weights_only=False)
-            planner.commit_tensor(req, data)
+            if req.type == LoadItemType.BYTE_IO:
+                planner.load_bytes(req, BytesIO(blob))
+                continue
+            # A tensor must be narrowed to the requested chunk and COPIED into
+            # the destination view that `resolve_tensor` returns. This is the
+            # step people skip: `commit_tensor` is only a post-copy hook —
+            # `DefaultLoadPlanner.commit_tensor` is literally `pass` — so
+            # handing it a freshly loaded tensor restores nothing at all and
+            # the load "succeeds" with the model untouched.
+            tensor = torch.load(BytesIO(blob), map_location="cpu",
+                                weights_only=True)
+            tensor = narrow_tensor_by_index(
+                tensor, req.storage_offsets, req.lengths
+            )
+            target = planner.resolve_tensor(req).detach()
+            assert target.size() == tensor.size(), \
+                f"size mismatch for {req.storage_index}"
+            target.copy_(tensor)
+            planner.commit_tensor(req, target)
         # read_data must likewise return a Future (of None).
         fut: Future = Future()
         fut.set_result(None)
@@ -685,27 +718,32 @@ $$
 
     That is, on a 1024-node cluster, you expect a failure somewhere in the cluster roughly every hour. Training runs lasting weeks will experience dozens to hundreds of failures. Without checkpointing, a single failure restarts training from scratch.
 
-    The fraction of useful compute wasted by a failure with checkpoint interval $T_{\text{ckpt}}$ steps and checkpoint save time $T_{\text{save}}$ is approximately:
+    The fraction of useful compute wasted has two independent sources, and they scale with *different* denominators. The save cost is paid once per **interval** — you stop for $T_{\text{save}}$ after every $T_{\text{ckpt}}$ of useful work — while the lost work is paid once per **failure**, and a failure lands on average halfway through an interval. With checkpoint interval $T_{\text{ckpt}}$ (in units of work time) and save time $T_{\text{save}}$:
 
     $$
-    \text{waste fraction} \approx \frac{T_{\text{ckpt}}/2 + T_{\text{save}}}{T_{\text{MTBF}}}
+    \text{waste fraction} \approx \underbrace{\frac{T_{\text{save}}}{T_{\text{ckpt}}}}_{\text{save overhead}} + \underbrace{\frac{T_{\text{ckpt}}}{2\,T_{\text{MTBF}}}}_{\text{expected rework}}
     $$
 
     For $T_{\text{ckpt}} = 1000$ steps at 10 steps/min (100 min of work), $T_{\text{save}} = 5$ min, and $T_{\text{MTBF}} = 60$ min:
 
     $$
-    \text{waste} \approx \frac{50 + 5}{60} \approx 92\%
+    \text{waste} \approx \frac{5}{100} + \frac{100}{2 \times 60} = 0.05 + 0.83 \approx 88\%
     $$
 
     This motivates more frequent checkpoints and faster (async) saves.
 
-    Read that 92% as a red flag rather than a precise figure: the linear approximation assumes at most one failure per interval and is only accurate when $T_{\text{ckpt}} \ll T_{\text{MTBF}}$. Here $T_{\text{ckpt}}$ *exceeds* the MTBF, so the run frequently dies before reaching its next checkpoint, restarts from the same one, and — in the limit — never makes progress at all. The formula's job is to tell you the configuration is untenable, which it does.
+    Read that 88% as a red flag rather than a precise figure: the linear approximation assumes at most one failure per interval and is only accurate when $T_{\text{ckpt}} \ll T_{\text{MTBF}}$. Here $T_{\text{ckpt}}$ *exceeds* the MTBF, so the run frequently dies before reaching its next checkpoint, restarts from the same one, and — in the limit — never makes progress at all. The formula's job is to tell you the configuration is untenable, which it does.
+
+    Note the tension the two terms create: shortening $T_{\text{ckpt}}$ shrinks the rework term but inflates the save-overhead term. Minimising their sum is exactly the derivation of the optimal interval below.
 
 {{fig:ckpt-failure-waste-and-daly}}
 
-The optimal checkpoint interval $T^*$ that minimises expected wasted compute can be derived (Young 1974, commonly called "Daly's formula" in HPC):
+The optimal checkpoint interval $T^*$ that minimises expected wasted compute falls straight out of the two-term waste expression (Young 1974, commonly called "Daly's formula" in HPC). Setting the derivative to zero,
 
 $$
+\frac{d}{dT}\!\left[\frac{T_{\text{save}}}{T} + \frac{T}{2\,T_{\text{MTBF}}}\right]
+= -\frac{T_{\text{save}}}{T^2} + \frac{1}{2\,T_{\text{MTBF}}} = 0
+\quad\Longrightarrow\quad
 T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}}
 $$
 
@@ -974,6 +1012,7 @@ Disk I/O errors, network interruptions to a shared filesystem, or process crashe
 
 ```python
 import hashlib
+import json
 from pathlib import Path
 
 
@@ -1102,6 +1141,11 @@ fi
 A common pattern for detecting stuck (not crashed, just hung) jobs is a heartbeat: the training loop writes a timestamp to a file every N steps. A separate watchdog process kills and restarts the job if the timestamp is older than a threshold.
 
 ```python
+import json
+import time
+from pathlib import Path
+
+
 class TrainingHeartbeat:
     """Write a heartbeat file periodically so external monitors can detect
     hung jobs (e.g., deadlocked collectives)."""
@@ -1141,7 +1185,8 @@ The following shows how all the components above fit together in a real training
 train_loop.py — Fault-tolerant pretraining main loop sketch.
 
 Assumes: FSDP model, AdamW optimizer, cosine LR schedule,
-         sharded data loader, CheckpointManager, AsyncCheckpointer.
+         sharded data loader, CheckpointManager (synchronous saves — swap in
+         AsyncCheckpointer or dcp.async_save once the run is large enough).
 """
 
 import os
@@ -1206,7 +1251,14 @@ def main():
         x, y = x.to(device), y.to(device)
 
         optimizer.zero_grad()
-        loss = model(x, labels=y).loss
+        # `y` is ALREADY shifted by one position by ShardedTextDataset, so the
+        # model must not shift again. This custom head takes pre-shifted
+        # targets. With a HuggingFace `*ForCausalLM` you would instead pass
+        # `labels=` and feed it the UNSHIFTED window, because it applies its
+        # own `shift_labels = labels[..., 1:]` internally — doing both trains
+        # position t to predict token t+2, an off-by-one that never crashes
+        # and only shows up as a stubbornly high loss.
+        loss = model(x, targets=y)
         loss.backward()
 
         # Gradient clipping — important for training stability.
@@ -1234,8 +1286,13 @@ def main():
                 dl.state_dict(), rank
             )
 
-    # Ensure final async checkpoint write completes
-    dist.barrier()
+    # Final checkpoint. The periodic branch only fires on multiples of 1000,
+    # so without this the last steps of work are silently lost.
+    # `ckpt_manager.save` is synchronous and barriers internally. Had we driven
+    # an AsyncCheckpointer instead, this is where `checkpointer.wait()` would
+    # go: a dist.barrier() synchronises RANKS, it does not join a local
+    # background write thread.
+    ckpt_manager.save(model, optimizer, step, scheduler, dl.state_dict(), rank)
     if rank == 0:
         print("Training complete.")
 
@@ -1253,7 +1310,7 @@ if __name__ == "__main__":
 
     First, apply Daly's formula for optimal checkpoint interval: $T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}} = \sqrt{2 \times 8 \times 90} \approx 38$ minutes. So checkpoint every ~38 minutes, not every 90.
 
-    Second, switch to asynchronous checkpointing. The critical path is the GPU-to-CPU tensor snapshot (roughly 30–60 seconds for a 70B model, since the ~840 GB of optimizer state must be copied to pinned CPU RAM). Once on CPU, disk write happens in the background while training continues. This reduces the hard blocking time from 8 minutes to ~1 minute.
+    Second, switch to asynchronous checkpointing. The critical path is then only the GPU-to-CPU tensor snapshot, and that is *fast*, because the ~980 GB of weights plus optimizer state is sharded: each of the 2048 ranks stages roughly 0.5 GB, and a pinned device-to-host copy runs at tens of GB/s per GPU, so the staging itself is well under a second per rank. Once on CPU, the disk write happens in the background while training continues. Budget a second or two of hard blocking rather than 8 minutes — torchtitan reports under 2 s of end-to-end checkpoint overhead on Llama-3 405B at 432 H200s. If your measured staging time is tens of seconds, you are copying into *pageable* memory, or serialising the snapshot through rank 0.
 
     Third, use PyTorch DCP sharded checkpoints: all 2048 ranks write in parallel to a distributed filesystem, achieving near-linear I/O scaling versus serialised saves through rank 0.
 
@@ -1369,22 +1426,27 @@ if __name__ == "__main__":
 
 **4.** Continuing from Exercise 3's cluster but now with a harder failure regime, take $T_{\text{MTBF}} = 90$ minutes and a checkpoint interval of $T_{\text{ckpt}} = 30$ minutes of work. Using the chapter's waste-fraction approximation
 $$
-\text{waste} \approx \frac{T_{\text{ckpt}}/2 + T_{\text{save}}}{T_{\text{MTBF}}},
+\text{waste} \approx \frac{T_{\text{save}}}{T_{\text{ckpt}}} + \frac{T_{\text{ckpt}}}{2\,T_{\text{MTBF}}},
 $$
 compute the wasted-compute fraction (a) for synchronous checkpointing with $T_{\text{save}} = 8$ min, and (b) after switching to asynchronous checkpointing that reduces the hard blocking time to $T_{\text{save}} = 1$ min. (c) Which term dominates, and what does that tell you about where to spend engineering effort?
 
 ??? note "Solution"
+    The rework term is the same in both cases:
+    $$
+    \frac{T_{\text{ckpt}}}{2\,T_{\text{MTBF}}} = \frac{30}{2 \times 90} = \frac{30}{180} \approx 16.7\%.
+    $$
+
     (a) Synchronous, $T_{\text{save}} = 8$ min:
     $$
-    \text{waste} \approx \frac{30/2 + 8}{90} = \frac{15 + 8}{90} = \frac{23}{90} \approx 25.6\%.
+    \text{waste} \approx \frac{8}{30} + \frac{30}{180} = 0.267 + 0.167 \approx 43.3\%.
     $$
 
     (b) Asynchronous, $T_{\text{save}} = 1$ min (only the GPU-to-CPU snapshot blocks; disk I/O overlaps training):
     $$
-    \text{waste} \approx \frac{15 + 1}{90} = \frac{16}{90} \approx 17.8\%.
+    \text{waste} \approx \frac{1}{30} + \frac{30}{180} = 0.033 + 0.167 \approx 20.0\%.
     $$
 
-    (c) The dominant term is $T_{\text{ckpt}}/2 = 15$ min — the expected lost work since a failure lands, on average, halfway through the interval. Async checkpointing shrinks only the $T_{\text{save}}$ term ($8 \to 1$ min), buying about 8 percentage points. To attack the larger $T_{\text{ckpt}}/2$ term you must checkpoint *more frequently*, which is only affordable once $T_{\text{save}}$ is small — so async saves and shorter intervals are complementary: async makes the frequent-checkpoint regime that Daly's formula recommends practical.
+    (c) At $T_{\text{save}} = 8$ min the **save-overhead** term dominates (26.7% versus 16.7% of rework): you are stopping the whole cluster for 8 minutes out of every 38, which is why async staging is the first thing to fix — it buys roughly 23 percentage points on its own. Once $T_{\text{save}}$ is small, the rework term takes over and the remaining lever is a *shorter* interval, which is only affordable because $T_{\text{save}}$ is now small. That is exactly the complementarity Daly's formula encodes: with $T_{\text{save}} = 1$ min, $T^* = \sqrt{2 \times 1 \times 90} \approx 13.4$ min, dropping total waste to about $1/13.4 + 13.4/180 \approx 15\%$.
 
 **5.** The chapter's `CheckpointManager.latest()` finds the newest directory that contains a `COMPLETE` sentinel, but it never checks *content* integrity — a checkpoint whose `COMPLETE` file was written yet whose shard bytes were later corrupted on disk would still be selected. Modify `latest()` so it (a) also runs the chapter's `verify_checksums()` on each candidate and (b) falls back to the next-most-recent good checkpoint when a candidate is incomplete or fails verification, returning `None` only if no valid checkpoint exists. Keep the chapter's style.
 

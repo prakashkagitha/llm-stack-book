@@ -344,8 +344,15 @@ def late_chunk_document(
     Args:
         document:          Full document string.
         chunk_boundaries:  List of (start_char, end_char) defining each chunk.
-                           These can be obtained from structural_chunking above,
-                           or any other boundary detection method.
+                           They must come from an *offset-preserving* splitter.
+                           Note `split_markdown` in §2.3 is not one: it returns
+                           chunk text only, and its paragraph sub-split
+                           (`re.split` + `.strip()`) discards offsets entirely.
+                           To feed this function, record the heading regex's
+                           `m.start()` offsets and replace the paragraph
+                           `re.split` with an equivalent `re.finditer`, whose
+                           matches carry `.start()`/`.end()` spans (offset by
+                           the section's own start in the document).
         model_name:        HuggingFace encoder model (must support long context).
         device:            'cpu' or 'cuda'.
 
@@ -540,8 +547,19 @@ class BM25Index:
         return score
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[int, float]]:
-        """Return (doc_idx, bm25_score) sorted descending."""
-        scores = [(i, self.score(query, i)) for i in range(self.N)]
+        """Return (doc_idx, bm25_score) sorted descending, matching docs only.
+
+        Documents containing none of the query terms score exactly 0.0 (every
+        IDF here is non-negative), and we drop them — an inverted index only
+        walks posting lists, so it never surfaces them either. This matters for
+        the RRF fusion below: RRF uses rank ordinals, so a zero-score document
+        padding the BM25 list to `top_k` would still be handed real fusion mass.
+        The list may therefore be shorter than `top_k`.
+        """
+        scores = [
+            (i, s) for i, s in ((i, self.score(query, i)) for i in range(self.N))
+            if s > 0.0
+        ]
         scores.sort(key=lambda x: -x[1])
         return scores[:top_k]
 
@@ -730,11 +748,17 @@ def rerank(
         List of (passage_text, relevance_score) sorted by descending score.
 
     Notes:
-        - Scores are logits (not probabilities) from the final classification
-          head, unless the model card specifies a sigmoid activation. They are
-          comparable *within* one query's candidate list and meaningless across
-          queries or across models — never threshold on a raw logit without
-          calibrating on your own data first.
+        - The score scale depends on the model, not on the library defaults you
+          might assume: `predict()` applies the activation recorded in the
+          model's config, and for a `num_labels=1` checkpoint that records none,
+          sentence-transformers falls back to `Sigmoid`, so you get values in
+          (0, 1). The `cross-encoder/ms-marco-*` models explicitly store
+          `Identity`, which is why they return raw logits like 8.6 or -4.3.
+          Check the loaded model's activation (`activation_fn` in
+          sentence-transformers v4+, `default_activation_function` before that)
+          rather than guessing. Either way the numbers are comparable *within*
+          one query's candidate list and meaningless across queries or across
+          models — never threshold without calibrating on your own data first.
         - Higher score = more relevant.
     """
     if not candidates:
@@ -842,7 +866,7 @@ import re
 
 
 REWRITE_PROMPT = """\
-You are a retrieval expert. Given a user question, produce 3 alternative phrasings
+You are a retrieval expert. Given a user question, produce {n} alternative phrasings
 that together cover the semantic space of the question. Return a JSON list of strings.
 
 User question: {question}
@@ -866,7 +890,9 @@ def expand_query(
     Returns:
         List of query strings including the original.
     """
-    prompt = REWRITE_PROMPT.format(question=question)
+    # Ask for `n_variants` in the prompt *and* truncate to it afterwards: the
+    # slice alone would silently return 3 no matter what the caller asked for.
+    prompt = REWRITE_PROMPT.format(question=question, n=n_variants)
     response = llm_call(prompt)
 
     # Extract JSON list from LLM output (handle markdown code fences)
@@ -1139,7 +1165,10 @@ class RAGConfig:
 
     # Query expansion
     use_hyde: bool = False          # enable HyDE
-    n_query_variants: int = 1       # 1 = no expansion
+    n_query_variants: int = 1       # 1 = no expansion. >1 means the caller runs
+                                    # expand_query() (Section 5.1) and fuses one
+                                    # retrieval per variant; the pipeline below
+                                    # implements the single-query path only.
 
     # Reranking
     use_reranker: bool = True
@@ -1156,7 +1185,7 @@ class RAGResult:
     query: str
     retrieved_chunks: list[str]
     rrf_scores: list[float]
-    reranker_scores: list[float]
+    reranker_scores: list[float]   # empty when reranking was disabled
     hyde_hypothesis: str | None = None
 
 
@@ -1220,7 +1249,10 @@ def run_rag_pipeline(
         reranker_scores = [float(s) for _, s in reranked]
     else:
         final_chunks = candidate_texts[:config.reranker_top_k]
-        reranker_scores = [rrf_by_text[t] for t in final_chunks]
+        # No cross-encoder ran, so there are no reranker scores. Copying the
+        # RRF scores here would hand downstream logging and A/B analysis a
+        # fabricated reranker signal for a run that never reranked.
+        reranker_scores = []
 
     return RAGResult(
         query=query,

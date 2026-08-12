@@ -24,7 +24,7 @@ The interplay with weight initialization is important. Standard initialization s
 
 ### Linear Schedule
 
-The simplest useful schedule: ramp linearly from $\eta_{\min}$ to $\eta_{\max}$ during warmup, then decay linearly to $\eta_{\min}$ over the remaining steps.
+The simplest useful schedule: ramp linearly from zero to $\eta_{\max}$ during warmup, then decay linearly over the remaining steps — as written below, all the way to zero. In practice you usually stop at a floor $\eta_{\min}$ instead, which is the form Exercise 5 asks you to implement: $\eta(t) = \eta_{\min} + (\eta_{\max}-\eta_{\min})\frac{T-t}{T-T_w}$.
 
 $$
 \eta(t) = \begin{cases}
@@ -48,7 +48,7 @@ $$
 Key properties:
 - Spends most of the budget near the peak learning rate (the cosine curve is flat near its maximum), which means the network sees aggressive gradient steps for most of training — good for exploration.
 - The tail naturally slows down near the end, allowing fine-grained convergence.
-- The exact shape is not sensitive to the precise $T$ you use, as long as $T$ is approximately correct.
+- The shape *is* sensitive to the $T$ you use: Hoffmann et al. (Chinchilla, 2022, App. A) show that stretching the cosine cycle well beyond the actual number of training steps (by roughly 25% or more) measurably worsens final loss, because the LR never finishes decaying. The cycle length must match the run you actually intend to do.
 
 The main weakness: cosine requires knowing the total token budget $T$ upfront. If you extend the run or add a second phase, you need to restart the schedule or accept a discontinuity.
 
@@ -72,7 +72,7 @@ $$
 \end{cases}
 $$
 
-where $f$ is a decay function. Cosine and linear both work; MiniCPM itself used an exponential decay, $f(s) = 0.5^{s/T_d}$, while Hägele et al. (2024) swept cooldown shapes head-to-head and found a $1-\sqrt{\cdot}$ shape (fast at first, flattening at the end) beats linear. Unlike standard cosine pretraining practice, the WSD decay usually goes all the way to (near) zero rather than stopping at $\eta_{\max}/10$ — the last bit of decay is where the characteristic extra loss drop lives. A common budget is $T_d \approx 10\%$ of total steps.
+where $f$ is a decay function of the *normalized* decay fraction $s \in [0, 1]$. Cosine and linear both work; MiniCPM itself used an exponential decay with a fixed half-life $T_{1/2}$ measured in **raw steps** into the decay, $\eta(t) = \eta_{\max}\cdot 0.5^{(t - T_w - T_s)/T_{1/2}}$ — i.e. $f(s) = 0.5^{s\,T_d/T_{1/2}}$ in the normalized notation above — while Hägele et al. (2024) swept cooldown shapes head-to-head and found a $1-\sqrt{\cdot}$ shape (fast at first, flattening at the end) beats linear. Unlike standard cosine pretraining practice, the WSD decay usually goes all the way to (near) zero rather than stopping at $\eta_{\max}/10$ — the last bit of decay is where the characteristic extra loss drop lives. A common budget is $T_d \approx 10\%$ of total steps.
 
 The insight driving WSD is that most of the loss reduction happens in the stable phase, and the decay phase mainly "polishes" the model. This decoupling buys three things:
 
@@ -179,9 +179,12 @@ if __name__ == "__main__":
         lrs.append(optimizer.param_groups[0]["lr"])
         scheduler.step()
 
-    # Verify: step 50 should be ~50% of peak; step 999 should be near min
-    assert abs(lrs[50] / lrs[99] - 50/100) < 0.01, "warmup slope wrong"
-    assert lrs[-1] < lrs[99] * 0.15, "floor not reached"
+    # Verify: step 50 should be ~50% of peak; step 999 should be near min.
+    # The peak is lrs[100] (first step of the cosine branch), NOT lrs[99],
+    # which is still one warmup step below it.
+    peak = max(lrs)
+    assert abs(lrs[50] / peak - 0.5) < 1e-9, "warmup slope wrong"
+    assert lrs[-1] < peak * 0.15, "floor not reached"
     print(f"Peak LR: {max(lrs):.2e}, Final LR: {lrs[-1]:.2e}")
     # Output: Peak LR: 3.00e-04, Final LR: 3.00e-05
 ```
@@ -263,7 +266,7 @@ PyTorch's `torchtitan` reference stack similarly exposes warmup/stable/decay pha
 
 ### Making the Schedule Restart-Safe
 
-Long pretraining runs get preempted, and the schedule must survive the restart exactly. There is a footgun here: `LambdaLR.state_dict()` cannot serialize a plain-function `lr_lambda` (it is skipped, with a warning), so a naive `torch.save(scheduler.state_dict())` round-trip can silently restore only `last_epoch` — and if you rebuild the scheduler with different `num_training_steps` on resume, you get a *different curve* with no error.
+Long pretraining runs get preempted, and the schedule must survive the restart exactly. There is a footgun here: `LambdaLR.state_dict()` cannot serialize a plain-function `lr_lambda` (it is silently stored as `None`), so a naive `torch.save(scheduler.state_dict())` round-trip can silently restore only `last_epoch` — and if you rebuild the scheduler with different `num_training_steps` on resume, you get a *different curve* with no error.
 
 The robust pattern used by most production trainers, including the capstone's `wsd_lr`, is to make the schedule a **pure function of the global step** and set the LR by hand each iteration. There is no hidden state to checkpoint beyond the step counter you were already saving:
 
@@ -432,8 +435,9 @@ def train_step_with_grad_accumulation(
     optimizer: torch.optim.Optimizer,
     data_loader,
     accumulation_steps: int = 4,
-    scaler=None,  # Optional GradScaler for mixed precision
+    scaler=None,  # GradScaler: needed for fp16 ONLY, never for bf16
     device: str = "cuda",
+    amp_dtype: torch.dtype = torch.bfloat16,  # set None to disable autocast
 ) -> float:
     """
     One effective step = accumulation_steps micro-forward-backward passes.
@@ -456,8 +460,14 @@ def train_step_with_grad_accumulation(
         )
 
         with sync_ctx:
-            # Use autocast for bf16/fp16 if scaler is provided
-            amp_ctx = torch.autocast("cuda", dtype=torch.bfloat16) if scaler else nullcontext()
+            # Autocast is controlled by amp_dtype, NOT by the scaler: bf16 has
+            # fp32's exponent range and needs no loss scaling, while fp16 does
+            # (pass a GradScaler alongside amp_dtype=torch.float16).
+            amp_ctx = (
+                torch.autocast(device, dtype=amp_dtype)
+                if amp_dtype is not None
+                else nullcontext()
+            )
             with amp_ctx:
                 logits = model(input_ids)
                 # CRITICAL: divide by accumulation_steps so effective batch
@@ -509,7 +519,7 @@ $$
 \theta_{t+1} = (1 - \lambda \eta) \theta_t - \eta \cdot m_t / (\sqrt{v_t} + \epsilon)
 $$
 
-The decay is applied to the raw parameter values, not the gradient estimate, which prevents the adaptive scaling of Adam from interfering with regularization. Typical values: $\lambda = 0.1$ for pretraining (used in GPT-3, Llama, and most modern runs). Embeddings and bias terms are usually excluded from decay since they have a different scale and semantics.
+The decay is applied to the raw parameter values, not the gradient estimate, which prevents the adaptive scaling of Adam from interfering with regularization. Typical values: $\lambda = 0.1$ for pretraining (used in GPT-3, Llama, and most modern runs). Bias terms and normalization scales — the 1D parameters — are usually excluded from decay since they have a different scale and semantics; some recipes additionally exclude the embedding matrices, but decaying them is the more common default.
 
 Notice what the update equation implies: the shrinkage per step is $\lambda\eta$, **not** $\lambda$. Weight decay and the learning rate are therefore not independent knobs — they multiply. Two consequences follow, and both bite in practice:
 
@@ -531,15 +541,17 @@ def get_optimizer_with_decay(
     betas=(0.9, 0.95) is standard for LLM pretraining — beta2=0.999 (default)
     can slow adaptation to gradient changes late in training.
     """
-    # Partition params: decay weights but NOT biases, LayerNorm params, embeddings
+    # Partition params: decay the 2D weight matrices, NOT biases/LayerNorm params
     decay_params = []
     no_decay_params = []
 
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        # Common no-decay criteria: 1D params (bias, LN scale/bias),
-        # and sometimes embedding matrices
+        # Common no-decay criteria: 1D params (bias, LN scale/bias).
+        # NOTE: an nn.Embedding weight is 2D, so it lands in decay_params here.
+        # If your recipe also excludes embeddings, add an explicit test such as
+        # `or "embed" in name.lower()` -- it is not implied by the rule below.
         if param.ndim == 1 or "bias" in name or "norm" in name.lower():
             no_decay_params.append(param)
         else:
@@ -649,7 +661,7 @@ The key changes relative to standard PyTorch initialization:
 |---|---|---|
 | Input embedding | $\mathcal{N}(0, 1)$ | $\mathcal{N}(0, 1)$ |
 | Hidden weight $W \in \mathbb{R}^{d_{\text{in}} \times d_{\text{out}}}$ | $\mathcal{N}(0, \sigma^2/d_{\text{in}})$ | $\mathcal{N}(0, \sigma^2/d_{\text{in}})$ |
-| Output / readout weight | $\mathcal{N}(0, 1/d_{\text{in}})$ | $\mathcal{N}(0, 1/d_{\text{in}}^2)$ with a unit multiplier — equivalently $\mathcal{N}(0, 1/d_{\text{in}})$ with an explicit $1/d$ output multiplier, as in `mup.MuReadout`. Apply **one** of the two, not both. |
+| Output / readout weight | $\mathcal{N}(0, 1/d_{\text{in}})$ | $\mathcal{N}(0, 1/d_{\text{in}}^2)$ with a unit multiplier — equivalently, a *width-independent* init std (variance $1/d_{\text{base}}$) together with an explicit $1/d$ output multiplier, as in `mup.MuReadout`. Both give an effective readout scale $\propto 1/d$; apply **one** of the two, not both. |
 | Per-layer LR multiplier | 1 | $1/d_{\text{in}}$ for hidden; $1/d$ for readout |
 | Attention logit scale | $1/\sqrt{d_k}$ | $1/d_k$ |
 
@@ -892,7 +904,7 @@ The typical workflow is:
 
 The evidence that this works is now substantial: Microsoft's Phi models, various internal runs at other labs, and controlled ablations in the *Tensor Programs V* paper all show that muP-transferred LRs closely match the empirically optimal LRs found by grid search at the large scale — saving orders-of-magnitude in tuning compute.
 
-Two notes on how this looks in 2026 practice. First, many teams no longer depend on the `mup` package: because the prescription reduces to a handful of rules (init std $\propto 1/\sqrt{\text{fan\_in}}$, readout output scaled by an extra $1/d$ *or* — equivalently, never both — its init std divided by an extra $\sqrt{d}$, per-matrix LR $\propto 1/\text{fan\_in}$ for the matrices whose fan-in grows with width, attention logits divided by $d_k$ rather than $\sqrt{d_k}$), it is often written directly into the model definition — which is also what makes it survive `torch.compile` and FSDP wrapping without surprises. Second, **normalized-update optimizers get part of this for free.** Muon's orthogonalized update has a fixed per-element RMS by construction, independent of gradient scale and largely of width, so its peak LR transfers across width far better than Adam's — which is why the capstone can carry a peak LR measured on a 43M proxy up to full width with only a short confirmation run instead of a full muP apparatus ([Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html)). muP and normalized optimizers are attacking the same problem — making the update magnitude scale-invariant — from opposite ends.
+Two notes on how this looks in 2026 practice. First, many teams no longer depend on the `mup` package: because the prescription reduces to a handful of rules (init std $\propto 1/\sqrt{\text{fan\_in}}$, readout output scaled by an extra $1/d$ on top of a width-independent init std *or* — equivalently, never both — the usual $1/\sqrt{\text{fan\_in}}$ init std divided by an extra $\sqrt{d}$ and no output multiplier, per-matrix LR $\propto 1/\text{fan\_in}$ for the matrices whose fan-in grows with width, attention logits divided by $d_k$ rather than $\sqrt{d_k}$), it is often written directly into the model definition — which is also what makes it survive `torch.compile` and FSDP wrapping without surprises. Second, **normalized-update optimizers get part of this for free.** Muon's orthogonalized update has a fixed per-element RMS by construction, independent of gradient scale and largely of width, so its peak LR transfers across width far better than Adam's — which is why the capstone can carry a peak LR measured on a 43M proxy up to full width with only a short confirmation run instead of a full muP apparatus ([Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html)). muP and normalized optimizers are attacking the same problem — making the update magnitude scale-invariant — from opposite ends.
 
 !!! warning "What muP Transfers - and What It Does Not"
 
@@ -1038,7 +1050,7 @@ Hyperparameter Launch Checklist
 [ ] LR scaled for batch size if changed from reference run (sqrt for AdamW/Muon)
 [ ] Cosine or WSD schedule: total_steps (cosine) or stable_steps set
 [ ] Min LR floor = 10% of peak LR
-[ ] Weight decay = 0.1 (decoupled, excluded from embeddings/norms/biases)
+[ ] Weight decay = 0.1 (decoupled, excluded from 1D params: norms/biases)
 [ ] Grad clip norm = 1.0; grad norm logged every step
 [ ] beta2 = 0.95 (not 0.999 default)
 [ ] Gradient accumulation: effective_batch = micro_batch * accum_steps * world_size

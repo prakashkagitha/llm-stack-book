@@ -172,7 +172,7 @@ This is the defining constraint of tensor parallelism: **it must run over the fa
 
 ### The Vocabulary: Parallel Embedding and Parallel Cross-Entropy
 
-The token embedding table and the (usually weight-tied) LM head are each a $V \times h$ matrix, with $V$ ranging from ~32k to 256k+ — for large $h$ this is routinely the single biggest matrix in the model, bigger than any individual attention or MLP weight. You cannot assemble an end-to-end TP transformer without sharding these along the **vocabulary** dimension across the $t$ TP ranks: a third partitioning strategy, distinct from both the column-parallel and row-parallel matmul patterns above.
+The token embedding table and the (usually weight-tied) LM head are each a $V \times h$ matrix, with $V$ ranging from ~32k to 256k+ — for large $h$ this is routinely the single biggest matrix in the model, bigger than any individual attention or MLP weight. You cannot assemble an end-to-end TP transformer without sharding these along the **vocabulary** dimension across the $t$ TP ranks. That is not a new algebra: it is the *same* row-parallel pattern applied to the embedding (the vocabulary is the contracted dimension of the one-hot lookup, hence the all-reduce) and the *same* column-parallel pattern applied to the LM head (where the vocabulary is the *output* dimension). What is new are the two wrinkles the vocabulary forces at each end: **index masking** on the input side, and a **fused parallel cross-entropy** on the output side so the full $[N, V]$ logits are never materialized.
 
 **Vocab-parallel embedding.** Rank $r$ owns rows $[r \cdot V_{\text{loc}} : (r+1) \cdot V_{\text{loc}})$ of the table, where $V_{\text{loc}} = V / t$. A lookup for a token id outside a rank's local range must resolve to zero on that rank; summing across ranks then recovers the correct row, since exactly one rank owns each id.
 
@@ -188,6 +188,7 @@ class VocabParallelEmbedding(nn.Module):
         self.vocab_end = self.vocab_start + self.V_loc
         self.tp_group = tp_group
         self.weight = nn.Parameter(torch.empty(self.V_loc, h))   # [V_loc, h]
+        nn.init.normal_(self.weight, std=0.02)   # torch.empty is uninitialized memory
 
     def forward(self, input_ids):                      # input_ids: [b, s], long
         mask = (input_ids < self.vocab_start) | (input_ids >= self.vocab_end)
@@ -241,9 +242,9 @@ Megatron-LM implements exactly these primitives as `megatron.core.tensor_paralle
 
 Look again at the Megatron block: between the two TP regions sit the **LayerNorm/RMSNorm and the dropout/residual-add**, which Megatron *replicates* (every TP rank does the same redundant work on the full $s \times h$ tensor). That replication wastes both compute and, more importantly, **activation memory**: each rank stores the full LayerNorm activations.
 
-**Sequence parallelism (SP)** — in this Megatron sense (Korthikanti et al., 2022) — splits those replicated regions along the *sequence* dimension instead. The norm and residual are now done on $s/t \times h$ shards. The catch: the boundaries between an SP region (sharded on sequence) and a TP region (sharded on hidden/features) require a conversion. Megatron shows that the *same* all-reduce of the TP region can be **decomposed into a reduce-scatter + all-gather** that achieves the layout conversion *for the same total communication volume*. So Megatron-style SP is essentially free communication-wise and meaningfully cuts activation memory — it is now standard and always-on in Megatron. (Note: this "sequence parallelism" is a memory optimization *within* a TP group, and is distinct from **context parallelism / Ring Attention**, covered later, which is a true sequence split for long context.)
+**Sequence parallelism (SP)** — in this Megatron sense (Korthikanti et al., 2022) — splits those replicated regions along the *sequence* dimension instead. The norm and residual are now done on $s/t \times h$ shards. The catch: the boundaries between an SP region (sharded on sequence) and a TP region (sharded on hidden/features) require a conversion. Megatron shows that the *same* all-reduce of the TP region can be **decomposed into a reduce-scatter + all-gather** that achieves the layout conversion *for the same total communication volume*. So Megatron-style SP is essentially free communication-wise and meaningfully cuts activation memory — it is the recommended default in Megatron whenever TP > 1, enabled with the `--sequence-parallel` flag (Megatron turns it back off automatically at TP=1, where there is no TP region to shard against). (Note: this "sequence parallelism" is a memory optimization *within* a TP group, and is distinct from **context parallelism / Ring Attention**, covered later, which is a true sequence split for long context.)
 
-One correctness detail this split forces, easy to miss when hand-rolling TP: **dropout needs two different RNG regimes.** Dropout applied inside a TP region acts on a *distinct feature shard* per rank, so each rank must draw a *different* mask — using the same seed everywhere would correlate the masks and effectively reduce the dropout rate. Dropout applied to a replicated tensor (e.g. on the residual stream before SP shards it) must use the *same* seed on all ranks, or the replicas silently diverge. Megatron keeps both states in a seed tracker (`model_parallel_cuda_manual_seed` / `get_cuda_rng_tracker` in `megatron/core/tensor_parallel/random.py`) and switches between them at region boundaries; PyTorch's DTensor path handles the equivalent bookkeeping through its `OffsetBasedRNGTracker`. If your architecture has no dropout (as most 2026 pretraining recipes do not), this problem disappears — which is one small extra reason the modern default is dropout-free pretraining.
+One correctness detail this split forces, easy to miss when hand-rolling TP: **dropout needs two different RNG regimes.** Dropout applied inside a TP region acts on a *distinct feature shard* per rank, so each rank must draw a *different* mask — using the same seed everywhere drops the *same offsets inside every shard*, which leaves the marginal drop probability (and hence the expected fraction of zeroed activations) exactly unchanged, but makes the mask correlated across feature shards instead of i.i.d. over the full hidden dimension (effectively $h/t$ independent Bernoullis instead of $h$), so the model no longer sees the dropout noise distribution of the single-GPU baseline. Dropout applied to a replicated tensor (e.g. on the residual stream before SP shards it) must use the *same* seed on all ranks, or the replicas silently diverge. Megatron keeps both states in a seed tracker (`model_parallel_cuda_manual_seed` / `get_cuda_rng_tracker` in `megatron/core/tensor_parallel/random.py`) and switches between them at region boundaries; PyTorch's DTensor path handles the equivalent bookkeeping through its `OffsetBasedRNGTracker`. If your architecture has no dropout (as most 2026 pretraining recipes do not), this problem disappears — which is one small extra reason the modern default is dropout-free pretraining.
 
 ### The Library: PyTorch-Native TP with DTensor
 
@@ -341,7 +342,9 @@ The bubble fraction is the *same* $\frac{p-1}{m+p-1}$ as GPipe — 1F1B's win is
 # Minimal 1F1B driver (single-stage view). In reality each rank runs this with
 # send/recv to its neighbors. `num_micro` = m, `stage` in [0, p-1], `p` = #stages.
 def run_1f1b(stage, p, num_micro, fwd_step, bwd_step, recv_act, send_act,
-             recv_grad, send_grad):
+             recv_grad, send_grad, next_input, loss_grad):
+    # `next_input()` yields the next microbatch (used only by stage 0);
+    # `loss_grad()` returns dL/d(output) for the next microbatch (only stage p-1).
     warmup = p - stage - 1                 # how many forwards before first backward
     warmup = min(warmup, num_micro)
     steady = num_micro - warmup
@@ -488,6 +491,7 @@ Because the router sends tokens to experts that live on *other* devices, EP's si
 # Sketch of one expert-parallel MoE layer. `ep_group` spans `e` ranks;
 # this rank owns experts [rank*E_local : (rank+1)*E_local].
 import torch, torch.distributed as dist, torch.nn.functional as F
+import torch.distributed.nn.functional as dist_nn   # autograd-aware collectives
 
 def bucket_tokens_by_rank(x, dest_rank, e):
     # x: [T, h] (for k>1, each token is expanded to k rows before this call);
@@ -530,16 +534,24 @@ def moe_forward(x, gate, experts_local, E, e, ep_group, k=1):
     output_splits = recv_counts.tolist()
 
     # 2) DISPATCH: all-to-all with EXPLICIT variable split sizes, sized from the exchange.
+    #    Use the *differentiable* all-to-all from torch.distributed.nn.functional: plain
+    #    dist.all_to_all_single writes into a fresh buffer with no autograd edge back to
+    #    send_buf, so gradients would never reach the expert weights or x — you would
+    #    silently train only the router. The differentiable version's backward is the
+    #    transposed all-to-all (splits swapped): backward-of-dispatch IS combine.
     recv_buf = send_buf.new_empty((int(recv_counts.sum()), x.shape[-1]))   # [T_recv, h]
-    dist.all_to_all_single(recv_buf, send_buf, output_splits, input_splits, group=ep_group)
+    recv_buf = dist_nn.all_to_all_single(recv_buf, send_buf, output_splits, input_splits,
+                                         group=ep_group)
 
     # 3) Run the local experts on received tokens.
     local_out = run_local_experts(recv_buf, experts_local, recv_counts, E_local)  # [T_recv, h]
 
     # 4) COMBINE: all-to-all back to each token's original owner — note the split sizes
-    #    are SWAPPED relative to dispatch (we're now sending back what we received).
+    #    are SWAPPED relative to dispatch (we're now sending back what we received),
+    #    and again we use the differentiable collective (its backward is the dispatch).
     combine_buf = local_out.new_empty((int(counts.sum()), x.shape[-1]))    # [T, h]
-    dist.all_to_all_single(combine_buf, local_out, input_splits, output_splits, group=ep_group)
+    combine_buf = dist_nn.all_to_all_single(combine_buf, local_out, input_splits,
+                                            output_splits, group=ep_group)
 
     # 5) Unsort back to original token order, then weight by router probs.
     out = torch.empty_like(combine_buf)
@@ -651,7 +663,7 @@ The visualizer below puts all four of the load-bearing axes side by side on one 
     - [Shoeybi et al., *Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism* (2019)](https://arxiv.org/abs/1909.08053) — introduced column/row parallel linear layers and the two-all-reduce-per-block TP formulation that every framework still uses.
     - [Huang et al., *GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism* (2019)](https://arxiv.org/abs/1811.06965) — established the microbatch pipeline schedule and the bubble-fraction formula.
     - [Narayanan et al., *Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM* (2021)](https://arxiv.org/abs/2104.04473) — interleaved 1F1B virtual stages, 3D-parallelism analysis, and the first trillion-parameter training result.
-    - [Korthikanti et al., *Reducing Activation Recomputation in Large Transformer Models* (2022)](https://arxiv.org/abs/2205.05198) — Megatron sequence parallelism (SP) and selective activation recomputation; SP is now always-on in Megatron.
+    - [Korthikanti et al., *Reducing Activation Recomputation in Large Transformer Models* (2022)](https://arxiv.org/abs/2205.05198) — Megatron sequence parallelism (SP) and selective activation recomputation; SP is the recommended default in Megatron whenever TP > 1, switched on with `--sequence-parallel`.
 
     **Recent advances (2023–2026)**
 
@@ -741,10 +753,10 @@ The visualizer below puts all four of the load-bearing axes side by side on one 
     \frac{p-1}{m+p-1} = \frac{3}{32+3} = \frac{3}{35} \approx 0.086 = 8.6\% .
     $$
 
-**4.** Estimate the tensor-parallel communication volume for one transformer *layer* forward pass. Use $s = 8192$, $h = 8192$, activations in bf16 (2 bytes), and TP degree $t = 8$ with ring all-reduce. (a) How many bytes does each GPU send+receive per all-reduce, using the chapter's $2\cdot\frac{t-1}{t}\cdot(s\,h\cdot 2)$ estimate? (b) A layer forward does two all-reduces; what is the per-GPU per-layer forward volume? (c) Why does this quantity, multiplied out over 80 layers, force the TP group onto NVLink rather than InfiniBand?
+**4.** Estimate the tensor-parallel communication volume for one transformer *layer* forward pass. Use $s = 8192$, $h = 8192$, activations in bf16 (2 bytes), and TP degree $t = 8$ with ring all-reduce. (a) How many bytes does each GPU send — and, separately, receive — per all-reduce, using the chapter's $2\cdot\frac{t-1}{t}\cdot(s\,h\cdot 2)$ estimate? (b) A layer forward does two all-reduces; what is the per-GPU per-layer forward volume (per direction)? (c) Why does this quantity, multiplied out over 80 layers, force the TP group onto NVLink rather than InfiniBand?
 
 ??? note "Solution"
-    (a) The activation tensor per all-reduce has $s \cdot h = 8192 \cdot 8192 = 67{,}108{,}864$ elements, i.e. $\approx 6.71 \times 10^7$. In bf16 that is $s\,h \cdot 2 = 1.342 \times 10^8$ bytes $\approx 128$ MiB. The ring-all-reduce per-GPU send+receive volume is
+    (a) The activation tensor per all-reduce has $s \cdot h = 8192 \cdot 8192 = 67{,}108{,}864$ elements, i.e. $\approx 6.71 \times 10^7$. In bf16 that is $s\,h \cdot 2 = 1.342 \times 10^8$ bytes $\approx 128$ MiB. A ring all-reduce is a reduce-scatter followed by an all-gather, each moving $\frac{t-1}{t}$ of the tensor, so the per-GPU volume *in each direction* — each GPU sends this much, and receives the same amount — is
 
     $$
     2\cdot\frac{t-1}{t}\cdot(s\,h\cdot 2) = 2\cdot\frac{7}{8}\cdot 1.342\times 10^8 \approx 2.35 \times 10^8 \text{ bytes} \approx 224\text{ MiB}.
@@ -753,8 +765,10 @@ The visualizer below puts all four of the load-bearing axes side by side on one 
     (b) Two all-reduces in the forward pass (after attention output-proj and after the MLP down-proj):
 
     $$
-    2 \times 2.35\times 10^8 \approx 4.70 \times 10^8 \text{ bytes} \approx 448\text{ MiB per GPU per layer (forward)}.
+    2 \times 2.35\times 10^8 \approx 4.70 \times 10^8 \text{ bytes} \approx 448\text{ MiB sent per GPU per layer (forward)},
     $$
+
+    and the same 448 MiB received.
 
     (c) Over $L = 80$ layers the forward pass alone moves $\approx 80 \times 448\text{ MiB} \approx 35$ GiB per GPU, and the backward pass roughly doubles it (two more all-reduces per layer). This traffic sits *on the critical path* — the GPUs stall on each all-reduce before proceeding. On NVLink/NVSwitch ($\sim$hundreds of GB/s, up to $\sim$900 GB/s aggregate) it is absorbed; on InfiniBand (10-25x slower) the per-layer all-reduces serialize behind the slow link and collapse throughput. That is exactly why the rule is to keep the TP group inside one NVLink domain, $t \le 8$.
 

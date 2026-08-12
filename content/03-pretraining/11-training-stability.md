@@ -62,28 +62,40 @@ $$
 \Delta \theta = -\frac{\alpha \cdot \hat{m}_t}{\sqrt{\hat{v}_t} + \epsilon}
 $$
 
-If the large gradient is *new* (not predicted by the historical $\hat{v}_t$), the denominator is small (accumulated from previous, smaller gradients), so the parameter update is disproportionately large. This is the primary amplification mechanism. After the spike, $\hat{v}_t$ quickly absorbs the new large value, damping future updates — which is why spikes are usually transient. But if the first large update throws the model into a region of high curvature, recovery may take hundreds of steps or fail entirely.
+If the large gradient is *new* (not predicted by the historical $\hat{v}_t$), the denominator is still dominated by the previous, smaller gradients — the second-moment EMA picks up only a $(1-\beta_2)$ share of the new one — while the numerator responds to it immediately. The update is therefore disproportionately large. This is the primary amplification mechanism. Having absorbed the large value, $\hat{v}_t$ stays elevated for the following hundreds of steps, damping future updates — which is why spikes are usually transient. But if the first large update throws the model into a region of high curvature, recovery may take hundreds of steps or fail entirely.
 
 !!! example "Worked example: spike magnitude with Adam"
-    Take AdamW with $\beta_1 = 0.9$ (so $1-\beta_1 = 0.1$), learning rate $\alpha = 3 \times 10^{-4}$, and $\epsilon = 10^{-8}$. Suppose a parameter has historical gradient RMS $g_\text{rms} = 0.01$, so the second-moment estimate is $\hat{v} \approx g_\text{rms}^2 = 10^{-4}$ and $\sqrt{\hat{v}} \approx 0.01$ (the $\epsilon$ term is negligible here). Crucially, $\hat{v}$ updates slowly ($\beta_2$ close to 1, e.g. $0.999$, so $1-\beta_2 \approx 10^{-3}$): on the step a spike arrives, $\sqrt{\hat{v}}$ still reflects the *historical* gradient scale, not the spike.
+    Take AdamW with $\beta_1 = 0.9$ (so $1-\beta_1 = 0.1$), $\beta_2 = 0.999$ (so $1-\beta_2 = 10^{-3}$), learning rate $\alpha = 3 \times 10^{-4}$, and $\epsilon = 10^{-8}$. Suppose a parameter has historical gradient RMS $g_\text{rms} = 0.01$, so *before* the spike arrives $v \approx g_\text{rms}^2 = 10^{-4}$ and $\sqrt{v} \approx 0.01$ (the $\epsilon$ term is negligible here).
 
-    Model the first moment as tracking the current gradient with the fresh-moment factor $\hat{m} \approx (1-\beta_1)\,g$, and hold the stale denominator $\sqrt{\hat{v}} \approx 0.01$ fixed for the arriving step. The update magnitude is then $|\Delta\theta| \approx \alpha\,(1-\beta_1)\,g / \sqrt{\hat{v}}$.
-
-    A **normal** step with $g = g_\text{rms} = 0.01$:
+    Both moments are updated with the *current* gradient before the step is taken, so model the numerator with the fresh-moment factor $\hat{m} \approx (1-\beta_1)\,g$ and the denominator with the actual second-moment update $v \leftarrow \beta_2 v + (1-\beta_2)g^2$ (bias correction is $\approx 1$ this far into training):
 
     $$
-    |\Delta \theta|_\text{normal} \approx \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\hat{v}}} = \frac{3\times10^{-4} \times 0.1 \times 0.01}{0.01} = 3\times10^{-5}
+    |\Delta\theta| \approx \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\beta_2\,g_\text{rms}^2 + (1-\beta_2)\,g^2}}
     $$
 
-    A **spike** step where a bad batch produces $g = 1.0$ (100x the historical RMS), with the *same* stale $\sqrt{\hat{v}} = 0.01$:
+    The asymmetry that drives everything: the numerator is *linear* in the arriving gradient, while the denominator picks up only $\sqrt{1-\beta_2}\,|g| \approx 0.032\,|g|$ of it. The historical term keeps dominating the denominator until $g > g_\text{rms}/\sqrt{1-\beta_2} \approx 32\,g_\text{rms}$.
+
+    A **normal** step with $g = g_\text{rms} = 0.01$ (the denominator is essentially unchanged at $0.01$):
 
     $$
-    |\Delta \theta|_\text{spike} \approx \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\hat{v}}} = \frac{3\times10^{-4} \times 0.1 \times 1.0}{0.01} = 3\times10^{-3}
+    |\Delta \theta|_\text{normal} \approx \frac{3\times10^{-4} \times 0.1 \times 0.01}{0.01} = 3\times10^{-5}
     $$
 
-    The spike update is **100x larger** than a normal step — exactly the ratio of the gradients ($1.0 / 0.01$), because the denominator $\sqrt{\hat{v}}$ has not yet absorbed the spike. That factor is enough to blow the model out of a good basin. Once $\hat{v}$ catches up over the next few hundred steps the denominator grows and the amplification fades, which is why spikes are usually transient.
+    A **spike** step where a bad batch produces $g = 1.0$ (100x the historical RMS). The denominator now becomes $\sqrt{0.999\times10^{-4} + 10^{-3}\times 1.0} = \sqrt{1.10\times10^{-3}} = 0.033$:
 
-    **With gradient clipping** at global norm $\tau = 1.0$: during the spike the *global* gradient norm is large — say $\|g\| \approx 10$ — so clipping rescales every gradient by $\tau/\|g\| \approx 0.1$, dropping this parameter's gradient from $1.0$ to $\approx 0.1$. The update becomes $\alpha\,(1-\beta_1)\times 0.1 / \sqrt{\hat{v}} = 3\times10^{-4}$, i.e. **~10x normal** instead of 100x — an order of magnitude of damage removed, survivable in most cases.
+    $$
+    |\Delta \theta|_\text{spike} \approx \frac{3\times10^{-4} \times 0.1 \times 1.0}{0.033} = 9.0\times10^{-4}
+    $$
+
+    The spike update is **30x larger** than a normal step — *not* 100x, the ratio of the gradients, because the denominator absorbs part of the spike on the very step it arrives. The amplification is sub-linear in $g$ and in fact bounded: as $g \to \infty$,
+
+    $$
+    |\Delta\theta| \;\longrightarrow\; \frac{\alpha\,(1-\beta_1)}{\sqrt{1-\beta_2}} = 3\times10^{-4}\times\frac{0.1}{0.0316} = 9.5\times10^{-4},
+    $$
+
+    i.e. at most $\approx 32\times$ a normal step no matter how bad the batch is. (This is Kingma & Ba's own bound $|\Delta\theta| \le \alpha(1-\beta_1)/\sqrt{1-\beta_2}$, which holds whenever $1-\beta_1 > \sqrt{1-\beta_2}$ — true for the standard $(0.9, 0.999)$.) That self-limiting property is one reason spikes are survivable at all; the other is that the enlarged $\hat{v}$ persists for the next $\sim 1/(1-\beta_2) = 1000$ steps and damps subsequent updates. But 30x a normal step, applied across every coordinate at once, is still enough to blow the model out of a good basin.
+
+    **With gradient clipping** at global norm $\tau = 1.0$: during the spike the *global* gradient norm is large — say $\|g\| \approx 10$ — so clipping rescales every gradient by $\tau/\|g\| \approx 0.1$, dropping this parameter's gradient from $1.0$ to $\approx 0.1$. That is only $10\,g_\text{rms}$, below the crossover, so the denominator barely moves ($\sqrt{v} = 0.0105$) and the update becomes $3\times10^{-4}\times0.1\times0.1 / 0.0105 = 2.9\times10^{-4}$, i.e. **~10x normal** instead of 30x — most of the excess displacement removed, survivable in most cases.
 
 {{fig:adam-spike-amplification}}
 
@@ -173,7 +185,7 @@ At bf16, the representable range is roughly $\pm 3.4 \times 10^{38}$ (same 8 exp
 
 At fp16, overflow occurs above $65\,504$, and activations can silently become inf or NaN during the forward pass if any intermediate value — typically in the attention softmax or MLP feedforward — exceeds this. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for the full picture.
 
-**The attention logit overflow problem.** Without QK normalization or attention bias clipping, the logits $QK^\top / \sqrt{d_k}$ can grow arbitrarily large. For a model with $d_k = 128$, the scale factor is $1/\sqrt{128} \approx 0.088$. If query and key vectors both have L2 norm $\approx 100$ (feasible in a large model at late training), the maximum logit magnitude is $\approx 100 \times 100 \times 0.088 = 880$, which is still within fp16 range but causes the softmax distribution to saturate into a near one-hot delta on a single token. That is already fatal for learning: the softmax Jacobian $p_i(\delta_{ij} - p_j)$ is $\approx 0$ once $p$ is one-hot, so gradients through attention vanish. Outright `NaN` requires one more step — the *logit itself* overflowing fp16 ($> 65\,504$) to `inf`, at which point the max-subtraction inside every softmax kernel computes $\infty - \infty$. (Note that `F.softmax` and every FlashAttention kernel subtract the row max before exponentiating, so the normalizing sum is always $\geq 1$ and cannot underflow on its own.)
+**The attention logit overflow problem.** Without QK normalization or attention bias clipping, the logits $QK^\top / \sqrt{d_k}$ can grow arbitrarily large. For a model with $d_k = 128$, the scale factor is $1/\sqrt{128} \approx 0.088$. If query and key vectors both have L2 norm $\approx 100$ (feasible in a large model at late training), the maximum logit magnitude is $\approx 100 \times 100 \times 0.088 = 880$, which is still within fp16 range but causes the softmax distribution to saturate into a near one-hot delta on a single token. That is already fatal for learning: the softmax Jacobian $p_i(\delta_{ij} - p_j)$ is $\approx 0$ once $p$ is one-hot, so no gradient reaches the logits and therefore none reaches $W_Q$ or $W_K$ — the head's attention pattern is frozen. (The value path is untouched, so $W_V$ and $W_O$ keep training; a saturated head degenerates into a fixed-routing copy head rather than dead weight.) Outright `NaN` requires one more step — the *logit itself* overflowing fp16 ($> 65\,504$) to `inf`, at which point the max-subtraction inside every softmax kernel computes $\infty - \infty$. (Note that `F.softmax` and every FlashAttention kernel subtract the row max before exponentiating, so the normalizing sum is always $\geq 1$ and cannot underflow on its own.)
 
 ### Embedding table instabilities
 
@@ -281,7 +293,11 @@ def qk_clip_(attn: nn.Module, max_logit: float, tau: float = 100.0) -> bool:
     if not (max_logit > tau):        # also covers NaN: NaN > tau is False
         return False
     gamma = (tau / max_logit) ** 0.5
-    if getattr(attn, "q_norm", None) is not None:
+    q_norm = getattr(attn, "q_norm", None)
+    # NOTE: the common idiom for "QK-norm off" is `self.q_norm = nn.Identity()`
+    # (that is what the capstone's Attention does), so an `is not None` test
+    # alone would take the wrong branch and die on `Identity.weight`.
+    if q_norm is not None and not isinstance(q_norm, nn.Identity):
         # QK-norm is ON: W_Q / W_K are pre-normalized, so rescaling them is a
         # NO-OP. The free knob is the learnable RMSNorm gain -- clip that.
         attn.q_norm.weight.mul_(gamma)
@@ -414,7 +430,7 @@ and we rescale all gradients by $\min(1, \tau / \|g\|_2)$ where $\tau$ is the cl
 
     - **DDP:** gradients are all-reduced during `backward()`, so every rank already holds the full gradient. Plain `torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)` after `backward()` and before `optimizer.step()` is correct.
     - **FSDP1 (`FullyShardedDataParallel`):** parameters and gradients are flat-sharded, so the module exposes its own collective-aware `fsdp_model.clip_grad_norm_(1.0)`. Calling the free function instead clips on a per-rank shard norm — wrong, and it will not error.
-    - **FSDP2 (`torch.distributed.fsdp.fully_shard`, the current PyTorch API):** parameters are `DTensor`s, and `torch.nn.utils.clip_grad_norm_` is `DTensor`-aware — it performs the cross-rank reduction itself and returns a global norm. This is what `torchtitan`, PyTorch's reference large-scale pretraining codebase, does.
+    - **FSDP2 (`torch.distributed.fsdp.fully_shard`, the current PyTorch API):** parameters are `DTensor`s, so the norm can be computed collectively — but `torchtitan`, PyTorch's reference large-scale pretraining codebase, still wraps it rather than calling the free function. Its `clip_grad_norm_` (in `torchtitan/distributed/utils.py`) computes `torch.nn.utils.get_total_norm(grads, ...)`, converts the resulting `DTensor` with `total_norm.full_tensor()` — that is where the cross-rank reduction happens — then all-reduces *again* over the pipeline-parallel mesh, and only then calls `torch.nn.utils.clip_grads_with_norm_`. The extra step exists because no generic helper knows about the pipeline dimension: with PP enabled, a free-function call silently gives you a norm over one stage's parameters only. Read that file before writing your own.
     - **DeepSpeed ZeRO:** set `gradient_clipping` in the DeepSpeed JSON config and let the engine do it inside `engine.step()`; do not clip yourself.
     - **Megatron-LM:** pass `--clip-grad 1.0`; Megatron computes the norm across the data-, tensor- and pipeline-parallel groups, which no generic helper can do for you.
 
@@ -586,8 +602,13 @@ class TrainingMonitor:
         # --- Spike detector ---
         if len(self.loss_history) >= self.spike_window:
             window = self.loss_history[-self.spike_window:]
-            baseline = sum(window[:self.spike_window // 2]) / (self.spike_window // 2)
-            recent = sum(window[self.spike_window // 2:]) / (self.spike_window // 2)
+            # Compare the two halves. Use ONE half-length for both slices and
+            # both divisors: with an odd spike_window, window[h:] holds h + 1
+            # elements and dividing it by h would inflate `recent` (and fire
+            # the spike alert) on a perfectly healthy run.
+            h = len(window) // 2
+            baseline = sum(window[:h]) / h
+            recent = sum(window[-h:]) / h
             metrics['train/spike_delta'] = recent - baseline
 
         wandb.log(metrics)
@@ -602,7 +623,11 @@ class TrainingMonitor:
         stats = {}
         for name, param in model.named_parameters():
             if 'weight' in name and param.dim() >= 2:
-                # Track weight matrix spectral norm proxy (Frobenius / sqrt(numel))
+                # RMS magnitude of a single weight entry (Frobenius / sqrt(numel)).
+                # This is a per-tensor weight-growth tracker, NOT a spectral-norm
+                # proxy: for entries of std s, ||W||_2 ~= s * (sqrt(m) + sqrt(n)),
+                # so the shape factor makes tensors of different shape
+                # incomparable. Compare each tensor against ITS OWN history.
                 rms = param.norm() / (param.numel() ** 0.5)
                 short = name.replace('.weight', '').replace('model.', '')
                 stats[f'weights/{short}_rms'] = rms.item()
@@ -666,7 +691,7 @@ Every modern LLM training run has seen this: things are fine for weeks, then at 
 
 ### Story 3: The fp16 attention NaN cascade
 
-In a 13B model trained in fp16 (not bf16), at step 42 000 the loss becomes NaN. Debugging with activation hooks reveals that the attention logits for the last layer's head 7 are producing values near 60 000 before the softmax — approaching the fp16 max of 65 504. A batch with a 32 000-token nearly-identical sequence (a repeated copyright boilerplate) pushed query and key norms to an extreme; on the next step the logit crossed 65 504 and became `inf`, so the softmax's max-subtraction computed $\infty - \infty$ = `NaN`, the backward pass propagated it, and all parameters were corrupted. (The heads had in fact been useless for a while before that: at a logit of 60 000 the softmax was already a hard one-hot with zero gradient.) Fix: add QK-Norm (see above) and switch to bf16, which has a much larger dynamic range. The retrospective also added a maximum logit monitor to the activation hooks.
+In a 13B model trained in fp16 (not bf16), at step 42 000 the loss becomes NaN. Debugging with activation hooks reveals that the attention logits for the last layer's head 7 are producing values near 60 000 before the softmax — approaching the fp16 max of 65 504. A batch with a 32 000-token nearly-identical sequence (a repeated copyright boilerplate) pushed query and key norms to an extreme; on the next step the logit crossed 65 504 and became `inf`, so the softmax's max-subtraction computed $\infty - \infty$ = `NaN`, the backward pass propagated it, and all parameters were corrupted. (The heads had in fact been stuck for a while before that: at a logit of 60 000 the softmax was already a hard one-hot, so $W_Q$ and $W_K$ had been receiving no gradient and the attention pattern was frozen.) Fix: add QK-Norm (see above) and switch to bf16, which has a much larger dynamic range. The retrospective also added a maximum logit monitor to the activation hooks.
 
 ### Story 4: The zombie GPU
 
@@ -941,38 +966,42 @@ MONITORING
 **1.** (Conceptual) The chapter states that loss spikes under AdamW are *usually transient* — the model recovers on its own after tens to hundreds of steps — yet a small fraction become *absorbing* and effectively diverge. Using the update rule $\Delta\theta = -\alpha\,\hat{m}_t / (\sqrt{\hat{v}_t} + \epsilon)$ and the roles of $\beta_1$ and $\beta_2$, explain (a) the self-healing mechanism that makes most spikes transient, and (b) what distinguishes a spike that heals from one that absorbs.
 
 ??? note "Solution"
-    **(a) Why most spikes heal.** On the step a spike arrives, the second-moment estimate $\hat{v}_t$ still reflects the *historical* gradient scale, because it updates slowly ($\beta_2 = 0.999$, so $1-\beta_2 \approx 10^{-3}$). This stale, small denominator is exactly what amplifies the update — the effective per-parameter learning rate $\alpha/\sqrt{\hat{v}_t}$ is momentarily huge. But over the *next* few hundred steps the EMA absorbs the large gradient: $\hat{v}_t$ grows, $\sqrt{\hat{v}_t}$ grows, and the amplification factor shrinks back toward normal. So the very quantity that caused the spike is also self-limiting — Adam damps its own future updates once it has "seen" the large gradient. The first moment $\hat{m}_t$ ($\beta_1 = 0.9$) also decays the anomalous gradient's influence within roughly $1/(1-\beta_1) \approx 10$ steps. Together these give the observed transient behavior.
+    **(a) Why most spikes heal.** On the step a spike arrives, the second-moment estimate does update with the new gradient — $v_t = \beta_2 v_{t-1} + (1-\beta_2)g_t^2$ happens *before* the step is applied — but it takes only a $(1-\beta_2) \approx 10^{-3}$ share of it, so the denominator grows like $\sqrt{1-\beta_2}\,|g|$ while the numerator grows like $(1-\beta_1)|g|$. The denominator therefore still mostly reflects the *historical* gradient scale, the effective per-parameter learning rate $\alpha/\sqrt{\hat{v}_t}$ is momentarily large, and the update is amplified — though only sub-linearly, and never beyond $\alpha(1-\beta_1)/\sqrt{1-\beta_2} \approx 3.2\,\alpha$. Over the *following* few hundred steps the enlarged $\hat{v}_t$ persists (the EMA has a $1/(1-\beta_2) = 1000$-step memory), so ordinary gradients now meet an oversized denominator and the amplification is gone. So the very quantity that caused the spike is also self-limiting — Adam damps its own future updates once it has "seen" the large gradient. The first moment $\hat{m}_t$ ($\beta_1 = 0.9$) also decays the anomalous gradient's influence within roughly $1/(1-\beta_1) \approx 10$ steps. Together these give the observed transient behavior.
 
-    **(b) Transient vs. absorbing.** The healing above only concerns the *optimizer state* recovering its calibration; it says nothing about *where the weights landed*. The distinguishing factor is the **magnitude of the single large update relative to the local loss geometry**. If the one oversized step keeps the parameters within the same basin (a region of moderate curvature), the subsequent well-calibrated steps walk the loss back down and the spike is transient. If the oversized step throws the weights into a region of high curvature / a different, worse basin, the recovered optimizer now descends toward a higher-loss minimum — the spike is absorbing. This is why the chapter frames severity relative to the stale $\sqrt{\hat{v}}$: the larger the gradient/$\sqrt{\hat{v}}$ ratio on the spike step, the farther the model is flung, and the more likely it leaves the good basin. It is also why gradient clipping (which caps that single displacement) converts many would-be-absorbing spikes into survivable transient ones.
+    **(b) Transient vs. absorbing.** The healing above only concerns the *optimizer state* recovering its calibration; it says nothing about *where the weights landed*. The distinguishing factor is the **magnitude of the single large update relative to the local loss geometry**. If the one oversized step keeps the parameters within the same basin (a region of moderate curvature), the subsequent well-calibrated steps walk the loss back down and the spike is transient. If the oversized step throws the weights into a region of high curvature / a different, worse basin, the recovered optimizer now descends toward a higher-loss minimum — the spike is absorbing. This is why the chapter frames severity relative to the *historical* $\sqrt{\hat{v}}$: the larger the gradient/$\sqrt{\hat{v}}$ ratio on the spike step, the farther the model is flung (up to the $\alpha(1-\beta_1)/\sqrt{1-\beta_2}$ ceiling), and the more likely it leaves the good basin. It is also why gradient clipping (which caps that single displacement) converts many would-be-absorbing spikes into survivable transient ones.
 
-**2.** (Quantitative) A parameter has historical gradient RMS $g_\text{rms} = 0.02$, so $\hat{v} \approx g_\text{rms}^2 = 4\times10^{-4}$ and $\sqrt{\hat{v}} \approx 0.02$ (take $\epsilon$ negligible). Training uses AdamW with $\alpha = 4\times10^{-4}$, $\beta_1 = 0.9$, and the fresh-moment model $\hat{m} \approx (1-\beta_1)\,g$ with the denominator held at its stale value $\sqrt{\hat{v}} = 0.02$ for the arriving step, so $|\Delta\theta| \approx \alpha\,(1-\beta_1)\,g/\sqrt{\hat{v}}$.
+**2.** (Quantitative) A parameter has historical gradient RMS $g_\text{rms} = 0.02$, so entering the step $v \approx g_\text{rms}^2 = 4\times10^{-4}$ and $\sqrt{v} \approx 0.02$ (take $\epsilon$ negligible). Training uses AdamW with $\alpha = 4\times10^{-4}$, $\beta_1 = 0.9$, $\beta_2 = 0.999$. Use the chapter's model — fresh moment $\hat{m} \approx (1-\beta_1)\,g$ in the numerator, and the second moment *after* it has been updated with the arriving gradient in the denominator:
+
+   $$
+   |\Delta\theta| \approx \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\beta_2\,g_\text{rms}^2 + (1-\beta_2)\,g^2}}
+   $$
 
    (a) Compute $|\Delta\theta|$ for a normal step with $g = 0.02$.
    (b) A bad batch produces $g = 0.5$ on this parameter. Compute $|\Delta\theta|$ and the spike-to-normal ratio.
    (c) Global gradient clipping is enabled at $\tau = 1.0$, and on the spike step the global gradient norm is $\|g\| = 5.0$. Recompute $|\Delta\theta|$ for the spike and the new ratio to a normal step. How much of the amplification did clipping remove?
 
 ??? note "Solution"
-    **(a) Normal step**, $g = 0.02$:
+    **(a) Normal step**, $g = 0.02$. The second-moment update barely moves the denominator: $\sqrt{0.999\times4\times10^{-4} + 10^{-3}\times4\times10^{-4}} = \sqrt{4.0\times10^{-4}} = 0.02$, so
 
     $$
-    |\Delta\theta|_\text{normal} = \frac{\alpha\,(1-\beta_1)\,g}{\sqrt{\hat{v}}} = \frac{4\times10^{-4}\times 0.1 \times 0.02}{0.02} = 4\times10^{-4}\times 0.1 = 4\times10^{-5}.
+    |\Delta\theta|_\text{normal} = \frac{4\times10^{-4}\times 0.1 \times 0.02}{0.02} = 4\times10^{-4}\times 0.1 = 4\times10^{-5}.
     $$
 
-    **(b) Spike step**, $g = 0.5$ (25x the historical RMS), same stale $\sqrt{\hat{v}} = 0.02$:
+    **(b) Spike step**, $g = 0.5$ (25x the historical RMS). The denominator now picks up the spike: $\sqrt{0.999\times4\times10^{-4} + 10^{-3}\times0.25} = \sqrt{6.50\times10^{-4}} = 0.0255$, so
 
     $$
-    |\Delta\theta|_\text{spike} = \frac{4\times10^{-4}\times 0.1 \times 0.5}{0.02} = \frac{2\times10^{-5}}{0.02} = 1\times10^{-3}.
+    |\Delta\theta|_\text{spike} = \frac{4\times10^{-4}\times 0.1 \times 0.5}{0.0255} = \frac{2\times10^{-5}}{0.0255} = 7.8\times10^{-4}.
     $$
 
-    Ratio $= (1\times10^{-3})/(4\times10^{-5}) = 25$. The update is 25x a normal step — exactly the gradient ratio $0.5/0.02 = 25$, because the denominator has not yet absorbed the spike.
+    Ratio $= (7.8\times10^{-4})/(4\times10^{-5}) \approx 20$. Note it is *less* than the gradient ratio $0.5/0.02 = 25$: the denominator grew by 27 % on this very step. The gap would be far wider for a bigger spike — the ratio can never exceed $(1-\beta_1)/\sqrt{1-\beta_2} \approx 31.6$ regardless of $g$.
 
-    **(c) With clipping.** Clipping rescales every gradient by $\tau/\|g\| = 1.0/5.0 = 0.2$, so this parameter's gradient drops from $0.5$ to $0.5\times0.2 = 0.1$:
+    **(c) With clipping.** Clipping rescales every gradient by $\tau/\|g\| = 1.0/5.0 = 0.2$, so this parameter's gradient drops from $0.5$ to $0.5\times0.2 = 0.1$. That is only $5\,g_\text{rms}$, well below the $g_\text{rms}/\sqrt{1-\beta_2} \approx 32\,g_\text{rms}$ crossover, so the denominator is nearly the historical one: $\sqrt{3.996\times10^{-4} + 10^{-5}} = 0.0202$.
 
     $$
-    |\Delta\theta|_\text{spike,clip} = \frac{4\times10^{-4}\times 0.1 \times 0.1}{0.02} = \frac{4\times10^{-6}}{0.02} = 2\times10^{-4}.
+    |\Delta\theta|_\text{spike,clip} = \frac{4\times10^{-4}\times 0.1 \times 0.1}{0.0202} = \frac{4\times10^{-6}}{0.0202} = 2.0\times10^{-4}.
     $$
 
-    New ratio $= (2\times10^{-4})/(4\times10^{-5}) = 5$. Clipping cut the amplification from **25x down to 5x** — a factor-of-5 reduction, i.e. it removed exactly the clip rescale factor $1/0.2 = 5$. The step is now only 5x normal instead of 25x, far more likely to keep the model in its basin.
+    New ratio $= (2.0\times10^{-4})/(4\times10^{-5}) \approx 4.9$. Clipping cut the amplification from **20x down to ~5x** — a factor of $\approx 4$, slightly less than the clip rescale factor $1/0.2 = 5$ because the unclipped step had an inflated denominator working in its favour. The step is now only ~5x normal instead of 20x, far more likely to keep the model in its basin.
 
 **3.** (Quantitative) A model uses head dimension $d_k = 64$, so the attention scale is $1/\sqrt{d_k} = 1/8 = 0.125$. Late in training, a repeated-boilerplate batch drives one head's query and key vectors to L2 norm $\|q\| = \|k\| = 250$.
 
@@ -986,7 +1015,7 @@ MONITORING
     \text{logit}_\text{max} = \frac{62\,500}{\sqrt{64}} = \frac{62\,500}{8} = 7\,812.5.
     $$
 
-    This is comfortably within the fp16 range ($< 65\,504$), so no overflow yet. It is still dangerous because the softmax *saturates*. Every kernel (`F.softmax`, FlashAttention) subtracts the row max before exponentiating, so there is no `inf` and no `NaN` here — but a logit gap of thousands of nats means every non-maximal entry exponentiates to exactly $0$ and the distribution is a hard one-hot. The softmax Jacobian $p_i(\delta_{ij}-p_j)$ is then $\approx 0$, so *no gradient flows back through attention*: the head is frozen and learns nothing. Saturation therefore bites long before the *logit itself* reaches the fp16 ceiling; `NaN` only appears once the logit overflows to `inf` and the max-subtraction computes $\infty-\infty$.
+    This is comfortably within the fp16 range ($< 65\,504$), so no overflow yet. It is still dangerous because the softmax *saturates*. Every kernel (`F.softmax`, FlashAttention) subtracts the row max before exponentiating, so there is no `inf` and no `NaN` here — but a logit gap of thousands of nats means every non-maximal entry exponentiates to exactly $0$ and the distribution is a hard one-hot. The softmax Jacobian $p_i(\delta_{ij}-p_j)$ is then $\approx 0$, so *no gradient reaches the pre-softmax logits* — and hence none reaches $W_Q$ or $W_K$: the head's attention pattern is frozen. (Gradient still flows through the values, $\partial \text{out}/\partial v_{j^*} = 1$ for the selected position, so $W_V$ and $W_O$ keep training — the head degenerates into a fixed-routing copy head rather than dead weight, which is why the damage is easy to miss.) Saturation therefore bites long before the *logit itself* reaches the fp16 ceiling; `NaN` only appears once the logit overflows to `inf` and the max-subtraction computes $\infty-\infty$.
 
     **(b)** RMSNorm sets each vector's root-mean-square component to $1$, so $\sqrt{\tfrac{1}{d_k}\sum_i x_i^2} = 1 \Rightarrow \sum_i x_i^2 = d_k \Rightarrow \|x\|_2 = \sqrt{d_k} = \sqrt{64} = 8$ (before the learnable scale, which is $O(1)$). The maximum logit is now
 

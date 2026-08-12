@@ -9,7 +9,7 @@ By the end of this chapter you will understand the Megatron-Core abstraction lay
 Megatron-LM, developed at NVIDIA, was the first framework to train models beyond 100B parameters in a systematic way. The 2021 paper by Narayanan et al. ("Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM") introduced the idea of combining tensor parallelism (TP), pipeline parallelism (PP), and data parallelism (DP) in a principled way. The current codebase ships as two packages:
 
 - **Megatron-LM** — the outer loop: launch scripts, training harness, logging, checkpointing.
-- **Megatron-Core (megatron.core)** — a library of parallelism-aware transformer building blocks that other frameworks (NVIDIA NeMo, Databricks MosaicML, Aleph Alpha) can import.
+- **Megatron-Core (megatron.core)** — a library of parallelism-aware transformer building blocks that other frameworks can import. NVIDIA NeMo (and the domain stacks built on it, such as BioNeMo) is the largest consumer; most non-NVIDIA stacks — Databricks/MosaicML's LLM Foundry, HuggingFace `nanotron`, `allenai/OLMo-core` — instead build on PyTorch FSDP/DTensor directly.
 
 ### The 3-D Parallelism Layout
 
@@ -45,14 +45,21 @@ def initialize_model_parallel(
     """
     Build the 3-D process group topology.
     Assumes dist.init_process_group() has already been called.
-    world_size = TP * PP * DP is enforced implicitly.
+    world_size = TP * PP * DP; the divisibility is asserted below.
     """
     global _TP_GROUP, _PP_GROUP, _DP_GROUP
 
     world_size = dist.get_world_size()
     rank = dist.get_rank()
 
-    dp_size = world_size // (tensor_model_parallel_size * pipeline_model_parallel_size)
+    tp_pp = tensor_model_parallel_size * pipeline_model_parallel_size
+    # Real Megatron asserts this too. Without it, floor division silently drops
+    # the leftover ranks: they join no group, all three globals stay None, and
+    # the failure surfaces much later as an opaque crash in the first collective.
+    assert world_size % tp_pp == 0, (
+        f"world_size {world_size} must be divisible by TP*PP = {tp_pp}"
+    )
+    dp_size = world_size // tp_pp
 
     # --- Tensor-parallel groups ---
     # Each group of TP consecutive ranks forms one TP group.
@@ -67,7 +74,6 @@ def initialize_model_parallel(
     # Rank layout is TP-fastest: rank = tp + TP * pp + TP * PP * dp.
     # A PP group fixes (tp, dp) and strides by TP within one DP replica's block
     # of TP * PP ranks, so the groups partition the world exactly.
-    tp_pp = tensor_model_parallel_size * pipeline_model_parallel_size
     for dp in range(dp_size):
         for tp in range(tensor_model_parallel_size):
             start = dp * tp_pp + tp
@@ -150,15 +156,18 @@ zero3_config = {
         },
         "overlap_comm": True,      # overlap reduce-scatter with backward pass
         "contiguous_gradients": True,
-        "sub_group_size": 1e9,     # process params in 1B-element chunks
-        # These must be real integers when you hand the JSON to deepspeed.initialize()
-        # yourself. The "auto" placeholder you see in HuggingFace examples is resolved
-        # by Trainer/accelerate (from the model config) *before* DeepSpeed parses it.
-        "reduce_bucket_size": 5e8,
-        "stage3_prefetch_bucket_size": 5e8,
-        "stage3_param_persistence_threshold": 1e5,
-        "stage3_max_live_parameters": 1e9,
-        "stage3_max_reuse_distance": 1e9,
+        "sub_group_size": int(1e9),  # process params in 1B-element chunks
+        # Write these as real ints, not 5e8 — a float literal is serialized by
+        # json.dump as 500000000.0, and these are element/byte counts. The "auto"
+        # placeholder you see in HuggingFace examples is resolved by
+        # Trainer/accelerate (from the model config) *before* DeepSpeed parses it,
+        # so it is only valid on that path, not when you hand the JSON to
+        # deepspeed.initialize() yourself.
+        "reduce_bucket_size": int(5e8),
+        "stage3_prefetch_bucket_size": int(5e8),
+        "stage3_param_persistence_threshold": int(1e5),
+        "stage3_max_live_parameters": int(1e9),
+        "stage3_max_reuse_distance": int(1e9),
     },
     "fp16": {
         "enabled": True,
@@ -200,7 +209,17 @@ class TinyTransformerBlock(nn.Module):
         x = x + self.ffn(self.norm2(x))
         return x
 
-model = nn.Sequential(*[TinyTransformerBlock(1024, 16) for _ in range(24)])
+D_MODEL, VOCAB_SIZE = 1024, 32000
+
+# The output projection must live *inside* the module you hand to
+# deepspeed.initialize(). Parameters left outside the engine are never sharded,
+# never gathered under ZeRO-3, and — worst — their gradients are never reduced
+# across DP ranks by model_engine.backward(), so every rank would silently drift
+# to a different lm_head.
+model = nn.Sequential(
+    *[TinyTransformerBlock(D_MODEL, 16) for _ in range(24)],
+    nn.Linear(D_MODEL, VOCAB_SIZE, bias=False),   # lm_head
+)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
 
@@ -216,10 +235,11 @@ model_engine, optimizer, _, _ = deepspeed.initialize(
 # being called on the engine rather than on the loss and the optimizer.
 import torch.nn.functional as F
 
-for batch in dataloader:                       # yields (inputs, labels) on the right device
-    inputs, labels = batch
-    hidden = model_engine(inputs)              # (B, S, d_model)
-    logits = lm_head(hidden)                   # your untied/tied output projection
+dataloader = ...  # your own DataLoader; yields (embeddings, labels) already on device
+
+for batch in dataloader:
+    inputs, labels = batch                     # inputs: (B, S, d_model), labels: (B, S)
+    logits = model_engine(inputs)              # (B, S, vocab) — head is inside the engine
     loss = F.cross_entropy(
         logits.view(-1, logits.size(-1)).float(),
         labels.view(-1),
@@ -240,7 +260,7 @@ $$
 
 **Expert parallelism (EP)** shards the experts across EP ranks. Within a single MoE layer, tokens are dispatched to experts on different GPUs via all-to-all collectives. EP communicates *token activations* rather than parameters, so the all-to-all volume is proportional to sequence length and hidden size, not parameter count.
 
-Megatron-Core's `MoELayer` handles the EP dimension natively (`--expert-model-parallel-size`, with `--moe-token-dispatcher-type alltoall`). The key constraint: each EP group must see enough tokens to keep all experts loaded. An expert that processes very few tokens is wasted capacity — the *load imbalance* problem that auxiliary loss terms (introduced by Switch Transformer, Fedus et al.) address.
+Megatron-Core's `MoELayer` handles the EP dimension natively (`--expert-model-parallel-size`, with `--moe-token-dispatcher-type alltoall`). The key constraint: each EP group must see enough tokens to keep all experts loaded. An expert that processes very few tokens is wasted capacity — the *load imbalance* problem that auxiliary load-balancing losses address (introduced by Shazeer et al. 2017; the now-standard mean-gate-probability × mean-token-fraction form comes from GShard, Lepikhin et al. 2020, and was simplified and popularized by Switch Transformer, Fedus et al. 2021).
 
 {{fig:megatron-4d-moe-collectives}}
 
@@ -268,10 +288,10 @@ With 8× H100 80 GB per node (640 GB HBM), you need at least $\lceil 1120 / 80 \
 
 ### Step 2 — Pick TP
 
-TP is constrained by intra-node bandwidth (NVLink). The all-reduce inside a TP column-parallel GEMM must finish before the next GEMM begins; it sits on the critical path.
+TP is constrained by intra-node bandwidth (NVLink). In Megatron's column-then-row GEMM pair the forward all-reduce sits at the *end* of the **row**-parallel GEMM (the `g` operator: all-reduce in forward, identity in backward; the `f` operator before the column-parallel GEMM is the mirror image — identity in forward, all-reduce in backward). Either way it must finish before the next block begins, so it sits squarely on the critical path.
 
 - TP=1: no communication, maximum arithmetic intensity.
-- TP=2: halves the per-GPU attention and FFN weight (and gradient / optimizer-state) memory, at the cost of one all-reduce per layer — cheap when both GPUs sit on the same NVLink domain.
+- TP=2: halves the per-GPU attention and FFN weight (and gradient / optimizer-state) memory, at the cost of two all-reduces per layer in the forward pass — one closing the attention output projection, one closing the MLP down-projection — plus two more in the backward. Cheap when both GPUs sit on the same NVLink domain.
 - TP=4 or TP=8: recommended for nodes with 4 or 8 GPUs respectively and NVLink.
 - TP > 8: crosses PCIe/InfiniBand; avoid unless forced.
 
@@ -325,7 +345,7 @@ $$
 
 ### Running the Funnel at 100M: the Answer Is Usually DP-Only
 
-Apply the same five steps to the capstone's ~100M-parameter model and every model-parallel degree collapses to 1. Step 1: $16P = 16 \times 10^8 \approx 1.6$ GB of model state — it fits on a 16 GB T4 with room to spare, so nothing *must* be sharded. Step 2: TP exists only to make a model fit or to cut per-GPU activation memory; with 1.6 GB of state there is nothing to split, and TP=2 would add an all-reduce per layer to a model whose GEMMs ($d_{\text{model}}=512$) are too small to amortize it. Step 3: PP has the same answer, plus a bubble you cannot pay for. Steps 4–5: DP = number of GPUs, and you spend the whole global-batch budget on gradient accumulation.
+Apply the same five steps to the capstone's ~100M-parameter model and every model-parallel degree collapses to 1. Step 1: $16P = 16 \times 10^8 \approx 1.6$ GB of model state — it fits on a 16 GB T4 with room to spare, so nothing *must* be sharded. Step 2: TP exists only to make a model fit or to cut per-GPU activation memory; with 1.6 GB of state there is nothing to split, and TP=2 would add two forward all-reduces per layer to a model whose GEMMs ($d_{\text{model}}=512$) are too small to amortize it. Step 3: PP has the same answer, plus a bubble you cannot pay for. Steps 4–5: DP = number of GPUs, and you spend the whole global-batch budget on gradient accumulation.
 
 The practical consequence is worth stating plainly, because it saves readers weeks: **you do not need Megatron-LM or DeepSpeed to train a 100M model.** Plain `DistributedDataParallel` — or FSDP2 if you want the optimizer-state saving for free — over `torchrun --nproc_per_node=8` is the correct tool, and [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) shows that even one GPU suffices for the whole capstone. What *does* transfer directly from this chapter at 100M scale is the measurement discipline: the $6P$ FLOPs/token rule, the MFU calculation, and the Nsight-before-you-tune habit. Small models typically land at *lower* MFU than 70B ones (they are launch-latency- and memory-bandwidth-bound rather than GEMM-bound), so calibrate expectations against similar-sized runs, not against the 40–55% frontier-scale band. The techniques here become mandatory somewhere around 7B–13B, the transition described in [Retrospective: Cost Accounting, Reproducibility, and the Path to 1B](../14-capstone/12-retrospective-and-scaleup.html).
 
@@ -442,10 +462,11 @@ print(f"MFU: {mfu:.2%}")  # prints ~54.9% (~55%) for a well-configured run, incl
     - Layers per pipeline stage: $80 / 8 = 10$ layers
     - Activations per layer ≈ two $B \times S \times H$ tensors in bf16 (input and output of the attention block)
     - With MBS=2, $S=4096$, $H=8192$: $2 \times 2 \times 4096 \times 8192 \times 2 \text{ B} \approx 268$ MB per layer
-    - 10 layers: $\approx 2.7$ GB activations per stage (before recompute)
-    - With selective recompute (e.g., recompute attention blocks only): reduce by $\sim$40% → 1.6 GB
+    - 10 layers: $\approx 2.7$ GB per stage **per in-flight micro-batch** (before recompute)
+    - With selective recompute (e.g., recompute attention blocks only): reduce by $\sim$40% → 1.6 GB per in-flight micro-batch
+    - **1F1B in-flight multiplier**: stage $i$ stashes the activations of $PP - i$ micro-batches simultaneously, so the *first* stage — the peak — holds $PP = 8$ of them: $8 \times 1.6 \approx 13$ GB. (This is the well-known result that 1F1B does not reduce activation memory on stage 0: $8$ stages $\times$ 10 layers is the whole 80-layer model's worth of stashed activations.)
 
-    **Total per GPU (approximate)**: $6.0 + 1.6 + 2$ (comm buffers, fragmentation) $\approx 9.6$ GB — comfortably within 80 GB, which is why this config has room for a larger micro-batch or a longer sequence.
+    **Total per GPU (approximate)**: $6.0 + 13 + 2$ (comm buffers, fragmentation) $\approx 21$ GB on the worst stage — still well within 80 GB, so this config has room for a larger micro-batch or a longer sequence, but the headroom is $\sim 8\times$ smaller than the naive single-micro-batch estimate suggests. Forgetting the in-flight multiplier is one of the most common causes of an OOM that only appears once the pipeline fills.
 
     **MFU check**:
     - FLOPs per token: $6 \times 70 \times 10^9 = 4.2 \times 10^{11}$
@@ -490,10 +511,16 @@ MODEL_CONFIG = {
 # launch_70b.sh — SLURM-based Megatron-LM 70B launch
 
 #SBATCH --nodes=64
-#SBATCH --ntasks-per-node=8
+#SBATCH --ntasks-per-node=1  # ONE torchrun agent per node; it spawns the 8 ranks itself
 #SBATCH --gpus-per-node=8
-#SBATCH --cpus-per-task=12
+#SBATCH --cpus-per-task=96
 #SBATCH --mem=960G           # enough for ZeRO-Offload CPU tensors if needed
+
+# ---- Rendezvous ----
+# SLURM does not export MASTER_ADDR/MASTER_PORT; derive them from the allocation.
+# Every node must agree on the same host:port for the c10d rendezvous.
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
+export MASTER_PORT=29500
 
 # ---- Parallelism degrees ----
 TP=8
@@ -525,10 +552,14 @@ WEIGHT_DECAY=0.1
 DATA_PATH=/mnt/storage/tokenized/llama3_merged
 CHECKPOINT_PATH=/mnt/checkpoints/70b-run
 
-torchrun \
+# sbatch runs this script on the FIRST allocated node only, so the launcher must be
+# wrapped in srun to start one agent on each of the 64 nodes. Without it a single
+# torchrun would advertise --nnodes=64 and the rendezvous would block forever.
+srun --ntasks-per-node=1 torchrun \
   --nnodes=$SLURM_NNODES \
   --nproc_per_node=8 \
   --rdzv_backend=c10d \
+  --rdzv_id=$SLURM_JOB_ID \
   --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
   pretrain_gpt.py \
   --tensor-model-parallel-size $TP \
@@ -608,14 +639,23 @@ The five performance flags are the ones worth memorizing. `--sequence-parallel` 
 import re
 import sys
 
+# Megatron-LM's training_log() does NOT print a tokens/s field. Every iteration
+# line carries "iteration N/M" and "elapsed time per iteration (ms): X", so derive
+# throughput from those plus the batch config you launched with. (If you pass
+# --log-throughput, Megatron additionally prints
+# "throughput per GPU (TFLOP/s/GPU): Y", which you can divide by the peak below.)
 LOG_LINE_RE = re.compile(
-    r"iteration\s+(\d+)/\s*\d+.*?elapsed time per iteration \(ms\): ([\d.]+).*?"
-    r"tokens-per-second-per-gpu: ([\d.]+)",
-    re.DOTALL,
+    r"iteration\s+(\d+)/\s*\d+.*?elapsed time per iteration \(ms\): ([\d.]+)"
 )
 
 H100_BF16_PEAK_TFLOPS = 989.0  # dense bf16 Tensor Core, per GPU (1979 is the 2:4-sparse rate)
 MODEL_PARAMS = 70e9
+
+# Must match the launch script: --global-batch-size counts SEQUENCES.
+GLOBAL_BATCH_SIZE = 2048
+SEQ_LEN = 4096
+N_GPUS = 512
+TOKENS_PER_ITER = GLOBAL_BATCH_SIZE * SEQ_LEN   # 8.4M tokens per optimizer step
 
 def toks_per_sec_to_mfu(tps_per_gpu: float) -> float:
     flops_per_tok = 6 * MODEL_PARAMS
@@ -627,7 +667,7 @@ for line in sys.stdin:
     if m:
         iteration = int(m.group(1))
         ms_per_iter = float(m.group(2))
-        tps = float(m.group(3))
+        tps = TOKENS_PER_ITER / (ms_per_iter / 1000.0) / N_GPUS  # tokens/s/GPU
         mfu = toks_per_sec_to_mfu(tps)
         print(f"iter {iteration:6d} | {ms_per_iter:6.0f} ms/it | {tps:5.0f} tok/s/gpu | MFU {mfu:.1%}")
 ```
@@ -656,7 +696,7 @@ For large models, `selective` is the sweet spot — it eliminates the expensive-
 
 !!! warning "Gradient accumulation and ZeRO-3 interaction"
 
-    When combining ZeRO-3 with gradient accumulation, each micro-batch forward pass triggers a parameter all-gather. With GAS=128, you do 128 all-gathers per optimizer step. Use `--overlap-param-gather` to pipeline these with compute, and set `stage3_max_live_parameters` large enough to buffer at least one full transformer block's parameters, otherwise you stall.
+    When combining ZeRO-3 with gradient accumulation, each micro-batch forward pass triggers a parameter all-gather. With GAS=128, you do 128 all-gathers per optimizer step. These are DeepSpeed's to hide, not Megatron's — `--overlap-param-gather` is a Megatron-LM flag for its *own* distributed optimizer and does nothing on a DeepSpeed path. Set `overlap_comm: true` and a `stage3_prefetch_bucket_size` large enough to prefetch the next block's parameters, and set `stage3_max_live_parameters` large enough to buffer at least one full transformer block, otherwise you stall.
 
 ### Choosing Between Megatron and FSDP
 
@@ -716,11 +756,11 @@ This halves the bubble at the cost of sending twice as many pipeline messages pe
 
     **Q:** You are given a 256-GPU cluster (8 GPUs/node, NVLink intra-node, InfiniBand inter-node) and asked to train a 70B dense model. Walk through how you would choose TP, PP, and DP, and justify each choice.
 
-    **A:** Start with TP=8 — one full node — because all tensor-parallel all-reduces then stay on NVLink (fast) and never touch InfiniBand (slow). The cluster is 256/8 = 32 nodes, and TP=8 fills exactly one node, so there are 32 TP groups. Choosing PP=4 chains four of those nodes into each pipeline, giving 32/4 = 8 pipelines, i.e. DP=256/(8×4)=8. Verify memory: 70B params × 16 bytes / (8×4 TP×PP sharding) ≈ 35 GB model state per GPU, plus ~5-10 GB activations with selective recompute → comfortably fits 80 GB. For MFU, PP=4 with interleaved schedule (v=2) and 32+ micro-batches gives a bubble below 10%. If we needed more DP, we would scale the cluster rather than reducing TP/PP. If DP gradient communication shows up as exposed time in the profile, note that moving ZeRO-1 → ZeRO-2 would *not* help — both move the same reduce-scatter + all-gather volume, ZeRO-2 only saves gradient memory. The real levers are overlap (`--overlap-grad-reduce`, `--overlap-param-gather`), larger reduce buckets, and, if the DP group spans many nodes, ZeRO++-style hierarchical or quantized collectives.
+    **A:** Start with TP=8 — one full node — because all tensor-parallel all-reduces then stay on NVLink (fast) and never touch InfiniBand (slow). The cluster is 256/8 = 32 nodes, and TP=8 fills exactly one node, so there are 32 TP groups. Choosing PP=4 chains four of those nodes into each pipeline, giving 32/4 = 8 pipelines, i.e. DP=256/(8×4)=8. Verify memory: 70B params × 16 bytes / (8×4 TP×PP sharding) ≈ 35 GB model state per GPU, plus ~10-15 GB of activations with selective recompute — remembering that stage 0 stashes up to PP=4 in-flight micro-batches at once — → fits 80 GB with headroom. For MFU, PP=4 with interleaved schedule (v=2) and 32+ micro-batches gives a bubble below 10%. If we needed more DP, we would scale the cluster rather than reducing TP/PP. If DP gradient communication shows up as exposed time in the profile, note that moving ZeRO-1 → ZeRO-2 would *not* help — both move the same reduce-scatter + all-gather volume, ZeRO-2 only saves gradient memory. The real levers are overlap (`--overlap-grad-reduce`, `--overlap-param-gather`), larger reduce buckets, and, if the DP group spans many nodes, ZeRO++-style hierarchical or quantized collectives.
 
 ## Combining Megatron-Core with External Libraries
 
-Megatron-Core is designed to be embedded. The typical NeMo or Databricks Mosaic setup looks like:
+Megatron-Core is designed to be embedded. The typical NeMo-style setup looks like:
 
 ```python
 # Pattern: Megatron-Core layer inside a custom training loop
@@ -767,8 +807,19 @@ model = GPTModel(
 
 # 4. Optimizer-state sharding. Either Megatron's own distributed optimizer
 #    (config.use_distributed_optimizer = True, ZeRO-1) or DeepSpeed — not both.
+#    Pass a client optimizer explicitly. ds_config_zero1.json above has no
+#    "optimizer" block, and with neither source DeepSpeed has nothing to shard or
+#    step — it falls back to a DummyOptim, so .step() runs but no parameter is ever
+#    updated. (The alternative is to add an "optimizer" block to the JSON.)
 import deepspeed
-model_engine, _, _, _ = deepspeed.initialize(model=model, config="ds_config_zero1.json")
+import torch
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
+model_engine, optimizer, _, _ = deepspeed.initialize(
+    model=model,
+    optimizer=optimizer,
+    config="ds_config_zero1.json",
+)
 ```
 
 This pattern — Megatron-Core for the TP/PP topology, DeepSpeed for the optimizer-side ZeRO sharding — is sometimes called **3D + ZeRO** and remains the dominant approach for frontier model training runs in 2026, now increasingly running on NVIDIA Blackwell (B200 / GB200 NVL72) systems alongside the large H100/H200 fleets of the previous generation.

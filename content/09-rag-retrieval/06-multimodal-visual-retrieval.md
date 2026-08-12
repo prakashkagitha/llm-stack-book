@@ -117,8 +117,8 @@ ColPali (Faysse et al., *ColPali: Efficient Document Retrieval with Vision Langu
 The pipeline:
 
 1. Render each PDF page to an image (e.g., at ~150 DPI). **No OCR.**
-2. Feed the image to a VLM's vision encoder + projection. The original ColPali used PaliGemma (a SigLIP vision tower feeding a Gemma language model). The image becomes a sequence of patch tokens — for PaliGemma, a $32\times 32$ grid yields **1024 patch embeddings** per page.
-3. Project each patch embedding down to a low dimension $d$ (ColPali uses $d = 128$, matching ColBERT) with a linear layer, and L2-normalize. Store these 1024 vectors as the page's representation.
+2. Feed the image through the VLM's **full** stack, not just its vision tower. The original ColPali used PaliGemma (a SigLIP vision tower feeding a Gemma language model): SigLIP turns the page into a sequence of patch tokens — a $32\times 32$ grid, i.e. **1024 patch embeddings** per page — which are projected into Gemma's embedding space and run through the **language model**. The LM forward pass is the whole point: it is what contextualizes each patch against the rest of the page.
+3. Take the language model's final hidden state at each of the 1024 image positions and project it down to a low dimension $d$ (ColPali uses $d = 128$, matching ColBERT) with a linear layer, then L2-normalize. Store these 1024 vectors as the page's representation.
 4. The text query is tokenized and run through the **same model's** language tower to produce one $d$-vector per query token. Following ColBERT, the query is also *augmented*: `colpali-engine`'s `process_queries` prepends a short instruction-style prefix and appends a handful of padding tokens that are **not** masked out of the MaxSim. Those extra slots behave as learned query-expansion vectors — they can latch onto page evidence the literal query words never mention — and removing them typically costs a little recall.
 5. Score with MaxSim, identical to ColBERT.
 
@@ -427,7 +427,7 @@ print(reciprocal_rank_fusion([colpali_order, bm25_order]))
 
     **Q:** Your team retrieves over 2 million scanned pages. ColPali at 1024 patches/page would need a multi-vector index in the tens-to-hundreds of GB and exact MaxSim is too slow to scan. Walk me through a serving design that hits sub-200 ms p95 retrieval latency.
 
-    **A:** I would build a three-stage funnel and aggressively compress. **(1) Compression at index time:** token-pool each page from 1024 to ~128 patches via clustering, then store residuals at 1–2 bits/dim (PLAID) or binary-quantize. That alone shrinks 2M pages from hundreds of GB to a few tens of GB that fit in RAM across a couple of shards. **(2) Approximate candidate generation:** either PLAID's centroid-based retrieval or a MUVERA fixed-dimensional encoding so each query token hits a standard HNSW index; take the union of, say, the top few hundred candidate pages. This stage never touches full-precision vectors. **(3) Exact MaxSim rerank:** decompress the full fp16 patches for only those few hundred candidates (the two-tier storage split, full vectors memory-mapped on NVMe) and compute exact MaxSim, returning the top 3–5 pages. The latency budget goes mostly to stage 2's ANN graph traversal; stage 3 is a few hundred small matmuls. I would shard by document, replicate for QPS, cache query embeddings for repeated queries, and keep generation precision high by returning few but accurate pages. If latency still misses, I trade recall for speed by lowering `ef`/`nprobe` and the per-token top-$k$, and I validate the recall hit on a held-out ViDoRe-style eval before shipping.
+    **A:** I would build a three-stage funnel and aggressively compress. **(1) Compression at index time:** token-pool each page from 1024 to ~128 patches via clustering, then store residuals at 1–2 bits/dim (PLAID) or binary-quantize. That is $8\times$ from pooling and another $8\times$ from 16-bit to 2-bit, so 2M pages go from ~520 GB raw to $2\times10^6 \times 128 \times 128 \times 0.25\,\text{B} \approx 8$ GB (4 GB at 1 bit/dim, plus ~1 GB of centroid ids) — small enough to sit in RAM on a *single* node. **(2) Approximate candidate generation:** either PLAID's centroid-based retrieval or a MUVERA fixed-dimensional encoding so each query token hits a standard HNSW index; take the union of, say, the top few hundred candidate pages. This stage never touches full-precision vectors. **(3) Exact MaxSim rerank:** decompress the full fp16 patches for only those few hundred candidates (the two-tier storage split, full vectors memory-mapped on NVMe) and compute exact MaxSim, returning the top 3–5 pages. The latency budget goes mostly to stage 2's ANN graph traversal; stage 3 is a few hundred small matmuls. I would replicate for QPS (and shard by document only once the corpus outgrows one node), cache query embeddings for repeated queries, and keep generation precision high by returning few but accurate pages. If latency still misses, I trade recall for speed by lowering `ef`/`nprobe` and the per-token top-$k$, and I validate the recall hit on a held-out ViDoRe-style eval before shipping.
 
 ## Evaluation: ViDoRe and What to Measure
 
@@ -622,7 +622,7 @@ Compute the MaxSim score. Then compute the score you would get if you (wrongly) 
 
     The score is below 1 because a relevant page sat at rank 3 instead of rank 2 — nDCG penalizes the relevant page pushed down by the irrelevant one at rank 2.
 
-**5.** (Implementation) The chapter notes binary quantization (1 bit/dim) is "often the single highest-leverage optimization." Implement it. Write `binarize(V)` that sign-quantizes and bit-packs a patch matrix, and `approx_maxsim(q_bits, d_bits, dim)` that computes an approximate MaxSim using XOR + popcount (Hamming distance) instead of float dot products. Verify on random unit vectors that the approximate ranking tracks the exact MaxSim.
+**5.** (Implementation) The chapter notes binary quantization (1 bit/dim) is "often the single highest-leverage optimization." Implement it. Write `binarize(V)` that sign-quantizes and bit-packs a patch matrix, and `approx_maxsim(q_bits, d_bits, dim)` that computes an approximate MaxSim using XOR + popcount (Hamming distance) instead of float dot products. Verify on synthetic pages — one of which is planted as genuinely relevant to the query — that the approximate score still ranks that page first, agreeing with exact MaxSim.
 
 ??? note "Solution"
 
@@ -648,25 +648,31 @@ Compute the MaxSim score. Then compute the score you would get if you (wrongly) 
     def exact_maxsim(Q, D):
         return float((Q @ D.T).max(axis=1).sum())
 
-    # --- sanity check: approximate ranking should track exact ranking ---
+    # --- sanity check: the 1-bit surrogate must still surface the relevant page ---
+    # With *purely* i.i.d. random pages there is no ranking to recover: all 20 MaxSim
+    # scores land in a narrow band (~1.36-1.76 here) set mostly by patch count, so we
+    # give every page the same patch count and plant one genuinely relevant page.
     rng = np.random.default_rng(0)
     dim = 128
-    def unit(m): 
+    def unit(m):
         X = rng.standard_normal((m, dim)); return X / np.linalg.norm(X, axis=1, keepdims=True)
 
     Q = unit(8)                                  # 8 query tokens
-    pages = [unit(rng.integers(40, 80)) for _ in range(20)]
+    pages = [unit(64) for _ in range(20)]        # equal patch counts -> no size bias
+    # Page 7 is the "relevant" one: 8 of its patches echo the query tokens.
+    pages[7][:8] = 0.9 * Q + 0.1 * pages[7][:8]
+    pages[7] /= np.linalg.norm(pages[7], axis=1, keepdims=True)
 
     exact = np.array([exact_maxsim(Q, D) for D in pages])
     qb = binarize(Q)
     approx = np.array([approx_maxsim(qb, binarize(D), dim) for D in pages])
 
-    # Compare orderings (top pages should mostly agree).
-    print("exact top5 :", np.argsort(-exact)[:5])
-    print("approx top5:", np.argsort(-approx)[:5])
+    assert np.argmax(exact) == np.argmax(approx) == 7   # holds across seeds
+    print("exact top3 :", np.argsort(-exact)[:3])       # [ 7 18  3]
+    print("approx top3:", np.argsort(-approx)[:3])      # [ 7 16  1]
     ```
 
-    The bit-packed index uses $1/16$ of the fp16 memory. Ranks are approximate, so in a real system this stage does **candidate generation** and exact fp16 MaxSim reranks the shortlist (the two-tier storage split from the chapter).
+    The bit-packed index uses $1/16$ of the fp16 memory. Notice that only the *top* page agrees — below it the two orderings diverge freely, because the remaining pages are near-tied noise with no real signal for a 1-bit surrogate to preserve. That is precisely why this stage does **candidate generation** only, with exact fp16 MaxSim reranking the shortlist (the two-tier storage split from the chapter).
 
 **6.** (Implementation) Reproduce the chapter's HNSW-over-patches funnel *without* an ANN library, so the candidate-generation logic is explicit. Given a query's patch matrix and a dict of `page_id -> [m, d]` patch matrices, implement (1) candidate generation as the **union of pages owning each query token's top-$k$ nearest patches** across the whole corpus, then (2) exact-MaxSim reranking over only those candidate pages. Return the top-$n$ pages.
 

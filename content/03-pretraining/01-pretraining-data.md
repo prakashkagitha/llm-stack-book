@@ -54,7 +54,7 @@ The quick brown fox jumps over the lazy dog. Lorem ipsum ...
 
 Common Crawl's crawler is built on Apache Nutch, seeded from the previous crawl's link graph and a set of highly-linked root domains, and expanded breadth-first. Because it respects `robots.txt` and applies politeness delays, the crawl takes weeks per snapshot. The resulting corpus is *not* a uniform sample of the web — high-PageRank domains are over-represented, low-resource languages are under-represented, and non-HTML resources (PDFs, images) are captured only incidentally and are never converted to WET text, so you must filter them out yourself when reading WARC (as the extraction code below does).
 
-This non-uniformity is both a feature and a bug. English Wikipedia is crawled in its entirety every month. Some low-resource languages appear only in a handful of documents. Any downstream model will inherit these imbalances unless they are explicitly corrected through domain up/down-weighting.
+This non-uniformity is both a feature and a bug. A large fraction of English Wikipedia is re-crawled every month — high-PageRank domains are sampled far more densely than the tail, though never exhaustively, which is why pipelines still inject Wikipedia from the official dumps instead of relying on the crawl. Some low-resource languages appear only in a handful of documents. Any downstream model will inherit these imbalances unless they are explicitly corrected through domain up/down-weighting.
 
 ### Getting the Bytes: How You Actually Download a Crawl
 
@@ -282,9 +282,9 @@ The public release is a 600B-token extract of a ~5-trillion-token internal corpu
 
 ### FineWeb (HuggingFace, Penedo et al., 2024)
 
-FineWeb is a 15 trillion token dataset derived entirely from Common Crawl (96 monthly snapshots through 2024). Its key innovation is showing that *aggressive quality filtering alone* — without exotic curated corpora — can match or exceed the downstream performance of carefully hand-curated mixes. The FineWeb-Edu subset (1.3T tokens) applies an educational quality classifier (a fine-tuned LLM scoring each page on a 0–5 scale for educational value) and dramatically outperforms base FineWeb on knowledge-intensive benchmarks at small model scales (1B–7B parameters).
+FineWeb is a 15 trillion token dataset derived entirely from Common Crawl (96 monthly snapshots through 2024). Its key innovation is showing that *aggressive quality filtering alone* — without exotic curated corpora — can match or exceed the downstream performance of carefully hand-curated mixes. The FineWeb-Edu subset (1.3T tokens) applies an educational-quality classifier — a small embedding model (`Snowflake-arctic-embed-m`) with a regression head, trained on hundreds of thousands of sample pages that Llama-3-70B-Instruct scored 0–5 for educational value — and dramatically outperforms base FineWeb on knowledge-intensive benchmarks at small model scales (1B–7B parameters). Note the shape of that recipe: the 70B LLM annotates a sample *once*, and the cheap encoder is what actually scores all 15T tokens. Running the LLM itself over the full corpus would cost orders of magnitude more than the extraction pipeline.
 
-FineWeb is released under the Common Crawl terms of service, making it the most legally accessible large-scale web corpus. Its 2025 successor, **FineWeb-2**, generalizes the pipeline to over 1,000 languages (a ~20 TB, ~5-billion-document multilingual corpus built from nearly 100 snapshots), and NVIDIA's **Nemotron-CC** (2024) pushed the English frontier further by combining classifier ensembling with LLM-based synthetic rephrasing to retain roughly four times more unique tokens than DCLM at equal quality — a shift away from the "filter away 90% of the crawl" recipe toward rewriting and augmenting borderline data.
+FineWeb is released under the Open Data Commons Attribution License (ODC-By 1.0) — redistribution therefore carries an attribution requirement — and its users are additionally asked to abide by Common Crawl's Terms of Use, which makes it one of the most legally accessible large-scale web corpora. Its 2025 successor, **FineWeb-2**, generalizes the pipeline to over 1,000 languages (a ~20 TB, ~5-billion-document multilingual corpus built from nearly 100 snapshots), and NVIDIA's **Nemotron-CC** (2024) pushed the English frontier further by combining classifier ensembling with LLM-based synthetic rephrasing to retain roughly four times more unique tokens than DCLM at equal quality — a shift away from the "filter away 90% of the crawl" recipe toward rewriting and augmenting borderline data.
 
 ---
 
@@ -348,10 +348,10 @@ import gzip
 import os
 import re
 import struct
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from tokenizers import Tokenizer  # HuggingFace fast tokenizers
 
 
 # ── WET record parser ──────────────────────────────────────────────────────
@@ -449,9 +449,11 @@ def passes_quality_filter(text: str, min_chars: int = 200) -> bool:
     words = text.lower().split()
     if not words:
         return False
-    most_common_freq = max(
-        words.count(w) for w in set(words)
-    ) / len(words)
+    # One pass with Counter: O(N). `max(words.count(w) for w in set(words))`
+    # gives the same number but rescans the list once per unique word, which
+    # is O(unique x N) — seconds per document on a long page, and this filter
+    # runs on every document in the crawl.
+    most_common_freq = Counter(words).most_common(1)[0][1] / len(words)
     if most_common_freq > 0.20:
         return False
 
@@ -533,6 +535,10 @@ def run_pipeline(
     hundreds of workers, each handling a distinct subset of WET files.
     Here we run single-threaded for clarity.
     """
+    # Imported lazily so that the offline checks below can import this module
+    # without HuggingFace `tokenizers` installed.
+    from tokenizers import Tokenizer  # HuggingFace fast tokenizers
+
     tokenizer = Tokenizer.from_file(tokenizer_path)
     eos_id = tokenizer.token_to_id("<|endoftext|>")
     packer = TokenShard(output_dir, shard_size, context_len)
@@ -578,7 +584,7 @@ In production, the outer loop over WET files is parallelized — each worker pic
 
 !!! note "The WET parser above is didactic — use a real WARC reader in production"
 
-    `parse_wet_records` is a hand-rolled line scanner. It is correct for well-formed WET files, but it leans on string heuristics: a body line that happens to equal `WARC/1.0`, a truncated record, or unusual header casing could fool it. Production pipelines never parse WARC/WET by hand — they use `warcio`'s `ArchiveIterator` or the much faster `fastwarc`, both of which honor each record's `Content-Length` and read exactly that many payload bytes, so body content can never be mistaken for a header or a record boundary. To read WET this way, iterate exactly as in the *Extracting Text from WARC* section and keep records with `record.rec_type == "conversion"`.
+    `parse_wet_records` is a hand-rolled line scanner. It is correct for well-formed WET files, but it leans on string heuristics: a body line that happens to equal `WARC/1.0`, a truncated record, or unusual header casing could fool it. Production pipelines never parse WARC/WET by hand — they use `warcio`'s `ArchiveIterator` or the much faster `fastwarc`, both of which honor each record's `Content-Length` and read exactly that many payload bytes, so body content can never be mistaken for a header or a record boundary. Reading WET with `ArchiveIterator` is *not* quite the loop from the *Extracting Text from WARC* section, though: keep records with `record.rec_type == "conversion"`, take the URL from `record.rec_headers.get_header("WARC-Target-URI")`, and decode the payload with `record.content_stream().read().decode("utf-8", "replace")`. Drop both HTML-specific steps — a conversion record has no HTTP header block (`record.http_headers` is `None`, so the `Content-Type` check would raise, and no WET record would survive an `"html" in ctype` test anyway), and its payload is already plain text, so there is nothing left for `trafilatura.extract` to do.
 
 ### Shard Layout for Streaming Training
 
@@ -653,7 +659,7 @@ class ShardedTokenDataset(IterableDataset):
 
 ### Verifying the Pipeline
 
-Before running on real crawl data, sanity-check the three moving parts on tiny synthetic inputs — no tokenizer or network needed. These are deterministic and should print `All pipeline checks passed.`:
+Before running on real crawl data, sanity-check the three moving parts on tiny synthetic inputs — no tokenizer, no network, nothing beyond `numpy` (which is why `pipeline.py` imports `tokenizers` lazily inside `run_pipeline`). These are deterministic and should print `All pipeline checks passed.`:
 
 ```python
 # verify_pipeline.py

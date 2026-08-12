@@ -245,8 +245,13 @@ class TrainingMonitor:
         # --- Spike detector ---
         if len(self.loss_history) >= self.spike_window:
             window = self.loss_history[-self.spike_window:]
-            baseline = sum(window[:self.spike_window // 2]) / (self.spike_window // 2)
-            recent = sum(window[self.spike_window // 2:]) / (self.spike_window // 2)
+            # Compare the two halves. Use ONE half-length for both slices and
+            # both divisors: with an odd spike_window, window[h:] holds h + 1
+            # elements and dividing it by h would inflate `recent` (and fire
+            # the spike alert) on a perfectly healthy run.
+            h = len(window) // 2
+            baseline = sum(window[:h]) / h
+            recent = sum(window[-h:]) / h
             metrics['train/spike_delta'] = recent - baseline
 
         wandb.log(metrics)
@@ -261,7 +266,11 @@ class TrainingMonitor:
         stats = {}
         for name, param in model.named_parameters():
             if 'weight' in name and param.dim() >= 2:
-                # Track weight matrix spectral norm proxy (Frobenius / sqrt(numel))
+                # RMS magnitude of a single weight entry (Frobenius / sqrt(numel)).
+                # This is a per-tensor weight-growth tracker, NOT a spectral-norm
+                # proxy: for entries of std s, ||W||_2 ~= s * (sqrt(m) + sqrt(n)),
+                # so the shape factor makes tensors of different shape
+                # incomparable. Compare each tensor against ITS OWN history.
                 rms = param.norm() / (param.numel() ** 0.5)
                 short = name.replace('.weight', '').replace('model.', '')
                 stats[f'weights/{short}_rms'] = rms.item()

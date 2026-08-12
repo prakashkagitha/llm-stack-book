@@ -34,7 +34,7 @@ L(N) \approx \left(\frac{N_c}{N}\right)^{\alpha_N},
 L(D) \approx \left(\frac{D_c}{D}\right)^{\alpha_D}
 $$
 
-where $N_c, D_c$ are constants with units of parameters and tokens, and $\alpha_N, \alpha_D$ are small positive exponents (empirically on the order of $0.05$–$0.1$). The exponents being *small* is the whole story of why training is expensive: to halve the loss-above-floor, you need to multiply $N$ by roughly $2^{1/\alpha_N}$, which for $\alpha_N \approx 0.07$ is about $2^{14} \approx 16000\times$ more parameters. Returns diminish, but they never stop.
+where $N_c, D_c$ are constants with units of parameters and tokens, and $\alpha_N, \alpha_D$ are small positive exponents (empirically on the order of $0.05$–$0.1$). The exponents being *small* is the whole story of why training is expensive: in this *floorless* parameterization, halving the loss means multiplying $N$ by roughly $2^{1/\alpha_N}$, which for $\alpha_N \approx 0.07$ is about $2^{14.3} \approx 2 \times 10^{4}$ times more parameters. (Watch which quantity the exponent applies to: the floored form introduced next puts a *different*, larger exponent — $\alpha \approx 0.34$ — on the *reducible* term $A N^{-\alpha}$, so halving what is left above the floor costs only $2^{1/0.34} \approx 8\times$ more parameters. The two exponents are not interchangeable.) Returns diminish, but they never stop.
 
 ### The joint form: the Chinchilla parameterization
 
@@ -100,7 +100,7 @@ def inference_flops(n_params: int, n_tokens: int) -> float:
 ```
 
 !!! warning "Caveats to 6ND that interviewers love"
-    The $6ND$ rule counts only the dense matmul FLOPs. Two corrections matter in practice. (1) **Attention** adds a term of order $12 \cdot L \cdot d \cdot T^2$ per sequence across the whole model — i.e. $\sim d \cdot T^2$ *per layer*, summed over the $L$ layers ($T$ = sequence length); for short contexts it is negligible, but for very long contexts it dominates and $6ND$ undercounts — see [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html). (2) For **Mixture-of-Experts** models, $N$ in the FLOP formula is the *active* (per-token) parameter count, not the *total* parameter count, because each token routes to only a few experts — see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html). MoE breaks the tidy coupling between "model capacity" and "compute," which is precisely why it is attractive.
+    The $6ND$ rule counts only the dense matmul FLOPs. Two corrections matter in practice. (1) **Attention** adds a term of order $12 \cdot L \cdot d \cdot T^2$ per sequence across the whole model — i.e. $\sim 12 \, d \, T^2$ *per layer* (the $QK^\top$ and $AV$ matmuls cost $4 d T^2$ forward, tripled for forward-plus-backward), summed over the $L$ layers ($T$ = sequence length); for short contexts it is negligible, but for very long contexts it dominates and $6ND$ undercounts — see [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html). (2) For **Mixture-of-Experts** models, $N$ in the FLOP formula is the *active* (per-token) parameter count, not the *total* parameter count, because each token routes to only a few experts — see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html). MoE breaks the tidy coupling between "model capacity" and "compute," which is precisely why it is attractive.
 
 ### Hardware FLOPs vs. model FLOPs
 
@@ -385,7 +385,7 @@ for C in [1e23, 1e24, 1e25]:
     print(f"C={C:.0e} -> N*={N:.2e}  D*={D:.2e}  tok/param={D/N:.1f}  L*={L:.3f}")
 ```
 
-Before the engineering notes, it is worth being honest about what this seed actually recovers: for `rng = np.random.default_rng(0)` the fit above returns approximately $E=1.83$, $A=879$, $B=471$, $\alpha=0.390$, $\beta=0.290$ against ground truth $E=1.69$, $A=406$, $B=410$, $\alpha=0.34$, $\beta=0.28$. If your run lands there too, that is expected — not a bug. $E$, $A$, and $B$ are strongly correlated and only weakly constrained by the data: the additive power-law surface is nearly flat near the optimum, so many $(E, A, B)$ triples fit the observed grid almost equally well, which is why $A$ can come out $2\times$ off. The exponents $\alpha, \beta$ — and especially the *allocation* exponent $\beta/(\alpha+\beta)$, recovered here as $0.426$ against a true $0.452$ — recover far more tightly, because it is the *slope* of the surface, not its offset, that the spread of runs actually pins down. The right accuracy check is therefore not the raw constants but (i) the implied allocation exponent and (ii) the extrapolated compute-optimal loss. This fit exhibits a classic compensating-error pattern: because $E$, $A$, $B$ trade off against each other, it interpolates the grid well, yet the extrapolated loss at $C=10^{25}$ comes out around $1.94$ nats versus the true $1.85$ — about $0.1$ nats high — while the allocation $N^\star(C)$, which depends only on the well-identified exponent ratio, tracks the truth far better than the absolute loss *level* does. This is not a toy artifact: Epoch AI's replication (Besiroglu et al., 2024, *"Chinchilla Scaling: A replication attempt"*) found the original Chinchilla parametric estimates were fragile for exactly this reason.
+Before the engineering notes, it is worth being honest about what this seed actually recovers: for `rng = np.random.default_rng(0)` the fit above returns approximately $E=1.81$, $A=794$, $B=459$, $\alpha=0.384$, $\beta=0.288$ against ground truth $E=1.69$, $A=406$, $B=410$, $\alpha=0.34$, $\beta=0.28$. If your run lands there too, that is expected — not a bug. $E$, $A$, and $B$ are strongly correlated and only weakly constrained by the data: the additive power-law surface is nearly flat near the optimum, so many $(E, A, B)$ triples fit the observed grid almost equally well, which is why $A$ can come out $2\times$ off. The exponents $\alpha, \beta$ — and especially the *allocation* exponent $\beta/(\alpha+\beta)$, recovered here as $0.429$ against a true $0.452$ — recover far more tightly, because it is the *slope* of the surface, not its offset, that the spread of runs actually pins down. The right accuracy check is therefore not the raw constants but (i) the implied allocation exponent and (ii) the extrapolated compute-optimal loss. This fit exhibits a classic compensating-error pattern: because $E$, $A$, $B$ trade off against each other, it interpolates the grid well, yet the extrapolated loss at $C=10^{25}$ comes out around $1.93$ nats versus the true $1.85$ — about $0.08$ nats high — while the allocation $N^\star(C)$, which depends only on the well-identified exponent ratio, tracks the truth far better than the absolute loss *level* does. This is not a toy artifact: Epoch AI's replication (Besiroglu et al., 2024, *"Chinchilla Scaling: A replication attempt"*) found the original Chinchilla parametric estimates were fragile for exactly this reason.
 
 You can quantify the identifiability gap directly with a bootstrap over the fitting grid:
 
@@ -413,22 +413,24 @@ for _ in range(n_boot):
     idx = boot_rng.integers(0, n_rows, n_rows)          # resample WITH replacement
     e_b, a_b, b_b, alpha_b, beta_b = fit_once(N_obs[idx], D_obs[idx], L_obs[idx])
     _, _, L25 = optimal_alloc(1e25, e_b, a_b, b_b, alpha_b, beta_b)
-    records.append((alpha_b, beta_b, beta_b / (alpha_b + beta_b), np.exp(a_b), L25))
+    records.append((alpha_b, beta_b, beta_b / (alpha_b + beta_b),
+                    np.exp(a_b), np.exp(e_b), L25))
 records = np.array(records)
-names = ["alpha", "beta", "alloc_exp (beta/(a+b))", "A", "L*(1e25)"]
+names = ["alpha", "beta", "alloc_exp (beta/(a+b))", "A", "E", "L*(1e25)"]
 for j, name in enumerate(names):
     lo, mid, hi = np.percentile(records[:, j], [2.5, 50, 97.5])
     print(f"{name:>24}: [{lo:.3g}, {mid:.3g}, {hi:.3g}]  (2.5% / median / 97.5%)")
-# Expect: alpha ~ [0.30, 0.45], beta ~ [0.25, 0.34], alloc-exp ~ [0.38, 0.50] -- tight.
-# A spans roughly [230, 2300] and E ~ [1.57, 1.95] -- an order of magnitude wider,
-# visually confirming allocation is identifiable but the raw offsets are not.
+# Expect: alpha ~ [0.30, 0.46], beta ~ [0.25, 0.34], alloc-exp ~ [0.37, 0.51] -- tight.
+# A spans roughly [210, 2700] -- a 13x range end to end -- and E ~ [1.64, 1.96],
+# while the allocation exponent spans only ~1.4x, visually confirming that
+# allocation is identifiable but the raw offsets are not.
 ```
 
 A few engineering notes that separate a real fit from a toy one:
 
 - **Use enough points and enough spread.** Chinchilla's IsoFLOP method runs many models at each of several fixed compute budgets, then fits a parabola in $\log N$ to find the valley (the optimal $N$) at each budget, and finally fits a power law through those valleys. Our parametric fit above is the third of Chinchilla's three methods.
 - **Exclude under-converged runs.** A run whose LR schedule did not finish, or that hit a loss spike (see [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html)), pollutes the fit. This is exactly the failure mode that biased Kaplan.
-- **Sanity-check extrapolation, not interpolation.** The whole value is predicting *outside* your grid. Hold out your largest run, fit on the rest, and verify the prediction lands within a percent or two.
+- **Sanity-check extrapolation, not interpolation.** The whole value is predicting *outside* your grid. Hold out your largest run, fit on the rest, and verify the prediction lands within a few percent — and judge that against your own seed-to-seed noise, since the prediction can never be tighter than the noise on the held-out measurement itself.
 
 {{tool:scaling-law-fit}}
 
@@ -544,7 +546,7 @@ print(f"held-out predicted vs observed: {list(zip(pred_L.round(3), held_L.round(
 print(f"held-out error: {err_pct.round(2)}%")
 ```
 
-Expect the held-out loss recovered within roughly 1–2% — that is the real success criterion for a scaling-law fit: extrapolation, not interpolation.
+This prints per-row errors of `[1.31, 0.82, 0.0, 1.51, 2.52, 3.32, 1.91]%` — the held-out losses recovered within a few percent. Do not expect better: the observations themselves were generated with 2% multiplicative noise, so $|L_{\text{pred}} - L_{\text{obs}}|/L_{\text{obs}}$ has a $\approx 2\%$ RMS floor *before* any extrapolation bias (measured against the noiseless ground-truth law, the same predictions are within 1.1%). Recovering held-out runs to within a few percent, on the order of your seed-to-seed noise, is the real success criterion for a scaling-law fit: extrapolation, not interpolation.
 
 ---
 

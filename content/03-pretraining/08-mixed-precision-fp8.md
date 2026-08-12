@@ -113,7 +113,7 @@ loss ──×S──► backward ──► grads (×S, now representable) ──
 What value of $S$? Too small and gradients still underflow; too large and the *scaled* gradients overflow to `inf`. The sweet spot drifts during training as gradient magnitudes change. Two strategies:
 
 - **Static loss scaling:** pick one constant (say $2^{15}$) and hope. Simple, but fragile — wrong choice wastes range or causes overflow.
-- **Dynamic loss scaling** (what `GradScaler` does): start high (e.g. $2^{16}$), and adapt. After each backward, **check the gradients for `inf`/`NaN`**. If any are found, the scale was too big: **skip the optimizer step** (don't corrupt the weights with garbage) and **halve** $S$. If many steps pass with no overflow (e.g. 2000 steps), the scale may be too conservative: **double** $S$ to claw back precision. This is an AIMD (additive-increase / multiplicative-decrease)-style controller that automatically tracks the gradient distribution.
+- **Dynamic loss scaling** (what `GradScaler` does): start high (e.g. $2^{16}$), and adapt. After each backward, **check the gradients for `inf`/`NaN`**. If any are found, the scale was too big: **skip the optimizer step** (don't corrupt the weights with garbage) and **halve** $S$. If many steps pass with no overflow (e.g. 2000 steps), the scale may be too conservative: **double** $S$ to claw back precision. This is a purely *multiplicative* controller — $\times 2$ after `growth_interval` clean steps, $\times \tfrac{1}{2}$ on overflow — i.e. a $\pm 1$-octave random walk in $\log_2 S$ that automatically tracks the gradient distribution. (The asymmetry that keeps it stable is not the step sizes, which are symmetric in log space, but the *timing*: one bad step cuts immediately, while a doubling costs `growth_interval` clean steps.)
 
 ```python
 # Conceptual core of a dynamic GradScaler (PyTorch implements this in C++).
@@ -205,11 +205,11 @@ def train_step(batch):
 
 The five non-obvious correctness points, in order:
 
-1. **Cast logits to fp32 before cross-entropy.** The log-softmax over a 50k-vocab needs the fp32 range/precision; doing it in fp16 risks `inf` from `exp` of a large logit.
+1. **Cast logits to fp32 before cross-entropy.** `cross_entropy`/`log_softmax` are already on autocast's fp32 list, so under `torch.autocast` this cast is belt-and-braces — but it is the right habit, and it is load-bearing the moment you compute the loss outside the autocast region. The real fp16 hazards are the *logit GEMM itself* overflowing 65504 before the loss ever runs, and precision loss in the 50k-term log-sum-exp normalizer. Note the log-softmax kernel subtracts the row max before `exp`, so `exp` itself cannot overflow — the danger is the inputs, not the exponential.
 2. **Backward on the scaled loss**, not the raw loss.
 3. **Unscale before clipping.** `clip_grad_norm_` compares the gradient norm to `max_norm=1.0`. If the grads are still scaled by $2^{16}$, every batch looks like it has a norm of ~65,000 and you clip everything to noise. Unscale first.
 4. **`scaler.step` does the inf check and the skip.** You never call `optimizer.step()` directly in fp16 AMP.
-5. **`scaler.update()`** runs the AIMD controller.
+5. **`scaler.update()`** runs the multiplicative growth/backoff controller.
 
 ### Where do master weights live?
 
@@ -301,6 +301,7 @@ The fix is **finer-grained scaling**: instead of one scale per tensor, use one s
 You rarely hand-roll the casts. NVIDIA's **Transformer Engine (TE)** provides FP8-aware layers and an `fp8_autocast` context that manages scales, history, and the E4M3/E5M2 split for you.
 
 ```python
+import torch
 import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import DelayedScaling, Format
 

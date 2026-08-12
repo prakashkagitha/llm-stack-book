@@ -1,6 +1,6 @@
 # 9.1 Embeddings & Representation Learning
 
-Dense text embeddings are the connective tissue of modern information retrieval. Without them, matching a user's natural-language question to a relevant document requires either exact keyword overlap or hand-crafted rules — both brittle in practice. With them, a 768-dimensional vector encodes semantic meaning so precisely that "What is the boiling point of water?" and "At what temperature does H₂O vaporize?" land microseconds apart in vector space. This chapter develops every piece of the pipeline: why dense vectors work, how they are trained with contrastive objectives, how the field settled on architectures like bi-encoders with pooled transformer representations, and how to evaluate them rigorously with MTEB. It ends with a direct bridge to the RAG systems that consume these embeddings at query time.
+Dense text embeddings are the connective tissue of modern information retrieval. Without them, matching a user's natural-language question to a relevant document requires either exact keyword overlap or hand-crafted rules — both brittle in practice. With them, a 768-dimensional vector encodes semantic meaning so precisely that "What is the boiling point of water?" and "At what temperature does H₂O vaporize?" land a tiny cosine distance apart in vector space. This chapter develops every piece of the pipeline: why dense vectors work, how they are trained with contrastive objectives, how the field settled on architectures like bi-encoders with pooled transformer representations, and how to evaluate them rigorously with MTEB. It ends with a direct bridge to the RAG systems that consume these embeddings at query time.
 
 If you are looking for the token embeddings inside a transformer (the learned lookup table that maps token IDs to vectors at the input layer), that is covered in [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html). This chapter is about *sentence*- and *document*-level representation: a single fixed-size vector that summarizes an entire passage.
 
@@ -40,7 +40,7 @@ $$
 \mathbf{e} = \frac{\sum_{i=1}^{n} m_i \mathbf{h}_i}{\sum_{i=1}^{n} m_i}
 $$
 
-where $m_i \in \{0,1\}$ is the attention mask and $\mathbf{h}_i$ is the hidden state at position $i$. Mean pooling is empirically stronger than CLS pooling for most bi-encoder tasks, and it is the default in models like `sentence-transformers` (Reimers & Gurevych, 2019).
+where $m_i \in \{0,1\}$ is the attention mask and $\mathbf{h}_i$ is the hidden state at position $i$. Mean pooling is the most common default — it is what `sentence-transformers` uses out of the box (Reimers & Gurevych, 2019) and what E5, GTE and MPNet-based encoders were trained with. It is *not* universally better: the pooling mode is a property of the checkpoint, not a free choice at inference time. BGE-v1.5, for instance, is CLS-pooled (its `1_Pooling/config.json` sets `pooling_mode_cls_token: true`), and decoder-only encoders like E5-mistral or Qwen3-Embedding use last-token pooling. Pool the way the model was trained, or you silently read out the wrong vector.
 
 ### Max Pooling and Weighted Pooling
 
@@ -167,7 +167,9 @@ if __name__ == "__main__":
     d = F.normalize(torch.randn(B, D), dim=-1)
 
     loss = infonce_loss(q, d, temperature=0.05)
-    print(f"Loss (random init): {loss.item():.4f}")   # ~ log(B) ≈ 1.386
+    # Near chance: log(B) = 1.386, plus a small offset because dividing
+    # near-orthogonal cosines by tau=0.05 spreads the logits. Prints ~1.48.
+    print(f"Loss (random init): {loss.item():.4f}")
 
     # Perfect embeddings: q[i] == d[i]
     d_perfect = q.clone()
@@ -291,22 +293,32 @@ from sentence_transformers import SentenceTransformer
 # Load a pre-trained backbone (already fine-tuned for sentence embedding)
 model = SentenceTransformer("BAAI/bge-small-en-v1.5")
 
-# Encode a batch of texts -- returns numpy array by default
-texts = [
-    "What is the capital of France?",
+# BGE-v1.5 is asymmetric: the QUERY takes an instruction prefix, passages do not.
+# (See "Instruction-Following Embeddings" below — get this wrong and retrieval
+# quality drops with no error message.)
+BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+query = "What is the capital of France?"
+docs = [
     "Paris is the capital and most populous city of France.",
     "The Eiffel Tower is located in Paris.",
 ]
-embeddings = model.encode(texts, normalize_embeddings=True)
+
+# Encode a batch of texts -- returns numpy array by default
+embeddings = model.encode([BGE_QUERY_PREFIX + query] + docs,
+                          normalize_embeddings=True)
 
 print(f"Embedding shape: {embeddings.shape}")  # (3, 384)
 
 # Cosine similarity between query and each document
-import numpy as np
 query_emb = embeddings[0]
 doc_embs  = embeddings[1:]
 scores = doc_embs @ query_emb  # dot product of L2-normalized = cosine sim
-print(f"Scores: {scores}")     # e.g. [0.71, 0.58] — first doc more relevant
+print(f"Scores: {scores}")     # first doc scores higher than the second
+
+# BGE's absolute scores are compressed toward the high end — even a loosely
+# related passage can sit near 0.7. Compare scores to each other (ranking),
+# not to a threshold carried over from a different model.
 ```
 
 ### Fine-Tuning for Real: the `sentence-transformers` Trainer
@@ -350,7 +362,11 @@ train_ds = mine_hard_negatives(
     range_max=50,          # sample from the next ~40: hard but probably wrong
     max_score=0.8,         # reject anything suspiciously similar to the query
     margin=0.05,           # ...and anything within 0.05 of the positive's score
-    sampling_strategy="top",
+    sampling_strategy="random",
+                           # spread the 4 picks over the whole [10, 50) window.
+                           # "top" (the default) would deterministically take the
+                           # 4 highest-scoring survivors -- i.e. ranks 10-13,
+                           # right back against the false-negative boundary.
     output_format="n-tuple",   # -> anchor, positive, negative_1 ... negative_4
     batch_size=256,
     use_faiss=True,
@@ -435,7 +451,10 @@ def matryoshka_infonce_loss(
         loss_at_dim = infonce_loss(q_slice, d_slice, temperature)
         total_loss = total_loss + w * loss_at_dim
 
-    return total_loss / sum(weights)
+    # Weighted SUM, matching the objective above (and losses.MatryoshkaLoss).
+    # Do not average over prefixes: that would silently shrink the gradient
+    # by 1/|M| relative to the plain-InfoNCE path.
+    return total_loss
 ```
 
 Dimension truncation composes with *precision* reduction, and the two multiply. `sentence_transformers.quantization.quantize_embeddings(emb, precision="int8" | "binary")` casts a float32 embedding to one byte or one *bit* per dimension; binary embeddings are compared with Hamming distance and, on MRL-trained models, typically retain a large majority of retrieval quality while cutting memory 32×. Stack that on a 768→128 MRL truncation and a 100M-vector index drops from ~307 GB to under 2 GB — cheap enough to hold in RAM, with a full-precision rescoring pass over the top few hundred candidates to recover the lost recall. The index-side machinery for this (product quantization, rescoring, the recall/memory triangle) is [Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html).
@@ -488,7 +507,7 @@ The **Massive Text Embedding Benchmark** (MTEB, Muennighoff et al., 2023) is the
 | Retrieval | BEIR (MS MARCO, NQ, HotpotQA, …) | nDCG@10 |
 | Clustering | ArXiv topic clustering | V-measure |
 | Classification | Amazon review sentiment | Accuracy |
-| Pair classification | QQP duplicate detection | AP |
+| Pair classification | SprintDuplicateQuestions, TwitterURLCorpus | AP |
 | Reranking | AskUbuntu, StackExchange | MAP |
 | STS | STS12-16, STSBenchmark | Spearman ρ |
 | Summarization | SummEval | Spearman ρ |
@@ -530,7 +549,7 @@ The leaderboard is a *shortlist generator*, not a decision. Models with a two-po
 
     **A:** Raw BERT embeddings have two major problems for retrieval. First, they are **anisotropic**: without contrastive fine-tuning, embeddings cluster in a narrow cone of the embedding space rather than being uniformly distributed. This means cosine similarity between arbitrary sentences is high (often 0.6–0.9) even for unrelated pairs, making the scores uninformative for ranking. Second, BERT's `[CLS]` token was trained with masked language modeling and next-sentence prediction — neither objective directly encourages semantically similar sentences to be close in vector space.
 
-    The fix is to fine-tune with a contrastive objective (InfoNCE / NTXent) on labeled (query, positive) pairs, which directly trains the similarity space. Models like SBERT, BGE, E5, and GTE do this. After fine-tuning, the embedding space becomes roughly isotropic (embeddings spread across the hypersphere), and similarity scores are meaningful and well-calibrated. In production you would also use a model with MRL support so you can reduce dimensionality to balance cost and quality.
+    The fix is to fine-tune with a contrastive objective (InfoNCE / NTXent) on labeled (query, positive) pairs, which directly trains the similarity space. Models like SBERT, BGE, E5, and GTE do this. After fine-tuning, the embedding space becomes roughly isotropic (embeddings spread across the hypersphere), and similarity scores become genuinely useful for *ranking*. They are still not calibrated probabilities — InfoNCE only constrains the relative ordering of logits within a batch, so absolute cosine thresholds stay model-specific (E5 and BGE routinely score unrelated pairs at 0.7–0.8) and must be tuned on your own data. In production you would also use a model with MRL support so you can reduce dimensionality to balance cost and quality.
 
 ## Practical Training Recipe
 
@@ -548,6 +567,9 @@ from typing import Optional
 @dataclass
 class BiEncoderConfig:
     model_name: str = "BAAI/bge-base-en-v1.5"
+    # Must match how the backbone was trained: BGE-v1.5 is CLS-pooled,
+    # E5/GTE/MPNet checkpoints are mean-pooled.
+    pooling: str = "cls"
     max_length: int = 512
     embedding_dim: int = 768
     temperature: float = 0.05
@@ -565,7 +587,7 @@ class EmbeddingModel(torch.nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained(config.model_name)
 
     def encode(self, texts: list[str]) -> torch.Tensor:
-        """Tokenize, encode, mean-pool, and L2-normalize a list of texts."""
+        """Tokenize, encode, pool, and L2-normalize a list of texts."""
         encoded = self.tokenizer(
             texts,
             max_length=self.config.max_length,
@@ -577,8 +599,12 @@ class EmbeddingModel(torch.nn.Module):
         # Forward pass through the transformer backbone
         outputs = self.encoder(**encoded)
 
-        # Mean pool over token dimension (excluding padding)
-        embeddings = mean_pool(outputs.last_hidden_state, encoded["attention_mask"])
+        # Pool to one vector per text, using the checkpoint's own pooling mode
+        if self.config.pooling == "cls":
+            embeddings = outputs.last_hidden_state[:, 0]          # (B, H)
+        else:
+            embeddings = mean_pool(outputs.last_hidden_state,     # (B, H)
+                                   encoded["attention_mask"])
 
         # L2 normalize
         return F.normalize(embeddings, p=2, dim=-1)
@@ -671,7 +697,7 @@ Several design decisions at the embedding layer propagate through the entire sys
 
 **Chunking policy.** A document is split into chunks before embedding. The chunk size (128–512 tokens) and overlap determine how much context each embedded unit contains. This is the first point where RAG quality is determined — see [Chunking, Reranking & Hybrid Search](../09-rag-retrieval/04-chunking-reranking-hybrid.html).
 
-**Index refresh latency.** When new documents arrive, their embeddings must be computed and inserted into the ANN index. With asynchronous pipelines, there is a window where new content is not yet retrievable. High-throughput embedding inference on GPU batches can reduce this lag to seconds. In production you do not call `model.encode` in your application process: you run a dedicated embedding server. Hugging Face's **Text Embeddings Inference (TEI)** is the standard open-source choice — a Rust/Candle server with continuous batching, Flash-Attention kernels, and an OpenAI-compatible `/embed` endpoint, deployable as `ghcr.io/huggingface/text-embeddings-inference` and serving bi-encoders, rerankers, and sequence classifiers alike. `infinity` is a comparable Python alternative, and both vLLM and SGLang can serve LLM-based encoders through their pooling/embedding APIs, which matters when your embedder is a 7B model (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)).
+**Index refresh latency.** When new documents arrive, their embeddings must be computed and inserted into the ANN index. With asynchronous pipelines, there is a window where new content is not yet retrievable. High-throughput embedding inference on GPU batches can reduce this lag to seconds. In production you do not call `model.encode` in your application process: you run a dedicated embedding server. Hugging Face's **Text Embeddings Inference (TEI)** is the standard open-source choice — a Rust/Candle server with continuous batching, Flash-Attention kernels, and both a native `/embed` endpoint and an OpenAI-compatible `/v1/embeddings` endpoint, deployable as `ghcr.io/huggingface/text-embeddings-inference` and serving bi-encoders, rerankers, and sequence classifiers alike. `infinity` is a comparable Python alternative, and both vLLM and SGLang can serve LLM-based encoders through their pooling/embedding APIs, which matters when your embedder is a 7B model (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)).
 
 **Embedding drift.** If the embedding model is updated (e.g., fine-tuned on domain data), all stored document embeddings become stale and must be recomputed. This "re-indexing" cost — on the order of millions of API calls or hours of GPU time — is a real operational concern in production RAG.
 
@@ -695,7 +721,7 @@ For the next stage — indexing these embeddings and querying them efficiently a
     - The InfoNCE (NT-Xent) loss treats all other documents in the mini-batch as negatives; a temperature $\tau \approx 0.05$ works well for text retrieval. It decomposes into *alignment* (pull positives together) and *uniformity* (spread everything over the hypersphere) — the latter is what cures anisotropy.
     - Hard negatives — BM25-mined, ANN-mined, or cross-encoder-filtered — are essential to push past the plateau achieved with random in-batch negatives, but must be denoised (skip the top ranks, cap the score) or false negatives will fight your gradients.
     - You do not hand-roll any of this in production: `sentence-transformers` v3+ ships `mine_hard_negatives`, `MultipleNegativesRankingLoss` (= InfoNCE, `scale` = 1/$\tau$), `MatryoshkaLoss`, GradCache via `CachedMultipleNegativesRankingLoss`, and int8/binary `quantize_embeddings`; serve the trained encoder with Text Embeddings Inference (TEI).
-    - Mean pooling over non-padding tokens consistently outperforms CLS pooling for sentence-level tasks; L2-normalize before computing cosine similarity.
+    - Mean pooling over non-padding tokens is a strong default, but the pooling mode is a property of the checkpoint (BGE uses CLS, E5/GTE use mean, LLM-based encoders use last-token) — always pool the way the model was trained. L2-normalize before computing cosine similarity.
     - Matryoshka Representation Learning trains one model to produce useful embeddings at every prefix dimension, enabling adaptive quality/cost trade-offs at inference time.
     - Instruction embeddings prepend task descriptions to queries; LLM-based encoders (E5-mistral, GTE-Qwen) yield strong zero-shot generalization by leveraging decoder-only backbone representations.
     - MTEB/MMTEB is the standard benchmark and the right *shortlist generator*; the actual choice should come from a few hundred labelled query-passage pairs from your own domain. Embedding-model drift after fine-tuning requires full re-indexing of stored document embeddings — plan for this operational cost.
@@ -930,10 +956,12 @@ Compute the symmetric loss $(\mathcal{L}_{q\to d} + \mathcal{L}_{d\to q})/2$ tha
         q = F.normalize(torch.randn(B, D), dim=-1)
         pos = F.normalize(torch.randn(B, D), dim=-1)
         neg = F.normalize(torch.randn(B, K, D), dim=-1)
-        print(infonce_with_hard_negatives(q, pos, neg, 0.05).item())  # ~ log(1+K)
+        # Near chance: log(1+K) = 1.386 plus the same tau-scaling offset as
+        # the in-batch version. Prints ~1.64.
+        print(infonce_with_hard_negatives(q, pos, neg, 0.05).item())
     ```
 
-    At random initialization the loss is about $\log(1 + K)$ (uniform over the $1 + K$ candidates), just as plain in-batch InfoNCE starts near $\log B$.
+    At random initialization the loss sits near $\log(1 + K)$ (uniform over the $1 + K$ candidates), just as plain in-batch InfoNCE starts near $\log B$. It lands slightly *above* that floor in the sanity check — dividing near-orthogonal cosines by $\tau = 0.05$ gives the logits a standard deviation of $1/(\tau\sqrt{D}) \approx 0.72$, and the log-sum-exp picks up roughly $\sigma^2/2$ from that spread, so the printed value is ~1.64 rather than 1.386.
 
     **Connection to the chapter.** `neg_emb` is exactly where you feed the mined negatives the chapter describes: BM25-mined passages (high lexical overlap, wrong meaning), ANN/dense-mined passages from an earlier checkpoint (ANCE-style), or cross-encoder-filtered hardest negatives. You would embed those mined passages and pass them as the `(B, K, D)` tensor.
 

@@ -269,7 +269,7 @@ So far we kept the architecture fixed. The more ambitious form of "don't retrain
 
 ### Depth growth (layer stacking)
 
-To go from $L$ to $2L$ layers, **duplicate** existing layers (interleaved or stacked) so the initial deeper network computes *nearly the same function* as the shallow one. The cleanest trick is **function-preserving** growth: add new layers initialized so their contribution is zero at step 0. Because transformer blocks are residual, $x \mapsto x + f(x)$, you can make a new block an identity by zeroing the output projection of its attention and MLP sublayers — then $f(x)=0$ and the block passes its input through untouched. Training then "wakes up" the new layers gradually.
+To go from $L$ to $2L$ layers, **duplicate** existing layers (interleaved or stacked). Plain duplication is a *good initialization* — far better than random — but it is **not** function-preserving: a residual block maps $x \mapsto x + f(x)$, so applying it twice gives $x + f(x) + f(x + f(x)) \approx x + 2f(x)$, roughly doubling the update that block writes into the residual stream, and the deviation compounds across every copied block (and through normalization layers calibrated for the old activation scale). That is why naive stacking produces a visible loss jump that the subsequent CPT has to work off. The cleanest trick is **function-preserving** growth: add new layers initialized so their contribution is zero at step 0. Because transformer blocks are residual, $x \mapsto x + f(x)$, you can make a new block an identity by zeroing the output projection of its attention and MLP sublayers — then $f(x)=0$ and the block passes its input through untouched. Training then "wakes up" the new layers gradually.
 
 ```python
 import torch, torch.nn as nn, copy
@@ -380,7 +380,7 @@ See [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-exp
 
 When you change the tokenizer — extending the vocab for a new domain/language, or swapping to a different tokenizer entirely — the embedding matrix $E \in \mathbb{R}^{|V|\times d}$ and the output (unembedding) matrix must change shape, and the new rows must be initialized. Random init for new tokens is wasteful; the trained model already "knows" the meaning of the *pieces* of a new token. Two standard moves:
 
-- **Mean-of-subtokens init**: a new token (e.g., a whole word that the old tokenizer split into pieces) gets its embedding initialized to the **mean of its old sub-token embeddings**. This is the heuristic behind the widely-used embedding-init utilities (Hewitt, 2021; Gee et al., *Fast Vocabulary Transfer*, 2022), and it dramatically shortens the CPT needed to make the new tokens useful. Do not confuse it with **FOCUS** (Dobler & de Melo, 2023), a stronger but heavier initializer that goes the other way round: it composes each new token from the embeddings of the tokens the two vocabularies *share*, weighted by a sparsemax over similarities in an auxiliary fastText space trained on target-domain text.
+- **Mean-of-subtokens init**: a new token (e.g., a whole word that the old tokenizer split into pieces) gets its embedding initialized to the **mean of its old sub-token embeddings**. This is the heuristic behind the widely-used embedding-init utilities (Gee et al., *Fast Vocabulary Transfer*, 2022), and it dramatically shortens the CPT needed to make the new tokens useful. Do not confuse it with **FOCUS** (Dobler & de Melo, 2023), a stronger but heavier initializer that goes the other way round: it composes each new token from the embeddings of the tokens the two vocabularies *share*, weighted by a sparsemax over similarities in an auxiliary fastText space trained on target-domain text.
 - **Shared-token preservation**: tokens present in *both* vocabularies keep their trained embeddings exactly. Only genuinely new tokens are initialized.
 
 ```python
@@ -424,7 +424,7 @@ def init_new_embeddings(old_emb, new_vocab, old_tokenizer, mean_init=True):
 
 Three details that bite in practice. **(1) The output head.** If the model *unties* input and output embeddings, you must initialize the new `lm_head` rows too — run the same sub-token-mean procedure on the unembedding matrix (and on the output bias, if any). If weights are tied, resizing the input embedding is enough, but then a mean-initialized row is simultaneously an input vector and a logit direction, which is one reason tied models sometimes need a few hundred extra steps to stop over-predicting new tokens. **(2) Padding.** Round the new vocabulary size up to a multiple of 64 (128 with tensor parallelism) with dummy tokens; unaligned vocab sizes cost real throughput in the final GEMM, and Megatron's `--make-vocab-size-divisible-by` does this for you. **(3) Order of operations.** After re-initializing embeddings you almost always **CPT the whole model** (not just the embeddings) so the body learns to use the new vocabulary; a common warm-up is to first train *only* the new rows for a few hundred steps with the rest frozen, then unfreeze everything.
 
-The library path mirrors the code above. Train the new merges with Hugging Face `tokenizers` (or `SentencePiece`) on target-domain text, splice them in with `tokenizer.add_tokens([...])` — or, for a language pass, train a fresh tokenizer and take the union of vocabularies — then call `model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=64)`. Recent `transformers` versions default to `mean_resizing=True`, which draws new rows from a distribution fitted to the existing embeddings rather than from a plain $\mathcal{N}(0,\sigma^2)$; that is strictly better than random but is *not* sub-token-aware, so for a serious vocabulary transfer overwrite those rows with the sub-token means computed above (or run FOCUS, if you have enough target-domain text to fit its auxiliary embeddings). See [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) for how the merges that define new tokens are produced, [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html) for embedding/unembedding tying, and [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) for the capstone's own vocabulary, whose 100M-scale embedding table makes these tradeoffs cheap to measure.
+The library path mirrors the code above. Train the new merges with Hugging Face `tokenizers` (or `SentencePiece`) on target-domain text, splice them in with `tokenizer.add_tokens([...])` — or, for a language pass, train a fresh tokenizer and take the union of vocabularies — then call `model.resize_token_embeddings(len(tokenizer), pad_to_multiple_of=64)`. Recent `transformers` versions default to `mean_resizing=True`, which draws new rows from a multivariate Gaussian fitted to the mean and covariance of the existing embedding matrix rather than from a plain $\mathcal{N}(0,\sigma^2)$ — this is Hewitt's (2021) initializer, and it exists to stop the fresh rows from being an out-of-distribution logit direction that makes the model over-predict new tokens. It is strictly better than random but is *not* sub-token-aware, so for a serious vocabulary transfer overwrite those rows with the sub-token means computed above (or run FOCUS, if you have enough target-domain text to fit its auxiliary embeddings). See [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html) for how the merges that define new tokens are produced, [Embeddings & The Input Pipeline](../02-transformer/02-embeddings-input.html) for embedding/unembedding tying, and [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) for the capstone's own vocabulary, whose 100M-scale embedding table makes these tradeoffs cheap to measure.
 
 ## Planning CPT Compute With Loss-Trajectory Models
 
@@ -436,7 +436,7 @@ $$
 \mathcal{L}_{\text{new}}(D) \approx \mathcal{L}_\infty + \frac{A}{(D_0 + D)^{\alpha}},
 $$
 
-where $D_0$ encodes the "head start" the base model already has on the new domain, and $A,\alpha,\mathcal{L}_\infty$ are fit from a short pilot. Run a small pilot at, say, 1, 2, 4, 8 and 16 B tokens — you need strictly more measurement points than the four free parameters, or the fit is under-determined and the solver refuses it — then fit the curve and extrapolate to find the *knee* where additional tokens stop paying. The same machinery is developed in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html); CPT just adds the $D_0$ offset that represents transferred knowledge.
+where $D_0$ encodes the "head start" the base model already has on the new domain, and $A,\alpha,\mathcal{L}_\infty$ are fit from a short pilot. Run a small pilot at, say, 1, 2, 4, 8 and 16 B tokens — you need strictly more measurement points than the four free parameters, or the fit is under-determined and — once parameter bounds put you on a trust-region least-squares solver — nothing will complain: you simply get back a meaningless curve that extrapolates absurdly — then fit the curve and extrapolate to find the *knee* where additional tokens stop paying. The same machinery is developed in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html); CPT just adds the $D_0$ offset that represents transferred knowledge.
 
 **2. How much forgetting?** Model the *base*-domain loss as *rising* with CPT tokens at a rate damped by the replay ratio $r$. A serviceable empirical form is
 
@@ -459,10 +459,12 @@ def fit_cpt_trajectory(tokens, losses):
     Fit L(D) = L_inf + A / (D0 + D)**alpha to pilot (tokens, loss) points,
     then return a predictor and the token count to hit a target loss.
     tokens : array of CPT token counts (e.g. [1e9, 2e9, 4e9, 8e9, 1.6e10]).
-             The law has FOUR free parameters, so you need at least 5 pilot
-             points -- curve_fit raises on an under-determined system, and a
-             merely exactly-determined fit (4 points) has zero slack and
-             happily lands on absurd parameter values.
+             The law has FOUR free parameters, so you want at least 5 pilot
+             points. Note that because `bounds` are passed below, curve_fit
+             dispatches to the TRF solver, which does NOT raise on an under-
+             or exactly-determined system -- it silently returns an
+             unidentifiable fit that extrapolates absurdly. That quieter
+             failure is why the explicit guard below exists.
     losses : measured new-domain loss at each.
     """
     tokens = np.asarray(tokens, dtype=float)
@@ -489,7 +491,9 @@ def fit_cpt_trajectory(tokens, losses):
     def tokens_for_target(target_loss):                # invert the law
         if target_loss <= L_inf:
             return float("inf")                        # unreachable: below L_inf
-        return (A / (target_loss - L_inf)) ** (1.0 / alpha) - D0
+        # clamp at 0: if target >= L_inf + A/D0**alpha the base model already
+        # meets it at D = 0, and the raw inverse would return a NEGATIVE budget
+        return max(0.0, (A / (target_loss - L_inf)) ** (1.0 / alpha) - D0)
 
     return predict, tokens_for_target, popt
 

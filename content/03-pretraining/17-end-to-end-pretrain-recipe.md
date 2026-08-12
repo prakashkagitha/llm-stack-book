@@ -112,7 +112,7 @@ print(ids[:8], "..." , "roundtrip ok:", text == "The transformer processes token
 print("EOT token id:", enc.eot_token)   # 50256 -- the document/sequence separator
 ```
 
-**Why 50304 and not 50257.** `tiktoken`'s `gpt2` encoding has exactly 50257 entries (256 byte tokens + 50,000 BPE merges + 1 special `<|endoftext|>` token). But 50257 is an awkward number for a GPU matmul — it is not a multiple of 64 (or 128, the tile size on newer tensor cores), so the final `lm_head` matmul and the softmax over it fall off the fast tensor-core path. The standard fix, and the one chapter 3.5's `train.py` bakes in as its default (`vocab=50304`), is to **pad the embedding table and output head up to the next multiple of 64** — 50304 — and simply never train the extra 47 rows (they start near-zero and stay there, or you can mask them out of the loss). This is a pure efficiency trick with zero effect on model quality; it is exactly why every config in this chapter uses `vocab=50304` rather than `50257`.
+**Why 50304 and not 50257.** `tiktoken`'s `gpt2` encoding has exactly 50257 entries (256 byte tokens + 50,000 BPE merges + 1 special `<|endoftext|>` token). But 50257 is an awkward number for a GPU matmul — it is not a multiple of 64 (or 128, the tile size on newer tensor cores), so the final `lm_head` matmul and the softmax over it fall off the fast tensor-core path. The standard fix, and the one chapter 3.5's `train.py` bakes in as its default (`vocab=50304`), is to **pad the embedding table and output head up to the next multiple of 64** — 50304. What happens to the extra 47 rows is worth being precise about, because the model is weight-tied. On the *input* side they are genuinely never touched: no document ever contains those IDs, so the embedding lookup never reads them and no gradient ever flows back through it. On the *output* side they are not inert — because `head.weight` **is** `tok.weight`, those rows sit in every softmax denominator and pick up a small, always-negative gradient on every single step, so the model simply learns to drive their logits down and never predicts them. That is the desired behaviour and it needs no masking; masking them out of the loss is a legitimate but unnecessary alternative. This is a pure efficiency trick with zero effect on model quality; it is exactly why every config in this chapter uses `vocab=50304` rather than `50257`.
 
 If you *do* need your own tokenizer — a smaller vocabulary for the TinyStories toy scale (roughly 8k merges is a reasonable choice for such a narrow, simple corpus), a non-English corpus, or a code-specific vocabulary — the from-scratch BPE trainer, complete with the pre-tokenization regex and merge-selection algorithm, lives in [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html). In production you would train it with HuggingFace **`tokenizers`** (the Rust-backed library behind `transformers`): a `models.BPE` model, `pre_tokenizers.ByteLevel` + `decoders.ByteLevel` for the lossless byte alphabet, and `trainers.BpeTrainer(vocab_size=..., special_tokens=["<|endoftext|>"])` fed by `train_from_iterator` over your corpus, then `tokenizer.save("tokenizer.json")` — a file `transformers` (via `PreTrainedTokenizerFast`), vLLM, and `llama.cpp`'s GGUF converter all consume directly. `tiktoken` is the exception: it has no `tokenizer.json` loader at all (its only file reader, `tiktoken.load.load_tiktoken_bpe`, parses the base64 `.tiktoken` rank format), so feeding a `tiktoken.Encoding` from your own vocabulary means converting the merge table into a `mergeable_ranks: dict[bytes, int]` by hand. The capstone trains exactly such a tokenizer from scratch and then exports it to all three formats in [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html). Everything downstream in this chapter is agnostic to which tokenizer produced the integer IDs; only the `vocab_size` argument to `GPT` changes.
 
@@ -225,7 +225,7 @@ The model is not reprinted here. The runnable one is the compact, weight-tied `G
 | 8-GPU node | 24 | 16 | 2048 | 1024 | ~1.3B |
 | Multi-node | 32 | 32 | 4096 | 4096 | ~7B |
 
-**Weight tying and init.** The `GPT` in 2.7 ties `wte.weight` (the token embedding) and `lm_head.weight` (the output projection) — they are the *same* tensor, saving `vocab_size * d_model` parameters and, per Press & Wolf, acting as a mild regularizer. It also applies a "two-headed" initialization: a standard `N(0, 0.02)` init for most weights, but residual-stream-writing projections (the attention output projection and the MLP's second linear) get their standard deviation scaled by `1/sqrt(2 * n_layer)`, because those are the two places every block adds *directly* into the residual stream, and without the extra shrink their variance compounds across depth and destabilizes early training. See the `_init_weights` method in [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html) for the exact code. 3.5's compact `train.py` keeps the weight tying but relies on PyTorch's default initialization for brevity; porting `_init_weights` across is a recommended upgrade for the deeper/wider rows, where the residual-variance growth this scaling controls actually begins to bite.
+**Weight tying and init.** The `GPT` in 2.7 ties `wte.weight` (the token embedding) and `lm_head.weight` (the output projection) — they are the *same* tensor, saving `vocab_size * d_model` parameters and, per Press & Wolf, acting as a mild regularizer. It also applies a "two-headed" initialization: a standard `N(0, 0.02)` init for most weights, but residual-stream-writing projections (the attention output projection and the MLP's second linear) get their standard deviation scaled by `1/sqrt(2 * n_layer)`, because those are the two places every block adds *directly* into the residual stream, and without the extra shrink their variance compounds across depth and destabilizes early training. See the `_init_weights` method in [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html) for the exact code. 3.5's compact `train.py` keeps the weight tying but relies on PyTorch's default initialization for brevity — and porting `_init_weights` across is the one change you must make *before your first run*, not an optional upgrade. The reason is the weight tying: `nn.Embedding`'s default init is `N(0, 1)`, not `N(0, 0.02)`, and since the output head *is* that same table, the step-0 logits are inner products $\langle h, W_i \rangle$ where the final LayerNorm fixes $\lVert h \rVert = \sqrt{d_{\text{model}}}$. That gives a logit standard deviation of $\sqrt{768} \approx 28$ instead of $0.02\sqrt{768} \approx 0.55$, and logits spread that wide put the step-0 cross-entropy on the order of **100 nats** rather than the $\ln(\text{vocab}) \approx 10.8$ that every diagnostic later in this chapter keys off. Stage 5 gives the exact patch, which also carries over the $1/\sqrt{2\,n_{\text{layer}}}$ residual shrink — that part *is* mainly for the deeper/wider rows, where the residual-variance growth it controls actually begins to bite.
 
 **Where the parameter count comes from.** A convenient approximation, accurate to within a few percent for these shapes, is
 
@@ -305,21 +305,38 @@ for micro in range(args.grad_accum):          # gradient accumulation: G micro-s
         loss = nn.functional.cross_entropy(model(x).view(-1, 50304),
                                            y.view(-1)) / args.grad_accum   # mean over G micro-batches
         loss.backward()                       # collectives fire on the last micro-step
-clip()                                         # global-norm clip, DDP or FSDP-sharded-aware
+gnorm = clip()                                 # global-norm clip, DDP or FSDP-sharded-aware;
+                                               # the return value is the PRE-clip norm -- log it
 opt.step()
 if step > 0 and step % args.ckpt_every == 0:
     save_checkpoint(model, step, args.ckpt_dir, rank)
 ```
 
-**One three-line patch to `train.py` first.** 3.5's script exposes the data, parallelism, batch, schedule and checkpoint flags — but *not* the model shape. It builds the model as `model = GPT(ctx=args.ctx)`, which pins `d=768, h=12, n_layers=12` to the constructor's defaults, so out of the box every command below would train the same 124M GPT-2-small no matter which row of the Stage-3 table you were aiming at. Add the three missing flags — the same three `eval_ppl.py`, `export_hf.py` and `sample.py` already take, so the whole chapter agrees on how a config is spelled — before you run anything but the single-GPU row:
+**Two small patches to `train.py` first.** 3.5's script exposes the data, parallelism, batch, schedule and checkpoint flags — but *not* the model shape. It builds the model as `model = GPT(ctx=args.ctx)`, which pins `d=768, h=12, n_layers=12` to the constructor's defaults, so out of the box every command below would train the same 124M GPT-2-small no matter which row of the Stage-3 table you were aiming at. Add the three missing flags — the same three `eval_ppl.py`, `export_hf.py` and `sample.py` already take, so the whole chapter agrees on how a config is spelled — and, per Stage 3, apply the GPT-2 initialization to the constructed model:
 
 ```python
 ap.add_argument("--d", type=int, default=768)          # d_model
 ap.add_argument("--h", type=int, default=12)           # attention heads
 ap.add_argument("--n-layers", type=int, default=12)    # transformer blocks
-# ... and pass them through where train.py constructs the model:
-model = GPT(d=args.d, h=args.h, n_layers=args.n_layers, ctx=args.ctx).to(device)
+
+# ... and where train.py constructs the model, pass them through AND initialize.
+# Without the init the tied embedding/head starts at nn.Embedding's default
+# N(0, 1) and step-0 loss is ~100 nats, not ln(vocab) -- see Stage 3.
+def gpt2_init(m):
+    if isinstance(m, (nn.Linear, nn.Embedding)):
+        nn.init.normal_(m.weight, mean=0.0, std=0.02)
+        if getattr(m, "bias", None) is not None:
+            nn.init.zeros_(m.bias)
+
+model = GPT(d=args.d, h=args.h, n_layers=args.n_layers, ctx=args.ctx)
+model.apply(gpt2_init)
+for name, p in model.named_parameters():               # residual-path shrink (2.7)
+    if name.endswith("attn.out_proj.weight") or name.endswith("mlp.2.weight"):
+        nn.init.normal_(p, mean=0.0, std=0.02 / (2 * args.n_layers) ** 0.5)
+model = model.to(device)
 ```
+
+(`nn.MultiheadAttention` keeps its packed `in_proj_weight` as a bare `Parameter` rather than an `nn.Linear`, so `apply` does not reach it — it keeps PyTorch's Xavier-uniform default, whose standard deviation is already close to 0.02 at these widths. The tied `tok`/`head` table is the one that must be fixed, and `apply` does reach that.)
 
 With that in place, here are the exact four launches — one file, one set of flags per scale:
 
@@ -363,7 +380,7 @@ The multi-node command above is still pure data parallelism — every GPU still 
 
 ## Stage 6: Monitoring — Reading a Live Run
 
-Every `N` steps, log six numbers: **loss**, the **pre-clip** gradient norm (clip *after* you've logged it, or you'll only ever see 1.0), the **learning rate**, **ms/step**, **tokens/s**, and **MFU**. The pre-clip grad norm is the one that actually tells you something — a post-clip norm is clamped by construction and hides exactly the spikes you want to catch (see Stage 7).
+Every `N` steps, log six numbers: **loss**, the **pre-clip** gradient norm, the **learning rate**, **ms/step**, **tokens/s**, and **MFU**. You do not have to reorder anything to get the pre-clip norm: both `torch.nn.utils.clip_grad_norm_` and `FSDP.clip_grad_norm_` *return* the total norm they measured **before** rescaling, so the only fix needed is to stop throwing that return value away — 3.5's `clip = lambda: nn.utils.clip_grad_norm_(model.parameters(), 1.0)` is called as a bare `clip()`, so change the call site to `gnorm = clip()` and log `gnorm`. The pre-clip norm is the one that actually tells you something: a *recomputed* post-clip norm is $\min(\lVert g \rVert, 1.0)$, clamped by construction, and clamping erases exactly the spikes you want to catch (see Stage 7).
 
 **MFU**, reproduced from [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html):
 
@@ -381,7 +398,7 @@ print(f"MFU = {u * 100:.1f}%")     # -> MFU = 40.5%
 
 That 40.5% is squarely in the healthy range for a single-GPU bf16 run with `torch.compile` enabled and flash-attention-backed attention kernels.
 
-**The loss curve's expected shape.** For a `vocab=50304` model, the loss of a uniform random guesser — and therefore the loss you should see logged at step 0 before any learning has happened — is $\ln(50304) \approx 10.83$. A healthy run drops fast over the first few hundred steps (the model is learning trivial statistics: token frequency, short local n-grams) and then settles into a long, slow grind as it learns genuinely harder long-range structure. If step 0's loss is not close to $\ln(\text{vocab})$, suspect a labeling or masking bug before suspecting the model — see the parallel warning in [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html).
+**The loss curve's expected shape.** For a `vocab=50304` model, the loss of a uniform random guesser is $\ln(50304) \approx 10.83$ — and that is the loss you should see logged at step 0, *provided you applied the Stage-3/Stage-5 `N(0, 0.02)` init*, which is what makes the initial logits small enough that the softmax is near-uniform. (Skip that patch and the tied `N(0, 1)` embedding gives you a step-0 loss around 100 instead; that is an init bug, not a data bug.) A healthy run drops fast over the first few hundred steps (the model is learning trivial statistics: token frequency, short local n-grams) and then settles into a long, slow grind as it learns genuinely harder long-range structure. With the init settled, a step-0 loss that is not close to $\ln(\text{vocab})$ is a real signal: much *lower* means the loss is being computed over the wrong number of classes (check the `vocab` you passed to `GPT` and the `view(-1, V)` in the loss), while a value stuck at $\ln(\text{vocab})$ for hundreds of steps afterwards points at a labeling or masking bug — see the parallel warning in [Building a GPT From Scratch](../02-transformer/07-build-gpt-from-scratch.html).
 
 A **healthy-run** mini-table to keep next to your terminal:
 
@@ -736,9 +753,9 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 - [ ] Wall-clock and cost estimated *before* launching, from $T_{\text{wall}} = 6ND / (\text{MFU} \times G \times P_{\text{peak}})$.
 - [ ] `prepare.py` run to completion; `train_*.bin` and `val_*.bin` exist under `./data`, and their dtype (`uint16`) matches `ShardedTokenLoader`'s `np.memmap` dtype.
 - [ ] `GPTConfig` chosen from the four-scale table; vocab fixed at 50304 (or your custom tokenizer's padded vocab).
-- [ ] `torch.manual_seed(0)` set before model construction so every rank initializes identically.
+- [ ] `torch.manual_seed(0)` set before model construction so every rank initializes identically, and the `N(0, 0.02)` GPT-2 init applied to the constructed model (Stage 3 / the Stage-5 patch) — PyTorch's `nn.Embedding` default is `N(0, 1)`, which the tied head turns into a step-0 loss near 100.
 - [ ] `train.py` launched via the correct `torchrun` command for your scale, `--parallel` set to `ddp` (fits on one GPU) or `fsdp` (does not).
-- [ ] First logged loss lands near $\ln(\text{vocab\_size})$; if not, stop and debug the data pipeline before training further.
+- [ ] First logged loss lands near $\ln(\text{vocab\_size})$; if it is far *higher*, suspect the init above, and if it is far *lower*, suspect the number of classes the loss is computed over — either way stop and debug before training further.
 - [ ] Live monitoring shows loss falling, pre-clip grad norm steady, zero NaNs, and (on GPU) MFU in a healthy range.
 - [ ] `eval_ppl.py` run against the held-out `val_*.bin` shard; perplexity in the right order of magnitude for your scale.
 - [ ] `export_hf.py` run and its logit-difference assertion passed, so `./ckpt_hf` is a faithful HuggingFace copy of the trained model.
@@ -747,7 +764,7 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 
 ## Exercises
 
-**1.** (Conceptual, warm-up.) The chapter says the very first logged training loss should land near $\ln(\text{vocab})$. Compute that number for the `vocab=50304` models used throughout, and state what it represents. Then: on your first laptop run you instead see a step-0 loss of about $6.9$. Which of the three "loss not dropping" suspects from Stage 7 does this specific number point at, and why?
+**1.** (Conceptual, warm-up.) The chapter says the very first logged training loss should land near $\ln(\text{vocab})$. Compute that number for the `vocab=50304` models used throughout, and state what it represents. Then: on your first laptop run the loss *does* start there, but within a few dozen steps it falls to about $6.9$ and then flatly plateaus for the rest of the run. Which of the three "loss not dropping" suspects from Stage 7 does this specific number point at, and why? (Sub-question: why could a loss of $6.9$ **at step 0** never have that explanation?)
 
 ??? note "Solution"
     The expected step-0 loss is the cross-entropy of a *uniform* next-token distribution over the vocabulary — a model that has learned nothing yet assigns probability $1/V$ to every token, giving a per-token loss of
@@ -758,7 +775,9 @@ All wall-clock, loss, and MFU figures are order-of-magnitude planning ballparks 
 
     This is the entropy of a fair 50304-sided die; it is the "no information" baseline every healthy run starts from before it learns even trivial token-frequency statistics.
 
-    A step-0 loss of $6.9$ is *far below* $10.83$ — the model appears to already "know" something at initialization, which is impossible for freshly-initialized weights on a correctly-labeled task. Note that $6.9 \approx \ln(1000)$: the loss looks like a uniform distribution over roughly a **thousand** tokens, not fifty thousand. That is the signature of a **corrupt / degenerate shard** (the third Stage-7 suspect): if the data your loader is feeding only ever contains a small handful of distinct token IDs (e.g. a shard that is mostly padding or a few repeated tokens, or bytes being misread so only a narrow ID range appears), the effective prediction problem is over a much smaller alphabet and the entropy floor drops accordingly. It is *not* the off-by-one target-shift bug (that produces a loss stuck near or above $\ln V$, not below it) and it is *not* a too-low learning rate (that keeps you *at* $\ln V$, it doesn't start you below it). The Stage-7 fix applies: pull one batch, decode `x` back to text, and look at the actual bytes — a shard that decodes to repeated garbage is visible instantly.
+    An immediate plateau at $6.9$ is the interesting part. Note that $6.9 \approx \ln(1000)$: after its first few dozen steps the model has become about as good as a uniform guesser over roughly a **thousand** tokens, and then stops improving entirely. That is the signature of a **corrupt / degenerate shard** (the third Stage-7 suspect): if the data your loader is feeding only ever contains a small handful of distinct token IDs (e.g. a shard that is mostly padding or a few repeated tokens, or bytes being misread so only a narrow ID range appears), the effective prediction problem is over a much smaller alphabet, the entropy floor of the data drops accordingly, and the model reaches that floor almost immediately and sits on it. It is *not* the off-by-one target-shift bug (that leaves you stuck at or above $\ln V$, because a mis-shifted target is genuinely unpredictable) and it is *not* a too-low learning rate (that also keeps you *at* $\ln V$ — it does not produce a fast drop followed by a hard floor). The Stage-7 fix applies: pull one batch, decode `x` back to text, and look at the actual bytes — a shard that decodes to repeated garbage is visible instantly.
+
+    **The sub-question.** A loss of $6.9$ *at step 0* could not be a data bug at all, and this is worth being precise about. With the `N(0, 0.02)` init of Stage 3, the model's step-0 output distribution is essentially uniform over its own output dimension $V$, so the loss is $-\ln(1/V) = \ln V$ **whatever the targets are** — no target sequence, however degenerate, can move it, because the model has not yet taken a single gradient step and so cannot exploit the data's small alphabet. A genuine step-0 reading of $\approx \ln(1000)$ therefore points at the number of *classes the loss is computed over*, i.e. a model-side bug: a wrong `vocab=` passed to `GPT`, or a wrong second argument in `model(x).view(-1, V)` that reshapes the logits into far fewer columns than the vocabulary has. Degenerate data changes the loss you *converge to*, not the loss you *start* from.
 
 **2.** (Quantitative, tokens-per-step.) Using the tokens-per-step identity from Stage 4, compute the tokens/step for the **8-GPU node** launch command (`--local-bsz 16 --grad-accum 4`, `ctx=1024`, `--nproc_per_node=8`). Then compute how many tokens the run of `--steps 40000` actually consumes, and check it against the "~25-40B tokens" entry in the four-scale table.
 

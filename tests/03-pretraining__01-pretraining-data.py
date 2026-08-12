@@ -28,6 +28,7 @@ import os
 import re
 import struct
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -200,9 +201,11 @@ def passes_quality_filter(text: str, min_chars: int = 200) -> bool:
     words = text.lower().split()
     if not words:
         return False
-    most_common_freq = max(
-        words.count(w) for w in set(words)
-    ) / len(words)
+    # One pass with Counter: O(N). `max(words.count(w) for w in set(words))`
+    # gives the same number but rescans the list once per unique word, which
+    # is O(unique x N) — seconds per document on a long page, and this filter
+    # runs on every document in the crawl.
+    most_common_freq = Counter(words).most_common(1)[0][1] / len(words)
     if most_common_freq > 0.20:
         return False
 
@@ -284,6 +287,10 @@ def run_pipeline(
     hundreds of workers, each handling a distinct subset of WET files.
     Here we run single-threaded for clarity.
     """
+    # Imported lazily so that the offline checks below can import this module
+    # without HuggingFace `tokenizers` installed.
+    from tokenizers import Tokenizer  # HuggingFace fast tokenizers
+
     tokenizer = Tokenizer.from_file(tokenizer_path)
     eos_id = tokenizer.token_to_id("<|endoftext|>")
     packer = TokenShard(output_dir, shard_size, context_len)

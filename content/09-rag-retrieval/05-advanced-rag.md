@@ -316,7 +316,13 @@ def multihop_rag(
         context_str = "\n---\n".join(accumulated_context)
         prompt = DECOMPOSE_PROMPT.format(
             question=original_question,
-            context=context_str[:6000],  # guard against context overflow
+            # Guard against context overflow by keeping the *tail*, not the head.
+            # With max_hops=4 and chunks_per_hop=3 this budget binds around hop 2-3,
+            # and `[:6000]` would drop the chunks just fetched for the sub-query the
+            # model asked for — so it would re-issue that same sub-query, `current_query`
+            # would stop changing, and the loop would burn its remaining hops
+            # re-retrieving identical chunks.
+            context=context_str[-6000:],
         )
         response = llm(prompt).strip()
 
@@ -329,11 +335,12 @@ def multihop_rag(
 
     # Fallback: force an answer with whatever we have
     # Slice the *joined string*, not the list: accumulated_context is a list of
-    # chunks, so `accumulated_context[:6000]` would cap the number of chunks
-    # (never reached) instead of the character budget.
+    # chunks, so `accumulated_context[-6000:]` would cap the number of chunks
+    # (never reached) instead of the character budget. Keep the tail here too —
+    # the last hops carry the evidence closest to the answer.
     final_prompt = (
         f"Based on the following information, answer: {original_question}\n\n"
-        + "\n---\n".join(accumulated_context)[:6000]
+        + "\n---\n".join(accumulated_context)[-6000:]
     )
     return llm(final_prompt)
 ```
@@ -370,7 +377,7 @@ Asai et al. (*Self-RAG*, 2023) fine-tune an LLM to generate four types of **refl
 
 The model learns to insert these tokens at appropriate positions. During inference, if the model generates `[Retrieve]`, the system fetches passages and feeds them back. If it generates `[Irrelevant]`, it continues generating without that passage. This creates a feedback loop where retrieval is demand-driven rather than always-on.
 
-A simpler variant is **Corrective RAG (CRAG)** (Yan et al., 2024): after the initial retrieval, a lightweight evaluator scores each retrieved document's relevance. Low-scoring documents trigger a web search to supplement or replace the original retrieval. Documents that score ambiguously are decomposed into individual factual claims and each claim is re-verified.
+A simpler variant is **Corrective RAG (CRAG)** (Yan et al., 2024): after the initial retrieval, a lightweight evaluator scores the retrieved documents and triggers one of three actions. **Correct** (high score) runs *knowledge refinement* — the document is decomposed into fine-grained knowledge strips, each strip is scored, the irrelevant ones are dropped, and the survivors are recomposed. **Incorrect** (low score) discards the retrieved documents entirely and falls back to a web search. **Ambiguous** (in between) is the soft middle: it does both. Note the direction here, which is easy to get backwards — refinement is applied to the documents the evaluator *believes*, because it is the mechanism for stripping noise out of a document that is genuinely relevant; web search is the remedy for the ones it does not.
 
 ```python
 """
@@ -402,6 +409,22 @@ def evaluate_relevance(query: str, doc: str, llm) -> float:
         return 0.5
 
 
+def refine(query: str, text: str, llm, keep_threshold: float) -> List[str]:
+    """
+    CRAG's decompose-then-recompose step: split a document into fine-grained
+    knowledge strips, score each, keep only the relevant ones.
+
+    Note the fallback: a sentence stripped of its terminating period and its
+    surrounding context often scores *worse* than the whole document did, so
+    without `or [text]` a document the evaluator just called relevant could be
+    dropped entirely — the opposite of what this branch is for.
+    """
+    strips = [s.strip() for s in text.split(".") if s.strip()]
+    kept = [s for s in strips
+            if evaluate_relevance(query, s, llm) >= keep_threshold]
+    return kept or [text]
+
+
 def corrective_rag(
     query: str,
     initial_docs: List[RetrievedDoc],
@@ -411,10 +434,11 @@ def corrective_rag(
     low_threshold: float = 0.3,
 ) -> List[str]:
     """
-    CRAG algorithm:
-      - relevance >= high_threshold → accept as-is
-      - relevance <= low_threshold  → discard, trigger web search
-      - in between                  → keep but also do web search
+    CRAG algorithm (Yan et al., 2024) — one of three actions per document:
+      - relevance >= high_threshold → Correct:   refine (decompose into knowledge
+                                                 strips, filter, recompose)
+      - relevance <= low_threshold  → Incorrect: discard, trigger web search
+      - in between                  → Ambiguous: do both
     Returns a final list of text passages for the generator.
     """
     final_passages: List[str] = []
@@ -424,16 +448,13 @@ def corrective_rag(
         rel = evaluate_relevance(query, doc.text, llm)
 
         if rel >= high_threshold:
-            final_passages.append(doc.text)
+            # Correct: the document is believed, but still carries noise.
+            final_passages.extend(refine(query, doc.text, llm, high_threshold))
         elif rel <= low_threshold:
-            need_web = True  # discard this doc
+            need_web = True  # Incorrect: discard this doc
         else:
-            # Ambiguous: decompose into fine-grained sentences and keep good ones
-            sentences = [s.strip() for s in doc.text.split(".") if s.strip()]
-            for sent in sentences:
-                sent_rel = evaluate_relevance(query, sent, llm)
-                if sent_rel >= high_threshold:
-                    final_passages.append(sent)
+            # Ambiguous: the soft middle — refine *and* go to the web.
+            final_passages.extend(refine(query, doc.text, llm, high_threshold))
             need_web = True
 
     if need_web or not final_passages:
@@ -774,6 +795,16 @@ def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
     lines = source.splitlines()
     chunks: List[Dict] = []
 
+    def start_line(node) -> int:
+        """
+        First source line of a definition, decorators included. Since Python 3.8
+        `node.lineno` points at the `def`/`class` keyword, NOT at the first
+        decorator (those live in `node.decorator_list`), so slicing from
+        `node.lineno` silently drops `@property`, `@staticmethod`, `@dataclass`,
+        `@app.route("/x")` — exactly the tokens a code query keys on.
+        """
+        return min([node.lineno] + [d.lineno for d in node.decorator_list])
+
     def emit(node, qualname: str, code_text: str) -> None:
         context = (
             f"File: {filepath}\n"
@@ -786,7 +817,7 @@ def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
             "embedded_text": f"{context}\n\n{code_text}",  # what gets embedded
             "type": type(node).__name__,
             "qualname": qualname,
-            "lineno": node.lineno,
+            "lineno": start_line(node),
         })
 
     def class_skeleton(node: ast.ClassDef) -> str:
@@ -794,10 +825,13 @@ def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
         if ast.get_docstring(node) is not None:
             end = node.body[0].end_lineno
         elif node.body:
-            end = node.body[0].lineno - 1   # last line of a multi-line header
+            # Last line of a (possibly multi-line) header. Use start_line so a
+            # decorated first method's decorators land in the method's chunk,
+            # not smeared into the class skeleton.
+            end = start_line(node.body[0]) - 1
         else:
             end = node.end_lineno
-        return "\n".join(lines[node.lineno - 1:max(end, node.lineno)])
+        return "\n".join(lines[start_line(node) - 1:max(end, node.lineno)])
 
     def visit(body: List[ast.stmt], prefix: str) -> None:
         """Recursive descent with an explicit parent stack (the `prefix`)."""
@@ -805,7 +839,7 @@ def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 # A function is a leaf: nested helpers stay inside its text.
                 emit(node, prefix + node.name,
-                     "\n".join(lines[node.lineno - 1:node.end_lineno]))
+                     "\n".join(lines[start_line(node) - 1:node.end_lineno]))
             elif isinstance(node, ast.ClassDef):
                 qualname = prefix + node.name
                 emit(node, qualname, class_skeleton(node))

@@ -323,7 +323,7 @@ The two asserts encode the two invariants from earlier. The `all_gather` + `torc
 
 !!! warning "Common pitfall: DDP with unused parameters"
 
-    If your forward pass conditionally skips a sub-module (e.g. an auxiliary head used only some steps), that module's parameters never receive a gradient, their hooks never fire, and the corresponding bucket never completes — so DDP hangs at the `wait()` forever. The fix is `DistributedDataParallel(model, find_unused_parameters=True)`, which traverses the autograd graph to detect which parameters were used and marks the rest "ready" immediately. It costs a graph traversal per step, so only enable it when you actually have conditionally-unused parameters.
+    If your forward pass conditionally skips a sub-module (e.g. an auxiliary head used only some steps), that module's parameters never receive a gradient, their hooks never fire, and the corresponding bucket never completes. Production DDP detects the unfinished reduction at the *start of the next iteration* and raises `RuntimeError: Expected to have finished reduction in the prior iteration before starting a new one` — the error text that points you at `find_unused_parameters=True`. It genuinely *hangs* only when the skipping is **asymmetric** (different ranks skip different sub-modules), because then the ranks issue different sequences of collectives and one waits forever on an all-reduce its peers never post. Our `TinyDDP` fails more quietly than either: an incomplete bucket never calls `_all_reduce_bucket`, so no handle is appended to `_pending_work`, `finish_gradient_synchronization()` returns happily, and that gradient is silently never averaged. The fix is `DistributedDataParallel(model, find_unused_parameters=True)`, which traverses the autograd graph to detect which parameters were used and marks the rest "ready" immediately. It costs a graph traversal per step, so only enable it when you actually have conditionally-unused parameters.
 
 ## The Memory Problem: Where Every Byte Goes
 
@@ -333,7 +333,7 @@ Plain DDP replicates *everything* on every GPU. To see why that's a problem — 
 
 The dominant training recipe is **mixed-precision with Adam/AdamW** (see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) and [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html)). With $\Psi$ parameters, the per-GPU memory for the *persistent* model state (everything except activations) in the canonical bf16-compute / fp32-master-weights setup is:
 
-| State | Precision | Bytes per parameter |
+| State | Bytes per parameter | Total bytes |
 |---|---|---|
 | Parameters (bf16, for fwd/bwd) | 2 bytes | $2\Psi$ |
 | Gradients (bf16) | 2 bytes | $2\Psi$ |
@@ -385,7 +385,7 @@ Memory per GPU: $2\Psi + 2\Psi + 12\Psi/N$. Communication volume is essentially 
 
 ### A From-Scratch ZeRO-1: Sharding the Optimizer State
 
-DDP earned a from-scratch reimplementation; ZeRO-1 deserves the same. It is only a small step from the DDP loop: keep full parameters and full gradients on every rank, but give each rank the *optimizer state* for only the parameters it owns, and after the step broadcast each owner's freshly-updated parameters back to everyone. The one design choice is how to assign parameters to owners. We use **greedy per-parameter assignment** (largest parameter to the currently least-loaded rank), which balances owned bytes and — unlike slicing one flat buffer at fixed `1/N` boundaries — needs no divisibility between the parameter count and the world size, and gracefully allows a rank to own nothing.
+DDP earned a from-scratch reimplementation; ZeRO-1 deserves the same. It is only a small step from the DDP loop: keep full parameters and full gradients on every rank, but give each rank the *optimizer state* for only the parameters it owns, and after the step broadcast each owner's freshly-updated parameters back to everyone. The one design choice is how to assign parameters to owners. We use **greedy per-parameter assignment** (largest parameter to the currently least-loaded rank), which keeps whole tensors intact and — unlike slicing one flat buffer at fixed `1/N` boundaries — needs no divisibility between the parameter count and the world size, and gracefully allows a rank to own nothing. The price is that whole-tensor assignment can only balance down to the size of the *largest single tensor*: if one parameter exceeds $\Psi/N$, its owner is over-loaded no matter how clever the packing. Production ZeRO-1 shards the *flattened* parameter buffer at $1/N$ boundaries — splitting large tensors — which is exactly what makes the clean $12\Psi/N$ bound hold.
 
 ```python
 # tiny_sharded_optim.py -- from-scratch ZeRO-1 (optimizer-state sharding).
@@ -404,9 +404,11 @@ class TinyShardedOptimizer:
     step, each owner broadcasts its updated parameters back to all ranks so the
     replicas are bit-identical again for the next forward pass.
 
-    Ownership is greedy-by-size, so per-rank optimizer-state bytes are balanced
-    even when the parameter count is NOT divisible by the world size (and some
-    rank may legitimately own zero parameters).
+    Ownership is greedy-by-size over WHOLE tensors, so it needs no divisibility
+    between the parameter count and the world size (and some rank may
+    legitimately own zero parameters). The tradeoff: balance is bounded below by
+    the largest single tensor, so it only approaches full/N when no parameter
+    exceeds Psi/N. Real ZeRO-1 slices a flat buffer at 1/N boundaries instead.
     """
 
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.95), eps=1e-8,
@@ -516,15 +518,19 @@ if __name__ == "__main__":
         print(f"max|param_sharded - param_unsharded| = {max_diff:.3e}")
         assert max_diff == 0.0, "ZeRO-1 must match unsharded AdamW exactly"
 
-    # Per-rank memory: optimizer state for OWNED params only.
+    # Per-rank memory: optimizer state for OWNED params only. Whole-tensor
+    # assignment balances only down to the LARGEST tensor, so print the actual
+    # share next to the ideal one -- here the 512x512 weight alone is half the
+    # model, so the rank that owns it lands at ~50%, not 1/4.
     owned = sharded.owned_state_bytes()
     full = sum(8 * p.numel() for p in m_ref.parameters())   # m + v, fp32
-    print(f"rank {rank}: owns {owned/1e6:.3f} MB optim state vs "
-          f"{full/1e6:.3f} MB unsharded (~{world}x less across the group)")
+    print(f"rank {rank}: owns {owned/1e6:.3f} MB optim state = "
+          f"{100*owned/full:.1f}% of the {full/1e6:.3f} MB unsharded total "
+          f"(ideal 1/{world} share = {full/world/1e6:.3f} MB)")
     dist.destroy_process_group()
 ```
 
-Running this prints `max|...| = 0.000e+00` on rank 0 (the sharded and unsharded parameter trajectories are **bit-identical** after 20 steps) and, per rank, roughly `full / N` bytes of optimizer state. Two accounting notes. First, the assertion is *exact*, not `allclose`: AdamW's update is elementwise per parameter and both paths consume the identical all-reduced gradient, so moving *where* a parameter's update executes changes nothing about the bits it produces (contrast the DDP verification below, where different summation orders force a tolerance). Second, this fp32 toy measures 8 bytes/param of state (`exp_avg` + `exp_avg_sq`, both fp32) because the parameters are already fp32 and torch keeps no separate master copy. The chapter's **12 bytes/param** is the production **bf16-param + fp32-master** recipe: 4 (fp32 master) + 4 (m) + 4 (v). ZeRO-1 shards all of it; only the resident 2 (bf16 param) + 2 (bf16 grad) stay replicated. PyTorch ships this exact idea as `torch.distributed.optim.ZeroRedundancyOptimizer` (`ZeRO`), which wraps any `torch.optim` class and partitions its state across the DP group; DeepSpeed's `zero_optimization: {stage: 1}` is the production reference.
+Running this prints `max|...| = 0.000e+00` on rank 0 (the sharded and unsharded parameter trajectories are **bit-identical** after 20 steps) and, per rank, the optimizer-state bytes that rank actually owns. Three accounting notes. First, those per-rank bytes are deliberately *not* a clean `full / N`. With `world=4` the greedy pass hands rank 0 the $512\times512$ weight — 262,144 of the model's 526,593 parameters — so rank 0 owns ≈2.10 MB of the 4.21 MB total (about **half**, against an ideal share of 1.05 MB) while rank 3 is left with just the three biases (≈0.01 MB). That skew is inherent to assigning whole tensors and is not a bug in the greedy rule: no whole-tensor partition can give any rank less than the largest tensor. Real ZeRO-1 avoids it by slicing one flat buffer at `1/N` boundaries, splitting tensors across owners, which is what makes $12\Psi/N$ exact. The same effect shows up at scale as the embedding/output matrix dominating any per-tensor partition. Second, the assertion is *exact*, not `allclose`: AdamW's update is elementwise per parameter and both paths consume the identical all-reduced gradient, so moving *where* a parameter's update executes changes nothing about the bits it produces (contrast the DDP verification below, where different summation orders force a tolerance). Third, this fp32 toy measures 8 bytes/param of state (`exp_avg` + `exp_avg_sq`, both fp32) because the parameters are already fp32 and torch keeps no separate master copy. The chapter's **12 bytes/param** is the production **bf16-param + fp32-master** recipe: 4 (fp32 master) + 4 (m) + 4 (v). ZeRO-1 shards all of it; only the resident 2 (bf16 param) + 2 (bf16 grad) stay replicated. PyTorch ships this exact idea as `torch.distributed.optim.ZeroRedundancyOptimizer` (`ZeRO`), which wraps any `torch.optim` class and partitions its state across the DP group; DeepSpeed's `zero_optimization: {stage: 1}` is the production reference.
 
 ### ZeRO-2: Also Shard Gradients
 
@@ -1064,7 +1070,7 @@ For the largest models, data parallelism alone is insufficient and is combined w
     T_{\text{inter}} \approx \frac{3.25 \text{ GB}}{25 \text{ GB/s}} \approx 0.13 \text{ s/step}
     $$
 
-    (sanity check: each node need only ship *one* copy of the gradient, 26 GB, across the seam, and its 8 GPUs share that link). The exposed slow-link cost therefore drops from $\approx 3.1$ s to $\approx 0.13$ s, and the all-gathers nearly vanish from the critical path onto NVLink. This is why hybrid sharding is the default for multi-node FSDP whenever the model *fits* in a single node's aggregate memory.
+    (sanity check: each node need only ship *one* copy of the gradient across the seam — 26 GB in total, i.e. 3.25 GB per rank — instead of the 78 GB *per rank* that `FULL_SHARD` moves. As throughout this example, $\beta = 25$ GB/s is the bandwidth available *per rank*; if the node's 8 GPUs genuinely shared a single 25 GB/s uplink the same 26 GB would instead cost $26/25 \approx 1.0$ s.) The exposed slow-link cost therefore drops from $\approx 3.1$ s to $\approx 0.13$ s, and the all-gathers nearly vanish from the critical path onto NVLink. This is why hybrid sharding is the default for multi-node FSDP whenever the model *fits* in a single node's aggregate memory.
 
 !!! interview "Interview Corner"
 
@@ -1132,7 +1138,7 @@ For the largest models, data parallelism alone is insufficient and is combined w
 ??? note "Solution"
     (a) **Silent divergence.** Averaging gradients across ranks does nothing to reconcile *parameters* that started different. The update rule is $\theta_i \leftarrow \theta_i - \eta \bar g$ with the *same* $\bar g$ on every rank, but $\theta_i$ differ at step 0, so they stay different forever. Nothing crashes and the loss may even fall on each rank, but the "replicas" are really $N$ different models. This is exactly why the chapter broadcasts params (and buffers) from rank 0 at init.
 
-    (b) **Silent divergence for that one parameter.** Its hook never contributes to an all-reduce, so each rank updates the bias using only its *local* gradient $g_i$, not the averaged $\bar g = \frac{1}{N}\sum_i g_i$. Every other parameter stays in lockstep, but the bias drifts independently per rank. No crash (unlike the *unused*-parameter case, which hangs at `wait()`); the model is subtly wrong. This is Invariant 2.
+    (b) **Silent divergence for that one parameter.** Its hook never contributes to an all-reduce, so each rank updates the bias using only its *local* gradient $g_i$, not the averaged $\bar g = \frac{1}{N}\sum_i g_i$. Every other parameter stays in lockstep, but the bias drifts independently per rank. No crash (unlike the *unused*-parameter case, where real DDP raises "Expected to have finished reduction in the prior iteration…", or hangs outright if different ranks skip different sub-modules); the model is subtly wrong. This is Invariant 2.
 
     (c) **Unaffected in correctness, but effectively rescales the learning rate.** From the decomposition $\nabla_\theta\mathcal L = \frac{1}{N}\sum_i g_i$, summing yields $\sum_i g_i = N\bar g$, i.e. exactly $N\times$ the true gradient. Since every rank applies the *same* $N\bar g$, all replicas stay bit-identical (both invariants hold), so there is no divergence. The step is just $N$ times larger than intended, equivalent to training with learning rate $N\eta$ — which may blow up or slow convergence, but is a hyperparameter issue, not a correctness bug.
 

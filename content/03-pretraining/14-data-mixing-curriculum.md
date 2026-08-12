@@ -209,7 +209,7 @@ rng = np.random.default_rng(0)
 #    Domains differ in BOTH difficulty (floor) and headroom/speed (scale,rate).
 # -----------------------------------------------------------------------------
 domains = ["web", "code", "math", "books", "multi"]
-floor = np.array([1.70, 1.10, 1.55, 1.80, 2.30])   # math & multi are "hard"
+floor = np.array([1.70, 1.10, 1.55, 1.80, 2.30])   # multi is the "hardest", code the easiest
 scale = np.array([2.0, 3.5, 4.0, 1.8, 0.6])        # code & math: big headroom; multi: tiny
 rate  = np.array([0.32, 0.28, 0.22, 0.30, 0.18])   # math & multi learn slowly
 k = len(domains)
@@ -291,7 +291,7 @@ vs natural        : [0.798 0.066 0.008 0.021 0.106]
 upweight factor   : [ 0.18  5.45 36.88  5.24  0.84]
 ```
 
-Read the result. The natural mixture is 80% web; DoReMi-style reweighting collapses web from 80% to ~14% and pours the freed budget into the small high-headroom domains — code ~5.5x, math ~37x, books ~5.2x. This is exactly the qualitative behavior reported for real DoReMi: it pulls weight *out* of the abundant, lower-headroom domain (web) and *into* domains where the proxy still has the most room to improve relative to the reference. The math domain, despite a high floor (it is genuinely hard), gets heavily upweighted because its *excess* — the gap the proxy can still close — is large. Read the *ratios* with care, though: math's 37x is inflated by its tiny natural weight (0.008); the load-bearing comparison is the **absolute** weight, where math goes from a rounding error to 0.29 of every batch.
+Read the result. The natural mixture is 80% web; DoReMi-style reweighting collapses web from 80% to ~14% and pours the freed budget into the small high-headroom domains — code ~5.5x, math ~37x, books ~5.2x. This is exactly the qualitative behavior reported for real DoReMi: it pulls weight *out* of the abundant, lower-headroom domain (web) and *into* domains where the proxy still has the most room to improve relative to the reference. The math domain gets heavily upweighted not because it is *hard* — its floor, 1.55, is actually among the lowest here, below web and books — but because its *excess*, the gap the proxy can still close, is large: `scale = 4.0` of reducible loss sits on top of that modest floor, and a slow `rate = 0.22` keeps the gap open for the whole run. What earns weight is headroom, not difficulty. Read the *ratios* with care, though: math's 37x is inflated by its tiny natural weight (0.008); the load-bearing comparison is the **absolute** weight, where math goes from a rounding error to 0.29 of every batch.
 
 The multilingual domain is the control. It has the **highest reference loss of all five** (2.356 nats/token — it is genuinely the hardest text here), yet it comes out at 0.089 versus a natural weight of 0.106: a slight *down*weight, 0.84x. The reason is visible in the parameters: `multi` has a high `floor` but a small `scale`, so almost all of its loss is irreducible and there is very little for the proxy to close. High raw loss alone does not earn weight; **closeable** loss does. That separation is the entire reason DoReMi uses excess loss instead of raw loss.
 
@@ -621,7 +621,10 @@ Compute the effective epochs $e_i$ for each domain. Which domain is at the edge 
 
 ??? note "Solution"
 
-    We keep the same domain learning-curve model and the same multiplicative-weights (exp-gradient) update, but change the *reward signal* from excess loss to loss velocity, and remove the reference model. Velocity is the loss drop since the previous step, clamped at zero. Because per-step velocities are tiny, we scale the step size up (`ETA_V`) so the update is comparable in magnitude.
+    We keep the same domain learning-curve model and the same multiplicative-weights (exp-gradient) update, but change the *reward signal* from excess loss to loss velocity, and remove the reference model. Velocity is the loss drop since the previous step, clamped at zero. Two details decide whether that raw drop is a usable reward:
+
+    - **Divide by the tokens you spent.** The drop `prev_loss - cur_loss` for domain $i$ was produced by the $w_i \times$ `BATCH_TOKENS` tokens you just gave it, so it is mechanically proportional to $w_i$ — a domain is rewarded partly for already being sampled a lot. That feedback loop equilibrates the weights toward uniform and reports nothing about the domains. Dividing by the allocation turns the signal into *loss reduction per token invested*, which is the quantity a bandit should be comparing across arms.
+    - **Normalize it to a share.** Per-token velocity is the derivative of a power law, so it falls by orders of magnitude over the run. Any fixed `ETA_V` applied to the raw number saturates `exp` into a hard argmax on the first steps (where velocities are ~1 nat/token, not tiny) and then decays into a no-op. Rescaling to each domain's *share* of this step's total velocity keeps `ETA_V * reward` inside $[0, \eta]$ for the whole run — the same bounded-reward requirement EXP3 imposes.
 
     ```python
     import numpy as np
@@ -631,8 +634,8 @@ Compute the effective epochs $e_i$ for each domain. Which domain is at the edge 
 
     STEPS        = 4000
     BATCH_TOKENS = 10.0
-    ETA_V        = 200.0        # larger: per-step velocities are small
-    SMOOTH_C     = 0.05
+    ETA_V        = 10.0         # reward is bounded in [0,1], so eta is O(10), not O(100)
+    SMOOTH_C     = 0.01
 
     w         = w_nat.copy()
     seen      = np.zeros(k)
@@ -641,15 +644,18 @@ Compute the effective epochs $e_i$ for each domain. Which domain is at the edge 
 
     for t in range(STEPS):
         # (a) Draw this step's batch by current weights and "train".
-        seen += w * BATCH_TOKENS
+        alloc = w * BATCH_TOKENS
+        seen += alloc
 
-        # (b) Loss VELOCITY: how much did each domain's loss fall this step?
-        cur_loss = domain_loss(seen)
-        velocity = np.maximum(prev_loss - cur_loss, 0.0)   # a derivative, not a level
+        # (b) Loss VELOCITY per token invested: how much did each domain's loss
+        #     fall this step, per token we actually spent on it?
+        cur_loss  = domain_loss(seen)
+        velocity  = np.maximum(prev_loss - cur_loss, 0.0) / alloc  # derivative, not level
         prev_loss = cur_loss
+        reward    = velocity / velocity.sum()   # bounded share, EXP3-style
 
         # (c) Same multiplicative-weights update, now toward high-velocity domains.
-        w = w * np.exp(ETA_V * velocity)
+        w = w * np.exp(ETA_V * reward)
         w = w / w.sum()                                    # back onto the simplex
         w = (1.0 - SMOOTH_C) * w + SMOOTH_C / k            # uniform smoothing (floor)
 
@@ -657,12 +663,23 @@ Compute the effective epochs $e_i$ for each domain. Which domain is at the edge 
 
     w_bar = np.mean(w_history, axis=0)
     print("velocity-based AVERAGED weights:", np.round(w_bar, 3))
+    print("velocity-based final weights   :", np.round(w, 3))
     print("vs natural                     :", np.round(w_nat, 3))
     ```
 
-    Key changes vs the excess-loss toy: (1) no reference model / no `ref_loss` is computed; (2) the signal is `prev_loss - cur_loss` (a *derivative*) instead of `proxy_loss - ref_loss` (a *level*); (3) the step size is enlarged because velocities are small.
+    Key changes vs the excess-loss toy: (1) no reference model / no `ref_loss` is computed; (2) the signal is `prev_loss - cur_loss` (a *derivative*) instead of `proxy_loss - ref_loss` (a *level*); (3) the derivative is taken *per allocated token* and normalized to a share, so the reward is comparable across domains and stays bounded over the run.
 
-    Qualitative difference in behavior: velocity says "ride what's working," excess loss says "fix what's broken." Under a power-law learning curve, a domain's velocity is largest early (when tokens are cheapest to convert into loss reduction) and *decays toward zero as the domain plateaus* — even if that domain is still far above its achievable floor. So velocity-based mixing will **pull weight out of a domain once it plateaus, even when large closeable loss (excess) remains**, whereas DoReMi's excess-loss signal would keep investing there until the gap to the reference is closed. The chapter's warning applies: a domain can have high excess loss yet near-zero velocity (stuck), and the two methods disagree precisely in that case.
+    Running it prints:
+
+    ```text
+    velocity-based AVERAGED weights: [0.141 0.258 0.372 0.142 0.088]
+    velocity-based final weights   : [0.135 0.253 0.382 0.137 0.093]
+    vs natural                     : [0.798 0.066 0.008 0.021 0.106]
+    ```
+
+    Qualitative difference in behavior: velocity says "ride what's working," excess loss says "fix what's broken." Under a power-law learning curve, a domain's velocity is largest early (when tokens are cheapest to convert into loss reduction) and *decays toward zero as the domain plateaus* — even if that domain is still far above its achievable floor. So velocity-based mixing will **pull weight out of a domain once it plateaus, even when large closeable loss (excess) remains**, whereas DoReMi's excess-loss signal would keep investing there until the gap to the reference is closed.
+
+    You can read that disagreement straight off the two runs. `code` (`rate = 0.28`) flattens sooner than `math` (`rate = 0.22`), so velocity mixing settles at code 0.26 / math 0.37, while the chapter's excess-loss toy settled at code 0.36 / math 0.29 — velocity moved weight *from* code *to* math. And if you evaluate the chapter's `ref_loss` against the velocity run's final `seen`, `code` still carries the **largest** clamped excess of any domain (0.16 nats/token) — precisely the headroom the velocity signal has decided to walk away from. The chapter's warning is this effect in general form: a domain can have high excess loss yet near-zero velocity (stuck), and the two methods disagree exactly in that case.
 
 **7.** You implement the mixture from Exercise 2 ($D = 1500$ B; math has $n_{\text{math}} = 25$ B unique tokens at $w_{\text{math}} = 0.10$) with Hugging Face `interleave_datasets(streams, probabilities=w, stopping_strategy="first_exhausted")`. Roughly how many tokens does your run actually produce, and why? What changes if you switch to `"all_exhausted"`? What must the loader report for you to know whether either behaviour matches your intended epoch budget?
 

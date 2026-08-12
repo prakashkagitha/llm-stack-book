@@ -79,7 +79,7 @@ Popular open-source choices include models from the `sentence-transformers` fami
 
 The chunk vectors are stored in a vector database (FAISS, Pinecone, Weaviate, Qdrant, pgvector, etc.) with an Approximate Nearest Neighbor (ANN) index such as HNSW or IVF. See [Vector Databases & Approximate Nearest Neighbor Search](../09-rag-retrieval/02-vector-databases-ann.html) for internals.
 
-At query time, the query vector is compared against all indexed vectors, and the top-$k$ most similar chunks (by cosine similarity or dot product) are returned in sub-millisecond to low-millisecond time even for corpora of tens of millions of chunks.
+At query time, the query vector is *not* compared against every indexed vector — that is the point of an ANN index. It is compared against a small candidate subset the index selects (the graph neighbourhood it walks for HNSW, the vectors inside the `nprobe` nearest Voronoi cells for IVF), and the top-$k$ most similar chunks (by cosine similarity or dot product) are returned in a few milliseconds even for corpora of tens of millions of chunks.
 
 ### Stage 4 — Retrieve (and optionally Rerank)
 
@@ -409,7 +409,7 @@ $$
 \text{Precision@k} = \frac{|\{\text{relevant chunks in top-}k\}|}{k}
 $$
 
-In the LLM-as-judge variant (no ground truth), the judge is asked: "Is this chunk necessary to produce the correct answer?" for each retrieved chunk.
+In the LLM-as-judge variant, the judge is asked "Is this chunk useful in arriving at the correct answer?" for each retrieved chunk. In `ragas` the default `context_precision` judges against the gold `reference`; the reference-free variant, which judges against the system's own `response`, is a separate class, `LLMContextPrecisionWithoutReference` (aliased `ContextUtilization`).
 
 The formula above is plain precision@$k$ — a rank-*insensitive* proxy that is easy to compute by hand and is what we use in the exercises. The `ragas` library's `context_precision` is the rank-weighted average-precision form, which additionally rewards putting the useful chunks *early*:
 
@@ -437,7 +437,7 @@ from ragas import evaluate, EvaluationDataset
 from ragas.metrics import (
     faithfulness,        # generation: are the answer's claims entailed by context?
     answer_relevancy,    # generation: does the answer address the question?
-    context_precision,   # retrieval: how much of the retrieved context is useful?
+    context_precision,   # retrieval: how much of the retrieved context is useful? (needs reference)
     context_recall,      # retrieval: was the needed evidence retrieved? (needs reference)
 )
 
@@ -448,7 +448,12 @@ eval_data = [
         "retrieved_contexts": [
             "FlashAttention is an IO-aware exact attention algorithm. It tiles the Q, K, V matrices into blocks that fit in SRAM...",
         ],
-        # `reference` (the gold answer) is optional; context_recall needs it.
+        # `reference` (the gold answer) is REQUIRED by both metrics imported
+        # above as `context_precision` (an alias for
+        # LLMContextPrecisionWithReference) and `context_recall`. The
+        # reference-free judge variant is a *different* class,
+        # LLMContextPrecisionWithoutReference (aliased ContextUtilization),
+        # which scores the retrieved contexts against `response` instead.
         "reference": "FlashAttention avoids storing the full N×N attention matrix by using tiled SRAM computation.",
     },
 ]
@@ -461,8 +466,14 @@ results = evaluate(
 )
 print(results)
 # Example output:
-# {'faithfulness': 0.97, 'answer_relevancy': 0.92,
-#  'context_precision': 1.00, 'context_recall': 0.95}
+# {'faithfulness': 1.00, 'answer_relevancy': 0.92,
+#  'context_precision': 1.00, 'context_recall': 1.00}
+#
+# Note the coarse values: on a ONE-row dataset the reported number is that
+# row's score, and faithfulness/context_recall are ratios over a handful of
+# atomic claims (so 3/3, 2/3, 1/2, ...). Only answer_relevancy, a mean cosine
+# over back-generated questions, varies continuously. Smooth aggregates like
+# 0.87 only appear once you evaluate over hundreds of rows.
 ```
 
 !!! note "Aside: RAGAS requires an LLM judge"
@@ -753,7 +764,8 @@ The honest answer is: it depends.
 | Freshness | Re-prompt each time (cheap) | Re-index on document update |
 | Latency | Prefilling 100 k tokens takes seconds | Retrieval adds ~50–100 ms |
 | Inference cost | Very high (attention is $O(N^2)$ in prefill) | Cheap: only top-$k$ docs injected |
-| Retrieval precision | Perfect (nothing is missed) | Recall depends on retriever quality |
+| Retrieval recall | Perfect — nothing is missed | Depends on retriever quality |
+| Retrieval precision | Very low — the whole corpus is supplied, most of it irrelevant | High after reranking; only top-$k'$ chunks reach the prompt |
 | Lost-in-middle | Significant beyond ~32 k tokens | Controlled; inject 1–5 k tokens |
 
 For corpora that fit in a long context (e.g., a single legal contract, a codebase under 100 k tokens), long-context prompting is simpler and more reliable. For large, dynamic, multi-document corpora (knowledge bases, enterprise wikis, customer support databases), RAG is the right tool. See [Advanced RAG: GraphRAG, Agentic RAG & Long-Context vs RAG](../09-rag-retrieval/05-advanced-rag.html) for a detailed comparison.
@@ -825,7 +837,7 @@ A few operational concerns that come up in every production RAG deployment:
 - Es et al., **"RAGAS: Automated Evaluation of Retrieval Augmented Generation"**, 2023 — defines the faithfulness, answer relevance, and context precision metrics implemented by the `ragas` library.
 - Liu et al., **"Lost in the Middle: How Language Models Use Long Contexts"**, TACL 2024 — empirical study of positional bias in long-context generation, directly relevant to multi-chunk RAG.
 - Izacard & Grave, **"Leveraging Passage Retrieval with Generative Models for Open Domain Question Answering"** (Fusion-in-Decoder), EACL 2021 — encodes each retrieved passage separately and fuses them in the decoder, scaling to far more passages than single-context concatenation.
-- Shi et al., **"REPLUG: Retrieval-Augmented Black-Box Language Models"**, NAACL 2023 — treats the LLM as a black box and trains only the retriever via LM likelihood signals.
+- Shi et al., **"REPLUG: Retrieval-Augmented Black-Box Language Models"**, NAACL 2024 (arXiv 2023) — treats the LLM as a black box and trains only the retriever via LM likelihood signals.
 - Zhang et al., **"RAFT: Adapting Language Model to Domain Specific RAG"**, 2024 — fine-tuning recipe for making models better at extracting answers from retrieved context while ignoring distractor documents.
 - LangChain and LlamaIndex open-source repos — the two most widely used RAG orchestration frameworks, with extensive examples of advanced retrieval patterns.
 

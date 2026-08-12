@@ -213,7 +213,7 @@ That innocuous `logits.reshape(B * T, V)` is, at real batch sizes, the single la
 | `log_softmax` output saved for backward | fp32 | 8.6 GB |
 | **loss head, peak** | | **≈ 21 GB** |
 
-For a 100M-parameter model the entire transformer trunk — weights, optimizer state, and all block activations — is *smaller than this*. Two properties make it especially nasty: the cost grows as $B \cdot T \cdot V$, so it fights every attempt to raise throughput by increasing the micro-batch; and activation checkpointing does nothing about it, because the head sits outside the checkpointed blocks.
+For a 100M-parameter model with activation checkpointing on the blocks, the entire transformer trunk — weights, optimizer state, and the saved block inputs — is *smaller than this*. Two properties make it especially nasty: the cost grows as $B \cdot T \cdot V$, so it fights every attempt to raise throughput by increasing the micro-batch; and activation checkpointing does nothing about it, because the head sits outside the checkpointed blocks.
 
 The 2026 standard fix is **chunked (fused) linear cross-entropy**: fold the `lm_head` matmul into the loss and process the token dimension in chunks, so at most `chunk × V` logits ever exist, and recompute those logits in the backward pass instead of storing them.
 
@@ -272,7 +272,7 @@ In production you do not write this yourself. The libraries that implement it:
 - **Liger Kernel** (`liger-kernel`) — Triton kernels for LLM training; `from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss` drops in for the head + loss and is wired into TRL and Axolotl by a single config flag.
 - **Cut Cross-Entropy** (`cut-cross-entropy`, Wijmans et al.) — `from cut_cross_entropy import linear_cross_entropy`; computes the loss without ever materializing the logit matrix by fusing the matmul, the logsumexp, and the true-class gather in one kernel.
 - **`torch.compile`** over a hand-written chunked loop like the one above, which is what TorchTitan-style stacks use when they want no extra dependency.
-- **Megatron-LM** shards the vocabulary across tensor-parallel ranks and uses `vocab_parallel_cross_entropy`, which computes the log-partition with a single all-reduce of per-rank maxima and sums — so no rank ever holds the full $(B \cdot T, V)$ tensor (see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)).
+- **Megatron-LM** shards the vocabulary across tensor-parallel ranks and uses `vocab_parallel_cross_entropy`, which computes the log-partition with a small fixed number of all-reduces (a MAX over the per-rank logit maxima, then SUMs for the true-class logit and the partition function) — so no rank ever holds the full $(B \cdot T, V)$ tensor (see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)).
 
 Stack-100M uses the chunked path with `loss_chunk = 8192`, fused with its z-loss so the `logsumexp` is computed once and reused; the full kernel and its memory accounting are in [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html).
 
@@ -393,8 +393,10 @@ def build_packed_loss_mask(
     doc_ids example for one sequence:
        [0, 0, 0, 1, 1, 1, 1, 2, 2]
     Entries 2 and 6 get mask=0 — these are exactly the entries that score the
-    first tokens of docs 1 and 2 (at indices 3 and 7), so the returned mask is
-    [1, 1, 0, 1, 1, 1, 0, 1, 1].
+    first tokens of docs 1 and 2 (at indices 3 and 7). The last entry is also 0:
+    entry T-1 would score token T, which is outside this array, so there is no
+    way to know whether it starts a new document. The returned mask is therefore
+    [1, 1, 0, 1, 1, 1, 0, 1, 0].
     """
     B, T = doc_ids.shape
     # There is no mask entry that scores token 0 itself: entry t scores token t+1,
@@ -406,6 +408,7 @@ def build_packed_loss_mask(
     # from the wrong document, so mask entry t (not entry t+1).
     new_doc_at_next = doc_ids[:, 1:] != doc_ids[:, :-1]  # (B, T-1): True when t+1 starts new doc
     mask[:, :-1][new_doc_at_next] = 0  # mask positions t where next token is a new doc
+    mask[:, -1] = 0   # entry T-1 scores token T, which doc_ids does not cover
 
     return mask   # (B, T): 1 = train on this position, 0 = ignore
 ```

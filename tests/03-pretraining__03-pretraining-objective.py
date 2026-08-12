@@ -223,13 +223,16 @@ def build_packed_loss_mask(
     doc_ids: torch.Tensor,  # (B, T) — integer doc ID for each token position
 ) -> torch.Tensor:
     """
-    Returns a loss mask (B, T) where position t is 1 (active) unless it is
-    the first token of a new document (in which case its loss is contaminated
-    by the previous document's context and should be excluded).
+    Returns a loss mask (B, T) aligned to the *shifted targets*: entry t gates
+    the prediction of token t+1. It is 1 (active) unless token t+1 starts a new
+    document, in which case that prediction is contaminated by the previous
+    document's context and should be excluded.
 
     doc_ids example for one sequence:
        [0, 0, 0, 1, 1, 1, 1, 2, 2]
-    First positions of docs 1 and 2 (indices 3 and 7) get mask=0.
+    Entries 2 and 6 get mask=0 (they score the first tokens of docs 1 and 2, at
+    indices 3 and 7). The last entry is also 0: entry T-1 would score token T,
+    which is outside this array. Returned mask: [1, 1, 0, 1, 1, 1, 0, 1, 0].
     """
     B, T = doc_ids.shape
     # A position starts a new document when its doc_id differs from the previous one
@@ -249,6 +252,7 @@ def build_packed_loss_mask(
     # from prefix up to token t. If token t+1 starts a new doc, mask it.
     new_doc_at_next = doc_ids[:, 1:] != doc_ids[:, :-1]  # (B, T-1): True when t+1 starts new doc
     mask[:, :-1][new_doc_at_next] = 0  # mask positions t where next token is a new doc
+    mask[:, -1] = 0   # entry T-1 scores token T, which doc_ids does not cover
 
     return mask   # (B, T): 1 = train on this position, 0 = ignore
 
@@ -264,7 +268,8 @@ print(f"build_packed_loss_mask:\n{_mask5}")
 # doc_ids[3]=1 from doc_ids[2]=0 context masks position 2, and predicting
 # doc_ids[7]=2 from doc_ids[6]=1 context masks position 6.
 assert _mask5[0, 2].item() == 0 and _mask5[0, 6].item() == 0
-assert _mask5.sum().item() == _doc_ids5.numel() - 4  # two boundaries per row, two rows
+# two boundaries per row plus the undeterminable last entry per row, two rows
+assert _mask5.sum().item() == _doc_ids5.numel() - 6
 
 
 # ============================================================================
@@ -334,21 +339,23 @@ def loss_mask_from_doc_ids(
     doc_ids: torch.Tensor,   # (T,)  — -1 for padding
 ) -> torch.Tensor:
     """
-    Build loss mask of shape (T,).
-    Active (1) unless:
-      - padding position (doc_id == -1)
-      - first token of a new document that follows a different document
-        (cross-doc context contamination)
+    Build loss mask of shape (T,), aligned to the shifted targets: entry t gates
+    the prediction of token t+1, so it is decided by BOTH t and t+1.
+    Active (1) only when:
+      - neither t nor t+1 is padding (doc_id == -1), so no padding is ever
+        predicted and no padding is ever used as context, and
+      - t and t+1 belong to the same document (otherwise the prediction is
+        cross-doc context contamination)
+    The last entry is always 0: position T-1 has no next token in this array.
     """
     T = doc_ids.shape[0]
-    mask = (doc_ids >= 0).long()   # 0 at padding, 1 elsewhere
+    mask = torch.zeros(T, dtype=torch.long, device=doc_ids.device)
 
-    # Also zero out the target positions where the *next* token starts a new doc.
-    # Target at position t is tokens[t+1]; if tokens[t+1] belongs to a new doc,
-    # the model's context (tokens[:t+1]) is from the wrong doc, so mask it.
+    # Target at position t is tokens[t+1]. If tokens[t+1] is padding, or belongs
+    # to a new doc, the pair (context, target) is not a valid training signal.
     for t in range(T - 1):
-        if doc_ids[t] >= 0 and doc_ids[t + 1] >= 0 and doc_ids[t] != doc_ids[t + 1]:
-            mask[t] = 0   # predicting the first token of doc[t+1] from doc[t] context
+        if doc_ids[t] >= 0 and doc_ids[t + 1] >= 0 and doc_ids[t] == doc_ids[t + 1]:
+            mask[t] = 1   # predicting the next token of the same doc — valid
     return mask
 
 

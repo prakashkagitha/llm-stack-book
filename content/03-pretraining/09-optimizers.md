@@ -92,7 +92,7 @@ $$
 \theta_t = \theta_{t-1} - \eta\left( \frac{\hat{m}_t}{\sqrt{\hat{v}_t}+\epsilon} + \lambda\, \theta_{t-1}\right).
 $$
 
-Equivalently $\theta_t = (1-\eta\lambda)\,\theta_{t-1} - \eta\,\hat m_t/(\sqrt{\hat v_t}+\epsilon)$: a clean multiplicative shrink toward zero plus the adaptive step. AdamW is the de-facto standard for pretraining every modern LLM. A crucial practical detail: **do not decay 1-D parameters** — biases, LayerNorm/RMSNorm gains, and usually embeddings — only the 2-D weight matrices. Decaying norm gains pulls them toward zero and destabilizes training.
+Equivalently $\theta_t = (1-\eta\lambda)\,\theta_{t-1} - \eta\,\hat m_t/(\sqrt{\hat v_t}+\epsilon)$: a clean multiplicative shrink toward zero plus the adaptive step. AdamW is the de-facto standard for pretraining every modern LLM. A crucial practical detail: **do not decay 1-D parameters** — biases and LayerNorm/RMSNorm gains — only the 2-D weight matrices. Decaying norm gains pulls them toward zero and destabilizes training. (Embeddings and the LM head are 2-D, and under the GPT-3/nanoGPT convention they *are* decayed along with every other `ndim >= 2` tensor; some recipes exclude them by name instead. Either is defensible — just be explicit about which you picked.)
 
 ### Implementing AdamW from scratch
 
@@ -258,11 +258,12 @@ Adafactor pairs this with two more memory moves: it can **drop the first moment 
 ```python
 import torch
 
-def adafactor_matrix_step(W, G, R, C, t, lr, beta2=0.999, eps1=1e-30, eps2=1e-3):
+def adafactor_matrix_step(W, G, R, C, t, lr, eps1=1e-30, eps2=1e-3):
     """One Adafactor step for a 2D weight W with grad G.
     R: row accumulator (n,), C: col accumulator (m,). No first moment here.
+    Note there is no `beta2` argument: Adafactor *derives* the decay from the
+    step count instead of taking it as a hyperparameter.
     """
-    n, m = W.shape
     g2 = G * G + eps1                       # squared grad, floored
 
     # Decayed running averages of row sums and column sums of g^2
@@ -486,7 +487,7 @@ A pragmatic decision procedure for a new pretraining run:
 !!! interview "Interview Corner"
     **Q:** Why is Adam (or AdamW) the default for training transformers instead of SGD with momentum, and what is the cost of that choice?
 
-    **A:** Three reasons. (1) **Per-parameter adaptivity / scale invariance.** Transformer gradients span many orders of magnitude across parameters — sparse embedding rows, norm gains, dense projections — and Adam's division by $\sqrt{\hat v}$ rescales every coordinate to a near-unit step, so a single global learning rate works. SGD has one rate for all and zig-zags on the resulting ill-conditioned, anisotropic loss surface. (2) **Robustness to sparse and noisy gradients**, which dominate at the embedding layer. (3) **Fast, reliable early convergence**, helped by bias correction that prevents huge steps in the first iterations. The cost is memory: AdamW stores two extra fp32 tensors per parameter (first and second moment), so optimizer states are ~12 bytes/param including the fp32 master copy — three times the bf16 weights. For a 7B model that's ~84 GB of optimizer state alone, which is why we need ZeRO/FSDP sharding and why memory-frugal optimizers (Lion, Adafactor, Muon, 8-bit Adam) exist. A secondary cost: SGD often generalizes slightly better, but for LLMs Adam's convergence speed and robustness win decisively.
+    **A:** Three reasons. (1) **Per-parameter adaptivity / scale invariance.** Transformer gradients span many orders of magnitude across parameters — sparse embedding rows, norm gains, dense projections — and Adam's division by $\sqrt{\hat v}$ rescales every coordinate to a near-unit step, so a single global learning rate works. SGD has one rate for all and zig-zags on the resulting ill-conditioned, anisotropic loss surface. (2) **Robustness to sparse and noisy gradients**, which dominate at the embedding layer. (3) **Fast, reliable early convergence**, helped by bias correction that prevents huge steps in the first iterations. The cost is memory: AdamW stores two extra fp32 tensors per parameter (first and second moment), so optimizer states are ~12 bytes/param including the fp32 master copy — six times the 2 bytes of bf16 weights (three times the weights and gradients combined). For a 7B model that's ~84 GB of optimizer state alone, which is why we need ZeRO/FSDP sharding and why memory-frugal optimizers (Lion, Adafactor, Muon, 8-bit Adam) exist. A secondary cost: SGD often generalizes slightly better, but for LLMs Adam's convergence speed and robustness win decisively.
 
     **Follow-up Q:** What's the difference between L2 regularization and weight decay in Adam, and why does AdamW matter?
 
@@ -496,7 +497,7 @@ A pragmatic decision procedure for a new pretraining run:
     - **SGD+momentum** is cheapest (0–1 buffers) and generalizes well, but a single global learning rate cannot handle the wildly heterogeneous gradient scales of a transformer — hence adaptive methods.
     - **Adam/AdamW** rescale each coordinate by $\hat m/\sqrt{\hat v}$, giving near-unit, scale-invariant steps; **bias correction** ($1-\beta^t$ factors) prevents huge early steps. For LLMs use $\beta_2 = 0.95$ to react faster to gradient spikes.
     - **AdamW decouples weight decay** from the adaptive term ($\theta\leftarrow(1-\eta\lambda)\theta$); L2-in-the-gradient under-decays high-gradient params. Decay only 2-D weights, never norms or biases.
-    - **Optimizer state is the memory hog:** AdamW costs ~12 bytes/param ($m$, $v$, fp32 master) — 3× the bf16 weights, ~84 GB for a 7B model. This forces ZeRO/FSDP sharding and motivates frugal optimizers.
+    - **Optimizer state is the memory hog:** AdamW costs ~12 bytes/param ($m$, $v$, fp32 master) — 6× the bf16 weights, ~84 GB versus 14 GB for a 7B model. This forces ZeRO/FSDP sharding and motivates frugal optimizers.
     - **Adafactor** factors the second moment into row×column vectors ($O(n{+}m)$ memory) and can drop momentum — sublinear optimizer memory, at some stability cost. **8-bit Adam** quantizes $m,v$ for a $4\times$ cut with little quality loss.
     - **Lion** stores one buffer and steps by the *sign* of momentum (uniform $\pm\eta$); half AdamW memory, needs a smaller LR, larger decay, and bigger batches.
     - **LARS/LAMB** rescale each layer's update by a **trust ratio** $\lVert\theta\rVert/\lVert u\rVert$ so every layer moves a fixed fraction of its own norm — the key to 32k-batch training, and the origin of the per-layer update-to-weight ratio ($\sim 10^{-3}$) you should be logging.
@@ -559,7 +560,7 @@ A pragmatic decision procedure for a new pretraining run:
 
     a clean multiplicative shrink by the same factor $(1-\eta\lambda)$ for every weight, independent of its gradient. In plain SGD there is no $\sqrt{\hat v_t}$ denominator, so $\lambda\theta$-in-the-gradient and multiplicative shrink coincide; the divergence is created entirely by Adam's per-coordinate rescaling.
 
-    (b) An RMSNorm gain multiplies its activation channel; pulling it toward zero directly shrinks the signal passing through the normalization layer and destabilizes training (the layer's output scale collapses). More generally, 1-D parameters (norm gains, biases, and usually embeddings) are not the high-dimensional weight matrices that benefit from L2-style capacity control, so decaying them only hurts. The correct setup uses two parameter groups: one for the 2-D weight matrices with `weight_decay=0.1`, and one for all 1-D parameters (and typically embeddings) with `weight_decay=0.0`.
+    (b) An RMSNorm gain multiplies its activation channel; pulling it toward zero directly shrinks the signal passing through the normalization layer and destabilizes training (the layer's output scale collapses). More generally, 1-D parameters (norm gains and biases) are not the high-dimensional weight matrices that benefit from L2-style capacity control, so decaying them only hurts. The correct setup uses two parameter groups: one with `weight_decay=0.1` for the 2-D weight matrices, and one with `weight_decay=0.0` for all 1-D parameters — exactly the `p.ndim >= 2` split in the chapter's `param_groups` helper. Note that embeddings and the LM head are 2-D, so under that GPT-3/nanoGPT convention they land in the decay group; some recipes exclude them by name instead, which is also defensible — the non-negotiable part is that norm gains and biases never get decayed.
 
 **2.** *(Momentum, by hand.)* Consider heavy-ball momentum $v_t = \mu v_{t-1} + g_t$, $\theta_t = \theta_{t-1} - \eta v_t$, driven by a *constant* gradient $g$ starting from $v_0 = 0$. (a) Derive the terminal (steady-state) velocity and evaluate it for $\mu = 0.9$ and $\mu = 0.98$. (b) If you raise $\mu$ from $0.9$ to $0.98$ and want to keep the same steady-state step length $\eta v_\infty$, by what factor must you change $\eta$? (c) This is why momentum and learning rate are coupled. State the coupling in one sentence.
 

@@ -111,9 +111,12 @@ def main():
         lrs.append(optimizer.param_groups[0]["lr"])
         scheduler.step()
 
-    # Verify: step 50 should be ~50% of peak; step 999 should be near min
-    assert abs(lrs[50] / lrs[99] - 50 / 100) < 0.01, "warmup slope wrong"
-    assert lrs[-1] < lrs[99] * 0.15, "floor not reached"
+    # Verify: step 50 should be ~50% of peak; step 999 should be near min.
+    # The peak is lrs[100] (first step of the cosine branch), NOT lrs[99],
+    # which is still one warmup step below it.
+    peak = max(lrs)
+    assert abs(lrs[50] / peak - 0.5) < 1e-9, "warmup slope wrong"
+    assert lrs[-1] < peak * 0.15, "floor not reached"
     print(f"[OK] block #0 cosine schedule: Peak LR: {max(lrs):.2e}, Final LR: {lrs[-1]:.2e}")
 
     # Also exercise get_wsd_schedule so both functions defined in the block execute.

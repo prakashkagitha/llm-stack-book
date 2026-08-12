@@ -35,15 +35,15 @@ logic, fewer resamples) to keep total runtime well under the ~60s budget;
 this is a runtime-only "tiny fixture" change, not a change to the book's logic.
 
 Real bugs found and fixed:
-  1. Block #3's prose claimed the seed=0 fit recovers specific point values
-     (E~1.83, A~879, alpha~0.390, beta~0.290, alloc_exp~0.426) to a tight
-     tolerance. Running the book's own multi-start L-BFGS-B code here lands
-     on a nearby but different local optimum (E=1.808, A=793.9, alpha=0.384,
-     beta=0.288) -- exactly the "nearly-flat objective surface" fragility the
-     chapter's own prose warns about. The ORIGINAL test asserted `A` to
-     +/-50, which failed. Fixed by asserting the robust, order-of-magnitude
-     and allocation-exponent claims the chapter actually stakes stability
-     on, not the fragile fitted point estimate (see Block #3 below).
+  1. Block #3's prose originally claimed the seed=0 fit recovers E~1.83,
+     A~879, alpha~0.390, beta~0.290, alloc_exp~0.426. Running the book's own
+     multi-start L-BFGS-B code here lands on a nearby but different local
+     optimum (E=1.808, A=793.9, B=459.0, alpha=0.384, beta=0.288,
+     alloc_exp=0.429) -- exactly the "nearly-flat objective surface"
+     fragility the chapter's own prose warns about. The chapter prose was
+     corrected to the reproduced values. This test still asserts only the
+     robust, order-of-magnitude and allocation-exponent claims, because the
+     exact local optimum can drift across scipy/numpy/BLAS builds.
   2. The chapter's prose (line ~447, "Designing the Sweep Under a Budget")
      claimed the tok/param grid in Block #6 "spans roughly 200 down to 32
      within each slice." Running the book's own code shows it spans 200 down
@@ -282,16 +282,18 @@ if _HAVE_SCIPY:
         idx = boot_rng.integers(0, n_rows, n_rows)          # resample WITH replacement
         e_b, a_b, b_b, alpha_b, beta_b = fit_once(N_obs[idx], D_obs[idx], L_obs[idx])
         _, _, L25 = optimal_alloc(1e25, e_b, a_b, b_b, alpha_b, beta_b)
-        records.append((alpha_b, beta_b, beta_b / (alpha_b + beta_b), np.exp(a_b), L25))
+        records.append((alpha_b, beta_b, beta_b / (alpha_b + beta_b),
+                        np.exp(a_b), np.exp(e_b), L25))
     records = np.array(records)
-    names = ["alpha", "beta", "alloc_exp (beta/(a+b))", "A", "L*(1e25)"]
+    names = ["alpha", "beta", "alloc_exp (beta/(a+b))", "A", "E", "L*(1e25)"]
     for j, name in enumerate(names):
         lo, mid, hi = np.percentile(records[:, j], [2.5, 50, 97.5])
         print(f"{name:>24}: [{lo:.3g}, {mid:.3g}, {hi:.3g}]  (2.5% / median / 97.5%)")
-    # Expect: alpha ~ [0.30, 0.45], beta ~ [0.25, 0.34], alloc-exp ~ [0.38, 0.50] -- tight.
-    # A spans roughly [230, 2300] and E ~ [1.57, 1.95] -- an order of magnitude wider,
-    # visually confirming allocation is identifiable but the raw offsets are not.
-    assert records.shape == (n_boot, 5)
+    # Expect: alpha ~ [0.30, 0.46], beta ~ [0.25, 0.34], alloc-exp ~ [0.37, 0.51] -- tight.
+    # A spans roughly [210, 2700] -- a 13x range end to end -- and E ~ [1.64, 1.96],
+    # while the allocation exponent spans only ~1.4x, visually confirming that
+    # allocation is identifiable but the raw offsets are not.
+    assert records.shape == (n_boot, 6)
     # allocation exponent should be much more tightly concentrated (relative
     # spread) than the raw offset A -- the identifiability claim the book makes.
     alloc_col, A_col = records[:, 2], records[:, 3]
@@ -496,9 +498,9 @@ _section("Block #9: emergent abilities as a metric artifact")
 def smooth_per_token_accuracy(N):
     """Per-token correctness improves SMOOTHLY (power-law) with scale."""
     # Clip to a valid probability: the raw power law goes negative below
-    # N ~ 4.2e8, so clamp to [0, 1]. Per-token correctness still improves
-    # SMOOTHLY (power-law) with scale.
-    return np.clip(1.0 - 0.9 * (N / 1e9) ** (-0.12), 0.0, 1.0)
+    # N ~ 7.7e7, just under the grid swept below, so clamp to [0, 1] as a
+    # guard. Per-token correctness still improves SMOOTHLY (power-law).
+    return np.clip(1.0 - 0.9 * (N / 1e8) ** (-0.4), 0.0, 1.0)
 
 
 def exact_match(N, k_tokens):
@@ -517,13 +519,18 @@ for N in Ns_em:
     _per_token_vals.append(pt)
     _em30_vals.append(em30)
     print(f"{N:10.1e} {pt:10.3f} {em1:9.3f} {em30:10.3f}")
-# per-token rises gently; EM(k=30) stays ~0 then "emerges" sharply -- same model!
+# per-token rises gently (0.100 -> 0.432 -> ... -> 0.977) while EM(k=30) sits at
+# 0.000 for four rungs and then "emerges": 0.010, 0.059, 0.173, 0.335, 0.504.
+# Same model, same smooth improvement -- the cliff lives in the metric.
 
 # Verify the "mirage" claim directly: per-token accuracy rises smoothly and
-# substantially across the range, while EM(k=30) barely rises off the floor
-# for all but the very largest N (the "sharp jump" is deferred by exponentiation).
+# substantially across the range, while EM(k=30) sits on the floor for the
+# first four rungs and only then "emerges" (the jump is made by exponentiation).
 assert _per_token_vals[-1] - _per_token_vals[0] > 0.5, "per-token accuracy should improve substantially"
-assert all(v < 0.05 for v in _em30_vals[:-1]), "EM(k=30) should stay near zero except at the largest N"
+assert all(b > a for a, b in zip(_per_token_vals, _per_token_vals[1:])), "per-token accuracy should rise monotonically"
+assert all(v < 0.001 for v in _em30_vals[:4]), "EM(k=30) should sit on the floor for the first four rungs"
+assert _em30_vals[-1] > 0.5, "EM(k=30) should have 'emerged' by the largest N"
+assert all(b > a for a, b in zip(_em30_vals, _em30_vals[1:])), "EM(k=30) is monotone -- no true discontinuity"
 assert exact_match(1, 1) == exact_match(1, 1)  # k=1 exact match equals per-token accuracy by definition
 assert abs(exact_match(Ns_em[-1], 1) - smooth_per_token_accuracy(Ns_em[-1])) < 1e-9
 
