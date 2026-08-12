@@ -324,13 +324,20 @@ class InstructionDataset(Dataset):
         input_ids = torch.tensor(input_ids, dtype=torch.long)
         labels = torch.tensor(labels, dtype=torch.long)
 
-        # Verify the mask boundary -- the exact bug class this chapter warns
-        # about: prompt fully masked, response labels equal response ids.
-        prompt_len = len(prompt_ids)
-        assert bool((labels[:prompt_len] == IGNORE_INDEX).all()), "prompt not masked"
-        if prompt_len < input_ids.shape[0]:
-            assert bool((labels[prompt_len:] == input_ids[prompt_len:]).all()), \
-                "response labels must equal response ids"
+        # The mask boundary itself is exact BY CONSTRUCTION -- both lists are
+        # built from the same two pieces with the same truncation -- so
+        # asserting "prompt masked, response unmasked" could never fail and
+        # would prove nothing. What CAN go wrong is the tokenization on either
+        # side of the boundary, which is the bug class this chapter warns
+        # about, so check that instead.
+        bos_id, eos_id = self.tokenizer.bos_token_id, self.tokenizer.eos_token_id
+        if bos_id is not None and bos_id != eos_id:
+            assert prompt_ids[0] == bos_id and prompt_ids.count(bos_id) == 1, \
+                "prompt must begin with exactly one BOS"
+            assert bos_id not in response_ids, \
+                "response re-added BOS -- tokenize it with add_special_tokens=False"
+        assert bool((labels != IGNORE_INDEX).any()), \
+            "truncation left no response tokens -- raise max_length or drop this row"
 
         return {"input_ids": input_ids, "labels": labels}
 
@@ -388,7 +395,8 @@ def compute_sft_loss(
     labels: (B, L) with IGNORE_INDEX for prompt tokens
 
     Standard next-token prediction: predict token t from context 0..t-1.
-    We shift logits left by one and labels right by one.
+    We drop the LAST logit and the FIRST label, so position i's logits are
+    scored against token i+1.
 
     Returns (loss_SUM, n_response_tokens) rather than a mean. The sum is what
     lets gradient accumulation normalize by the TRUE token count of the whole
@@ -427,7 +435,12 @@ def train(args):
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype=torch.bfloat16,  # use bf16 to save ~50% memory vs fp32
+        # fp32 MASTER weights. bf16 is applied by autocast in the loop below,
+        # so the matmuls run on bf16 tensor cores while the parameters,
+        # gradients, and AdamW moments stay fp32. Loading in pure bf16 and
+        # stepping AdamW straight on those weights is a common shortcut that
+        # silently degrades SFT -- see "Mixed-precision bf16" below.
+        torch_dtype=torch.float32,
         device_map="auto",           # auto-shards across available GPUs
     )
     model.config.use_cache = False   # disable KV-cache during training
@@ -490,15 +503,19 @@ def train(args):
             labels = batch["labels"].to(device)
             attention_mask = batch["attention_mask"].to(device)
 
-            # Forward pass
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-            )
-            logits = outputs.logits  # (B, L, V)
+            # Forward pass under bf16 autocast. No GradScaler is needed:
+            # that is an fp16 concern, and bf16 has fp32's exponent range.
+            # F.cross_entropy is on autocast's fp32 list, so the loss itself
+            # is still accumulated in full precision.
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                )
+                logits = outputs.logits  # (B, L, V)
 
-            # Compute response-only loss as a SUM plus its token count
-            loss_sum, n_tokens = compute_sft_loss(logits, labels)
+                # Compute response-only loss as a SUM plus its token count
+                loss_sum, n_tokens = compute_sft_loss(logits, labels)
 
             if n_tokens > 0:
                 # Backward on the UNNORMALIZED sum: gradients accumulate as
@@ -605,7 +622,7 @@ The expected result: exactly one BOS token at position 0 (never two), every prom
 
 **Loss normalization under gradient accumulation.** This is the subtlest correctness issue in the whole loop, and the reason `compute_sft_loss` returns a sum rather than a mean. The naive implementation computes `F.cross_entropy(..., reduction="mean")` — the mean over *this microbatch's* response tokens — and divides by `grad_accum_steps`. That weights every microbatch equally, so a microbatch holding 40 response tokens contributes as much gradient as one holding 900. The gradient you take is then a *mean of means*, $\frac{1}{G}\sum_g \frac{L_g}{n_g}$, not the gradient of the loss over the accumulation window, $\frac{\sum_g L_g}{\sum_g n_g}$ — and changing `grad_accum_steps` silently changes the objective. Response-only masking is exactly what makes $n_g$ vary wildly, so SFT suffers far more than pretraining (where every packed window has the same number of targets). This is the gradient-accumulation normalization bug that HuggingFace and Unsloth publicized in late 2024 and subsequently fixed across `transformers` and TRL. The fix above accumulates unnormalized sums and divides the accumulated *gradient* by the window's true token count — exact, single-pass, no extra forward. Backpropagating an unnormalized sum makes raw gradients on the order of $10^3\times$ larger than a mean's, which is safe here because bf16 carries fp32's dynamic range, and we rescale *before* clipping so `max_norm=1.0` still means what it says. Under DDP there is one extra factor to keep straight: DDP *averages* gradients across ranks (it all-reduces and divides by `world_size`), so after the sync each parameter holds $\frac{1}{R}\sum_r \nabla L_r$ while the exact global per-token mean is $\frac{\sum_r \nabla L_r}{\sum_r n_r}$. All-reduce `window_tokens` to get the global count $N$, then divide by `N / world_size` — i.e. `p.grad.div_(global_tokens / dist.get_world_size())`. Dividing by $N$ alone would shrink every gradient by a factor of `world_size`, silently scaling the effective learning rate down by the number of GPUs. The same fix, with the same reasoning, appears in the capstone's SFT loop ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)).
 
-**BF16 training.** We use `torch_dtype=torch.bfloat16` for the model. BF16 has the same dynamic range as float32 (8 exponent bits) but less precision (7 mantissa bits vs. 23). This is the preferred format for SFT on modern GPUs with bf16 tensor cores — see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
+**Mixed-precision bf16.** The model is loaded in fp32 and the forward is wrapped in `torch.autocast(device_type="cuda", dtype=torch.bfloat16)`: the matmuls execute on bf16 tensor cores while the parameters, gradients, and AdamW moments remain fp32. BF16 has the same dynamic range as float32 (8 exponent bits) but less precision (7 mantissa bits vs. 23); the wide range is why bf16 autocast needs no `GradScaler` (fp16 does). Do *not* take the tempting shortcut of loading the weights in pure bf16 and running plain AdamW directly on them: the gradients and both moment buffers then also live in bf16, and with only 8 bits of significand a typical SFT update ($\text{lr} = 2 \times 10^{-5}$, so a relative change of order $10^{-3}$ on a weight) falls below half an ulp — a large fraction of updates round away to no-ops. Every framework that does keep bf16 weights (FSDP/DeepSpeed mixed precision, the 14 + 28 + 56 line in the memory box above) holds a separate fp32 master copy for exactly this reason. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
 
 **Gradient clipping.** `clip_grad_norm_(max_norm=1.0)` is standard. SFT on a small dataset can produce occasional large gradients (long responses, unusual tokens), and clipping prevents loss spikes.
 
@@ -630,7 +647,9 @@ The expected result: exactly one BOS token at position 0 (never two), every prom
 You should write the loop above once, to know what every line does. For production you use a library, and the ecosystem default is HuggingFace **TRL** (`huggingface/trl`), whose `SFTTrainer` wraps `transformers.Trainer` with the masking, packing, PEFT, and distributed plumbing already correct — including the loss normalization discussed above. The entire script becomes:
 
 ```python
-# pip install "trl>=0.15" transformers datasets peft
+# pip install "trl>=0.20" transformers datasets peft
+# (>=0.20 matters: `completion_only_loss` arrived in the 0.19 line, and
+#  SFTConfig's `max_seq_length` was renamed to `max_length` in 0.20.)
 from datasets import load_dataset
 from peft import LoraConfig
 from trl import SFTConfig, SFTTrainer
@@ -665,7 +684,7 @@ trainer = SFTTrainer(
 trainer.train()
 ```
 
-The mapping is one-to-one with what we built: `completion_only_loss` is our label mask, `gradient_accumulation_steps` is our accumulation window, `peft_config` is the LoRA branch of the memory table. Two flags worth knowing beyond this snippet: for *conversational* datasets (a `messages` column of role/content turns) use `assistant_only_loss=True` instead, which masks every non-assistant turn but requires the tokenizer's chat template to wrap assistant content in a `{% generation %}` block — if the template lacks it, the flag silently trains on everything. And `packing=True` concatenates examples to fill `max_length`, the single biggest throughput win for short SFT data; both are covered in [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html), and TRL itself in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html). Argument names do move between TRL releases — read the `SFTConfig` dataclass in the version you install rather than trusting a snippet. Above TRL sit config-driven wrappers that need no Python at all: **axolotl** (YAML), **LLaMA-Factory** (YAML + web UI), **Unsloth** (fused Triton kernels for single-GPU LoRA), and **allenai/open-instruct** (the Tulu recipes end to end). For multi-GPU full fine-tuning, TRL delegates sharding to Accelerate with DeepSpeed ZeRO-3 or PyTorch FSDP — see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
+The mapping is one-to-one with what we built: `completion_only_loss` is our label mask, `gradient_accumulation_steps` is our accumulation window, `peft_config` is the LoRA branch of the memory table. Two flags worth knowing beyond this snippet: for *conversational* datasets (a `messages` column of role/content turns) use `assistant_only_loss=True` instead, which masks every non-assistant turn but requires the tokenizer's chat template to wrap assistant content in a `{% generation %}` block — the flag is built on `apply_chat_template(..., return_assistant_tokens_mask=True)`, so if the template lacks that block the mask comes back all zeros, *every* token gets masked out, and you train on nothing (a loss over zero targets). `transformers` warns about the missing `{% generation %}` keyword and recent TRL raises instead of proceeding, but the fix is the same either way: inspect one batch's labels before you trust the run. And `packing=True` concatenates examples to fill `max_length`, the single biggest throughput win for short SFT data; both are covered in [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html), and TRL itself in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html). Argument names do move between TRL releases — read the `SFTConfig` dataclass in the version you install rather than trusting a snippet. Above TRL sit config-driven wrappers that need no Python at all: **axolotl** (YAML), **LLaMA-Factory** (YAML + web UI), **Unsloth** (fused Triton kernels for single-GPU LoRA), and **allenai/open-instruct** (the Tulu recipes end to end). For multi-GPU full fine-tuning, TRL delegates sharding to Accelerate with DeepSpeed ZeRO-3 or PyTorch FSDP — see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Megatron-LM, DeepSpeed & Parallelism in Practice](../03-pretraining/07-megatron-deepspeed.html).
 
 ## Evaluating SFT Models
 

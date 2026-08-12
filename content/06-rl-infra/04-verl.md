@@ -79,8 +79,10 @@ def fit(self):
         if self.use_reference_policy:
             batch = batch.union(self.ref_policy_wg.compute_ref_log_prob(batch))
 
-        # 4) REWARD: rule-based verifier and/or a reward model.
-        batch = batch.union(self.reward_fn(batch))
+        # 4) REWARD: rule-based verifier and/or a reward model. The RewardManager
+        #    returns a reward TENSOR (not a DataProto), so the driver assigns it
+        #    into the batch rather than union-ing it.
+        batch.batch["token_level_scores"] = self.reward_fn(batch)
 
         # 5) VALUES (PPO only; GRPO skips this — no critic).
         if self.use_critic:
@@ -191,7 +193,7 @@ The object passed around — `DataProto` — is veRL's batch container: a dict o
 
 We now reach the part of veRL that is the most technically interesting and the source of much of its performance: the **3D-HybridEngine**. The problem it solves is unavoidable in any colocated RL system. The actor model must live in *two different parallel layouts*:
 
-- **Training layout.** During the update, the actor is sharded for training — typically **FSDP** (parameters, gradients, and optimizer state sharded across all data-parallel ranks; see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html)) or **Megatron 3D parallelism** (tensor × pipeline × data; see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)). Optimizer state dominates memory: Adam needs two moments per parameter, so the training engine holds roughly $4\times$–$6\times$ the raw parameter bytes.
+- **Training layout.** During the update, the actor is sharded for training — typically **FSDP** (parameters, gradients, and optimizer state sharded across all data-parallel ranks; see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html)) or **Megatron 3D parallelism** (tensor × pipeline × data; see [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html)). Optimizer state dominates memory: Adam keeps an fp32 master copy plus two fp32 moments ($12$ B/param), so on top of bf16 parameters and gradients the training engine holds $\approx 8\times$ the raw bf16 parameter bytes ($16$ B/param in total).
 - **Rollout layout.** During generation, the *same* weights must feed **vLLM** or **SGLang**, which shard the model purely with **tensor parallelism** (TP) for low-latency decode and use PagedAttention for the KV cache (see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html) and [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)). The rollout engine needs *no* optimizer state and *no* gradients — just the bf16 weights and a big KV cache.
 
 Every RL step must convert the actor weights from the training layout to the rollout layout (before generation) and conceptually back (the trainer just keeps its own copy and updates it in place). The naive way to do this is catastrophic: gather the full weights to every rank, write a checkpoint, and have vLLM load it — disk round-trips of tens of gigabytes per step, plus a full unsharded copy of the model materialized in memory. The 3D-HybridEngine does it **in GPU memory, in place, with a clever rank arrangement that minimizes redundant copies.**
@@ -317,7 +319,7 @@ Colocation is powerful but it forces a tight memory budget: at any instant the G
     - Adam optimizer state in fp32 (master weights + two moments): roughly $7\text{B}\times(4+4+4)\text{ B} = 84\text{ GB}$ total $\Rightarrow 84/8 = 10.5\text{ GB}$ per rank.
     - Subtotal training state: $\approx 14\text{ GB}$ per rank, *persistently sharded*.
 
-    **Rollout-side memory (vLLM, TP=2):** the rollout engine needs a *full* bf16 copy of the model split across its TP group. With TP=2, each rollout rank holds $14\text{ GB}/2 = 7\text{ GB}$ of weights. The KV cache then uses whatever `gpu_memory_utilization` leaves. With a 32k-token context budget across the batched group samples, the KV cache can easily want **tens of GB** — this is usually the dominant rollout cost. (For the KV-cache size formula, see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).)
+    **Rollout-side memory (vLLM, TP=2):** the rollout engine needs a *full* bf16 copy of the model split across its TP group. With TP=2, each rollout rank holds $14\text{ GB}/2 = 7\text{ GB}$ of weights. The KV cache then uses whatever `gpu_memory_utilization` leaves. With hundreds of thousands to millions of tokens resident across the batched group samples — a GQA 7B costs $\approx 60$ KB of KV per token, an MHA 7B roughly $500$ KB — the KV cache can easily want **tens of GB**, and this is usually the dominant rollout cost. (For the KV-cache size formula, see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).)
 
     **The resharding transient:** when the 3D-HybridEngine gathers a layer to re-split it, the live extra memory is bounded by *one TP group's* weights for *one layer* at a time (a few hundred MB), not the whole 14 GB model — that bound is the entire point of the nested-group arrangement.
 
@@ -353,6 +355,7 @@ The single-controller design's biggest practical payoff is that the parts you wa
 #    decoded responses. No GPUs, no collectives — just scoring strings. In a real
 #    run the verifier might call a sandboxed code runner (see chapter 6.8).
 import re
+import torch
 
 def math_verifiable_reward(data, tokenizer, **kwargs):
     """Return a per-sample scalar reward tensor for a DataProto batch."""

@@ -126,10 +126,11 @@ print("[block 0] RLTask.fingerprint() + make_checker() OK "
 # ===========================================================================
 import numpy as np
 
-def estimate_offline_difficulty(tasks, policy, checker_fn, k=8, batch_gen=None):
+def estimate_offline_difficulty(tasks, batch_gen, checker_fn, k=8):
     """One pass over the pool: k rollouts each, record empirical pass rate.
-    Returns buckets and prunes the dead tails. batch_gen() should call your
-    rollout engine (vLLM/SGLang) -- batch ALL prompts*k together for throughput."""
+    Returns buckets and prunes the dead tails. batch_gen() is required -- it is
+    what actually runs the policy: it should call your rollout engine
+    (vLLM/SGLang) -- batch ALL prompts*k together for throughput."""
     for t in tasks:
         completions = batch_gen(t.prompt, n=k)            # k samples
         rewards = [checker_fn(t)(c) for c in completions]
@@ -189,7 +190,7 @@ def fake_batch_gen(prompt, n):
 
 
 kept_b1, pruned_b1 = estimate_offline_difficulty(
-    tasks_b1, policy=None, checker_fn=make_checker, k=32, batch_gen=fake_batch_gen
+    tasks_b1, batch_gen=fake_batch_gen, checker_fn=make_checker, k=32
 )
 
 for t in tasks_b1:

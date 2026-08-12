@@ -131,10 +131,11 @@ For $k=8$ that worst-case SE is $\approx 0.18$ — so a prompt you measured at $
 ```python
 import numpy as np
 
-def estimate_offline_difficulty(tasks, policy, checker_fn, k=8, batch_gen=None):
+def estimate_offline_difficulty(tasks, batch_gen, checker_fn, k=8):
     """One pass over the pool: k rollouts each, record empirical pass rate.
-    Returns buckets and prunes the dead tails. batch_gen() should call your
-    rollout engine (vLLM/SGLang) — batch ALL prompts*k together for throughput."""
+    Returns buckets and prunes the dead tails. batch_gen() is required — it is
+    what actually runs the policy: it should call your rollout engine
+    (vLLM/SGLang) — batch ALL prompts*k together for throughput."""
     for t in tasks:
         completions = batch_gen(t.prompt, n=k)            # k samples
         rewards = [checker_fn(t)(c) for c in completions]
@@ -602,8 +603,8 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
         for t in tasks:
             p = t.posterior_mean()
             if p_lo <= p <= p_hi:
-                # In band: 0 (best) at the edge-worst, more negative penalty as we
-                # move off-center. Offset by +1 so every in-band task beats any
+                # In band: 1.0 (best) at the band center, decaying as we move
+                # off-center. The +1.0 offset makes every in-band task beat any
                 # out-of-band task (whose score is <= 0 below).
                 score = 1.0 - abs(p - target_p)
             else:

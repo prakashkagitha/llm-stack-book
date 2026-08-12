@@ -49,13 +49,13 @@ $$
 \mathcal{J}(\pi) = \mathbb{E}_{x \sim \mathcal{D},\, y \sim \pi(\cdot|x)} \bigl[ r_\theta(x, y) \bigr] - \beta \, \mathbb{D}_\mathrm{KL}\!\bigl(\pi(\cdot|x) \,\|\, \pi_\mathrm{ref}(\cdot|x)\bigr)
 $$
 
-where $\beta > 0$ is the KL coefficient. As we sweep $\beta$ from $\infty$ (policy stays at reference) to $0$ (unconstrained optimization), we trace a **Pareto frontier** in (KL divergence, true reward) space. The frontier bends: proxy reward rises monotonically with KL, but true reward peaks at some intermediate KL and then drops as hacking sets in.
+where $\beta > 0$ is the KL coefficient. As we sweep $\beta$ from $\infty$ (policy stays at reference) to $0$ (unconstrained optimization), we trace a **Pareto frontier** in (KL divergence, *proxy* reward) space — each $\beta$ buys the most proxy reward obtainable at its KL level. Now plot *true* reward against that same KL axis. What you get is not a frontier at all: proxy reward rises monotonically with KL, but true reward peaks at some intermediate KL and then drops as hacking sets in, so every point past the peak is strictly dominated (less true reward for more drift).
 
 
 {{fig:rewardhack-kl-frontier}}
 
 
-Gao et al. (2022) ("Scaling Laws for Reward Model Overoptimization") showed empirically that the true reward peak occurs at a KL on the order of a few nats and that the peak moves rightward (more optimization is OK before the peak) as the reward model is trained on more data. The gap between proxy and true reward grows roughly as $\sqrt{\text{KL}}$ in the low-KL regime — it keeps widening with every extra nat of optimization pressure, though sublinearly in KL itself.
+Gao et al. (2022) ("Scaling Laws for Reward Model Overoptimization") showed empirically where that peak sits, and that it moves rightward (more optimization is OK before the peak) as the reward model is trained on more data. The location is regime-dependent, and the difference is large: best-of-$n$ reranking is bounded to a few nats of KL by construction (see the closed form below) and its gold peak sits inside that budget, whereas their PPO sweeps run out to $\sqrt{D_\mathrm{KL}}$ of roughly $10$ — i.e. *tens* of nats of sequence-level KL — with the gold peak correspondingly far out. There is therefore no single "the peak is at $X$ nats" number to memorize — quote it per regime, and calibrate it against your own RM. The gap between proxy and true reward grows roughly as $\sqrt{\text{KL}}$ in the low-KL regime — it keeps widening with every extra nat of optimization pressure, though sublinearly in KL itself.
 
 ### Measuring optimization pressure: the $\sqrt{\mathrm{KL}}$ axis and the best-of-$n$ yardstick
 
@@ -75,7 +75,7 @@ $$
 D_\mathrm{KL}\bigl(\pi_{\text{bo}n} \,\|\, \pi_\mathrm{ref}\bigr) = \log n - \frac{n-1}{n}
 $$
 
-For $n = 64$ this is $\log 64 - 63/64 = 4.159 - 0.984 \approx 3.17$ nats. So "best-of-64 against the RM" spends roughly the same optimization pressure as running PPO out to ~3 nats — which is already in the neighborhood of the gold-reward peak. If best-of-64 reranking already makes your outputs *worse* by human judgement, no amount of KL tuning will save the PPO run: the reward model, not the optimizer, is the bottleneck.
+For $n = 64$ this is $\log 64 - 63/64 = 4.159 - 0.984 \approx 3.17$ nats. So best-of-64 extracts a large share of the RM's headroom for only ~3 nats of drift — already in the neighborhood of the best-of-$n$ gold peak. Do **not** read that as "best-of-64 $\equiv$ PPO at 3 nats": Gao et al. are explicit that KL distance is not a canonical measure of optimization pressure that can be compared across methods, and that RL spends far more KL than best-of-$n$ for the same proxy gain. What does transfer is the diagnosis: if best-of-64 reranking already makes your outputs *worse* by human judgement, no amount of KL tuning will save the PPO run: the reward model, not the optimizer, is the bottleneck.
 
 ### The analytical optimal policy
 
@@ -220,7 +220,6 @@ def rm_adversarial_probe(
     seed_text: str,
     n_steps: int = 50,
     lr: float = 0.1,
-    top_k_project: int = 50,
 ) -> tuple[str, float]:
     """
     Soft-embedding gradient ascent to find high-RM-scoring text.
@@ -230,6 +229,13 @@ def rm_adversarial_probe(
     Returns the decoded best sequence found and its reward score.
     """
     rm_model.eval()
+    # eval() only disables dropout/BN updates -- it does NOT stop autograd from
+    # populating .grad on every RM parameter. Freeze them explicitly, or each
+    # backward() accumulates a full extra copy of the RM in gradient buffers
+    # (and leaves stale grads behind). soft_embeds is a leaf input, so its
+    # gradient still flows.
+    for p in rm_model.parameters():
+        p.requires_grad_(False)
     device = next(rm_model.parameters()).device
 
     # Tokenize seed and get embeddings
@@ -252,7 +258,8 @@ def rm_adversarial_probe(
         loss.backward()
         optimizer.step()
 
-        # Project back to nearest token (Gumbel-softmax style)
+        # Project back to the nearest vocabulary embedding
+        # (deterministic cosine nearest-neighbour -- no Gumbel noise involved)
         with torch.no_grad():
             # Cosine similarity to vocab embeddings -> pick argmax
             normed = F.normalize(soft_embeds, dim=-1)
@@ -300,7 +307,11 @@ class AdaptiveKLController:
     Adaptive KL controller from Ziegler et al. (2019) / TRL implementation.
     Adjusts beta to keep the per-step KL close to a target value.
 
-    target_kl: desired KL divergence per update step (e.g., 0.1 nats)
+    target_kl: desired KL, in *the same units as the KL you pass to update()*.
+               For a sequence-level KL sum this is a few nats (Ziegler et al. /
+               TRL use 6); for a per-token mean KL it is ~0.01-0.1. Mixing the
+               two saturates the clip below on every step and the controller
+               degenerates into a one-directional ramp.
     horizon:   number of steps over which to adjust (e.g., 10000)
     """
 
@@ -324,7 +335,7 @@ class AdaptiveKLController:
 
 The key insight: a fixed $\beta$ cannot be globally optimal because the policy's proximity to $\pi_\mathrm{ref}$ changes throughout training. Early in training (small KL) a small $\beta$ is fine; as KL accumulates a larger $\beta$ is needed.
 
-**Where these dials live in the real libraries.** You will rarely write the controller above yourself; you will set a config field. In **TRL** ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)), `PPOConfig` exposes `kl_coef` (the $\beta$ above) and `whiten_rewards` (batch-level z-scoring, the `normalize=True` branch of `compute_clipped_rewards` below), and `trl/trainer/utils.py` ships both `AdaptiveKLController` and `FixedKLController` — note that TRL's current PPO implementation defaults to the *fixed* controller, so adaptive control is something you opt into. `GRPOConfig` exposes `beta` for the KL-to-reference term; recent TRL versions default it to `0.0`, following DAPO/Dr. GRPO-style findings that KL-free training works better on verifiable tasks — which is fine when the reward is a checker, but removes your main anti-hacking dial when the reward is learned. In **veRL** ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) the same knobs appear as YAML under `algorithm.kl_ctrl` (`type: fixed|adaptive`, `kl_coef`, `target_kl`, `horizon`), plus a separate choice of whether the penalty enters the *reward* (`algorithm.use_kl_in_reward`) or the *loss* (`actor_rollout_ref.actor.use_kl_loss` with `kl_loss_coef`). Check the version's docs for exact field names — they drift — but the three decisions are always the same: fixed vs. adaptive, reward-side vs. loss-side, and which KL estimator. The estimator choice matters more than people expect; see [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).
+**Where these dials live in the real libraries.** You will rarely write the controller above yourself; you will set a config field. In **TRL** ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)), `PPOConfig` exposes `kl_coef` (the $\beta$ above) and `whiten_rewards`, which rescales the *per-token* reward tensor (KL penalty already folded in) to unit variance *without* shifting its mean — `masked_whiten(..., shift_mean=False)` — so it is deliberately **not** the mean-subtracting `normalize=True` branch of `compute_clipped_rewards` below. `trl/trainer/utils.py` ships both `AdaptiveKLController` and `FixedKLController` — note that TRL's current PPO implementation defaults to the *fixed* controller, so adaptive control is something you opt into. `GRPOConfig` exposes `beta` for the KL-to-reference term; recent TRL versions default it to `0.0`, following DAPO/Dr. GRPO-style findings that KL-free training works better on verifiable tasks — which is fine when the reward is a checker, but removes your main anti-hacking dial when the reward is learned. In **veRL** ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) the same knobs appear as YAML under `algorithm.kl_ctrl` (`type: fixed|adaptive`, `kl_coef`, `target_kl`, `horizon`), plus a separate choice of whether the penalty enters the *reward* (`algorithm.use_kl_in_reward`) or the *loss* (`actor_rollout_ref.actor.use_kl_loss` with `kl_loss_coef`). Check the version's docs for exact field names — they drift — but the three decisions are always the same: fixed vs. adaptive, reward-side vs. loss-side, and which KL estimator. The estimator choice matters more than people expect; see [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html).
 
 ### Reward Ensembles
 
@@ -337,12 +348,14 @@ $$
 Use the ensemble disagreement as an uncertainty signal:
 
 $$
-u(x, y) = \operatorname{Var}_{k}\bigl[r_{\theta_k}(x, y)\bigr]
+u(x, y) = \operatorname{Std}_{k}\bigl[r_{\theta_k}(x, y)\bigr] = \sqrt{\operatorname{Var}_{k}\bigl[r_{\theta_k}(x, y)\bigr]}
 $$
+
+We use the standard deviation rather than the variance so that $u$ carries the same units as the reward and the penalty weight is directly interpretable — this is the convention the code and exercises below follow.
 
 {{fig:rewardhack-ensemble-uncertainty}}
 
-Penalize or clip rewards in high-uncertainty regions. This catches some forms of extremal hacking: if a response scores high on RM 1 but low on RMs 2–4, the ensemble score is lower and the variance penalty fires. Coste et al. (2023) showed this reduces hacking significantly in controlled settings.
+Penalize or clip rewards in high-uncertainty regions. This catches some forms of extremal hacking: if a response scores high on RM 1 but low on RMs 2–4, the ensemble score is lower and the disagreement penalty fires. Coste et al. (2023) showed this reduces hacking significantly in controlled settings.
 
 ```python
 import torch
@@ -595,7 +608,9 @@ from typing import Callable
 @dataclass
 class RobustRLHFConfig:
     beta_init: float          = 0.05    # initial KL coefficient
-    beta_target_kl: float     = 0.1     # target KL per step (nats)
+    beta_target_kl: float     = 6.0     # target *sequence-level* KL (nats); must
+                                        # match the units _compute_kl returns
+                                        # (Ziegler et al. / TRL default: 6)
     beta_horizon: int         = 10_000  # steps for adaptive KL horizon
     reward_clip: float        = 5.0     # symmetric clip bound
     reward_normalize: bool    = True    # z-score normalize rewards
@@ -637,12 +652,15 @@ class RobustPPOTrainer:
         responses = self._generate(prompts)
 
         # 2. Ensemble reward + uncertainty penalty
-        input_ids     = self._encode(prompts, responses)
-        proxy_r, std  = self.ens_rm(input_ids, self.cfg.uncertainty_penalty)
+        input_ids      = self._encode(prompts, responses)
+        raw_proxy, std = self.ens_rm(input_ids, self.cfg.uncertainty_penalty)
 
-        # 3. Clip and normalize
+        # 3. Clip and normalize -- for the *gradient* only. Keep `raw_proxy` for
+        #    monitoring: with reward_normalize=True the returned tensor is
+        #    mean-zero by construction, so logging its mean gives a flat 0.000
+        #    line that can never show the proxy rising away from gold.
         proxy_r = compute_clipped_rewards(
-            proxy_r, self.cfg.reward_clip, self.cfg.reward_normalize
+            raw_proxy, self.cfg.reward_clip, self.cfg.reward_normalize
         )
 
         # 4. KL divergence computation (approximate per-token KL sum)
@@ -653,12 +671,14 @@ class RobustPPOTrainer:
         total_reward = proxy_r - beta * kl
         self._policy_gradient_step(prompts, responses, total_reward)
 
-        # 6. Adaptive KL update
+        # 6. Adaptive KL update. n_steps is the number of episodes this update
+        #    covers (TRL passes the batch size), not literally 1 -- with 1 the
+        #    multiplier is 1 +- 0.2/horizon and beta never moves.
         mean_kl = kl.mean().item()
-        self.kl_ctrl.update(mean_kl, n_steps=1)
+        self.kl_ctrl.update(mean_kl, n_steps=len(prompts))
 
-        # 7. Monitoring
-        self.history["proxy"].append(proxy_r.mean().item())
+        # 7. Monitoring. Log the *raw* ensemble score, not the z-scored one.
+        self.history["proxy"].append(raw_proxy.mean().item())
         self.history["kl"].append(mean_kl)
 
         if self.step % self.cfg.probe_interval == 0:
@@ -667,12 +687,18 @@ class RobustPPOTrainer:
             self.history["gold"].append(gold_score)
             self.history["syco"].append(syco_score)
             print(
-                f"Step {self.step:6d} | proxy={proxy_r.mean():.3f} "
+                f"Step {self.step:6d} | proxy={raw_proxy.mean():.3f} "
                 f"gold={gold_score:.3f} KL={mean_kl:.3f} "
                 f"beta={self.kl_ctrl.value:.4f} syco={syco_score:.2f}"
             )
             if syco_score > self.cfg.sycophancy_threshold:
                 print("ALERT: sycophancy above threshold — consider pausing training.")
+        else:
+            # Pad the probe series so all four histories stay step-aligned and
+            # can be handed straight to plot_reward_frontier(); matplotlib
+            # simply leaves gaps at NaNs.
+            self.history["gold"].append(float("nan"))
+            self.history["syco"].append(float("nan"))
 
         # 8. Online RM update (placeholder for annotation pipeline)
         if self.step % self.cfg.rm_update_interval == 0 and self.step > 0:
@@ -837,7 +863,7 @@ Compute the mean, the (Bessel-corrected) standard deviation, and the penalized r
     Unbiased variance $= 0.02/3 = 0.006667$, so $\sigma_B = \sqrt{0.006667} \approx 0.0816$.
     Penalized $= 1.5 - 0.5 \times 0.0816 = 1.5 - 0.041 = \mathbf{1.459}$.
 
-    The ensemble prefers **B** ($1.459 > 0.890$) even though A has the higher *mean* reward ($1.7 > 1.5$). A is a likely **extremal / adversarial hack**: two RMs love it ($3.0, 3.2$) but two others do not ($0.4, 0.2$), so the high ensemble disagreement (variance penalty) fires and suppresses its score. This is exactly the mechanism the chapter describes: "if a response scores high on RM 1 but low on RMs 2-4, the ensemble score is lower and the variance penalty fires."
+    The ensemble prefers **B** ($1.459 > 0.890$) even though A has the higher *mean* reward ($1.7 > 1.5$). A is a likely **extremal / adversarial hack**: two RMs love it ($3.0, 3.2$) but two others do not ($0.4, 0.2$), so the high ensemble disagreement (std penalty) fires and suppresses its score. This is exactly the mechanism the chapter describes: "if a response scores high on RM 1 but low on RMs 2-4, the ensemble score is lower and the disagreement penalty fires."
 
 **4.** *(Quantitative.)* Trace the `AdaptiveKLController` by hand. Initialize with `init_kl_coef = 0.2`, `target_kl = 0.1`, `horizon = 10000`. Apply two successive `update` calls:
 

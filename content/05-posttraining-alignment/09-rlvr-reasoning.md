@@ -33,8 +33,8 @@ Three families of verifiers dominate practice:
 It is worth being precise about *why* this matters, beyond "it's cheaper." There are four distinct advantages, and an interviewer will want all four:
 
 - **No reward-model training loop.** You skip preference data collection, reward-model architecture, reward-model training, and reward-model serving. The reward is a function call. This collapses the RLHF pipeline from "two models and a human-data pipeline" to "one policy and a checker."
-- **The reward cannot be over-optimized in the usual sense.** Classic [reward over-optimization](../05-posttraining-alignment/13-reward-hacking-failures.html) (Goodhart's law: "when a measure becomes a target it ceases to be a good measure") happens because the *learned* reward diverges from true quality off-distribution. A correct-answer checker *is* the true quality (for the narrow definition "got the right answer"). You can push the policy arbitrarily hard against `is_correct` and it will keep getting more correct. (RLVR still has *its own* hacks — see §6 — but they are program bugs, not statistical drift.)
-- **Dense, free supervision at scale.** Every problem with a known answer is a training example, and you can *generate* such problems (templated arithmetic, synthetic theorem instances, mutated code problems) essentially without limit. The bottleneck moves from "human labels" to "problems with checkable answers."
+- **The reward cannot be over-optimized in the usual sense.** Classic [reward over-optimization](../05-posttraining-alignment/13-reward-hacking-failures.html) (Goodhart's law: "when a measure becomes a target it ceases to be a good measure") happens because the *learned* reward diverges from true quality off-distribution. A correct-answer checker *is* the true quality (for the narrow definition "got the right answer"). You can push the policy arbitrarily hard against `is_correct` and it will keep getting more correct. (RLVR still has *its own* hacks — see §"Reward hacking in RLVR: it's not gone, it moved" — but they are program bugs, not statistical drift.)
+- **Abundant, free supervision at scale.** Every problem with a known answer is a training example, and you can *generate* such problems (templated arithmetic, synthetic theorem instances, mutated code problems) essentially without limit. The bottleneck moves from "human labels" to "problems with checkable answers."
 - **It exposes a learning signal the model can climb.** Because the reward is exact, the gradient is clean: the only way to increase reward is to *actually solve more problems*. This is the precondition for the emergent-reasoning phenomenon — the optimizer is not being nudged toward a fuzzy human aesthetic, it is being pushed straight at "be correct," and the shortest path to "be correct" on hard problems turns out to be "think more."
 
 {{fig:rlvr-rm-vs-verifier}}
@@ -164,7 +164,7 @@ def math_is_correct(response: str, gold: str, atol: float = 1e-6) -> float:
     norm = lambda x: re.sub(r"\s+", "", x).lower()
     return 1.0 if norm(pred) == norm(gold) else 0.0
 
-# --- quick sanity checks (these all return 1.0) ---
+# --- quick sanity checks (the last two are deliberately 0.0) ---
 assert math_is_correct(r"... so the answer is \boxed{1/2}.", "0.5") == 1.0
 assert math_is_correct(r"first \boxed{7} then \boxed{0.50}", "1/2") == 1.0
 assert math_is_correct(r"<answer>42</answer>", "42") == 1.0
@@ -347,7 +347,10 @@ def rlvr_reward(question: str, response: str, gold: str,
 
     # 2. Format shaping (tiny, and CONTINGENT on a parseable answer existing).
     has_think = "<think>" in response and "</think>" in response
-    has_answer = extract_boxed_answer(response) is not None
+    #    Note the non-empty check: `\boxed{}` extracts to "" (not None), so a
+    #    bare empty box would otherwise farm the bonus with zero solving effort.
+    answer = extract_boxed_answer(response)
+    has_answer = answer is not None and answer.strip() != ""
     format_bonus = 0.1 if (has_think and has_answer) else 0.0
 
     # 3. Anti-hacking guard: zero out everything if the response is degenerate
@@ -460,7 +463,7 @@ The mental model: **RLVR converts statistical reward-hacking into software secur
 !!! interview "Interview Corner"
     **Q:** Why does pure correctness reward (R1-Zero) cause long chain-of-thought to *emerge*, and what's the one precondition without which it fails?
 
-    **A:** Because longer reasoning *correlates with reaching the right answer* on hard problems, and correctness is the only thing rewarded. Under a group-relative optimizer like GRPO, the trajectories that solved the problem get positive advantage; empirically those winners are the ones that spent extra tokens checking intermediate steps, trying alternative approaches, and self-verifying. The gradient therefore up-weights "spend more compute reasoning," and over thousands of steps this compounds into long CoT, self-verification, backtracking, and the "aha moment" — none of it demonstrated, all of it discovered as the cheapest path to higher correctness. The non-negotiable precondition is that the base model must *sometimes succeed*: the group of $G$ samples needs both successes and failures to produce a nonzero advantage. If pass@G $\approx 0$ (problems too hard) or $\approx 1$ (too easy), the group is "dead" — zero advantage, no gradient, no learning. That's why R1-Zero needs a strong base model and a difficulty-calibrated (curriculum) prompt set, and why the same recipe on a weak base with very hard problems produces nothing.
+    **A:** Because longer reasoning *correlates with reaching the right answer* on hard problems, and correctness is the only thing rewarded. Under a group-relative optimizer like GRPO, the trajectories that solved the problem get positive advantage; empirically those winners are the ones that spent extra tokens checking intermediate steps, trying alternative approaches, and self-verifying. The gradient therefore up-weights "spend more compute reasoning," and over thousands of steps this compounds into long CoT, self-verification, backtracking, and the "aha moment" — none of it demonstrated, all of it discovered as the cheapest path to higher correctness. The non-negotiable precondition is that the base model must *sometimes succeed*: the group of $G$ samples needs both successes and failures to produce a nonzero advantage. If the per-sample success rate pass@1 $\approx 0$ (problems too hard) or $\approx 1$ (too easy), every sample in the group shares the same outcome — the group is "dead": zero advantage, no gradient, no learning. That's why R1-Zero needs a strong base model and a difficulty-calibrated (curriculum) prompt set, and why the same recipe on a weak base with very hard problems produces nothing.
 
 ## Putting it together: the reasoning recipe
 
@@ -558,7 +561,7 @@ The deepest takeaway is a shift in worldview. For a decade, the bottleneck of su
     - **RLVR replaces the learned reward model with a program.** For tasks with checkable answers (math equivalence, code unit-tests, exact/constraint match) the reward is $V(q,o)\in\{0,1\}$ computed by a deterministic verifier — no preference data, no reward network, no critic. The optimizer is critic-free RL (GRPO/RLOO); RLVR only changes *where the reward comes from*.
     - **The big win is exactness, not just cost.** A correctness checker *is* ground truth for "got it right," so the policy can be optimized against it arbitrarily hard without statistical [over-optimization](../05-posttraining-alignment/13-reward-hacking-failures.html). The bottleneck moves from "human labels" to "problems with checkable answers," which are cheap to generate.
     - **R1-Zero phenomenon:** pure correctness reward on a *base* model spontaneously grows long chain-of-thought, self-verification, backtracking, and the "aha moment" — no reasoning demonstrations. Mechanism: longer reasoning correlates with correctness, so the group-relative gradient up-weights "spend more compute," and it compounds.
-    - **The precondition is a base model that sometimes succeeds.** Emergence needs mixed-outcome groups (pass@G neither 0 nor 1); too-hard or too-easy prompts give zero advantage ("dead groups") and no learning. Calibrate difficulty / use curriculum.
+    - **The precondition is a base model that sometimes succeeds.** Emergence needs mixed-outcome groups (per-sample pass@1 neither $\approx 0$ nor $\approx 1$); too-hard or too-easy prompts give zero advantage ("dead groups") and no learning. Calibrate difficulty / use curriculum.
     - **Verifiers must normalize, not string-match.** A real math checker extracts the final answer and compares with numeric/symbolic equivalence ($\frac12 = 0.5 = 0.50$). A weak verifier's *false negatives* poison training — audit them as a first-class metric.
     - **Code verifiers require true sandboxing.** Model-generated code is adversarial: isolate it (container/microVM), apply strict CPU/memory/time rlimits, block network and host filesystem, hide the tests, and treat a crashed grader as reward 0. Use graded (fraction-of-tests) reward to densify the signal.
     - **Reward hacking isn't eliminated — it moves from statistics to software.** The policy fuzzes your verifier/sandbox: test hard-coding, parser exploits, sandbox escapes, format/length farming. Threat-model your grader like a public API taking untrusted input.

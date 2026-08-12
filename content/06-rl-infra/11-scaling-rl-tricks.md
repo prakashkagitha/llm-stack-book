@@ -151,11 +151,17 @@ def run_phase(engine, trajs, token_budget):
     for tr in trajs:
         if tr.done:
             continue
+        # Clip this phase's budget against the REMAINING global budget, or the
+        # cap is only noticed after we have already blown past it.
+        remaining = GLOBAL_MAX - len(tr.generated_ids)
+        if remaining <= 0:
+            tr.done = True
+            continue
         # Resume from saved KV if the engine kept it; else re-prefill the prefix.
         out = engine.generate(
             prefix_ids=tr.prompt_ids + tr.generated_ids,
             kv_handle=tr.kv_handle,
-            max_new_tokens=token_budget,
+            max_new_tokens=min(token_budget, remaining),
             return_logprobs=True,
         )
         tr.generated_ids.extend(out.token_ids)
@@ -302,12 +308,13 @@ Two more levers raise *sample* efficiency — getting more learning per generate
 
 **Replay / sample reuse.** On-policy purists generate fresh samples every step and throw them away. But each sample cost a generation; reusing it for $k$ minibatch passes (PPO epochs) amortizes that cost. The catch is staleness: after one gradient step the data is off-policy, so you *must* use the clipped importance ratio (which is exactly what PPO/GRPO already provide). A modest replay — 1–4 inner epochs over each rollout batch — is nearly free sample-efficiency. Go too far and the ratios drift outside the clip range, gradients get clipped to zero, and you waste compute on dead samples. A **prioritized** replay can preferentially revisit high-advantage-magnitude (most informative) trajectories.
 
-**Curriculum.** Dynamic sampling already implements an *implicit* curriculum: it discards prompts that are all-correct (mastered) or all-wrong (hopeless), so the model trains on prompts in its **zone of proximal development** — those it gets right sometimes. You can make this explicit: bin prompts by historical pass-rate, schedule from easy to hard, or up-sample prompts near the 50% success boundary where group-relative advantage variance (hence gradient signal) is maximized. For a Bernoulli group with success probability $p$, the reward variance is $p(1-p)$, maximized at $p=0.5$ — so a prompt the model solves half the time gives the strongest learning signal, and one it never or always solves gives none. Curriculum is just steering the rollout budget toward $p \approx 0.5$.
+**Curriculum.** Dynamic sampling already implements an *implicit* curriculum: it discards prompts that are all-correct (mastered) or all-wrong (hopeless), so the model trains on prompts in its **zone of proximal development** — those it gets right sometimes. You can make this explicit: bin prompts by historical pass-rate, schedule from easy to hard, or up-sample prompts near the 50% success boundary, where a group carries the most information. For a Bernoulli group with success probability $p$, the *reward* variance is $p(1-p)$, maximized at $p=0.5$ — and that is directly the advantage magnitude once you drop the $/\operatorname{std}$ normalization (Dr. GRPO). Under vanilla std-normalized GRPO the argument runs through degeneracy instead: standardizing forces the advantages to magnitude $\approx 1$ in *every* non-degenerate group regardless of $p$, but the probability that a group is degenerate at all — $p^G + (1-p)^G$ — is *minimized* at $p = 0.5$. Either way, a prompt the model solves half the time gives the strongest learning signal, and one it never or always solves gives none. Curriculum is just steering the rollout budget toward $p \approx 0.5$.
 
 ```python
 def informativeness(pass_rate):
-    """Expected per-group reward variance for Bernoulli reward; gradient signal
-    peaks at pass_rate = 0.5 and vanishes at 0 or 1 (the DAPO-filtered cases)."""
+    """Expected per-group reward variance for Bernoulli reward; peaks at
+    pass_rate = 0.5 and vanishes at 0 or 1 (the DAPO-filtered cases), so it
+    scores how much signal a prompt is likely to yield."""
     return pass_rate * (1.0 - pass_rate)
 
 # Schedule rollout budget proportional to informativeness (a soft curriculum).
@@ -325,9 +332,9 @@ This unifies the chapter's two halves: the *infra* trick (dynamic sampling) and 
     Setup: GRPO on a 7B reasoning model. Per step we want $N = 256$ useful prompt-groups, $G = 8$ samples each, so the target is $256 \times 8 = 2{,}048$ trained sequences. Inference fleet: 4 H100s running vLLM; the other 4 run the trainer (a disaggregated 4+4 split, so the two fleets can in principle run at the same time). Trace lengths are heavy-tailed: median 1,500 tokens, mean 2,200, max outliers ~14,000. Assume an effective **aggregate** decode rate of ~10,000 tokens/s per H100 at this batch concurrency (hundreds of sequences in flight; a single stream is far slower).
 
     **Baseline — static-ish synchronous, no oversubscription, no filtering.**
-    Generation runs until the longest of 2,048 sequences finishes. With per-engine concurrency = 512 and 4 engines, the engines drain to the tail. Effective generation efficiency $\eta_{\text{gen}} = \bar L / L_{\max} = 2200 / 14000 \approx 0.157$: real token-work is $2048 \times 2200 = 4.5\text{M}$ tokens, but a phase that holds every slot open until the longest sequence finishes costs as much as $2048 \times 14000 = 28.7\text{M}$ token-times. At $4 \times 10{,}000 = 40{,}000$ tok/s fleet decode, the *bulk* of the real work is only $\approx 4.5\text{M}/40{,}000 \approx 110$ s — but the phase does not end there, because the *tail* is gated by something much slower. That 10,000 tok/s is an **aggregate** rate across many concurrent sequences; a single stream on a 7B model is memory-bandwidth bound and decodes at order 50–100 tok/s, and you cannot parallelize one sequence across the fleet. So once the batch has drained to its last 14k-token outlier, that one sequence's own decode — on the order of two to three minutes — sets the floor while 4 engines sit nearly empty. Take a measured stand-in: **generation ≈ 200 s** (≈110 s of bulk token-work plus a ~90 s tail drain), training ≈ 60 s, **step ≈ 260 s**, train GPUs idle during all 200 s of generation (busy $60/260 \approx 23\%$).
+    Generation runs until the longest of 2,048 sequences finishes. With per-engine concurrency = 512 and 4 engines, all 2,048 sequences are admitted at $t=0$ and nothing is queued behind them, so the engines simply drain to the tail. Effective generation efficiency $\eta_{\text{gen}} = \bar L / L_{\max} = 2200 / 14000 \approx 0.157$: real token-work is $2048 \times 2200 = 4.5\text{M}$ tokens, but a phase that holds every slot open until the longest sequence finishes costs as much as $2048 \times 14000 = 28.7\text{M}$ token-times. At $4 \times 10{,}000 = 40{,}000$ tok/s fleet decode, the *bulk* of the real work is only $\approx 4.5\text{M}/40{,}000 \approx 110$ s — but the phase does not end there, because the *tail* is gated by something much slower. That 10,000 tok/s is an **aggregate** rate across many concurrent sequences; a single stream on a 7B model is memory-bandwidth bound and decodes at order 50–100 tok/s, and you cannot parallelize one sequence across the fleet. So once the batch has drained to its last 14k-token outlier, that one sequence's own decode — on the order of two to three minutes — sets the floor while 4 engines sit nearly empty. Take a measured stand-in: **generation ≈ 200 s** (≈110 s of bulk token-work plus a ~90 s tail drain), training ≈ 60 s, **step ≈ 260 s**, train GPUs idle during all 200 s of generation (busy $60/260 \approx 23\%$).
 
-    **+ Continuous batching & oversubscription (Lever 1).** Deep queue keeps all engines full until the final tail. The bubble shrinks to the last handful of long sequences: generation ≈ **150 s** (≈1.3× faster), step ≈ 150 + 60 = **210 s**. It cannot go much lower while a 14k trace must finish *inside* the phase — that one trace's own serial decode is the floor, and no scheduling trick parallelizes it.
+    **+ Continuous batching & oversubscription (Lever 1).** The baseline's mistake is admitting the whole batch at once: with 512 streams per engine sharing one H100's bandwidth, *every* stream — including the trace that will become the tail — decodes at only $10{,}000/512 \approx 20$ tok/s. Instead, cap admitted concurrency at what the KV budget actually rewards (say 128 per engine, 512 slots) and *queue* the other 1,536 prompts; continuous batching refills each freed slot from that queue, so the engines stay just as full while each live stream gets roughly 4× the bandwidth share ($10{,}000/128 \approx 78$ tok/s). The tail trace is therefore far further along when the queue finally drains, and the bubble shrinks to the last handful of long sequences: generation ≈ **150 s** (≈1.3× faster), step ≈ 150 + 60 = **210 s**. It cannot go much lower while a 14k trace must finish *inside* the phase — that one trace's own serial decode is the floor, and no scheduling trick parallelizes it.
 
     **+ Overlap generation with training (Lever 3, 1-step off-policy).** Training's 60 s now hides *inside* the next generation phase. Effective step ≈ $\max(150, 60) =$ **150 s**, and train-GPU busy time goes from $60/260 \approx 23\%$ to $60/150 = 40\%$. Generation is now the critical path, so it is the *inference* fleet that runs ~100% busy; pushing train-GPU utilization higher means giving the trainer more work per step (replay epochs), not more scheduling.
 
@@ -376,7 +383,7 @@ The meta-point: **throughput in RL is won by overlap and by not wasting samples,
     - **Dr. GRPO** removes two silent biases: per-sequence length normalization (which incentivizes longer wrong answers) and std-normalization of the advantage (which over-weights low-variance prompts). Be deliberate about your loss normalizer.
     - **DAPO's clip-higher** decouples the PPO clip bounds to preserve exploration; **VAPO** shows a hardened value model (length-adaptive GAE, warmup) can beat critic-free RL at the cost of a second network.
     - **Budget the whole step and use the flags you already have:** $T_{\text{step}} = T_{\text{gen}} + T_{\text{reward}} + T_{\text{train}} + T_{\text{sync}}$ (a checkpoint-reload weight sync can cost more than every bubble you just fixed), and each lever is a config key — veRL `data.gen_batch_size`, `rollout.mode=async`, `algorithm.filter_groups`; TRL `generation_batch_size`, `vllm_mode`, `mask_truncated_completions`.
-    - **Curriculum and dynamic sampling are the same idea** — spend the rollout budget on prompts near pass-rate 0.5, where reward variance $p(1-p)$ and thus gradient signal is maximal.
+    - **Curriculum and dynamic sampling are the same idea** — spend the rollout budget on prompts near pass-rate 0.5, where reward variance $p(1-p)$ is maximal and the degenerate-group rate $p^G + (1-p)^G$ is minimal.
 
 !!! sota "State of the Art & Resources (2026)"
     Scaling RL for LLMs is a fast-moving engineering discipline where the biggest wins come from eliminating generation bubbles (overlap, oversubscription, partial rollout) and from eliminating useless samples (dynamic sampling, curriculum). By 2026 the open-source ecosystem has largely converged on DAPO-style dynamic sampling and token-level loss normalization as standard practice, with sequence-level clipping (GSPO) now common for MoE runs; value-based methods (VAPO) and fully-async disaggregated fleets remain the moving frontier.
@@ -460,7 +467,7 @@ $$
     - $p=0.5$: $0.5 \times 0.5 = 0.25$.
     - $p=0.9$: $0.9 \times 0.1 = 0.09$.
 
-    Signal (reward variance, hence group-relative advantage magnitude) is maximal at $p=0.5$ — the prompt the model solves half the time — and symmetric, vanishing toward $p=0$ or $p=1$. This is why curriculum aims the rollout budget at $p \approx 0.5$.
+    Reward variance is maximal at $p=0.5$ — the prompt the model solves half the time — and symmetric, vanishing toward $p=0$ or $p=1$. This is why curriculum aims the rollout budget at $p \approx 0.5$. (Careful with the mechanism: $p(1-p)$ *is* the advantage magnitude under Dr. GRPO's mean-only baseline, but vanilla GRPO's $/\operatorname{std}$ rescales every non-degenerate group to advantages of magnitude $\approx 1$ whatever $p$ is. There the $p\approx0.5$ preference comes from the degeneracy rate computed in (b), not from the advantage size.)
 
     (b) Degenerate probability $= p^G + (1-p)^G$.
     - $p=0.5,\ G=8$: $0.5^8 + 0.5^8 = 2 \times (1/256) = 2/256 = 1/128 \approx 0.0078$.

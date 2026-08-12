@@ -77,7 +77,7 @@ $$
 \rho_t(\theta) \;=\; \frac{\pi_\theta(o_t \mid q, o_{<t})}{\pi_{\theta_{\text{old}}}(o_t \mid q, o_{<t})}.
 $$
 
-The importance-weighted policy-gradient surrogate (the objective whose gradient is the off-policy REINFORCE gradient) is
+The importance-weighted policy-gradient surrogate (the first-order off-policy surrogate: at $\theta = \theta_{\text{old}}$ its gradient is exactly the REINFORCE gradient) is
 
 $$
 J^{\text{IS}}(\theta) \;=\; \mathbb{E}_{o\sim\pi_{\theta_{\text{old}}}}\!\Big[\sum_{t} \rho_t(\theta)\, \hat A_t \Big],
@@ -85,7 +85,7 @@ $$
 
 where $\hat A_t$ is the advantage (a group-relative score for GRPO; see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)). When $\theta = \theta_{\text{old}}$ every $\rho_t = 1$ and this collapses to the on-policy objective — exactly what you want at zero staleness.
 
-The danger of importance sampling is **variance explosion**. The ratio is a product of per-token ratios over the whole sequence; for a 4,000-token response, even tiny per-token discrepancies compound multiplicatively. A sequence-level ratio $\prod_t \rho_t$ can be astronomically large or small, and its variance is unbounded. Three standard defenses, in increasing sophistication:
+The danger of importance sampling is **variance explosion** — but be precise about where it comes from. An *exactly* unbiased off-policy estimator would have to weight the term at position $t$ by the cumulative product $\prod_{t'\le t}\rho_{t'}$; over a 4,000-token response even tiny per-token discrepancies compound multiplicatively, so a sequence-level ratio $\prod_t \rho_t$ can be astronomically large or small and its variance is effectively unbounded. The token-level surrogate above sidesteps that *by construction*: it is a **sum** of single-token terms and never forms the product at all, which makes it a biased but low-variance first-order approximation — and that is already the first line of defense. What remains is per-token variance: a handful of tokens whose $\rho_t$ sits far from $1$ (from staleness, or from the engine mismatch discussed below) can still dominate the gradient. Three standard defenses against *that*, in increasing sophistication:
 
 **1. PPO clipping.** Replace the raw ratio with the clipped surrogate. This is *the same machinery* that makes PPO multi-epoch-safe, now doing double duty as a staleness corrector:
 
@@ -207,7 +207,15 @@ class RolloutQueue:
         return batch
 
 async def inference_worker(worker_id, engine, prompts, weight_box, rq: RolloutQueue, reward_fn):
-    """One generator: pull a prompt, sample with CURRENT in-memory weights, score, enqueue. Repeat forever."""
+    """One generator: pull a prompt, sample with CURRENT in-memory weights, score, enqueue. Repeat forever.
+
+    IMPORTANT: this worker OWNS its `engine`. The hot-swap below is only safe because no other
+    request is in flight on that engine at this point. If many workers share one engine (the usual
+    production layout, since continuous batching wants many concurrent requests per engine), the
+    swap must NOT live here: a request boundary for this worker is mid-decode for every other
+    in-flight sequence. Give the shared engine a single owner that stops admitting new requests,
+    waits for in-flight ones to drain, loads the weights, then resumes admission.
+    """
     idx = 0
     while True:
         prompt = prompts[idx % len(prompts)]; idx += 1
@@ -227,7 +235,10 @@ async def trainer_loop(model, optimizer, rq: RolloutQueue, weight_box, steps, ba
         loss, metrics = compute_loss(model, batch, trainer_step=step)   # uses async_ppo_loss internally
         optimizer.zero_grad(); loss.backward(); optimizer.step()
         if step % publish_every == 0:
-            weight_box.publish(model.state_dict(), version=step)        # generators pick this up lazily
+            # NOTE the +1: these are the POST-update weights, i.e. the ones the trainer will
+            # hold at step+1. Stamping them `step` would make a freshly-generated rollout come
+            # back with staleness (step+1) - step = 1, so s_max=0 could never be satisfied.
+            weight_box.publish(model.state_dict(), version=step + 1)    # generators pick this up lazily
 ```
 
 `weight_box` is the versioned weight store. Its `publish` is the broadcaster's job; in a single-node setup it is a shared object, but at scale it is a sharded broadcast — discussed in [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html). The key property of this loop: **neither the trainer nor any worker ever blocks on a per-step *barrier*.** They do still block on the queue, but only softly and self-correctingly — the trainer waits only if the queue happens to be empty, and a worker waits only if the bounded queue is full (that is the backpressure discussed below, and it is a feature). In the steady state neither wait fires: workers always have weights to sample with, the trainer always has rollouts to consume, and the only algorithmic coupling is the soft staleness gate.
@@ -243,11 +254,13 @@ How fast can the trainer go before it starves? Let the inference fleet produce r
     - Inference throughput per worker is ~3,000 tok/s; you have 16 inference workers → ~48,000 tok/s aggregate.
     - Training step (forward+backward+optimizer on the 512 rollouts) takes $T_{\text{train}} = 14\text{ s}$.
 
-    **Synchronous step time.** Generation must wait for the longest sample. Even with continuous batching across 16 workers, the batch is not "done" until the 9,000-token straggler finishes. Total response tokens $\approx 512 \times 1200 = 614{,}400$, but the *critical path* is set by the straggler queued behind others. A realistic synchronous gen time is dominated by the tail; call it $T_{\text{gen}}^{\text{sync}} \approx 614{,}400 / 48{,}000 \approx 12.8\text{ s}$ of useful work, but tail effects stretch wall-clock to ~$18\text{ s}$. Plus weight sync $T_{\text{sync}} \approx 2\text{ s}$. So
+    **Synchronous step time.** Generation must wait for the longest sample. The *useful* aggregate work is small: total response tokens $\approx 512 \times 1200 = 614{,}400$, which the fleet could chew through in $614{,}400 / 48{,}000 \approx 12.8\text{ s}$ if it stayed perfectly packed. But the *critical path* is the 9,000-token straggler, and one sequence decodes far slower than the fleet aggregate. With all 512 sequences in flight, 48,000 tok/s is shared ~512 ways — about $94$ tok/s per stream; as short samples retire, the survivors speed up toward the single-stream decode rate of a 7B model, roughly $150$ tok/s (low-batch decode is HBM-bandwidth-bound, not compute-bound). So the outlier alone needs between $9{,}000/150 \approx 60\text{ s}$ and $9{,}000/94 \approx 96\text{ s}$ of wall clock; call it $T_{\text{gen}}^{\text{sync}} \approx 60\text{ s}$. Plus weight sync $T_{\text{sync}} \approx 2\text{ s}$. So
 
     $$
-    T_{\text{step}}^{\text{sync}} \approx 18 + 14 + 2 = 34\text{ s}, \quad\text{GPU utilization} \approx \frac{14}{34} \approx 41\% \text{ (trainer)}.
+    T_{\text{step}}^{\text{sync}} \approx 60 + 14 + 2 = 76\text{ s}, \quad\text{GPU utilization} \approx \frac{14}{76} \approx 18\% \text{ (trainer)}.
     $$
+
+    Sixty seconds of wall clock to do 12.8 s of work: *that* factor of ~5 is the straggler tax, and it is why the tail — not the mean — is what you must design around.
 
     **Async step time.** The trainer never waits: while it spends $14\text{ s}$ on step $k$, the 16 workers produce $48{,}000 \times 14 = 672{,}000$ tokens $\approx 560$ rollouts — *more* than the 512 it needs. The trainer is generation-fed continuously, so
 
@@ -255,7 +268,7 @@ How fast can the trainer go before it starves? Let the inference fleet produce r
     T_{\text{step}}^{\text{async}} \approx \max(T_{\text{train}},\, B/r_{\text{gen}}) \approx \max(14, \; 614{,}400/48{,}000) \approx \max(14, 12.8) = 14\text{ s}.
     $$
 
-    **Speedup** $\approx 34 / 14 \approx 2.4\times$, with trainer utilization near 100%. The straggler tax and the weight-sync stall both vanish because nothing is on the critical path but the trainer's own compute. This is exactly the 2–4× regime async systems report — and note the savings come *entirely* from eliminating idle time, not from any algorithmic change.
+    **Speedup** $\approx 76 / 14 \approx 5.4\times$, with trainer utilization near 100%. The straggler tax and the weight-sync stall both vanish because nothing is on the critical path but the trainer's own compute. That is *above* the 2–4× published async systems report end-to-end, because this example uses a deliberately brutal, uncapped tail (max/mean $= 7.5$); real runs blunt the tail with generation-length caps, truncation, and partial rollouts, which shrinks the synchronous penalty back into the 2–4× range. Either way the savings come *entirely* from eliminating idle time, not from any algorithmic change.
 
 **Does async pay off at 100M scale?** Run the same arithmetic before you build any of it. In [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html), Stack-100M's RLVR stage generates short, length-capped completions (hundreds of tokens, not thousands) from a single colocated vLLM instance, and a training step on a 100M model is seconds at most. Both the straggler tail and $T_{\text{sync}}$ are small relative to $T_{\text{train}}$, so the synchronous barrier costs tens of percent, not multiples — and one process is far easier to debug than three. Take the sync path there. What you *should* port down to 100M regardless of scale is the **diagnostics**: log the inference-engine behavior log-prob alongside the trainer-recomputed one and watch `approx_kl` on fresh rollouts. The engine-mismatch bias is a numerics phenomenon, not a scale phenomenon — a 100M policy served by vLLM and trained under FSDP/bf16 will still disagree with itself, and catching that on a cheap run is how you learn to recognize it on an expensive one.
 
@@ -336,7 +349,10 @@ def toploc_commit(hidden_states, k=128):
     vals, idx = torch.topk(hidden_states.abs(), k=k, dim=-1)        # (T, k) largest-|h| components
     signs = torch.sign(torch.gather(hidden_states, 1, idx))         # keep sign of each
     # Quantize values coarsely so benign low-bit noise doesn't change the commitment.
-    q_vals = (vals * 16).round().to(torch.int16)                    # coarse magnitude buckets
+    # int32, not int16: LLM hidden states contain "massive activations" in the 1e2-1e4 range,
+    # and |h| > 2048 would silently WRAP in int16 -- corrupting exactly the dominant components
+    # this scheme depends on. The commitment is still only a few bytes per component.
+    q_vals = (vals * 16).round().to(torch.int32)                    # coarse magnitude buckets
     return {"idx": idx.to(torch.int32), "qval": q_vals, "sign": signs.to(torch.int8)}
 
 def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90, mag_tol=2):
@@ -426,7 +442,7 @@ The dashboard you watch, in priority order:
 | `approx_kl` (fresh data) | $\approx 0$ | nonzero & drifting | **engine mismatch** — trainer vs inference log-probs disagree |
 | `clipfrac` | moderate (5–25%) | $>50\%$ | data too off-policy; lower $s_{\max}$ or publish weights more often |
 | `toploc_reject_rate` | low | spiking | a worker (or cohort) is forging inference; quarantine it |
-| trainer GPU util | $\approx 100\%$ | low | async isn't helping — you're training-bound, not generation-bound |
+| trainer GPU util | $\approx 100\%$ | low | trainer is starving on an empty queue — you're *generation*-bound; add inference workers |
 
 !!! tip "Practitioner tip: start synchronous, then turn the staleness dial up"
     Bring up your RL run **fully synchronous** ($s_{\max}=0$) first and confirm reward climbs and `approx_kl` on fresh data is essentially zero. *Then* introduce async by raising $s_{\max}$ to 1, then 2, watching that reward curves overlay the sync baseline. This isolates async/staleness bugs from ordinary RL bugs: if the sync run is healthy and the $s_{\max}=1$ run diverges, your importance-sampling correction or engine-mismatch handling is wrong — not your reward, advantage, or learning rate. Debugging async-and-RL simultaneously from a cold start is how teams lose a week.

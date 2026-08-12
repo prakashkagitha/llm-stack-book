@@ -236,7 +236,7 @@ def masked_grpo_loss(logits, token_ids, loss_mask, advantages,
 
     The most insidious masking bug is *off-by-one*. Because of the next-token shift, the loss at position $i$ trains the prediction of token $i{+}1$. If your mask marks "this token is an action," but you apply it *before* the shift (`loss_mask[:, :-1]` instead of `loss_mask[:, 1:]`), every live position slides one step to the right, so you will (a) **drop** the loss on the prediction of the *first* action token of every turn — that prediction is made at the position occupied by the last system/observation token before it, which your mask has zeroed — and (b) **add** a spurious loss on the *first observation token* of every turn, because the position of a turn's last action token stays live while its target is now the environment's text. Always shift the mask the same way you shift the targets, and unit-test it: feed a trajectory where you *know* exactly which positions should be live, and assert `mask.sum()` equals your hand count.
 
-A second, subtler masking issue is the **loss-normalization denominator**. Should you divide by the number of action tokens in the *trajectory*, in the *batch*, or in the *turn*? Dividing by the per-trajectory token count gives every trajectory equal weight regardless of length; dividing by the batch total gives every *token* equal weight, which over-weights long trajectories. This is the exact same length-bias controversy discussed for single-turn GRPO in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), but it bites harder here because trajectory lengths vary by an order of magnitude (a 1-turn success versus an 8-turn flailing failure). Practice is genuinely split. Per-trajectory normalization followed by an average over trajectories neutralizes length bias and is the safe default; DAPO-style **token-level** normalization instead sums the surrogate over every action token in the batch and divides by the batch's total action-token count, so each token contributes equally and a long trajectory is not outvoted by a lucky one-turn success; Dr. GRPO divides by a fixed constant instead, removing the length-dependent scaling altogether. Whichever you pick, pick it deliberately and log mean action-tokens-per-trajectory: a denominator that floats with realized episode lengths makes the loss scale — and hence the effective learning rate — drift as the policy's episode length drifts during training, which in agentic RL it always does.
+A second, subtler masking issue is the **loss-normalization denominator**. Should you divide by the number of action tokens in the *trajectory*, in the *batch*, or in the *turn*? Dividing by the per-trajectory token count gives every trajectory equal weight regardless of length; dividing by the batch total gives every *token* equal weight, which over-weights long trajectories. This is the exact same length-bias controversy discussed for single-turn GRPO in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), but it bites harder here because trajectory lengths vary by an order of magnitude (a 1-turn success versus an 8-turn flailing failure). Practice is genuinely split on the weighting, but the *bias* runs in one specific direction. Per-trajectory normalization followed by an average over trajectories gives every trajectory equal weight — and it is precisely the source of GRPO's documented length bias, not a cure for it: dividing trajectory $g$'s summed surrogate by its own action-token count $|o_g|$ scales each of its per-token gradients by $1/|o_g|$, so a long failing episode is penalized *less per token* than a short one, a standing pressure toward longer, more rambling trajectories. DAPO-style **token-level** normalization removes that scaling by summing the surrogate over every action token in the batch and dividing by the batch's total action-token count (exactly the `denom = mask.sum()` in `masked_grpo_loss` above), so each token contributes equally and a long trajectory is not outvoted by a lucky one-turn success; Dr. GRPO divides by a fixed constant instead, removing the length-dependent scaling altogether. Token-level is the safer default for agentic RL, where episode lengths vary by an order of magnitude — at the price that long trajectories now dominate the batch's loss mass. Whichever you pick, pick it deliberately and log mean action-tokens-per-trajectory: a denominator that floats with realized episode lengths makes the loss scale — and hence the effective learning rate — drift as the policy's episode length drifts during training, which in agentic RL it always does.
 
 ## Credit Assignment: Trajectory-Level vs Turn-Level
 
@@ -471,7 +471,8 @@ def agentic_grpo_step(policy, ref_policy, policy_engine, tokenizer,
         ids, mask = t.flatten()                  # [L], [L]
         A = t.metadata["advantage"]
         adv = mask * A                           # broadcast scalar adv onto ACTION tokens
-        # gather rollout-time logprobs aligned to every token (0 where masked)
+        # gather rollout-time (ENGINE) logprobs aligned to every token; entry i
+        # holds log p(token i). Kept as a diagnostic, not as the ratio denominator.
         lp = torch.zeros_like(ids, dtype=torch.float)
         cursor = 0
         for s in t.segments:
@@ -488,28 +489,53 @@ def agentic_grpo_step(policy, ref_policy, policy_engine, tokenizer,
     token_ids   = torch.stack(seqs).cuda()       # [B, L]
     loss_mask   = torch.stack(masks).cuda()      # [B, L]
     advantages  = torch.stack(advs).cuda()       # [B, L]
-    old_logprobs = torch.stack(old_lps).cuda()   # [B, L]
+    engine_logprobs = torch.stack(old_lps).cuda()  # [B, L] (inference engine)
 
-    # ---- 4. FORWARD + MASKED LOSS (teacher-forced over the trajectory) ----
+    # ---- 4. RECOMPUTE π_old WITH THE TRAINER'S OWN KERNELS ----
+    # The engine's log-probs really are the behaviour distribution, but feeding
+    # them straight into ρ injects the whole vLLM/SGLang-vs-FSDP numerical gap
+    # into the importance ratio (see "Inference/training distribution mismatch"
+    # above). veRL and TRL instead materialize π_old with a no-grad forward in
+    # the *training* stack -- so ρ == 1 exactly on the first inner epoch -- and
+    # keep the engine's numbers as a first-class monitored diagnostic.
+    old_logprobs = trainer_logprobs(policy, token_ids)          # [B, L]
+    lp_gap = (((old_logprobs - engine_logprobs).abs() * loss_mask).sum()
+              / loss_mask.sum().clamp(min=1.0))                 # engine-vs-train gap
+
+    # ---- 5. FORWARD + MASKED LOSS (teacher-forced over the trajectory) ----
     logits = policy(token_ids).logits            # [B, L, V]
     pg_loss = masked_grpo_loss(
         logits, token_ids, loss_mask, advantages, old_logprobs, epsilon=0.2,
     )
 
-    # ---- 5. KL penalty to the reference, masked to ACTION tokens ----
+    # ---- 6. KL penalty to the reference, masked to ACTION tokens ----
     with torch.no_grad():
         ref_logits = ref_policy(token_ids).logits
     kl = masked_token_kl(logits, ref_logits, token_ids, loss_mask)
     loss = pg_loss + beta * kl
 
-    # ---- 6. OPTIMIZE ----
+    # ---- 7. OPTIMIZE ----
     optimizer.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
     optimizer.step()
-    return {"pg_loss": pg_loss.item(), "kl": kl.item(),
+    return {"pg_loss": pg_loss.item(), "kl": kl.item(), "lp_gap": lp_gap.item(),
             "mean_reward": sum(t.reward for t in all_trajs) / len(all_trajs),
             "mean_turns": sum(t.metadata["n_turns"] for t in all_trajs) / len(all_trajs)}
+
+
+def trainer_logprobs(model, token_ids):
+    """
+    π_old under the TRAINING stack: entry [b, i] = log π(token i | tokens < i).
+    Position 0 has no predecessor, so it is 0 -- it is always masked anyway.
+    Same [B, L] convention as the engine log-probs, so `masked_grpo_loss`'s
+    `old_logprobs[:, 1:]` shift lines up with its shifted targets.
+    """
+    with torch.no_grad():
+        logits = model(token_ids).logits                         # [B, L, V]
+        lp = torch.log_softmax(logits[:, :-1], dim=-1)            # [B, L-1, V]
+        tok = lp.gather(-1, token_ids[:, 1:].unsqueeze(-1)).squeeze(-1)  # [B, L-1]
+    return torch.nn.functional.pad(tok, (1, 0))                   # [B, L]
 
 
 def masked_token_kl(logits, ref_logits, token_ids, loss_mask):

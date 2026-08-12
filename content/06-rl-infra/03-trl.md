@@ -75,8 +75,14 @@ from trl import SFTConfig, SFTTrainer
 # Load a model and tokenizer (e.g., Qwen-2.5-7B-Instruct)
 model = AutoModelForCausalLM.from_pretrained(
     "Qwen/Qwen2.5-7B-Instruct",
-    dtype="auto",                # bfloat16 on Ampere+ (was `torch_dtype` before transformers v5)
-    device_map="auto",           # naive tensor parallel across GPUs
+    dtype="auto",                # use the dtype recorded in the checkpoint's config
+                                 # (bfloat16 for Qwen2.5) — it does *not* inspect the GPU;
+                                 # was `torch_dtype` before transformers v5
+    device_map="auto",           # naive model ("pipeline") parallelism: consecutive layer
+                                 # blocks are placed on different GPUs and run one at a time.
+                                 # This is NOT tensor parallelism (that is `tp_plan="auto"`),
+                                 # and it must not be combined with a multi-process
+                                 # `accelerate launch` — use one or the other.
 )
 tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B-Instruct")
 
@@ -210,7 +216,9 @@ from datasets import load_dataset
 
 # Policy model wrapped with LoRA
 base_model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen2.5-7B-Instruct", dtype="bfloat16"
+    "Qwen/Qwen2.5-7B-Instruct",
+    dtype="bfloat16",
+    attn_implementation="flash_attention_2",  # required by `padding_free=True` below
 )
 lora_config = LoraConfig(r=32, lora_alpha=64, target_modules="all-linear")
 model = get_peft_model(base_model, lora_config)
@@ -230,6 +238,8 @@ dpo_config = DPOConfig(
     num_train_epochs=1,
     learning_rate=5e-5,
     bf16=True,
+    eval_strategy="steps",             # needed for the completions callback below
+    eval_steps=100,
     max_length=2048,                   # max total len (prompt + completion)
     truncation_mode="keep_start",      # drop the tail, not the prompt, when over budget
     padding_free=True,                 # flatten batch + position_ids (needs FlashAttention)
@@ -239,18 +249,22 @@ dpo_config = DPOConfig(
 
 # Dataset with columns: prompt, chosen, rejected
 dataset = load_dataset("HuggingFaceH4/ultrafeedback_binarized", split="train_prefs")
+eval_dataset = load_dataset("HuggingFaceH4/ultrafeedback_binarized", split="test_prefs")
 
 trainer = DPOTrainer(
     model=model,
     ref_model=None,      # auto-derives reference from base (without LoRA adapters)
     args=dpo_config,
     train_dataset=dataset,
+    eval_dataset=eval_dataset,   # the callback below samples its prompts from here
     processing_class=tokenizer,
 )
 
 # Eyeball actual generations during training. (The old `generate_during_eval`
-# config flag was replaced by this callback, which logs a completions table
-# to W&B / Trackio every `num_prompts` eval prompts.)
+# config flag was replaced by this callback, which logs a table of `num_prompts`
+# completions to W&B / Comet every `freq` steps — `freq` is how often, `num_prompts`
+# is how many. It draws those prompts from the trainer's *eval* dataset and raises
+# `ValueError` if the trainer has none, so `eval_dataset` above is mandatory.)
 trainer.add_callback(
     LogCompletionsCallback(trainer, num_prompts=8, freq=100)
 )
@@ -290,7 +304,7 @@ PPO (Schulman et al., Proximal Policy Optimization, 2017) is the classical RL al
 
 !!! warning "API churn: PPO has moved twice"
 
-    Older tutorials show a manual loop built around `AutoModelForCausalLMWithValueHead`, `PPOTrainer(config=..., tokenizer=...)`, and an explicit `trainer.step(queries, responses, rewards)` call. That API was retired in TRL 0.12 and replaced by a `transformers.Trainer`-shaped `PPOTrainer` you drive with `.train()`. In TRL v1 it moved again — out of the stable namespace and into `trl.experimental.ppo`. Any snippet you find calling `trainer.step(...)` predates 2024 and will not run. Treat PPO as legacy: reach for `GRPOTrainer` or `RLOOTrainer` unless you specifically need a learned value function.
+    Older tutorials show a manual loop built around `AutoModelForCausalLMWithValueHead`, `PPOTrainer(config=..., tokenizer=...)`, and an explicit `trainer.step(queries, responses, rewards)` call. That API was retired in TRL 0.12 and replaced by a `transformers.Trainer`-shaped `PPOTrainer` you drive with `.train()`. In TRL v1 it moved again — out of the stable namespace and into `trl.experimental.ppo`. Any snippet you find calling `trainer.step(...)` predates TRL 0.12 (November 2024) and will not run. Treat PPO as legacy: reach for `GRPOTrainer` or `RLOOTrainer` unless you specifically need a learned value function.
 
 The TRL PPO loop at each iteration:
 
@@ -413,7 +427,7 @@ import re
 model_name = "Qwen/Qwen2.5-7B-Instruct"
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
-    dtype="auto",           # bfloat16 on Ampere+
+    dtype="auto",           # dtype recorded in the checkpoint's config (bfloat16 here)
     attn_implementation="flash_attention_2",  # requires flash-attn installed
 )
 tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -428,7 +442,13 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 #    (e.g. unparseable ground truth), which is different from returning 0.0.
 # ----------------------------------------------------------------
 def extract_boxed_answer(text: str) -> str | None:
-    """Parse LaTeX \boxed{...} from model output."""
+    """Parse LaTeX \boxed{...} from model output.
+
+    Teaching version only: `[^}]+` stops at the FIRST `}`, so a nested answer like
+    `\boxed{\frac{3}{4}}` yields `\frac{3` and scores 0.0 even when it is correct.
+    Real runs should brace-match (count depth from the opening `{`) or delegate to
+    `math_verify` / `trl.rewards.accuracy_reward`.
+    """
     match = re.search(r"\\boxed\{([^}]+)\}", text)
     return match.group(1).strip() if match else None
 
@@ -798,7 +818,7 @@ trainer = GRPOTrainer(
 
 Note the factory pattern: functions that need configuration (`get_*`) return a closure, because `reward_funcs` entries are called as `f(prompts=..., completions=..., **dataset_columns)` with no room for extra arguments. You can also pass a *model* (or a Hub model id) in `reward_funcs`, in which case TRL scores completions with that sequence classifier — this is how you mix a learned reward model with programmatic checks in one run.
 
-Writing your own is still the common case. Here is a production-grade reward function that combines a format reward with a correctness reward, plus a length penalty:
+Writing your own is still the common case. Here is a worked example that combines a format reward with a correctness reward, plus a length penalty. Note that it reuses the teaching-grade `extract_boxed_answer` from §4 — before shipping it, swap that helper for `math_verify` (or `trl.rewards.accuracy_reward`), which handles nested LaTeX such as `\boxed{\frac{3}{4}}` that the simple regex silently marks wrong:
 
 ```python
 import re
@@ -910,14 +930,14 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 trl grpo \
     - All trainers inherit from `transformers.Trainer` and use `accelerate` for distribution — any `accelerate` backend (FSDP, DeepSpeed, DDP) works without trainer-level code changes.
     - PEFT (LoRA, QLoRA) integrates transparently: the reference model shares the base backbone with the policy, making the reference model nearly memory-free for DPO and GRPO. For full fine-tuning, `precompute_ref_log_probs=True` frees the reference model outright.
     - `GRPOTrainer` is the recommended entry point for reasoning alignment (replacing PPO): no critic, group-relative advantages, and verifiable reward functions as plain Python callables — with `trl.rewards` shipping the standard ones.
-    - Modern GRPO defaults encode hard-won lessons: `beta=0.0` (no reference model at all with verifiable rewards), `loss_type="dapo"` (token-level normalization, no length bias), `epsilon_high=0.28` (asymmetric clipping), and `mask_truncated_completions=True`.
+    - Modern GRPO recipes encode hard-won lessons. Two of them are already TRL defaults: `beta=0.0` (no reference model at all with verifiable rewards) and `loss_type="dapo"` (token-level normalization, no length bias). Two you must opt into: `epsilon_high=0.28` (asymmetric clipping — the default `None` makes the clip symmetric) and `mask_truncated_completions=True` (defaults to `False`, so truncated rollouts otherwise stay in the loss).
     - The batch arithmetic is the top footgun: `generation_batch_size = per_device_train_batch_size × num_processes × steps_per_generation`, counted in **completions**, and it must be divisible by `num_generations` so every group stays whole.
     - The generation bottleneck is TRL's main throughput limitation; `use_vllm=True` with `vllm_mode="colocate"` shares the training GPUs with a vLLM engine for roughly 1.3–1.7x wall-clock speedup, syncing weights by NCCL broadcast — and `vllm_importance_sampling_correction` compensates for the sampler-vs-trainer log-prob mismatch.
     - Monitor `reward`, `frac_reward_zero_std` (wasted rollouts), `entropy` (mode collapse), and `completions/mean_length` (length exploitation); `kl` only exists when `beta > 0`.
     - TRL is the fastest path from research paper to running experiment; for production-scale multi-node runs (70B+), consider veRL or OpenRLHF which offer general resource placement and higher throughput.
 
 !!! sota "State of the Art & Resources (2026)"
-    TRL has matured into the standard entry point for LLM post-training, with v1.0 (March 2026) stabilising its CLI, config system, and trainer suite. The v1 line draws a hard boundary: `SFTTrainer`, `RewardTrainer`, `DPOTrainer`, `KTOTrainer`, `GRPOTrainer`, and `RLOOTrainer` are stable and semver-guaranteed, while `PPOTrainer` and the long tail of preference algorithms moved to `trl.experimental.*` — a clean statement that critic-free RL has won for LLMs. `GRPOTrainer` with co-located vLLM is the dominant single-node recipe for reasoning alignment, and its defaults now bake in DAPO-style loss normalization and asymmetric clipping; disaggregated frameworks (veRL, OpenRLHF) still handle the 70B+ regime.
+    TRL has matured into the standard entry point for LLM post-training, with v1.0 (March 2026) stabilising its CLI, config system, and trainer suite. The v1 line draws a hard boundary: `SFTTrainer`, `RewardTrainer`, `DPOTrainer`, `KTOTrainer`, `GRPOTrainer`, and `RLOOTrainer` are stable and semver-guaranteed, while `PPOTrainer` and the long tail of preference algorithms moved to `trl.experimental.*` — a clean statement that critic-free RL has won for LLMs. `GRPOTrainer` with co-located vLLM is the dominant single-node recipe for reasoning alignment, and its defaults now bake in DAPO-style loss normalization (asymmetric clipping remains opt-in); disaggregated frameworks (veRL, OpenRLHF) still handle the 70B+ regime.
 
     **Foundational work**
 

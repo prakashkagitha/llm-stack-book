@@ -73,7 +73,7 @@ Then we compute **advantages**. For GRPO this is the group z-score; for PPO it i
 
 ### Phase 4 — Learn / minibatch updates
 
-We iterate `ppo_epochs` times over the rollout batch, each time shuffling and splitting it into minibatches, computing the clipped surrogate loss, and stepping the optimizer with gradient accumulation. This is the only phase that consumes gradients, and (perhaps surprisingly) it is often the *fastest* of the five — a handful of forward+backward passes versus thousands of autoregressive decode steps.
+We iterate `ppo_epochs` times over the rollout batch, each time shuffling and splitting it into minibatches, computing the clipped surrogate loss, and stepping the optimizer with gradient accumulation. This is the only phase that consumes gradients, and (perhaps surprisingly) it is usually a distant *second* to generation — a handful of forward+backward passes versus thousands of autoregressive decode steps. It does, however, cost more than the trainer's other phase: at $6N$ FLOPs per token per epoch it outweighs Phase 3's one or two $2N$ no-grad forwards over the same tokens.
 
 ### Phase 5 — Weight synchronization
 
@@ -98,6 +98,7 @@ In production RL, the trainer and a vLLM engine live in the same process (or adj
 ```python
 # Sketch of the rollout call inside an RL trainer using vLLM.
 # (Real code in TRL/veRL is more involved; this shows the load-bearing parts.)
+import torch
 from vllm import LLM, SamplingParams
 
 # One persistent engine, created ONCE. We will hot-swap weights into it each step.
@@ -133,8 +134,11 @@ def rollout(prompts):
                 for tid, lp_dict in zip(token_ids, comp.logprobs)
             ]
             batch.append({
-                "prompt": req.prompt,
-                "response_ids": token_ids,
+                "prompt": req.prompt,                     # the raw text, for the reward fn
+                # Emit TENSORS of ids: the trainer-side collate below concatenates
+                # prompt+response with torch.cat, so lists of ints would blow up there.
+                "prompt_ids": torch.tensor(list(req.prompt_token_ids)),      # (Lp,)
+                "response_ids": torch.tensor(list(token_ids)),               # (Lg,)
                 "behavior_logprobs": behavior_logprobs,   # log pi_behavior(o_t|.)
             })
     return batch
@@ -234,9 +238,13 @@ and total decode time is roughly $L_g$ times that. Both terms hurt, in different
 
     **Generation time (Phase 1), bandwidth-bound.** Weight traffic per decode step ≈ $N\cdot b_{\text{param}} = 7\text{e}9\cdot2 = 1.4\times10^{10}$ bytes = 14 GB → $14\text{ GB} / 3.35\text{ TB/s} \approx 4.2$ ms — *and that read is amortized across the whole batch*, because all 512 sequences decode their next token together. Now the term that is *not* amortized: a Qwen2.5-7B-shaped model (28 layers, 4 KV heads × 128 head dim, bf16) holds $2\cdot4\cdot128\cdot2\cdot28 \approx 57$ KB of KV **per token**, so at $B=512$ with a mean context of $L_p + L_g/2 = 1024$ tokens the KV read is $512\cdot1024\cdot57\text{ KB} \approx 30$ GB per step — over twice the weight traffic. Total ≈ 44 GB/step ≈ 13 ms, and over $L_g=1024$ steps, $\approx 13$ s of bandwidth-bound decode. With imperfect batching and scheduler overhead, call it **~15–20 s per outer step for generation.** Prefill is compute-bound and comparatively quick: prefix caching computes each prompt's KV once and shares it across its group of 8, so it is only $64$ unique prompts $\times\,512$ tokens $= 32{,}768$ tokens $\times\,2N \approx 4.6\times10^{14}$ FLOPs — about a second.
 
-    **Training time (Phase 4), compute-bound.** $C_{\text{train}} = 6N\cdot B\cdot (L_p + L_g)\cdot E = 6\cdot7\text{e}9\cdot512\cdot1536\cdot2 \approx 6.6\times10^{16}$ FLOPs (the prompt tokens ride along in the forward+backward even though the loss ignores them). At 45% MFU on an H100: effective throughput $\approx 0.45\cdot 990\text{e}12 = 4.5\times10^{14}$ FLOP/s. Time $\approx 6.6\text{e}16 / 4.5\text{e}14 \approx$ **~147 s**... but wait — that is on *one* GPU. The point of FSDP is to spread this across, say, 8 GPUs, giving **~18 s**. Meanwhile the *generation* above was also on the available GPUs.
+    **Training time (Phase 4), compute-bound.** $C_{\text{train}} = 6N\cdot B\cdot (L_p + L_g)\cdot E = 6\cdot7\text{e}9\cdot512\cdot1536\cdot2 \approx 6.6\times10^{16}$ FLOPs (the prompt tokens ride along in the forward+backward even though the loss ignores them). At 45% MFU on an H100: effective throughput $\approx 0.45\cdot 990\text{e}12 = 4.5\times10^{14}$ FLOP/s. Time $\approx 6.6\text{e}16 / 4.5\text{e}14 \approx$ **~147 s**... but wait — that is on *one* GPU. The point of FSDP is to spread this across, say, 8 GPUs, giving **~18 s**.
 
-    The honest takeaway from real runs (not this back-of-envelope, which is sensitive to batch and parallelism): with a single shared GPU pool, **generation is typically 60–80% of the step** because of its terrible MFU, the long $L_g$, and the fact that you regenerate every outer step but only train a couple of epochs. The experience-prep forward passes (Phase 3 — old-logprob + ref-logprob over all $B\cdot(L_p+L_g)$ tokens) add another meaningful chunk, often 10–20%. Reward (Phase 2) and weight sync (Phase 5) are usually a few percent each, unless the sandbox or the cross-node transfer is slow.
+    **Compare like with like.** The 13 s decode number above was *also* a single-GPU number, so do not read "13 s vs 18 s" off the page. Put the engine on the same 8 GPUs as 8 data-parallel replicas of 64 sequences each: the KV read shards (30 GB → 3.8 GB per GPU) but the 14 GB weight read does **not** — every replica holds a full copy — so per-GPU traffic falls only from 44 GB to ~18 GB per decode step, i.e. ~5.3 ms and **~5 s** of ideal decode. That is a 2.5× win from 8× the hardware, versus training's near-linear 8×. *That* asymmetry — training parallelizes cleanly, decode mostly does not — is the durable lesson of this envelope.
+
+    Note that this envelope does **not** by itself reproduce the 60–80% headline — on equal hardware it says ~5 s of generation against ~18 s of training. That is the roofline being generous to generation: it assumes a perfectly packed batch of 512 sequences all decoding in lockstep, and a very short $L_g=1024$. Real runs break all of those assumptions. Reasoning workloads run $L_g$ of 8k–32k, where decode time grows *superlinearly* (the KV read grows with context on every one of the now-8k steps) while the training pass grows only linearly in $L_p+L_g$; batches are ragged, so the effective decode batch decays as sequences finish; and the tail sequence gates the step.
+
+    The honest takeaway from real runs (not this back-of-envelope, which is sensitive to batch, length, and parallelism): with a single shared GPU pool, **generation is typically 60–80% of the step** because of its terrible MFU, the long $L_g$, the ragged long tail, and the fact that you regenerate every outer step but only train a couple of epochs. The two trainer-side phases split most of the remaining 15–35%: the update pass (Phase 4, $6N$ per token per epoch) and the experience-prep forwards (Phase 3 — old-logprob + ref-logprob over all $B\cdot(L_p+L_g)$ tokens, $2N$ each), with Phase 4 the larger of the two. Reward (Phase 2) and weight sync (Phase 5) are usually a few percent each, unless the sandbox or the cross-node transfer is slow.
 
 The qualitative ranking is robust across model sizes and clusters:
 
@@ -295,7 +303,7 @@ def build_experience_batch(rollouts, pad_id, device):
 
 ### Recomputing log-probs (the "old" forward) and the reference
 
-As warned above, we recompute the behavior/old log-probs on the trainer so the importance ratio is numerically consistent. We also run the frozen reference for the KL term. Both are `no_grad` forwards over the *entire* batch — this is Phase 3, and it costs roughly one (or two, with the reference) full-sequence forward pass over all $B$ sequences. That is why experience-prep is the second-biggest time sink.
+As warned above, we recompute the behavior/old log-probs on the trainer so the importance ratio is numerically consistent. We also run the frozen reference for the KL term. Both are `no_grad` forwards over the *entire* batch — this is Phase 3, and it costs roughly one (or two, with the reference) full-sequence forward pass over all $B$ sequences. At $2N$ FLOPs per token each, that is a real time sink: comparable to a single training epoch's forward, though still below Phase 4's $6NE$ per token over the same tokens.
 
 ```python
 @torch.no_grad()
@@ -446,12 +454,18 @@ weight_version = {"v": 0}
 shared_weights = {"sd": None, "lock": threading.Lock()}
 
 def generator_worker(engine, prompt_stream, group_size=8):
+    last_v = -1                              # version currently loaded in THIS engine
     while True:
-        # 1) refresh local weights if the trainer pushed a newer version
+        # 1) refresh local weights ONLY if the trainer pushed a newer version.
+        #    Read under the lock, then release it before the multi-GB load: a 7B
+        #    reload is ~14 GB of collective_rpc, and reloading unconditionally
+        #    every iteration (or holding the lock across it) would stall exactly
+        #    the generators this async design exists to keep saturated.
         with shared_weights["lock"]:
-            local_v = weight_version["v"]
-            if shared_weights["sd"] is not None:
-                sync_weights_to_engine(engine, shared_weights["sd"])
+            local_v, sd = weight_version["v"], shared_weights["sd"]
+        if sd is not None and local_v != last_v:
+            sync_weights_to_engine(engine, sd)
+            last_v = local_v
         # 2) generate, then enqueue WHOLE GROUPS tagged with the weight version.
         #    Group granularity is not cosmetic: the group-relative baseline needs
         #    all G completions of one prompt together, and several workers are
@@ -529,9 +543,9 @@ Read top to bottom, this is the entire RL-for-LLM training loop. This is also, a
 Every other chapter in this Part is an elaboration of one of these five lines: which engine serves Phase 1 ([vLLM](../07-inference-serving/03-vllm-internals.html)/[SGLang](../07-inference-serving/04-sglang-radixattention.html)), how Phase 2's verifiers are built ([Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html)), how Phase 4's advantages and KL are stabilized ([Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html)), how Phase 5's weight sync works across nodes ([Colocated vs Disaggregated RL](../06-rl-infra/07-colocated-vs-disaggregated.html)), and how to overlap them all for throughput ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html)).
 
 !!! interview "Interview Corner"
-    **Q:** You profile a GRPO run on a 7B model and find each step takes 30 seconds: 22 s in rollout generation, 5 s recomputing old/reference log-probs, 2 s in the backward/update, and 1 s in reward + weight sync. Your manager asks you to cut step time in half. Where do you look, in what order, and what are the correctness tradeoffs?
+    **Q:** You profile a GRPO run on a 7B model and find each step takes 30 seconds: 22 s in rollout generation, 5 s in the backward/update, 2 s recomputing old/reference log-probs, and 1 s in reward + weight sync. Your manager asks you to cut step time in half. Where do you look, in what order, and what are the correctness tradeoffs?
 
-    **A:** Generation is 73% of the step, so that is where the leverage is. In order: **(1) Overlap generation with training (rung 2/3).** While the trainer does Phases 3–5 (8 s of work), the generator should already be producing the *next* batch. This alone can hide most of training behind generation and costs only one step of bounded staleness, which the GRPO clip absorbs. **(2) Speed up generation itself:** confirm continuous batching and prefix caching are on (all $G$ completions share the prompt — that prefix should be computed once); raise the inference batch / `gpu_memory_utilization`; and crucially **attack the length long-tail** — a few runaway 4k-token generations gate a synchronous step, so cap max tokens and use overlong filtering, or go async so the slowest rollout doesn't block. **(3) The 5 s of log-prob recompute** is a forward pass over all tokens for both policy and reference; you can fuse the old-logprob computation into the first training forward, drop the reference entirely if running KL-free (R1-style $\beta=0$), or shard it across more GPUs. **(4) Quantize or use a smaller dtype for the *generator only*** (e.g. fp8/int8 inference) to speed decode, accepting a small numerics gap — but then you must recompute old-logprobs on the full-precision trainer to keep the ratio consistent. The backward (2 s) is the *last* thing to touch; halving it saves under 7%. The headline: in RL, optimize the rollout, not the gradient.
+    **A:** Generation is 73% of the step, so that is where the leverage is. In order: **(1) Overlap generation with training (rung 2/3).** While the trainer does Phases 3–5 (8 s of work), the generator should already be producing the *next* batch. This alone can hide most of training behind generation and costs only one step of bounded staleness, which the GRPO clip absorbs. **(2) Speed up generation itself:** confirm continuous batching and prefix caching are on (all $G$ completions share the prompt — that prefix should be computed once); raise the inference batch / `gpu_memory_utilization`; and crucially **attack the length long-tail** — a few runaway 4k-token generations gate a synchronous step, so cap max tokens and use overlong filtering, or go async so the slowest rollout doesn't block. **(3) The 2 s of log-prob recompute** is a forward pass over all tokens for both policy and reference; you can fuse the old-logprob computation into the first training forward, drop the reference entirely if running KL-free (R1-style $\beta=0$), or shard it across more GPUs. **(4) Quantize or use a smaller dtype for the *generator only*** (e.g. fp8/int8 inference) to speed decode, accepting a small numerics gap — but then you must recompute old-logprobs on the full-precision trainer to keep the ratio consistent. The backward (5 s) is the *last* thing to touch — not because it is small in absolute terms (it is the second-largest phase, as the $6NE$-vs-$4N$ FLOP ratio against Phase 3 predicts) but because generation still dwarfs it: halving it saves under 9%, halving generation saves 37%. The headline: in RL, optimize the rollout, not the gradient.
 
 !!! key "Key Takeaways"
     - **The loop is five phases:** rollout (generate) → reward → experience prep (recompute logprobs, advantages) → minibatch updates → weight sync. Each phase is a different system glued at the seam.
@@ -630,7 +644,7 @@ Every other chapter in this Part is an elaboration of one of these five lines: w
     T_{\text{train}} \approx \frac{6.13\times10^{16}}{4.455\times10^{14}} \approx 138\ \text{s}.
     $$
 
-    **(c) Comment.** On a *single* GPU the training pass ($\approx 138$ s) looks far larger than the decode weight-read floor ($\approx 4$ s) — but this is exactly the trap the chapter warns about: training is compute-bound and *parallelizes*, whereas decode runs at terrible MFU. Shard the training pass across 8 GPUs and it drops to $\approx 138/8 \approx 17$ s, while decode does not shrink the same way (it stays memory-bandwidth-bound, and the 4 s figure is only the *weight* floor — the un-amortized KV read at $B=512$ pushes the real number to a multiple of it, and it gates a fresh rollout *every* outer step while training runs only $E=2$ epochs). Once training is spread across the pool, generation reclaims its usual 60-80% share of wall-clock. The headline stands: doubling backward-pass speed barely moves the step; doubling generation throughput nearly halves it.
+    **(c) Comment.** On a *single* GPU the training pass ($\approx 138$ s) looks far larger than the decode weight-read floor ($\approx 4$ s) — but this is exactly the trap the chapter warns about: training is compute-bound and *parallelizes*, whereas decode runs at terrible MFU. Shard the training pass across 8 GPUs and it drops to $\approx 138/8 \approx 17$ s, while decode does not shrink the same way (it stays memory-bandwidth-bound, and the 4 s figure is only the *weight* floor — the un-amortized KV read at $B=512$ pushes the real number to a multiple of it, and it gates a fresh rollout *every* outer step while training runs only $E=2$ epochs). The same caveat as the chapter's worked example applies: if you put the engine on all 8 GPUs too, decode shrinks as well — but only *sublinearly*, because the 26 GB weight read is replicated on every data-parallel replica while only the KV read shards. So this envelope narrows the gap without inverting it; the 60–80% figure comes from real runs with much longer $L_g$ and ragged, tail-gated batches, not from a clean roofline at $L_g=512$. The headline stands: doubling backward-pass speed barely moves the step; doubling generation throughput nearly halves it.
 
 **4.** (Quantitative) A GRPO group has $G = 4$ completions for one prompt, with rewards $\mathbf{r} = [1, 0, 1, 0]$ (verifiable pass/fail). (a) Compute the group-relative advantage for each completion **without** std normalization (Dr.GRPO style, `normalize_std=False`). (b) Recompute **with** std normalization (`normalize_std=True`, `eps = 1e-4`), using the population std that `torch.std(..., unbiased=False)` would give. (c) A second prompt's group returns $\mathbf{r} = [1, 1, 1, 1]$ (all correct). What advantage does *each* member get, with and without std normalization, and why does this case motivate the `eps` term and the "contested std norm" comment in the code?
 

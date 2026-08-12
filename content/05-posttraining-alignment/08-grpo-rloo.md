@@ -191,7 +191,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # ---------------------------------------------------------------------------
-# 0. Setup. Use a tiny instruct model so this runs on a laptop GPU.
+# 0. Setup. Use a tiny instruct model so this runs on one consumer GPU.
 # ---------------------------------------------------------------------------
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -202,6 +202,16 @@ ref.eval()
 for p in ref.parameters():
     p.requires_grad_(False)
 opt = torch.optim.AdamW(policy.parameters(), lr=1e-6)
+
+# `generate` MERGES the model's shipped generation_config with the kwargs you
+# pass, and only the kwargs you pass override it. Qwen2.5-*-Instruct ships
+# do_sample/temperature/top_p/top_k/repetition_penalty defaults, and it declares
+# TWO stop ids (<|im_end|> and <|endoftext|>) while `tok.eos_token_id` is just
+# one of them. Both facts matter below, so pin them explicitly.
+_gc_eos = policy.generation_config.eos_token_id
+_gc_eos = [] if _gc_eos is None else (list(_gc_eos) if isinstance(_gc_eos, (list, tuple))
+                                      else [_gc_eos])
+STOP_IDS = sorted({tok.eos_token_id, *_gc_eos})   # every id generate() halts on
 
 GROUP_SIZE   = 8       # G: responses sampled per prompt
 CLIP_EPS_LOW = 0.2     # lower clip (1 - eps_low)
@@ -238,7 +248,12 @@ def rollout(prompts, golds):
                                       return_tensors="pt").to(device)
         plen = ids.shape[1]
         # Sample G completions in one batched call (num_return_sequences=G).
+        # top_k=0 and repetition_penalty=1.0 are NOT redundant: without them the
+        # model's own generation_config (top_k=20, repetition_penalty=1.1 for
+        # Qwen2.5-Instruct) silently survives, and the behavior policy would no
+        # longer be pi_theta_old -- the ratio would not be 1 on the first epoch.
         out = policy.generate(ids, do_sample=True, temperature=1.0, top_p=1.0,
+                              top_k=0, repetition_penalty=1.0,
                               max_new_tokens=MAX_NEW, num_return_sequences=GROUP_SIZE,
                               pad_token_id=tok.eos_token_id)
         for g in range(GROUP_SIZE):
@@ -261,9 +276,13 @@ def rollout(prompts, golds):
         # Those trailing pad-eos tokens were NEVER sampled by the policy; leaving
         # them in resp_mask feeds advantage-weighted gradient and KL into
         # positions the policy never chose. Keep exactly ONE eos (the true stop
-        # token the policy did emit) and mask everything after it.
+        # token the policy did emit) and mask everything after it. Scan the FULL
+        # stop set, not just tok.eos_token_id: if the model halted on the other
+        # stop id, a single-id scan would first match a *pad* token and leave one
+        # never-sampled position unmasked.
         gen = s[plen:]
-        eos_hits = (gen == tok.eos_token_id).nonzero(as_tuple=True)[0]
+        stop = torch.tensor(STOP_IDS, device=gen.device)
+        eos_hits = torch.isin(gen, stop).nonzero(as_tuple=True)[0]
         if eos_hits.numel() > 0:
             first_eos = plen + int(eos_hits[0])
             resp_mask[i, first_eos + 1:] = 0.0     # drop pad-eos after true stop
@@ -346,14 +365,14 @@ def grpo_step(prompts, golds):
 ```
 
 !!! note "Expected behavior: what a healthy toy run looks like"
-    - **Trajectory.** On this single-prompt arithmetic toy with `Qwen/Qwen2.5-0.5B-Instruct` and `GROUP_SIZE=8`, `mean_reward` should climb from roughly `0.2`-`0.5` at step 0 (the base instruct model already answers `17+26` some of the time and often emits the tags) to `>1.0` within about `30`-`80` outer steps. It will not sit exactly at the `1.2` ceiling because sampling stays stochastic. Wall-clock is a few minutes on one consumer GPU (24 GB, e.g. RTX 3090/4090); generation dominates the time, not the backward pass.
+    - **Trajectory.** On this single-prompt arithmetic toy with `Qwen/Qwen2.5-0.5B-Instruct` and `GROUP_SIZE=8`, `mean_reward` should climb from roughly `0.2`-`0.5` at step 0 (the base instruct model already answers `17+26` some of the time and often emits the tags) to `>1.0` within about `30`-`80` outer steps. It will not sit exactly at the `1.2` ceiling because sampling stays stochastic. Wall-clock is a few minutes on one consumer GPU (24 GB, e.g. RTX 3090/4090); generation dominates the *time*, not the backward pass. **Memory**, though, is the binding constraint, and it is dominated by one line: `token_logprobs` materializes a full `(B, T, V)` float32 log-softmax that autograd must keep, and with `4` prompts $\times$ `G=8` and Qwen2.5's `151936`-token vocabulary each such copy is several GB. If you OOM, drop to one prompt per step or lower `MAX_NEW` first — production trainers avoid the problem entirely by gathering the sampled token's logit and subtracting a chunked `logsumexp` (TRL calls this `selective_log_softmax`) instead of building the whole distribution.
     - **Healthy diagnostics.** The **fraction of non-degenerate groups** (groups whose `G` rewards are not all equal) should be clearly `>0` in the early steps -- that is the *only* source of gradient. It naturally decays toward `0` as the policy saturates to always-correct, at which point `mean_reward` plateaus near the ceiling (expected, not a bug). Token-level **entropy** should stay positive (the policy keeps exploring).
     - **Failure signatures.** `mean_reward` flat near `0` with all-wrong groups -> reward/parsing broken or task too hard (check the exact `<answer>{gold}</answer>` string match). `mean_reward` stuck mid-range while the non-degenerate-group fraction is already `0` -> dead groups (raise `G`, vary the prompts, add curriculum). Reward rising while decoded samples turn into repetitive gibberish and entropy collapses -> the policy is diverging: lower the learning rate, set `KL_BETA>0`, and confirm the EOS-mask fix in `rollout` is in place.
     - **Beyond the toy.** For a non-trivial signal, swap the single repeated prompt for a small GSM8K slice and track pass@1 over a few hundred steps rather than one arithmetic fact.
 
 A few engineering notes that matter in practice:
 
-- **`generate` pads with `pad_token_id`, so the response mask must stop at the true EOS.** With `num_return_sequences=G`, completions that finish early are right-padded with `pad_token_id` (here the EOS id) up to the group's longest sequence. The rollout loop above therefore masks everything after the *first* EOS, so the ratio, KL, and advantage-weighted loss are computed only on tokens the policy actually sampled. Forgetting this silently injects advantage-weighted gradient on repeated pad-EOS positions — a classic, hard-to-spot GRPO bug.
+- **`generate` pads with `pad_token_id`, so the response mask must stop at the true EOS.** With `num_return_sequences=G`, completions that finish early are right-padded with `pad_token_id` (here the EOS id) up to the group's longest sequence. The rollout loop above therefore masks everything after the *first* stop token, so the ratio, KL, and advantage-weighted loss are computed only on tokens the policy actually sampled. Forgetting this silently injects advantage-weighted gradient on repeated pad-EOS positions — a classic, hard-to-spot GRPO bug. Note the second-order trap: most chat models declare *several* stop ids (Qwen2.5-Instruct halts on both `<|im_end|>` and `<|endoftext|>`), so scanning for `tok.eos_token_id` alone can miss the real stop and land on the first pad instead — scan the whole set, as `STOP_IDS` does above.
 - **`old_lp` is recomputed, not reused from generation.** In the toy code we recompute log-probs with a forward pass. In production, generation happens on a separate inference engine (vLLM/SGLang) and you must be careful that the log-probs used for the ratio come from a *consistent* policy. Mismatch between the sampler's numerics and the trainer's numerics is a real, subtle source of bias — see [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html).
 - **KL is often set to zero in R1-style recipes.** Be precise about attribution here: DeepSeek's own published objective (the one reproduced above) still contains the $-\beta\,\mathbb{D}_{\text{KL}}$ term, and the value of $\beta$ used for R1-Zero was not disclosed. Dropping the penalty outright is a documented choice of *later* R1-style work — DAPO states explicitly that it removes the KL term, and most open reimplementations set $\beta=0$ — on the reasoning that letting the policy drift far from the base is *desired* when you want emergent long reasoning. Keep $\beta>0$ for chat alignment where you must preserve the SFT persona.
 - **PPO_EPOCHS > 1 is why we need the ratio and clip at all.** If you only ever take one gradient step on each rollout batch ($\pi_\theta=\pi_{\text{old}}$, ratio $=1$), GRPO collapses into RLOO-with-std-normalization. The clip earns its keep only when you reuse rollouts.
@@ -503,7 +522,7 @@ GRPO as originally written has two now-well-documented **optimization biases** �
 
 {{fig:grpo-length-bias}}
 
-Recall the inner term $\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}(\cdot)$. Dividing each response's summed token loss by its own length $|o_i|$ means **each response contributes equally regardless of length**, which sounds fair but isn't, gradient-wise. Consider two responses with the *same* positive advantage. The gradient signal per token is scaled by $1/|o_i|$, so a *long correct* response gets a *smaller per-token* push than a *short correct* one. Conversely, for negative advantage, long *wrong* responses are penalized *less per token* than short wrong ones. The net effect of this asymmetry is a systematic pressure that, combined with std-normalization, **inflates response length** — the model learns that rambling is cheap when wrong and reinforced when right. This is a major driver of the "GRPO models get longer and longer" phenomenon, separate from genuine reasoning gains.
+Recall the inner term $\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}(\cdot)$. Dividing each response's summed token loss by its own length $|o_i|$ means **each response contributes equally regardless of length**, which sounds fair but isn't, gradient-wise. Consider two responses with the *same* positive advantage. The gradient signal per token is scaled by $1/|o_i|$, so a *long correct* response gets a *smaller per-token* push than a *short correct* one. Conversely, for negative advantage, long *wrong* responses are penalized *less per token* than short wrong ones. The two halves of the asymmetry point in *opposite* directions: the positive-advantage half pushes correct responses *shorter* (a long correct answer is reinforced less per token), while the negative-advantage half under-penalizes long *wrong* answers. Empirically it is the second half that wins, and the net effect is a systematic pressure that, combined with std-normalization, **inflates response length** — rambling is cheap exactly when the model is failing, which is when there is most of it. This is a major driver of the "GRPO models get longer and longer" phenomenon, separate from genuine reasoning gains.
 
 **The fix (Dr. GRPO / token-level loss):** drop the per-response division and instead sum the loss over *all* tokens in the batch and divide by a *constant* (or by the total token count). Every token gets equal weight; length no longer modulates the per-token gradient:
 
@@ -586,7 +605,7 @@ Note the consequence for clipping *granularity*: GSPO discards or keeps an entir
 The arc is clear: each "fix" removes an artificial scaling from the loss until what remains is, essentially, **a clean token-level REINFORCE with a group-mean baseline and a PPO clip for off-policy safety** — RLOO's spirit with PPO's trust region. GSPO is the one branch that runs the other way: it does not simplify the aggregation, it *corrects the unit* of the importance weight, which is what starts to matter once the policy is an MoE or the responses run to thousands of tokens. If you remember one thing: *the legitimate parts of GRPO are the group-mean baseline and the clipped ratio; the std-normalization and per-response length normalization are the parts that caused trouble.*
 
 !!! warning "Common pitfall: the all-equal-reward dead group"
-    If every response in a group gets the same reward (all correct, all wrong, or a degenerate reward function), then `mean` equals every $R_i$, every advantage is $0$, and that group contributes *exactly zero gradient*. With std-normalization you additionally divide $0$ by a near-zero std — the $\varepsilon$ in the denominator saves you from NaNs, but the group is still dead. This is not a bug to fix in the loss; it is a signal that your prompts are mis-calibrated in difficulty (or your reward is too coarse). Monitor the fraction of non-degenerate groups as a first-class training metric, and use dynamic sampling to refill the batch.
+    If every response in a group gets the same reward (all correct, all wrong, or a degenerate reward function), then `mean` equals every $R_i$, every advantage is $0$, and that group contributes *exactly zero policy-gradient signal* (with $\beta>0$ its tokens still carry a nonzero KL-penalty gradient, which is one more reason to drop them). With std-normalization you additionally divide $0$ by a near-zero std — the $\varepsilon$ in the denominator saves you from NaNs, but the group is still dead. This is not a bug to fix in the loss; it is a signal that your prompts are mis-calibrated in difficulty (or your reward is too coarse). Monitor the fraction of non-degenerate groups as a first-class training metric, and use dynamic sampling to refill the batch.
 
 ## Length, format, and reward shaping
 
@@ -793,4 +812,4 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
         return loss, frac                                            # frac = diagnostic
     ```
 
-    Notes: (1) the dead-group tokens already had advantage $0$, so masking them changes the loss only through the denominator — the practical payoff of *true* dynamic sampling is that you would **resample fresh prompts** to refill the batch with informative groups rather than merely dropping them; this function is the filter that decision is built on. (2) `frac` is exactly the "fraction of non-degenerate groups" the chapter flags as a first-class training metric; log it every step, since it is the *only* source of gradient and naturally decays toward $0$ as the policy saturates. (3) The range-based test matches the population/sample-std discussion: it needs no std at all and never divides by a near-zero denominator.
+    Notes: (1) the dead-group tokens already had advantage $0$, so with $\beta=0$ (this chapter's default) masking them changes the loss only through the denominator; with a KL penalty ($\beta>0$) the k3 term is added to `pg` *before* the mask is applied and is nonzero on those tokens, so masking removes real numerator mass too. Either way the practical payoff of *true* dynamic sampling is that you would **resample fresh prompts** to refill the batch with informative groups rather than merely dropping them; this function is the filter that decision is built on. (2) `frac` is exactly the "fraction of non-degenerate groups" the chapter flags as a first-class training metric; log it every step, since it is the *only* source of gradient and naturally decays toward $0$ as the policy saturates. (3) The range-based test matches the population/sample-std discussion: it needs no std at all and never divides by a near-zero denominator.

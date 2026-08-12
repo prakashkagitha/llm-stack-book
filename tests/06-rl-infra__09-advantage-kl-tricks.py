@@ -261,8 +261,12 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
                        | ((ratio < 1 - eps_low) & (adv < 0))).float()
         clipfrac = (clipped_sel * mask).sum() / mask.sum()
         approx_kl = (kl * mask).sum() / mask.sum()
+        # Mask this one too: log-probs at padding positions are garbage, and
+        # after the [-20, 20] clamp a single pad token can contribute e^20 to
+        # an unmasked mean and swamp the diagnostic.
+        ratio_mean = (ratio * mask).sum() / mask.sum().clamp_min(1.0)
     return loss, {"clipfrac": clipfrac.item(), "kl": approx_kl.item(),
-                  "entropy": ent.item(), "ratio_mean": ratio.mean().item()}
+                  "entropy": ent.item(), "ratio_mean": ratio_mean.item()}
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +503,10 @@ def test_grpo_train_step():
     rewards = torch.tensor([1.0, 0.0, 1.0, 1.0])
     mask = torch.ones(B, T)
     mask[3, 3:] = 0.0
+    # Padding positions carry garbage log-probs in a real trainer; every metric
+    # must be a MASKED reduction, or one pad token swamps the diagnostic.
+    policy_logp[3, 3:] = 30.0
+    old_logp[3, 3:] = -30.0
 
     loss, metrics = grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
                                     rewards, group_size=G, mask=mask,
@@ -509,6 +517,9 @@ def test_grpo_train_step():
     assert 0.0 <= metrics["clipfrac"] <= 1.0
     assert metrics["kl"] >= 0.0            # k3 is non-negative
     assert metrics["entropy"] >= 0.0
+    # On near-on-policy data the masked ratio mean sits at ~1; an unmasked mean
+    # would be ~e^20 here because of the garbage pad log-probs above.
+    assert 0.5 < metrics["ratio_mean"] < 2.0
     print("grpo_train_step: loss =", loss.item(), "metrics =", metrics)
 
 

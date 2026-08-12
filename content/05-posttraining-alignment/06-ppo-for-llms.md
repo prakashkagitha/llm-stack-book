@@ -316,7 +316,7 @@ def ppo_policy_loss(new_logprobs, old_logprobs, advantages, mask, clip_eps=0.2):
 ```
 
 !!! note "Aside: when PPO is secretly REINFORCE"
-    Look at the very first gradient step taken on a fresh rollout buffer: $\theta = \theta_{\text{old}}$, so $r_t \equiv 1$ exactly, the clip is inactive, and $\nabla L^{\text{CLIP}} = -\hat A_t \nabla_\theta \log\pi_\theta(o_t\mid s_t)$ — *identical* to actor-critic REINFORCE with a baseline. Everything the clip does only becomes relevant on the *second* and later gradient steps over the same data. So if you set `PPO_EPOCHS = 1` and `MINIBATCHES = 1` (one gradient step per rollout, fully on-policy), PPO literally degenerates to REINFORCE-with-a-baseline, and the ratio machinery is dead weight. Several modern recipes do exactly this and drop the clip; most keep a few epochs because generation is far more expensive than a backward pass, and then the clip is what makes the reuse safe. This is also why `clipfrac` should be near zero on the first minibatch and grow through the epochs — if it is large immediately, your `old_logprobs` were computed with a *different* numerical path than your trainer (the generation–training skew discussed below), not by real policy drift.
+    Look at the very first gradient step taken on a fresh rollout buffer: $\theta = \theta_{\text{old}}$, so $r_t \equiv 1$ exactly, the clip is inactive, and $\nabla_\theta L^{\text{CLIP}}_t = \hat A_t \nabla_\theta \log\pi_\theta(o_t\mid s_t)$ (recall we *maximize* $L^{\text{CLIP}}$; the code minimizes $-L^{\text{CLIP}}$) — *identical* to actor-critic REINFORCE with a baseline. Everything the clip does only becomes relevant on the *second* and later gradient steps over the same data. So if you set `PPO_EPOCHS = 1` and `MINIBATCHES = 1` (one gradient step per rollout, fully on-policy), PPO literally degenerates to REINFORCE-with-a-baseline, and the ratio machinery is dead weight. Several modern recipes do exactly this and drop the clip; most keep a few epochs because generation is far more expensive than a backward pass, and then the clip is what makes the reuse safe. This is also why `clipfrac` should be near zero on the first minibatch and grow through the epochs — if it is large immediately, your `old_logprobs` were computed with a *different* numerical path than your trainer (the generation–training skew discussed below), not by real policy drift.
 
 ### The value (critic) loss
 
@@ -419,8 +419,9 @@ import torch.nn.functional as F
 
 # Assume: policy (with value head), ref_model, reward_model, tokenizer, optimizer.
 # policy(input_ids) returns .logits (B,T,V) AND .value_preds (B,T) from the value head.
-# Name that field `value_preds`, not `values`: HuggingFace model outputs subclass
-# OrderedDict, so `out.values` silently resolves to the dict *method*, not a tensor.
+# Name that field `value_preds`, not `values`: HuggingFace `ModelOutput` subclasses
+# OrderedDict, so a field named `values` shadows the inherited `.values()` method on
+# the instance — any code that iterates `out.values()` dies with "not callable".
 # Only the policy has a value head; ref_model and the RM are plain models.
 
 PPO_EPOCHS   = 4
@@ -515,11 +516,11 @@ def ppo_update(buf):
 You write the loop above once, to understand it; in production you use a library that has already fixed the fifty details (padding, EOS handling, sharding, generation offload). In HuggingFace **TRL** the whole two-phase rhythm is one object, and every constructor argument is a symbol derived above — which is the fastest way to check your mental model:
 
 ```python
-# pip install "trl>=0.12" transformers accelerate datasets
+# pip install "trl>=1.0" transformers accelerate datasets
 from datasets import load_dataset
 from transformers import (AutoModelForCausalLM, AutoModelForSequenceClassification,
                           AutoTokenizer)
-from trl import PPOConfig, PPOTrainer
+from trl.experimental.ppo import PPOConfig, PPOTrainer   # TRL v1 moved PPO here
 
 BASE    = "Qwen/Qwen2.5-0.5B-Instruct"
 RM_PATH = "path/to/your-reward-model"   # the RM you trained in chapter 5.5
@@ -561,7 +562,7 @@ trainer = PPOTrainer(args=cfg, processing_class=tok, model=policy, ref_model=ref
 trainer.train()
 ```
 
-TRL rewrote `PPOTrainer` around the standard `Trainer` interface in v0.12 (the older `AutoModelForCausalLMWithValueHead` + `trainer.step(...)` style predates it), and config field names have shifted across releases — always read `PPOConfig`'s docstring for the version you install ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)). At larger scale the same objects appear in **veRL** (whose `verl/trainer/ppo/core_algos.py` contains a GAE routine that is line-for-line the `compute_gae` above, plus the clipped policy/value losses) and **OpenRLHF** (Ray actors for policy/critic/RM/reference with vLLM rollouts) — see [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html) and [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html). Reading one of those `core_algos`-style files after this chapter is a genuinely short trip: you will recognize every function.
+TRL rewrote `PPOTrainer` around the standard `Trainer` interface in v0.12 (the older `AutoModelForCausalLMWithValueHead` + `trainer.step(...)` style predates it), and the API has kept moving since: v0.12 took `config=`/`policy=`/`ref_policy=`, v0.13 renamed those to `args=`/`model=`/`ref_model=` (the names used above), and TRL v1 relocated PPO out of the stable namespace into `trl.experimental.ppo`. Config field names have shifted too — always read `PPOConfig`'s docstring for the version you install ([TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html)). At larger scale the same objects appear in **veRL** (whose `verl/trainer/ppo/core_algos.py` contains a GAE routine that is line-for-line the `compute_gae` above, plus the clipped policy/value losses) and **OpenRLHF** (Ray actors for policy/critic/RM/reference with vLLM rollouts) — see [veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html) and [OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html). Reading one of those `core_algos`-style files after this chapter is a genuinely short trip: you will recognize every function.
 
 ## Why PPO is finicky
 

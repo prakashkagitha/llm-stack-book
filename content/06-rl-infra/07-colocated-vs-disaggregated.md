@@ -20,7 +20,7 @@ $$
 M_\text{train} = \underbrace{2P}_{\text{weights}} + \underbrace{2P}_{\text{grads}} + \underbrace{12P}_{\text{Adam m, v, fp32 master}} + M_\text{act}
 $$
 
-That well-known $\approx 16P$ bytes (plus activations) is why training a 7B model needs on the order of 112 GB of optimizer-related state. The rollout engine, by contrast, holds only weights and a KV cache:
+That well-known $\approx 16P$ bytes (plus activations) is why the full training state for a 7B model is on the order of 112 GB, of which the $12P = 84$ GB of Adam state is the largest piece. The rollout engine, by contrast, holds only weights and a KV cache:
 
 $$
 M_\text{infer} = \underbrace{2P}_{\text{weights}} + M_\text{KV}
@@ -55,15 +55,26 @@ veRL calls this the **hybrid engine**: a single set of workers that wears two ha
 ```python
 # Sketch of the time-sliced colocated loop (single-controller view, veRL-style).
 # Each "worker" actually holds BOTH an FSDP-wrapped trainer and a vLLM engine
-# bound to the same CUDA devices. We flip between them every iteration.
+# bound to the same CUDA devices. We flip between them every iteration. The
+# engine is built with enable_sleep_mode=True and put to sleep immediately, so
+# every iteration starts from the same state.
+import torch
 
 for step in range(num_steps):
     # ---- PHASE 1: ROLLOUT ----------------------------------------------------
-    # Wake the inference engine: allocate the KV-cache pool on the GPUs.
-    rollout_engine.wake_up()                  # cudaMalloc the paged KV blocks
-    # Trainer state is offloaded so the KV cache has room (see §offloading).
+    # Make room FIRST: wake_up() has to cudaMalloc the KV blocks, so the trainer's
+    # state must already be off the device (see §offloading).
     trainer.offload_optimizer_to_cpu()        # async D2H copy of Adam m, v, master
     trainer.offload_grads()
+    torch.cuda.synchronize()                  # the D2H copies must land before we allocate
+
+    # Multi-stage wake: remap the parameter buffers, push in the policy produced by
+    # the previous iteration's optimizer step, and only then allocate the KV pool.
+    # Syncing into a *sleeping* engine is useless -- sleep(level=1) unmaps the weight
+    # pages, and wake_up() would restore them from the host copy, discarding the push.
+    rollout_engine.wake_up(tags=["weights"])  # remap the weight allocation
+    sync_weights(trainer, rollout_engine)     # see PHASE 4 / §4
+    rollout_engine.wake_up(tags=["kv_cache"]) # now cudaMalloc the paged KV blocks
 
     batch = sample_prompts(dataset, n=global_batch)
     # generate() runs continuous batching over all prompts (G samples each for GRPO)
@@ -71,7 +82,7 @@ for step in range(num_steps):
 
     # ---- PHASE 2: REWARD -----------------------------------------------------
     rewards = reward_fn(batch.prompts, completions)        # may call a sandbox/verifier
-    advantages = compute_group_advantages(rewards)         # GRPO: r_i - mean(r_group)
+    advantages = compute_group_advantages(rewards)         # GRPO: (r_i - mean(r_group)) / std(r_group)
 
     # ---- PHASE 3: TRAIN ------------------------------------------------------
     rollout_engine.sleep()                    # free the KV-cache pool back to the allocator
@@ -84,12 +95,13 @@ for step in range(num_steps):
     trainer.optimizer.zero_grad()
 
     # ---- PHASE 4: WEIGHT SYNC ------------------------------------------------
-    # Push the just-updated weights into the (sleeping) inference engine's
-    # parameter buffers so the NEXT rollout uses the new policy. See §4.
-    sync_weights(trainer, rollout_engine)
+    # The trainer now holds the new policy. It is pushed into the inference
+    # engine at the top of the NEXT iteration, immediately after the engine's
+    # weight buffers are woken (PHASE 1) -- that is the first moment those
+    # buffers are backed by real device memory again. See §4 for the transports.
 ```
 
-Those `wake_up()`/`sleep()` calls are not pseudocode — they are the real API surface. vLLM implements **sleep mode**: construct the engine with `enable_sleep_mode=True`, then `llm.sleep(level=1)` discards the paged KV-cache pool and offloads the weights to host RAM (`level=2` discards the weights too, for when you will overwrite them anyway), and `llm.wake_up()` rebuilds the pool. SGLang's equivalent requires `--enable-memory-saver` at launch and exposes `release_memory_occupation()` / `resume_memory_occupation()`, both as Python calls and as HTTP endpoints on the server.
+Those `wake_up()`/`sleep()` calls are not pseudocode — they are the real API surface. vLLM implements **sleep mode**: construct the engine with `enable_sleep_mode=True`, then `llm.sleep(level=1)` discards the paged KV-cache pool and offloads the weights to host RAM (`level=2` discards the weights too, for when you will overwrite them anyway), and `llm.wake_up()` rebuilds the pool. `wake_up` takes a `tags` argument (`["weights"]`, `["kv_cache"]`) so you can wake the allocation groups in stages — that is what lets you remap the parameter buffers, push the new weights in, and only then re-allocate the KV pool. SGLang's equivalent requires `--enable-memory-saver` at launch and exposes `release_memory_occupation()` / `resume_memory_occupation()`, both as Python calls and as HTTP endpoints on the server.
 
 ```python
 from vllm import LLM, SamplingParams
@@ -124,7 +136,7 @@ The offload transfer is not free. A 7B model's Adam state is $12 \times 7\text{e
 
 ### Memory partitioning (true simultaneous colocation)
 
-The third option is to *not* time-slice at all: carve the GPU's HBM into a training partition and an inference partition that coexist. This is rare in pure RL because the combined footprint rarely fits, but it appears in two guises: (a) very small models or heavily LoRA-fied policies where $16P$ is tiny, and (b) **multiplexing via MPS** (NVIDIA Multi-Process Service) or MIG, where two processes share SMs and memory under a hardware scheduler. The win is true overlap; the risk is that the two contend for HBM bandwidth and *both* slow down. In practice, time-slicing + offload dominates for full-parameter RL; partitioning shows up mainly with LoRA-based RL where the policy delta is small. LoRA also collapses the *sync* problem: only the adapter matrices change, so you move tens of megabytes instead of gigabytes, and because vLLM and SGLang can load and swap LoRA adapters at runtime (vLLM's `LoRARequest` / `--enable-lora` path), "weight sync" degenerates to an adapter reload. That is why LoRA RL is attractive on modest hardware even when full-parameter RL would fit.
+The third option is to *not* time-slice at all: carve the GPU's HBM into a training partition and an inference partition that coexist. This is rare in pure RL because the combined footprint rarely fits, but it appears in two guises: (a) very small models or heavily LoRA-fied policies where $16P$ is tiny, and (b) **multiplexing via MPS** (NVIDIA Multi-Process Service), where several processes submit kernels into one shared CUDA context and genuinely time- and space-share the SMs — with no memory isolation, so you must budget HBM yourself. (**MIG** is sometimes mentioned in the same breath but does the opposite: it *statically partitions* a GPU into isolated instances with dedicated SMs, L2 slices and HBM, which caps each role's memory rather than letting the two overlap.) The win of MPS-style multiplexing is true overlap; the risk is that the two contend for HBM bandwidth and *both* slow down. In practice, time-slicing + offload dominates for full-parameter RL; partitioning shows up mainly with LoRA-based RL where the policy delta is small. LoRA also collapses the *sync* problem: only the adapter matrices change, so you move tens of megabytes instead of gigabytes, and because vLLM and SGLang can load and swap LoRA adapters at runtime (vLLM's `LoRARequest` / `--enable-lora` path), "weight sync" degenerates to an adapter reload. That is why LoRA RL is attractive on modest hardware even when full-parameter RL would fit.
 
 ## Disaggregated: Separate Pools for Training and Rollout
 
@@ -401,7 +413,7 @@ When rollout dominates (long reasoning traces), $U_\text{colo}$ is small — you
 
     $$T_\text{iter}^\text{async} \approx \max(53,\ 32) + 0.02 \approx 53\ \text{s}$$
 
-    That looks no better on wall-clock — and indeed for *this* split it is not, because we starved training. The real win is **rebalancing**: because rollout dominates, push more GPUs to rollout *and* size training so $T_\text{train}' \le T_\text{rollout}'$. With, say, 6 train + 10 rollout: $T_\text{rollout}' \approx 40 \times 16/10 = 64$ s, $T_\text{train}' \approx 8 \times 16/6 \approx 21$ s, iteration $\approx 64$ s — still rollout-bound, training fully hidden. The lesson: disaggregation's value is not automatic speedup, it is the *freedom to size the two pools so the cheap, dominant stage is the only thing on the critical path*, while the training GPUs run at near-100% utilization instead of 15%. On a real cost model where rollout can run on cheaper inference GPUs, that reallocation is a large effective-cost win even when wall-clock is similar.
+    That looks no better on wall-clock — and indeed for *this* split it is not, because we over-provisioned training: 4 GPUs finish their 32 s of work and then wait 21 s. The real win is **rebalancing**: because rollout dominates, push GPUs *to rollout* and keep only the smallest training pool that still hides under it, i.e. the smallest $g_t$ with $T_\text{train}' \le T_\text{rollout}'$. That constraint is $8 \times 16/g_t \le 40 \times 16/(16-g_t)$, i.e. $128 \le 48\,g_t$, so $g_t \ge 2.67$ and the split is **3 train + 13 rollout**: $T_\text{rollout}' \approx 40 \times 16/13 \approx 49$ s, $T_\text{train}' \approx 8 \times 16/3 \approx 43$ s, iteration $\approx 49$ s — rollout-bound, training fully hidden, and now genuinely faster than both the 53 s split and the 54 s colocated baseline. The lesson: disaggregation's value is not automatic speedup, it is the *freedom to size the two pools so the cheap, dominant stage is the only thing on the critical path*, while the training GPUs run at $43/49 \approx 87\%$ utilization instead of 15%. On a real cost model where rollout can run on cheaper inference GPUs, that reallocation is a large effective-cost win even when wall-clock is similar.
 
 The example also exposes the staleness cost we hid: in the async case, the rollouts feeding each update were generated under weights one iteration old. If that staleness hurts sample efficiency by, say, 10%, you must weigh it against the utilization gain. This is the perennial RL-infra trade and why the choice is workload-dependent rather than universal.
 

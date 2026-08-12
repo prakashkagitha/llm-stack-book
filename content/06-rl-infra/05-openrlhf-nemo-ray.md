@@ -108,7 +108,8 @@ class TPShard:
 
     def init_pg(self, master_addr: str, master_port: int):
         """Form the NCCL communicator. Ray sets no launcher env vars, so
-        `init_method="env://"` would hang here — we must pass the address
+        `init_method="env://"` would raise `ValueError: ... environment
+        variable MASTER_ADDR expected, but not set` — we must pass the address
         explicitly. This rendezvous-then-init split is exactly what
         OpenRLHF and vLLM do when wiring GPU groups under Ray."""
         import torch.distributed as dist
@@ -324,11 +325,25 @@ class VLLMRolloutActor:
         return "weights_loaded"
 
     def rollout(self, prompts, sampling_params):
-        """Generate responses using updated weights."""
+        """Generate responses using updated weights.
+
+        Log-probs must be requested explicitly: `SamplingParams.logprobs`
+        defaults to `None`, and then `CompletionOutput.logprobs` comes back as
+        `None` for every output — PPO's `old_logprobs` would be a list of
+        `None`s. `logprobs=0` asks for the sampled token only. What vLLM
+        returns is a `List[Dict[int, Logprob]]` (one dict per position, keyed
+        by token id), so flatten it to plain floats here, before it crosses the
+        actor boundary.
+        """
         from vllm import SamplingParams
-        outputs = self.engine.generate(prompts, SamplingParams(**sampling_params))
-        return [(o.prompt, o.outputs[0].text, o.outputs[0].logprobs)
-                for o in outputs]
+        params = {"logprobs": 0, **sampling_params}
+        outputs = self.engine.generate(prompts, SamplingParams(**params))
+        results = []
+        for o in outputs:
+            comp = o.outputs[0]
+            lps = [d[t].logprob for d, t in zip(comp.logprobs, comp.token_ids)]
+            results.append((o.prompt, comp.text, lps))
+        return results
 ```
 
 
@@ -348,11 +363,12 @@ from typing import List
 class ExperienceBatch:
     prompts: List[str]
     responses: List[str]
-    # All four below are per-token, ragged: outer list = batch, inner = time.
-    rewards: List[List[float]]
+    # All five below are per-token, ragged: outer list = batch, inner = time.
+    rewards: List[List[float]]        # KL penalty + RM score at the last token
     advantages: List[List[float]]
     old_logprobs: List[List[float]]   # from vLLM at generation time
     ref_logprobs: List[List[float]]   # from reference model
+    values: List[List[float]]         # from critic; needed for its own update
 
 
 def run_ppo_training(
@@ -367,6 +383,7 @@ def run_ppo_training(
     ppo_epochs: int = 4,
     gamma: float = 1.0,
     lam: float = 0.95,
+    kl_coef: float = 0.01,
 ):
     """
     High-level PPO controller. Runs entirely on CPU driver process.
@@ -382,7 +399,9 @@ def run_ppo_training(
 
             # --- Phase 2: Score with RM (can overlap with rollout) ---
             # (actually waits on rollout_ref internally)
-            reward_ref = reward_actor.score.remote(rollout_ref)
+            # One SCALAR per sequence; the per-token reward vector is built
+            # from it (plus the KL penalty) in build_experience_batch below.
+            rm_score_ref = reward_actor.score.remote(rollout_ref)
 
             # --- Phase 3: Compute reference log-probs ---
             ref_logp_ref = ref_actor.log_probs.remote(rollout_ref)
@@ -391,11 +410,11 @@ def run_ppo_training(
             value_ref = critic_actor.value.remote(rollout_ref)
 
             # Gather everything; build experience batch
-            rollouts, rewards, ref_logps, values = ray.get(
-                [rollout_ref, reward_ref, ref_logp_ref, value_ref]
+            rollouts, rm_scores, ref_logps, values = ray.get(
+                [rollout_ref, rm_score_ref, ref_logp_ref, value_ref]
             )
             batch = build_experience_batch(
-                rollouts, rewards, ref_logps, values, gamma, lam
+                rollouts, rm_scores, ref_logps, values, gamma, lam, kl_coef
             )
             batch_ref = ray.put(batch)  # into shared object store
 
@@ -410,21 +429,39 @@ def run_ppo_training(
             ray.get(vllm_actor.load_weights.remote(params_ref))
 
 
-def build_experience_batch(rollouts, rewards, ref_logps, values, gamma, lam):
+def build_experience_batch(rollouts, rm_scores, ref_logps, values,
+                           gamma, lam, kl_coef):
     """
-    Compute GAE advantages (lambda-return) and pack into ExperienceBatch.
+    Build the per-token reward vector, compute GAE advantages (lambda-return),
+    and pack into ExperienceBatch.
     See: Schulman et al. 'High-Dimensional Continuous Control Using
          Generalized Advantage Estimation', 2015.
 
-    Shapes: rewards[i] and values[i] are per-TOKEN sequences of length T_i for
-    rollout i (the RM score lands on the final token, the KL penalty on every
-    token). GAE recurses along the time axis *inside* one sequence and never
-    across the batch: separate rollouts are independent episodes, so
-    bootstrapping sequence i+1's value into sequence i is simply wrong —
-    a classic bug when a batch tensor is flattened before this loop.
+    The RM returns ONE scalar per sequence, but GAE needs a reward at every
+    timestep, so the per-token vector is materialized here: the token-level KL
+    penalty -kl_coef * (log pi_old - log pi_ref) at every position, plus the RM
+    score added at the final token. Skipping this step is a common bug — the KL
+    term then never reaches the advantage at all, and the policy is free to
+    drift arbitrarily far from the reference.
+
+    Shapes: after that construction, rewards[i] and values[i] are both
+    per-TOKEN sequences of length T_i for rollout i. GAE recurses along the
+    time axis *inside* one sequence and never across the batch: separate
+    rollouts are independent episodes, so bootstrapping sequence i+1's value
+    into sequence i is simply wrong — a classic bug when a batch tensor is
+    flattened before this loop.
     """
+    old_logprobs = [r[2] for r in rollouts]
+
+    rewards = []
+    for old_lp, ref_lp, score in zip(old_logprobs, ref_logps, rm_scores):
+        r_seq = [-kl_coef * (old_lp[t] - ref_lp[t]) for t in range(len(old_lp))]
+        r_seq[-1] += score          # RM score lands on the final token
+        rewards.append(r_seq)
+
     advantages = []
     for r_seq, v_seq in zip(rewards, values):
+        assert len(r_seq) == len(v_seq)   # critic must score every token
         T = len(r_seq)
         adv_seq = [0.0] * T
         last_gae = 0.0
@@ -440,8 +477,9 @@ def build_experience_batch(rollouts, rewards, ref_logps, values, gamma, lam):
         responses=[r[1] for r in rollouts],
         rewards=rewards,
         advantages=advantages,
-        old_logprobs=[r[2] for r in rollouts],
+        old_logprobs=old_logprobs,
         ref_logprobs=ref_logps,
+        values=values,
     )
 ```
 
@@ -502,7 +540,7 @@ ray job submit --address="http://127.0.0.1:8265" \
 Two switches on this command line are worth more than the rest combined:
 
 - **`--colocate_actor_ref` / `--colocate_critic_reward` / `--colocate_all_models`.** These place two roles in the *same* placement-group bundles, time-slicing the GPUs rather than dedicating separate ones. The reference model is idle except for one forward pass per batch, so colocating it with the actor typically buys you a whole node back at a few percent throughput cost. `--colocate_all_models` goes further and puts the vLLM engines on the training GPUs too, offloading each model's weights while the other runs — the "colocated" regime analysed in [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html).
-- **`--advantage_estimator`.** The default `gae` is the critic-based PPO described above. Setting it to `group_norm` switches to **GRPO**-style group-relative advantages, and `reinforce_baseline` to REINFORCE++ — both of which are *critic-free*. That is not a small algorithmic knob: it deletes an entire actor group from the topology. In the 32-GPU layout above, dropping `--critic_num_nodes` frees 8 GPUs and removes the critic's parameters, gradients and optimizer state from the memory budget. Since 2025 most reasoning-RL runs take this path (see [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)), which is why the "four-role" picture is increasingly a *three*-role picture.
+- **`--advantage_estimator`.** The default `gae` is the critic-based PPO described above. Setting it to `group_norm` switches to **GRPO**-style group-relative advantages, and `reinforce_baseline` to REINFORCE++ — both of which are *critic-free*. That is not a small algorithmic knob: it deletes an entire actor group from the topology. In the 32-GPU layout above it removes the critic's parameters, gradients and optimizer state from the budget outright — but it does not by itself hand you back the critic's 8 GPUs, because `--colocate_critic_reward` parks the reward model on that same node. To actually recover hardware you have to resize the reward group too: an 8B RM needs roughly 2 GPUs, so dropping the colocation flag and setting `--reward_num_gpus_per_node 2` returns 6 of the 8. Since 2025 most reasoning-RL runs take this path (see [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html)), which is why the "four-role" picture is increasingly a *three*-role picture.
 
 ---
 
@@ -554,7 +592,7 @@ NeMo-Aligner leverages all three for both the policy and critic. The communicati
 
 ### The Reward Model and Critic in NeMo-Aligner
 
-In NeMo-Aligner's PPO implementation, the critic shares the same Megatron parallelism configuration as the policy (same TP, PP, DP degrees). The reward model can be a separate Megatron model or an external scoring function. The key difference from OpenRLHF: **all four components communicate via NCCL point-to-point sends**, not via Ray's object store.
+In NeMo-Aligner's PPO implementation, the critic shares the same Megatron parallelism configuration as the policy (same TP, PP, DP degrees). The reward model can be a separate Megatron model or an external scoring function. The key difference from OpenRLHF is *how* the roles are wired together. NeMo-Aligner splits PPO into **two separately launched jobs**: `train_gpt_ppo_actor.py` holds the policy, the frozen reference and the TRT-LLM generation engine, while `serve_ppo_critic.py` hosts the critic together with the reward model. *Inside* each job, every transfer is a NCCL collective over Megatron's TP/PP/DP process groups — no Ray, no object store, no serialization. *Between* the two jobs the actor is a client: NeMo-Aligner serves the critic and RM behind **PyTriton**, so value estimates and reward scores arrive as inference requests over HTTP/gRPC rather than through a shared communicator. That split is what lets the critic job be restarted or rescaled independently of the actor job.
 
 ```python
 # NeMo-Aligner PPO trainer (conceptual — simplified from actual source)
@@ -566,8 +604,11 @@ import torch
 
 class MegatronPPOTrainer:
     """
-    PPO trainer built on Megatron-LM. All communication uses NCCL.
-    Policy, critic, RM are all Megatron GPTModel instances.
+    PPO trainer built on Megatron-LM. Policy, critic and RM are all Megatron
+    GPTModel instances. Shown here as four local objects for readability; in
+    the real code only `policy` and `ref` are local — `critic` and `rm` are
+    thin clients to the PyTriton server started by `serve_ppo_critic.py`, and
+    `.infer()` is an inference request, not a collective.
     """
     def __init__(self, policy, critic, rm, ref_policy, cfg):
         self.policy = policy      # MegatronGPTModel
@@ -579,8 +620,9 @@ class MegatronPPOTrainer:
     @torch.no_grad()
     def compute_rewards_and_advantages(self, rollout_batch):
         """
-        Given generated sequences, compute per-token advantages.
-        Runs on the same Megatron process group — no Ray involved.
+        Given generated sequences, compute per-token advantages. The reference
+        forward is a local Megatron collective; the RM and critic calls go out
+        to the PyTriton server. No Ray involved either way.
         """
         # rm_scores: [batch, 1] scalar reward per sequence
         rm_scores = self.rm.infer(rollout_batch["tokens"])
@@ -646,7 +688,7 @@ class MegatronPPOTrainer:
 
 NeMo-Aligner uses **TensorRT-LLM** for the generation phase rather than vLLM. TRT-LLM compiles the model into a highly optimized TensorRT engine with INT8/INT4 weight quantization and fused kernels. This can yield significantly higher throughput than vLLM for fixed batch shapes — an important property during RLHF where rollout prompts are typically drawn from a fixed distribution.
 
-The trade-off: TRT-LLM engines must be recompiled (or use dynamic shapes carefully) if the model architecture changes. Reloading weights into a compiled TRT engine after a gradient update involves an "engine reload" API call that is more expensive than vLLM's in-place `load_weights` call.
+The trade-off: the engine is a *compiled* artifact, so its shapes (max batch size, max input/output length) and its architecture are baked in at build time and changing any of them forces a full rebuild — minutes, not milliseconds. Routine weight sync after a gradient update does *not* rebuild anything: TRT-LLM exposes a **refitter** that swaps new weights into the already-built engine in place (NeMo-Aligner wraps this as `GPTGenerateTRTLLM.refit()`), which is what makes the design viable at RLHF sync frequency and is broadly comparable in cost to vLLM's `load_weights`. The real friction is the build-time rigidity, not the per-step refit.
 
 ```bash
 # Convert a NeMo policy checkpoint to TRT-LLM for rollout
@@ -753,14 +795,22 @@ class RolloutActor:
                     **inputs,
                     max_new_tokens=max_new_tokens,
                     do_sample=True,
-                    temperature=0.9,
+                    # pi_old must be the distribution the tokens were ACTUALLY
+                    # sampled from. `output_logits` returns the RAW model
+                    # logits, and `PolicyActor.ppo_step` recomputes raw logits
+                    # too, so the ratio is only meaningful if sampling applies
+                    # no transform: hence temperature=1.0 and top_k=0 (HF's
+                    # default top_k is 50, which truncates the distribution).
+                    # Sample at temperature T instead and you MUST divide the
+                    # training-time logits by the same T before `log_softmax`
+                    # — that is what OpenRLHF and veRL do. Storing raw-logit
+                    # log-probs while sampling at T != 1 is the classic
+                    # "temperature mismatch" bug: the ratio is then internally
+                    # consistent but between two distributions, neither of
+                    # which produced the data.
+                    temperature=1.0,
+                    top_k=0,
                     return_dict_in_generate=True,
-                    # `output_logits` gives the RAW model logits. Do not use
-                    # `output_scores`: those are post-processing (here divided
-                    # by temperature=0.9), so their log-probs would describe a
-                    # different distribution than the one `PolicyActor.ppo_step`
-                    # recomputes — and the PPO ratio would never be 1 even
-                    # immediately after a weight sync.
                     output_logits=True,
                 )
             # Decode generated tokens (excluding prompt)
@@ -822,10 +872,25 @@ class PolicyActor:
         for prompt, resp, old_lp_seq, adv in zip(
             prompts, responses, old_logprobs, advantages
         ):
-            # Tokenize full sequence (prompt + response)
-            full_text = prompt + resp
-            tokens = self.tok(full_text, return_tensors="pt").to(self.device)
-            prompt_len = self.tok(prompt, return_tensors="pt")["input_ids"].shape[1]
+            # Tokenize prompt and response SEPARATELY, then concatenate ids.
+            # Tokenizing `prompt + resp` as one string and measuring the prompt
+            # on its own is the tempting version, and it is subtly wrong: BPE
+            # merges across the join, so the prompt can occupy a different
+            # number of tokens inside the concatenation than it does alone.
+            # `prompt_len` then slices the response off by one, and every
+            # `old_lp_seq[i]` gets paired with a different token's new
+            # log-prob. The `min(...)` truncation below would fix the length
+            # and hide the misalignment. Concatenating ids makes `prompt_len`
+            # exact by construction. (Production code goes further and carries
+            # the generated token ids from the rollout actor, never
+            # re-tokenizing decoded text at all.)
+            prompt_ids = self.tok(prompt, return_tensors="pt")["input_ids"]
+            resp_ids = self.tok(resp, return_tensors="pt",
+                                add_special_tokens=False)["input_ids"]
+            input_ids = torch.cat([prompt_ids, resp_ids], dim=1).to(self.device)
+            tokens = {"input_ids": input_ids,
+                      "attention_mask": torch.ones_like(input_ids)}
+            prompt_len = prompt_ids.shape[1]
 
             # Forward pass
             with torch.enable_grad():
@@ -1207,10 +1272,17 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
             """Per-sequence summed log-prob of the response tokens."""
             seq_logps = []
             for prompt, resp in zip(prompts, responses):
-                tokens = self.tok(prompt + resp, return_tensors="pt").to(self.device)
-                prompt_len = self.tok(
-                    prompt, return_tensors="pt"
-                )["input_ids"].shape[1]
+                # Concatenate ids, not strings, so `prompt_len` is exact —
+                # same BPE-boundary reason as in `PolicyActor.ppo_step`.
+                prompt_ids = self.tok(prompt, return_tensors="pt")["input_ids"]
+                resp_ids = self.tok(resp, return_tensors="pt",
+                                    add_special_tokens=False)["input_ids"]
+                input_ids = torch.cat(
+                    [prompt_ids, resp_ids], dim=1
+                ).to(self.device)
+                tokens = {"input_ids": input_ids,
+                          "attention_mask": torch.ones_like(input_ids)}
+                prompt_len = prompt_ids.shape[1]
                 with torch.no_grad():
                     logits = self.model(**tokens).logits          # [1, T, vocab]
                 resp_logits = logits[0, prompt_len - 1:-1, :]      # [resp_len, vocab]

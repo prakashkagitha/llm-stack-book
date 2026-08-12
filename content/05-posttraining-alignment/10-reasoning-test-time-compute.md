@@ -202,6 +202,8 @@ Brown et al. (*Large Language Monkeys: Scaling Inference Compute with Repeated S
 !!! example "Worked example: self-consistency improvement"
     Suppose we have a model that answers a given math problem correctly 60 % of the time on a single sample. What accuracy do we get with majority vote over N=16 samples?
 
+    Model the answer space as **binary** — every incorrect trace emits the *same* wrong answer — so that a plurality win requires a strict majority. This is the worst case for voting; we relax it at the end.
+
     We want $P(\text{majority correct})$, where each sample is correct with $p = 0.60$ and we need $k > N/2 = 8$ correct out of 16.
 
     $$
@@ -222,7 +224,15 @@ Brown et al. (*Large Language Monkeys: Scaling Inference Compute with Repeated S
     P(\text{majority correct}) = \sum_{k=33}^{64} \binom{64}{k} (0.3)^k (0.7)^{64-k} \approx 0.00025
     $$
 
-    Majority vote amplifies a *strong* signal but cannot rescue a *weak* one. This motivates better search — weighted by quality, not just count.
+    Now drop the binary assumption, because real math answers are open-ended. Self-consistency takes a *plurality* argmax, so the correct answer only has to beat the most popular *single* wrong answer. If the $1-p$ error mass is spread over $m$ distinct wrong answers at $(1-p)/m$ each, voting improves on single-sample accuracy whenever
+
+    $$
+    p > \frac{1 - p}{m},
+    $$
+
+    which for $m = 10$ is $p > 0.09$, not $p > 0.5$. Simulating $p = 0.30$, $m = 10$, $N = 64$ gives plurality accuracy $\approx 0.99$ — about $4000\times$ the binary-case number above. This is why Wang et al. report LaMDA-137B on GSM8K going 17.1 % → 27.7 % with self-consistency, a model far below 50 % single-sample accuracy.
+
+    The honest summary: majority vote amplifies a signal whose errors are *diffuse*, and fails only when the errors are concentrated on one systematic wrong answer that the model prefers to the truth. Because the payoff depends on that error structure and not on a threshold you can read off single-sample accuracy, measure `maj@k` directly. This also motivates better search — weighted by quality, not just count.
 
 ## Tree-of-Thought and Graph-of-Thought
 
@@ -524,10 +534,11 @@ class MCTSNode:
     P: float = 1.0        # prior from LM (log-prob of this branch)
 
     def ucb_score(self, c_puct: float = 2.0) -> float:
-        if self.N == 0:
-            return float("inf")
+        # No `inf` special case for N == 0: AlphaZero evaluates the same formula
+        # with Q = 0, N(s,a) = 0, so unvisited siblings are ordered by the LM
+        # prior P. Returning inf would tie them all and pick list order instead.
         parent_N = self.parent.N if self.parent else self.N
-        return self.Q + c_puct * self.P * math.sqrt(parent_N) / (1 + self.N)
+        return self.Q + c_puct * self.P * math.sqrt(max(parent_N, 1)) / (1 + self.N)
 
     def is_leaf(self) -> bool:
         return len(self.children) == 0
@@ -758,7 +769,7 @@ Critically, training-time and test-time scaling **compose**: a model trained wit
 Gains are highly task-dependent and model-dependent; treat them as order-of-magnitude intuitions, not precise figures.
 
 !!! tip "Practitioner tip: what actually works at ~100M parameters"
-    Test-time compute is not free capability — it amplifies whatever signal the base model already has, and the worked example above shows majority vote *hurting* when single-sample accuracy is below chance-of-agreement. At the scale of this book's capstone model ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)), the ordering of what pays off is: (1) self-consistency on a **narrow** task the model is already above ~50 % on — cheap, needs no extra model, and is the one technique that reliably helps; (2) a verifier where one exists, since a unit-test runner or exact-match grader costs nothing to build and converts coverage into accuracy; (3) short trained-in reasoning traces via RLVR, which do help but produce nothing resembling an o1-style 20K-token deliberation. Do **not** budget for a PRM or MCTS at 100M — you would be training a value model larger and harder to fit than the policy itself. Measure the payoff honestly with `pass@k` alongside `maj@k` as described above, using the harness in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
+    Test-time compute is not free capability — it amplifies whatever signal the base model already has, and the worked example above shows majority vote *hurting* when the model's errors pile up on one systematic wrong answer it prefers to the truth. At the scale of this book's capstone model ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)), the ordering of what pays off is: (1) self-consistency on a **narrow** task whose errors are scattered across many distinct wrong answers rather than concentrated on one — cheap, needs no extra model, and is the one technique that reliably helps; measure `maj@k` directly rather than gating on a single-sample-accuracy threshold; (2) a verifier where one exists, since a unit-test runner or exact-match grader costs nothing to build and converts coverage into accuracy; (3) short trained-in reasoning traces via RLVR, which do help but produce nothing resembling an o1-style 20K-token deliberation. Do **not** budget for a PRM or MCTS at 100M — you would be training a value model larger and harder to fit than the policy itself. Measure the payoff honestly with `pass@k` alongside `maj@k` as described above, using the harness in [Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html).
 
 !!! warning "Common pitfall: ORM reward hacking at scale"
     When you run best-of-N with an ORM for large N (e.g., N=256), the model samples increasingly improbable but "ORM-fooling" outputs. A solution that pattern-matches to correct-looking formatting can score highly even if the reasoning is circular. Switch to PRM or step-level verification once N > ~32. See [Reward Hacking, Over-Optimization & Alignment Failures](../05-posttraining-alignment/13-reward-hacking-failures.html) for the general problem.
@@ -774,7 +785,7 @@ Long reasoning traces change the inference serving problem. A trace that is 4,00
 
 Key practical points:
 
-- **Parallelise best-of-N** across model replicas, not within a single model. Each sample is fully independent.
+- **Parallelise best-of-N *within* a replica first.** Issue one request with `n=N` so the prompt is prefilled once, the $N$ continuations share the prefix KV, and they decode in a single batch. Fan out across replicas only once $N$ exceeds what one engine can batch — a replica that re-prefills the prompt and decodes at batch=1 is the memory-bandwidth-bound worst case.
 - **Disaggregate thinking from answering**: in prefill-decode disaggregated systems (see [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html)), the thinking phase is a long decode run. Route thinking requests to throughput-optimised nodes.
 - **Caching reasoning prefixes**: if many queries share a problem preamble, prefix KV caching (see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html)) provides significant savings.
 - **Budget forcing at the API level**: expose `thinking_tokens` as a first-class parameter so product teams can tune the cost-accuracy tradeoff per use case.
@@ -783,7 +794,7 @@ Key practical points:
 
 !!! key "Key Takeaways"
     - Chain-of-thought prompting improves accuracy by externalising intermediate state into the context window, converting a fixed-depth circuit into a variable-depth sequential computation.
-    - Self-consistency (majority vote over N samples) is a simple, highly parallelisable way to trade inference cost for accuracy; it amplifies strong signals but cannot rescue a fundamentally weak model.
+    - Self-consistency (majority vote over N samples) is a simple, highly parallelisable way to trade inference cost for accuracy; it amplifies any signal whose errors are diffuse — it fails only when the errors concentrate on a single systematic wrong answer that outvotes the truth, which is why it helps models well below 50 % single-sample accuracy on open-ended answers.
     - Always separate **coverage** (`pass@k`, measured with the unbiased $1 - \binom{n-c}{k}/\binom{n}{k}$ estimator) from **selection** (`maj@k`, best-of-N): coverage keeps rising with more samples while selection plateaus, and the gap between them is precisely the value of a sound verifier.
     - Process Reward Models score each reasoning step independently, providing a richer training and search signal than Outcome Reward Models, which only evaluate final answers.
     - Tree-of-Thoughts and MCTS extend the search to the reasoning *process* itself, pruning dead branches early and focusing compute on promising subtrees.
@@ -799,7 +810,7 @@ Key practical points:
 
     - [Wei et al., *Chain-of-Thought Prompting Elicits Reasoning in Large Language Models* (2022)](https://arxiv.org/abs/2201.11903) — the paper that showed few-shot CoT dramatically improves arithmetic and commonsense benchmarks.
     - [Kojima et al., *Large Language Models are Zero-Shot Reasoners* (2022)](https://arxiv.org/abs/2205.11916) — "Let's think step by step" as a universal zero-shot CoT trigger.
-    - [Wang et al., *Self-Consistency Improves Chain of Thought Reasoning in Language Models* (2023)](https://arxiv.org/abs/2203.11171) — majority vote over N sampled reasoning traces; the canonical best-of-N baseline.
+    - [Wang et al., *Self-Consistency Improves Chain of Thought Reasoning in Language Models* (2023)](https://arxiv.org/abs/2203.11171) — majority vote over N sampled reasoning traces; the canonical *verifier-free* repeated-sampling baseline (`maj@k`).
     - [Lightman et al., *Let's Verify Step by Step* (2023)](https://arxiv.org/abs/2305.20050) — human-annotated step-level supervision; showed process reward models outperform outcome reward models for guiding search.
 
     **Recent advances (2023–2026)**
@@ -877,7 +888,7 @@ Key practical points:
     3 (0.40)^2 (0.60) + (0.40)^3 = 3 (0.16)(0.60) + 0.064 = 0.288 + 0.064 = 0.352.
     $$
 
-    Here accuracy *drops* from $0.400$ to $0.352$, a change of $-0.048$. The sign flips at $p = 0.5$: majority vote amplifies a signal that is already better than chance but actively degrades one that is worse than chance. This is the chapter's point that self-consistency "amplifies a strong signal but cannot rescue a weak one" -- voting concentrates probability on whatever the model most often produces, which only helps when the single-sample accuracy is above $\tfrac{1}{2}$ (for the two-outcome case).
+    Here accuracy *drops* from $0.400$ to $0.352$, a change of $-0.048$. The sign flips at $p = 0.5$: majority vote amplifies a signal that is already better than chance but actively degrades one that is worse than chance. This is the chapter's point that self-consistency amplifies whatever the model most often produces -- with only two outcomes that helps exactly when single-sample accuracy is above $\tfrac{1}{2}$. Note that the $\tfrac{1}{2}$ threshold is an artefact of the two-outcome assumption: with $m$ distinct wrong answers sharing the error mass, plurality voting pays off whenever $p > (1-p)/m$, which is far below $\tfrac{1}{2}$ for open-ended answers.
 
 **3.** *(Conceptual)* The chapter's "Common pitfall" warns that best-of-N with an *outcome* reward model (ORM) degrades as $N$ grows large (e.g., $N = 256$), and recommends switching to a process reward model (PRM) once $N \gtrsim 32$. (a) Explain why increasing $N$ makes an ORM *worse* rather than monotonically better. (b) Explain concretely why a PRM is more robust to this failure, referencing how PRM scores are aggregated in the chapter's PRM-guided best-of-N.
 
@@ -887,12 +898,12 @@ Key practical points:
     (b) A PRM scores *each reasoning step* $r_\text{PRM}(x, y_{1:t})$, and the chapter aggregates these into a trace score using the minimum (the "weakest link"), $s_i = \min_t r_\text{PRM}(x, y_{1:t})$, or the product $\prod_t r_\text{PRM}(x, y_{1:t})$. To score highly under either rule a trace must be judged sound at *every* step, not just at the end. A lucky-but-flawed trace that reaches a plausible final answer through a broken intermediate step is caught by that step's low PRM score, which drags down the min (and the product). This gives many independent gates a hackable output must pass, making the aggregate far harder to fool than a single final-answer scalar -- which is why PRM-guided search scales further before saturating.
 
 **4.** *(Quantitative)* Consider one MCTS selection step using the chapter's PUCT rule,
-   $\text{score}(s,a) = Q(s,a) + c_\text{puct}\, P(a\mid s)\, \dfrac{\sqrt{N(s)}}{1 + N(s,a)}$, with $c_\text{puct} = 2$ and parent visit count $N(s) = 25$. The parent has two children:
+   $\text{score}(s,a) = Q(s,a) + c_\text{puct}\, P(a\mid s)\, \dfrac{\sqrt{N(s)}}{1 + N(s,a)}$, with $c_\text{puct} = 2$ and parent visit count $N(s) = 25$. The parent's visits are spread over several children; consider two of them:
 
    - Child A (well-explored): $Q = 0.80$, $P = 0.30$, $N(s,a) = 16$.
    - Child B (barely explored): $Q = 0.40$, $P = 0.50$, $N(s,a) = 1$.
 
-   Compute both PUCT scores and state which child is selected. Interpret the result in terms of the exploration/exploitation tradeoff.
+   Compute both PUCT scores and state which of the two is selected. Interpret the result in terms of the exploration/exploitation tradeoff.
 
 ??? note "Solution"
     First, $\sqrt{N(s)} = \sqrt{25} = 5$ and $c_\text{puct} = 2$.
@@ -909,7 +920,7 @@ Key practical points:
     \text{score}_B = 0.40 + 2 \cdot 0.50 \cdot \frac{5}{1 + 1} = 0.40 + \frac{5.0}{2} = 0.40 + 2.50 = 2.90.
     $$
 
-    Since $2.90 > 0.976$, **Child B is selected**.
+    Since $2.90 > 0.976$, **Child B is preferred over Child A**.
 
     Interpretation: Child A has the higher exploitation term ($Q = 0.80$ vs $0.40$), so on estimated value alone A looks better. But A has already been visited 16 times, so its exploration bonus is small ($0.176$), while B has been visited only once and carries a high prior ($P = 0.50$), giving it a large bonus ($2.50$). PUCT therefore steers the search toward the under-explored, high-prior branch even though its current mean value is lower. This is exactly the intended behavior: the exploration term shrinks as $1/(1 + N(s,a))$, so nodes get revisited until their visit counts are large enough that the (now well-estimated) $Q$ term dominates the choice.
 

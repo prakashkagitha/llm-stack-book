@@ -12,7 +12,7 @@ $$
 \nabla_\theta J(\theta) = \mathbb{E}_{\tau\sim\pi_\theta}\!\left[\sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t\mid s_t)\, \Psi_t \right]
 $$
 
-where $\Psi_t$ is *some* measure of how good action $a_t$ was. The whole art of variance reduction is choosing $\Psi_t$. The naive choice $\Psi_t = R(\tau)$ (the full trajectory return) is unbiased but catastrophically high-variance: it credits every token in a 500-token response with the *entire* reward, including the reward earned by tokens that came after it. The causality trick replaces it with the **reward-to-go** $\sum_{t'\ge t}r_{t'}$, and subtracting a state-dependent **baseline** $b(s_t)$ leaves the gradient unbiased while shrinking variance. The optimal baseline is the value function $V(s_t)$, and the resulting quantity is the **advantage**:
+where $\Psi_t$ is *some* measure of how good action $a_t$ was. The whole art of variance reduction is choosing $\Psi_t$. The naive choice $\Psi_t = R(\tau)$ (the full trajectory return) is unbiased but catastrophically high-variance: it credits every token in a 500-token response with the *entire* reward, including the reward earned by tokens that came after it. The causality trick replaces it with the **reward-to-go** $\sum_{t'\ge t}r_{t'}$, and subtracting a state-dependent **baseline** $b(s_t)$ leaves the gradient unbiased — and, for a well-chosen baseline, shrinks its variance. The standard choice is the value function $V(s_t)$. It is not literally the variance-minimizing baseline (that one weights returns by $\|\nabla_\theta\log\pi_\theta\|^2$ and is never computed in practice), but it is near-optimal, and it makes the resulting quantity the **advantage**:
 
 $$
 A_t = Q(s_t,a_t) - V(s_t).
@@ -261,7 +261,7 @@ def policy_loss_kl_in_loss(logp, logp_old, logp_ref, advantages, mask,
 
 !!! tip "Practitioner tip"
 
-    A recent and increasingly common choice in **RLVR / reasoning** runs is to drop the KL penalty entirely ($\beta=0$). When the reward is a *verifiable* correctness signal (the answer is right or wrong), there is no reward model to hack, and the main job of KL — preventing exploitation of a flawed reward model — disappears. DeepSeek-R1-Zero and several follow-ups report better reasoning gains with no KL term, letting the policy move far from the reference. Keep KL when your reward is a *learned* RM (it can be hacked); consider dropping it when your reward is a *verifier*. See [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html).
+    A recent and increasingly common choice in **RLVR / reasoning** runs is to drop the KL penalty entirely ($\beta=0$). When the reward is a *verifiable* correctness signal (the answer is right or wrong), there is no reward model to hack, and the main job of KL — preventing exploitation of a flawed reward model — disappears. DAPO drops the KL term outright — its argument is that long-CoT RL is *supposed* to move the policy far from the reference, so the constraint only gets in the way — and R1-Zero-style reproductions such as Open-Reasoner-Zero train without it and report equal or better reasoning gains. (Note that DeepSeek's own published GRPO objective, including for R1-Zero, still carries the $-\beta D_{\mathrm{KL}}$ term; the KL-free recipes are the follow-up work.) Keep KL when your reward is a *learned* RM (it can be hacked); consider dropping it when your reward is a *verifier*. See [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html).
 
 ### Adaptive KL control
 
@@ -499,11 +499,15 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
                        | ((ratio < 1 - eps_low) & (adv < 0))).float()
         clipfrac = (clipped_sel * mask).sum() / mask.sum()
         approx_kl = (kl * mask).sum() / mask.sum()
+        # Mask this one too: log-probs at padding positions are garbage, and
+        # after the [-20, 20] clamp a single pad token can contribute e^20 to
+        # an unmasked mean and swamp the diagnostic.
+        ratio_mean = (ratio * mask).sum() / mask.sum().clamp_min(1.0)
     return loss, {"clipfrac": clipfrac.item(), "kl": approx_kl.item(),
-                  "entropy": ent.item(), "ratio_mean": ratio.mean().item()}
+                  "entropy": ent.item(), "ratio_mean": ratio_mean.item()}
 ```
 
-This is exactly the update used for the book's from-scratch model: the Stack-100M RLVR stage runs group size $G=8$–$16$ on a verifiable task, $\beta=0$ (no KL, no reference model resident — a real memory saving at small scale), clip-higher, a single inner epoch (so $\rho_t\equiv1$ and the clip is a safety net rather than an active constraint), token-mean with a fixed denominator, global-norm gradient clipping at 1.0, and a learning rate an order of magnitude below the SFT one. Small models make one thing harder: their pass rate on any given prompt is low, so all-wrong groups (zero advantage) are common and dynamic sampling / curriculum filtering matters more than it does at 7B. The full recipe, with the prompt set and the reward function, is in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
+This is essentially the update used for the book's from-scratch model, with the coefficients set for a small model: the Stack-100M RLVR stage runs group size $G=8$ on a verifiable task, clip-higher (0.2/0.28), a small KL-in-loss term ($\beta\approx0.02$ — we *keep* the leash at this scale because the goal is a narrow tool-use gain without collateral damage to general chat), two inner epochs per rollout batch (so $\rho_t\ne1$ from the second gradient step on and the clip is a live constraint, not just a safety net), token-mean over the generated tokens (DAPO's token-level loss, the `mask.sum()` denominator above), global-norm gradient clipping at 1.0, and a learning rate an order of magnitude below the SFT one. Small models make one thing harder: their pass rate on any given prompt is low, so all-wrong groups (zero advantage) are common and dynamic sampling / curriculum filtering matters more than it does at 7B. The full recipe, with the prompt set and the reward function, is in [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
 
 ### The same knobs in verl and TRL
 
@@ -537,7 +541,9 @@ cfg = GRPOConfig(
     epsilon_high=0.28,          # eps_high  -> clip-higher (DAPO)
     beta=0.0,                   # no KL term: verifiable reward, nothing to hack
     num_iterations=1,           # one inner update per rollout batch -> on-policy, ratio == 1
-    loss_type="dr_grpo",        # length-independent denominator (see aggregation above)
+    loss_type="bnpo",           # token-mean over the batch: the mask.sum() denominator
+                                # used above. Switch to "dr_grpo" for the fixed,
+                                # length-independent denominator (see aggregation above).
     max_grad_norm=1.0,          # global-norm gradient clipping
     learning_rate=1e-6,
     bf16=True,
@@ -618,7 +624,7 @@ Read the logged metrics with the same decoder ring: TRL's `clip_ratio` and verl'
     Padding positions carry advantage $0$. With 40% of the tensor being zeros:
 
     - **Mean is pulled toward zero.** The true masked mean is $\mu_{\text{real}} = \frac{1}{N_{\text{real}}}\sum_{\text{real}} A_t$. The padded mean is $\mu_{\text{pad}} = \frac{N_{\text{real}}}{N_{\text{real}}+N_{\text{pad}}}\,\mu_{\text{real}} = 0.6\,\mu_{\text{real}}$. So the mean is shrunk by the fraction of real tokens.
-    - **Std/variance is shrunk.** The padded variance mixes in $0.4$ worth of points sitting at value $0$ (near or below the real mean), which reduces the spread. Concretely the padded second moment about the padded mean is smaller than the real variance, so $\sigma_{\text{pad}} < \sigma_{\text{real}}$.
+    - **Std/variance is shrunk.** Mixing a fraction $p=0.6$ of real values (mean $\mu_{\text{real}}$, variance $v$) with $0.4$ worth of points sitting at exactly $0$ gives the pooled variance $\sigma^2_{\text{pad}} = p\,v + p(1-p)\,\mu_{\text{real}}^2 = 0.6\,v + 0.24\,\mu_{\text{real}}^2$. Because GRPO advantages are already approximately zero-mean (the group baseline was just subtracted), $\mu_{\text{real}}\approx0$ and this collapses to $\sigma^2_{\text{pad}}\approx0.6\,v$, so $\sigma_{\text{pad}} < \sigma_{\text{real}}$. (The shrinkage is not unconditional — it needs $p\,\mu_{\text{real}}^2 < v$, i.e. $|\mu_{\text{real}}| < \sigma_{\text{real}}/\sqrt{p} \approx 1.29\,\sigma_{\text{real}}$ — but that is comfortably satisfied after group centering.)
 
     After whitening, each real token gets $\hat A_t = (A_t - \mu_{\text{pad}})/(\sigma_{\text{pad}}+\varepsilon)$. Because $\sigma_{\text{pad}}$ is too small, the real advantages are **divided by too small a number and therefore scaled UP** (inflated) relative to correct whitening, and they are shifted by the wrong (too-small) mean. Worse, the scale factor depends on *how much padding happened to land in the batch* — so the effective learning rate silently varies with batch composition. This is exactly the pitfall the chapter warns about: always reduce with the loss mask (`masked_whiten`).
 

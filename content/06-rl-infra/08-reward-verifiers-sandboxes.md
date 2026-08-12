@@ -10,7 +10,7 @@ Every reward function takes a (prompt, completion) pair and optionally a referen
 
 | Family | Examples | Pros | Cons |
 |---|---|---|---|
-| **Rule-based verifier** | Math equivalence, regex match, code unit test | Deterministic, zero cost at training time | Only defined for tasks with ground truth |
+| **Rule-based verifier** | Math equivalence, regex match, code unit test | Deterministic; no reward model to train or serve (CPU cost only — code verifiers still spend real CPU throughput during training) | Only defined for tasks with ground truth |
 | **LLM-judge** | A frontier model (GPT-5, Claude) scoring correctness, helpfulness | Works for open-ended tasks | Expensive, noisy, gameable |
 | **Learned reward model** | Bradley-Terry model trained on preference data | Smooth signal, general-purpose | Reward hacking, needs fresh data |
 
@@ -497,9 +497,9 @@ SANDBOX_IMAGE = "python:3.11-slim"
 # and run as a non-root user, but we keep it simple here.
 
 SANDBOX_RUNNER = """
-import sys, io, json, traceback, signal, resource
+import sys, os, io, json, traceback, signal, resource
 
-# Hard memory limit: 256 MB
+# Hard memory limit: 256 MB. Set once here; forked children inherit it.
 resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
 
 # Per-task wall-clock guard, set below the pool's client-side timeout so a
@@ -521,24 +521,16 @@ def _on_alarm(signum, frame):
 
 signal.signal(signal.SIGALRM, _on_alarm)
 
-# Results are framed as one JSON object per line on the real stdout, so
-# generated code must not be able to write there — a stray print() would be
-# read as the result line and score a passing solution 0.0.
-_result_stdout = sys.stdout
 
-# Read tasks from stdin until EOF
-for line in sys.stdin:
-    task = json.loads(line)
-    code = task["code"]
-    tests = task["tests"]
+def run_task(task):
+    # Execute one task. Only ever called inside a forked child.
     result = {"passed": 0, "total": 0, "error": ""}
-
     sys.stdout = io.StringIO()   # swallow prints from generated code
     signal.alarm(TASK_TIMEOUT)
     try:
         exec_globals = {}
-        exec(compile(code, "<generated>", "exec"), exec_globals)
-        exec(compile(tests, "<tests>", "exec"), exec_globals)
+        exec(compile(task["code"], "<generated>", "exec"), exec_globals)
+        exec(compile(task["tests"], "<tests>", "exec"), exec_globals)
         fns = [v for k, v in exec_globals.items() if k.startswith("test_")]
         result["total"] = len(fns)
         for fn in fns:
@@ -557,7 +549,52 @@ for line in sys.stdin:
         result["total"] = 1
     finally:
         signal.alarm(0)
-        sys.stdout = _result_stdout
+    return result
+
+
+# Read tasks from stdin until EOF. Each task runs in a FRESH forked child:
+# a new `exec_globals` dict is not isolation, because `exec` hands the code
+# the real `builtins` plus process-wide `sys.modules`, so one adversarial
+# completion would permanently poison every later task on this worker. E.g.
+# `import builtins; builtins.print = lambda *a, **k: _p('{"passed":1,...}')`
+# hijacks the result line below forever, paying reward 1.0 on *other*
+# prompts. Fork-per-task is the cheap version of the snapshot-restore the
+# architecture section calls for: the parent never runs generated code, and
+# nothing the child touched (patched builtins, imported modules, threads,
+# leaked memory) survives its exit.
+for line in sys.stdin:
+    task = json.loads(line)
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(read_fd)
+        # Redirect fd 1 itself, not just sys.stdout: generated code can call
+        # os.write(1, ...) directly and inject a fake result line otherwise.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
+        try:
+            payload = json.dumps(run_task(task))
+        except BaseException:
+            payload = json.dumps({"passed": 0, "total": 1, "error": "child"})
+        os.write(write_fd, payload.encode())
+        os._exit(0)
+
+    os.close(write_fd)
+    reader = os.fdopen(read_fd, "rb")
+    signal.alarm(TASK_TIMEOUT + 1)   # child may have disabled its own alarm
+    try:
+        raw = reader.read()          # EOF when the child exits
+    except TaskTimeout:
+        os.kill(pid, signal.SIGKILL)
+        raw = b""
+    finally:
+        signal.alarm(0)
+        reader.close()
+        os.waitpid(pid, 0)
+
+    try:
+        result = json.loads(raw)
+    except Exception:
+        result = {"passed": 0, "total": 1, "error": "sandbox child died"}
 
     print(json.dumps(result), flush=True)
 """
@@ -786,15 +823,23 @@ async def judge_single(
     m = re.search(r"<score>(\d+(?:\.\d+)?)</score>", text)
     if m:
         raw_score = float(m.group(1))
-        return min(max(raw_score / 10.0, 0.0), 1.0)
-    
-    # Fallback: try to parse any integer at the end of the response
-    nums = re.findall(r"\b(\d+)\b", text)
-    if nums:
-        raw = float(nums[-1])
-        return min(max(raw / 10.0, 0.0), 1.0)
-    
-    return 0.5  # Uncertain — return neutral score
+        # Reject out-of-range values instead of clamping (see below).
+        if 0.0 <= raw_score <= 10.0:
+            return raw_score / 10.0
+
+    # Fallback: a number at the very END of the response, and only if it is a
+    # legal score. Do NOT scan the whole text with re.findall and clamp: a
+    # truncated judge (max_tokens cuts the CoT before the <score> tag) leaves
+    # the last number somewhere inside <thinking>, and clamping turns any
+    # value >= 10 into the MAXIMUM reward — e.g. "...the reference says 244"
+    # scores 1.0 on a completion the judge was about to reject. That is a
+    # false-positive channel biased toward long completions, i.e. it amplifies
+    # the verbosity bias discussed in the next section.
+    m = re.search(r"(\d+(?:\.\d+)?)\s*$", text.strip())
+    if m and 0.0 <= float(m.group(1)) <= 10.0:
+        return float(m.group(1)) / 10.0
+
+    return 0.5  # Unparseable or out-of-range — return neutral score
 
 
 async def batch_judge(
@@ -1071,9 +1116,11 @@ None of the code above is useful until a trainer calls it. The two libraries you
 **TRL.** `GRPOTrainer` takes a list of plain Python callables in `reward_funcs`. Each is called once per generation batch with keyword arguments `prompts`, `completions`, and *every extra column of your dataset* (so a `gold_answer` column arrives as a `gold_answer=` kwarg), and must return one float per completion. Multiple functions are combined with `GRPOConfig(reward_weights=[...])` — that is where the multi-objective weighting of the previous section actually lives, and TRL logs each component separately so you can watch format and correctness decouple.
 
 ```python
+import re
+
 from datasets import Dataset
 from trl import GRPOConfig, GRPOTrainer
-from math_verifier import math_reward, extract_answer_from_completion
+from math_verifier import math_reward
 
 def correctness_reward(completions, gold_answer, **kwargs) -> list[float]:
     """
@@ -1088,8 +1135,16 @@ def correctness_reward(completions, gold_answer, **kwargs) -> list[float]:
             for t, g in zip(texts, gold_answer)]
 
 def format_reward(completions, **kwargs) -> list[float]:
+    """
+    Reward the *declared* format only: a \\boxed{} answer. Do not reuse
+    extract_answer_from_completion here — its fallbacks (an <answer> tag, and
+    the loose "the answer is X" regex) would pay full format credit for
+    exactly the unstructured output this component exists to eliminate, and
+    would disagree with the `has_boxed` definition used by the end-to-end
+    pipeline later in this chapter.
+    """
     texts = [c[0]["content"] if isinstance(c, list) else c for c in completions]
-    return [1.0 if extract_answer_from_completion(t) else 0.0 for t in texts]
+    return [1.0 if re.search(r'\\boxed\s*\{', t) else 0.0 for t in texts]
 
 ds = Dataset.from_dict({
     "prompt": ["What is 1/2 + 1/2?"],
@@ -1152,6 +1207,7 @@ Deploy behind a load balancer; run multiple instances for throughput.
 import asyncio
 import hashlib
 import json
+import re
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -1165,8 +1221,11 @@ from llm_judge import batch_judge
 
 # Global sandbox pool — initialized once at startup
 _sandbox_pool: Optional[SandboxPool] = None
-# Simple in-memory cache (use Redis in production)
-_cache: dict[str, float] = {}
+# Simple in-memory cache (use Redis in production). Cache the *breakdown*
+# alongside the total: returning breakdown={} on a hit would silently drop
+# every cached sample from the per-component logs, biasing the format-vs-
+# correctness statistics you are supposed to be watching toward cache misses.
+_cache: dict[str, tuple[float, dict]] = {}
 
 
 @asynccontextmanager
@@ -1214,16 +1273,28 @@ def _cache_key(req: RewardRequest) -> str:
 async def compute_reward(req: RewardRequest):
     key = _cache_key(req)
     if key in _cache:
-        return RewardResponse(reward=_cache[key], cached=True, breakdown={})
+        cached_total, cached_breakdown = _cache[key]
+        return RewardResponse(
+            reward=cached_total, cached=True, breakdown=cached_breakdown
+        )
 
     breakdown = {}
     total = 0.0
+    cacheable = True
 
     if req.task_type == "math":
         gold = req.metadata.get("gold_answer", "")
-        r = math_reward(req.prompt, req.completion, gold)
-        breakdown["correctness"] = r
-        total = r
+        # format_bonus=0.0 keeps the logged "correctness" component *pure*:
+        # with the built-in 0.1 the server would report correctness = 0.1 for a
+        # well-formatted but wrong answer, so a policy that emits \boxed{0}
+        # every time would log 10% "correctness". The shaping term is reported
+        # (and weighted) separately, matching the pipeline at the end of this
+        # chapter.
+        correct = math_reward(req.prompt, req.completion, gold, format_bonus=0.0)
+        fmt = 1.0 if re.search(r'\\boxed\s*\{', req.completion) else 0.0
+        breakdown["correctness"] = correct
+        breakdown["format"] = fmt
+        total = correct + 0.1 * fmt
 
     elif req.task_type == "code":
         tests = req.metadata.get("test_suite", "")
@@ -1237,6 +1308,13 @@ async def compute_reward(req: RewardRequest):
         r = out["passed"] / max(out["total"], 1)
         breakdown["code_tests"] = r
         total = r
+        # execute() also returns error="..." when the *worker* died, the image
+        # was still pulling, or the client-side timeout fired — infrastructure
+        # failures, not judgments about this completion. Caching that 0.0 would
+        # pin a permanent false negative on this (prompt, completion) pair, the
+        # exact failure the false-negative section warns about. Recompute
+        # instead; correct results are cheap to cache and always clean.
+        cacheable = not out.get("error")
 
     elif req.task_type == "judge":
         reference = req.metadata.get("reference", "")
@@ -1250,7 +1328,8 @@ async def compute_reward(req: RewardRequest):
     else:
         raise HTTPException(400, f"Unknown task_type: {req.task_type}")
 
-    _cache[key] = total
+    if cacheable:
+        _cache[key] = (total, breakdown)
     return RewardResponse(reward=total, cached=False, breakdown=breakdown)
 
 
@@ -1367,7 +1446,7 @@ async def compute_rewards_for_batch(
 ```
 
 !!! key "Key Takeaways"
-    - Rule-based verifiers (math equivalence, code unit tests) are the gold standard for RLVR: deterministic, free at inference time, and hard to hack compared to learned reward models.
+    - Rule-based verifiers (math equivalence, code unit tests) are the gold standard for RLVR: deterministic, with no reward model to train or serve on GPU, and hard to hack compared to learned reward models — though code verifiers still cost real CPU throughput inside the training step.
     - Math verifiers must do symbolic/numeric normalization, not string equality, and must match braces rather than regex `\boxed{...}`. Sympy with a numeric fallback handles most competition math; in production reach for `math-verify`.
     - A verifier is a classifier: audit its false-negative rate on labelled rollouts — in group-relative RL a rejected-but-correct completion gets a *negative* advantage, actively training the policy away from a valid solution — and keep watching it with fuzzing, hold-out test suites, and within-group reward variance.
     - Trainers consume rewards through a narrow contract — TRL's `reward_funcs` callables (weighted via `GRPOConfig.reward_weights`) and veRL's `custom_reward_function.compute_score` — and they run it synchronously in the training step, which is why heavy verifiers belong behind a reward server.

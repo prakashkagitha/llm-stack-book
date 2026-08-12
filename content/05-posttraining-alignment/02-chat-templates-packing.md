@@ -143,9 +143,12 @@ def format_chatml(
     """
     Render a list of ChatMessage objects to a ChatML string.
 
-    If add_generation_prompt=True (used during inference and at the
-    end of training examples), appends '<|im_start|>assistant\n' so
-    the model knows it should generate next.
+    If add_generation_prompt=True (used at INFERENCE time), appends
+    '<|im_start|>assistant\n' so the model knows it should generate next.
+    Training examples already end with a complete assistant turn, so the
+    training path must pass add_generation_prompt=False — appending the
+    header there would leave a dangling assistant turn with empty content
+    that never appears at inference time.
     """
     pieces: list[str] = []
     for msg in messages:
@@ -247,7 +250,7 @@ def build_chatml_loss_mask(
 ```
 
 !!! example "Worked example: token counts and mask positions"
-    Consider this three-message exchange tokenised by a Qwen-2 tokenizer (vocabulary size 151,936):
+    Consider this three-message exchange tokenised by a Qwen-2 tokenizer (`len(tokenizer)` ≈ 151.6k; the model's embedding table is padded up beyond that — 151,936 or 152,064 depending on the size — which is exactly the "reserve spare ids" headroom discussed later in this chapter):
 
     ```
     messages = [
@@ -273,7 +276,7 @@ def build_chatml_loss_mask(
 
     Total ≈ 30 tokens. Of those, **only the assistant content** (tokens for "4." plus `<|im_end|>`) — roughly 3 tokens — have `loss_mask = True`. The rest (system turn, user turn, role headers) are masked to zero. This is the "train on completions only" principle.
 
-    For a dataset of on the order of 100,000 conversations averaging ~200 tokens each, roughly 30–40% of tokens are typically assistant tokens and thus supervised. Packing (discussed below) ensures we do not pay for the other 60–70% with wasted sequence length.
+    For a dataset of on the order of 100,000 conversations averaging ~200 tokens each, roughly 30–40% of tokens are typically assistant tokens and thus supervised. The other 60–70% are prompt tokens: they are real content that must occupy the sequence — the assistant tokens attend to them — so every forward pass pays for them whether or not you pack. Packing (discussed below) does not recover that compute; what it eliminates is the *separate* waste from padding.
 
 ### Shipping It: The Jinja Template and the New Special Tokens
 
@@ -323,7 +326,7 @@ input_ids = torch.tensor(out["input_ids"])
 loss_mask = torch.tensor(out["assistant_masks"], dtype=torch.bool)
 ```
 
-New special tokens also need embeddings, and a row initialised far outside the distribution of the existing embedding matrix trains slowly — because each new token appears at most a handful of times per batch, it can sit near its initialisation for a long time, which is why `<|im_end|>` is sometimes emitted unreliably early in a run. Modern `transformers` already handles this: `resize_token_embeddings(new_num_tokens, pad_to_multiple_of=None, mean_resizing=True)` defaults to `mean_resizing=True` (since v4.46) and samples the appended rows from a multivariate normal fitted to the mean and covariance of the old rows, so they start in-distribution *and* distinct from one another.
+New special tokens also need embeddings, and a row initialised far outside the distribution of the existing embedding matrix trains slowly — its norm and direction resemble no trained row, so the logits it participates in start out essentially arbitrary and it takes many steps to be pulled onto the manifold the rest of the table occupies. That, not scarcity of gradient, is why `<|im_end|>` is sometimes emitted unreliably early in a run. Modern `transformers` already handles this: `resize_token_embeddings(new_num_tokens, pad_to_multiple_of=None, mean_resizing=True)` defaults to `mean_resizing=True` (since v4.46) and samples the appended rows from a multivariate normal fitted to the mean and covariance of the old rows, so they start in-distribution *and* distinct from one another.
 
 ```python
 old_vocab = model.get_input_embeddings().weight.shape[0]
@@ -421,7 +424,7 @@ Not all models have a dedicated system role. Llama 2's template embeds the syste
 
 ### Role Tokens as Special Tokens
 
-When role markers like `<|im_start|>` are added to the tokenizer vocabulary, they receive their own embedding vectors in the model's embedding table. These are freshly initialised at fine-tuning time (unless the base model already included them during pretraining, as many modern bases do) — by default, sampled to match the mean and covariance of the existing rows, as described above. Because only a handful of examples per token appear in each gradient step, the embeddings for `<|im_end|>` and role names typically need a higher learning rate or more warm-up steps than ordinary parameters, or they remain near their initialisation.
+When role markers like `<|im_start|>` are added to the tokenizer vocabulary, they receive their own embedding vectors in the model's embedding table. These are freshly initialised at fine-tuning time (unless the base model already included them during pretraining, as many modern bases do) — by default, sampled to match the mean and covariance of the existing rows, as described above. Note that these rows do not suffer from lack of gradient: `<|im_start|>` and `<|im_end|>` occur once per turn and are therefore among the *most* frequent tokens in an SFT corpus. The problem is purely the starting point, which is why practitioners often give the new embedding rows a higher learning rate or more warm-up steps than ordinary parameters (on top of the in-distribution re-initialisation above) so they are pulled into the trained manifold quickly rather than lingering near their initialisation.
 
 One practical consequence: if you fine-tune a model on ChatML format but then serve it with a Llama 3-format prompt, the special tokens your model was trained with may not exist in the serving tokenizer — and vice versa. Always version and lock your tokenizer alongside your model weights.
 

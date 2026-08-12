@@ -164,10 +164,10 @@ The cleanest way to think about the implementation — and how `peft` actually d
 Directly optimizing $P^K_\ell, P^V_\ell$ leads to training instability — the prefix tensors exist in a high-dimensional continuous space with no warm-start. Li & Liang found that routing the prefix through a small MLP helps:
 
 $$
-P^\ell = \text{MLP}_\theta(e^\ell),
+P_i = \text{MLP}_\theta(e_i) \in \mathbb{R}^{2 L d_{kv}},
 $$
 
-where $e^\ell$ is a row of a small trainable embedding matrix $E \in \mathbb{R}^{k \times d'}$ (with $d' \ll d$). At inference time, the MLP can be discarded; only the resulting $P^\ell$ tensors are stored.
+where $e_i$ is row $i$ of a small trainable embedding matrix $E \in \mathbb{R}^{k \times d'}$ (with $d' \ll d$) — one row per *prefix position* $i = 1, \dots, k$, not per layer. The MLP emits all layers' entries for that position at once; the output is then reshaped into the per-layer $P^K_\ell, P^V_\ell$. At inference time, the MLP can be discarded; only the resulting prefix tensors are stored.
 
 ```python
 import torch
@@ -176,8 +176,8 @@ import torch.nn as nn
 class PrefixEncoder(nn.Module):
     """
     Generates per-layer prefix key/value tensors from a compact embedding.
-    At inference, call `.materialize()` to get the final prefix tensors
-    (the MLP can then be discarded to save memory).
+    At inference, call the module once (`encoder()`) to materialize the final
+    prefix tensors; the MLP can then be discarded to save memory.
     """
     def __init__(self, num_layers: int, num_heads: int, d_head: int,
                  prefix_len: int = 10, bottleneck_dim: int = 512):
@@ -323,9 +323,10 @@ class IA3Attention(nn.Module):
         """
         Bake IA3 scales into W_k and W_v so inference has zero overhead.
         Idempotent: calling it twice would otherwise square the scales.
-        Note we do NOT delete l_k / l_v — forward() still refers to them,
-        and dropping them would break the very inference path we just
-        optimized. The `folded` flag is what makes the scaling disappear.
+        The `folded` flag is what makes the scaling disappear: the folded
+        forward path never reads l_k / l_v. We still keep them around so the
+        fold can be inspected or undone and so the module can run unfolded
+        (e.g. to resume training), not because inference needs them.
         """
         if self.folded:
             return
@@ -463,12 +464,12 @@ Model soups (Wortsman et al., 2022) used this idea to combine several fine-tuned
 Linear interpolation can reduce the norm of the merged tensor when $\theta_A$ and $\theta_B$ point in different directions (just as the average of two unit vectors on a sphere has smaller magnitude). SLERP corrects this by interpolating along the great circle:
 
 $$
-\text{SLERP}(\theta_A, \theta_B, t) = \frac{\sin((1-t)\Omega)}{\sin\Omega}\,\hat{\theta}_A + \frac{\sin(t\Omega)}{\sin\Omega}\,\hat{\theta}_B,
+\text{SLERP}(\theta_A, \theta_B, t) = \frac{\sin((1-t)\Omega)}{\sin\Omega}\,\theta_A + \frac{\sin(t\Omega)}{\sin\Omega}\,\theta_B,
 $$
 
-where $\Omega = \arccos(\hat{\theta}_A \cdot \hat{\theta}_B)$ is the angle between the unit-normalized versions of the two vectors and $t \in [0,1]$ is the interpolation parameter.
+where $\Omega = \arccos(\hat{\theta}_A \cdot \hat{\theta}_B)$ is the angle between the unit-normalized versions of the two vectors and $t \in [0,1]$ is the interpolation parameter. Note that the angle is computed from the normalized vectors but the coefficients are applied to the *unnormalized* ones — this is what `mergekit` does, and it is what keeps the merge on the scale of the original weights instead of projecting everything onto the unit sphere.
 
-SLERP is applied independently to each weight tensor (or each row/column vector within a tensor), preserving magnitude throughout the interpolation.
+SLERP is applied independently to each weight tensor (or each row/column vector within a tensor). It traces the great-circle arc between the two directions, so when $\|\theta_A\| = \|\theta_B\|$ the merged tensor has exactly that same norm; more generally the norm stays in the neighborhood of the two inputs' norms rather than collapsing toward the origin the way linear averaging does.
 
 ```python
 import torch
@@ -496,11 +497,13 @@ def slerp(v0: torch.Tensor, v1: torch.Tensor, t: float, eps: float = 1e-8) -> to
     dot = torch.clamp((n0 * n1).sum(), -1.0, 1.0)
     omega = torch.acos(dot)
 
-    if omega.abs() < 1e-6:
-        # Nearly parallel — fall back to linear interpolation
+    sin_omega = torch.sin(omega)
+    if sin_omega.abs() < 1e-6:
+        # Degenerate great circle: nearly parallel (omega ~ 0) OR nearly
+        # anti-parallel (omega ~ pi). Both make sin(omega) ~ 0, so dividing
+        # by it would blow up — fall back to linear interpolation.
         return ((1 - t) * v0 + t * v1).reshape(orig_shape)
 
-    sin_omega = torch.sin(omega)
     out = (torch.sin((1 - t) * omega) / sin_omega) * v0_flat + \
           (torch.sin(t * omega) / sin_omega) * v1_flat
 
@@ -576,11 +579,13 @@ $$
 \hat{\tau}_i[j] = \begin{cases} \tau_i[j] & \text{if } |\tau_i[j]| \geq t_i^{(p)} \\ 0 & \text{otherwise} \end{cases}
 $$
 
-**Step 2 — Elect sign.** For each parameter position $j$, resolve the sign conflict by majority vote among all task vectors that have a nonzero entry at position $j$:
+**Step 2 — Elect sign.** For each parameter position $j$, resolve the sign conflict by electing the sign with the largest *total magnitude* (mass) across task vectors — not by counting votes. Concretely, the elected sign is the sign of the sum:
 
 $$
 \gamma_j = \operatorname{sign}\!\left(\sum_i \hat{\tau}_i[j]\right).
 $$
+
+(The distinction matters: with $\hat\tau[j] = (+0.1, +0.1, -0.5)$ a headcount would elect $+$, while the mass rule elects $-$, since the sum is $-0.3$.)
 
 **Step 3 — Disjoint merge.** Aggregate only the task vectors that agree with the elected sign:
 
@@ -601,20 +606,24 @@ import torch
 
 def magnitude_threshold(delta: torch.Tensor, trim_fraction: float) -> torch.Tensor:
     """
-    Magnitude cutoff below which entries are trimmed.
+    Magnitude cutoff below which entries are trimmed: the *smallest magnitude
+    among the entries we intend to keep*, so that masking with
+    `delta.abs() < threshold` zeroes exactly the requested fraction.
+    (Taking the k-th smallest instead would be off by one — only k-1 entries
+    are strictly below it — and would silently become a no-op whenever that
+    value happens to be 0.0.)
 
     NOTE: do *not* use torch.quantile here. It has a hard input-size limit
     of 2**24 = 16,777,216 elements and raises
     RuntimeError("quantile() input tensor is too large") above it — a
     4096 x 14336 FFN matrix already has ~59M entries.
-    torch.kthvalue has no such limit and is exact.
+    torch.topk has no such limit and is exact.
     """
     flat = delta.abs().flatten()
-    k = int(trim_fraction * flat.numel())
-    if k <= 0:
-        return torch.tensor(0.0, dtype=flat.dtype, device=flat.device)
-    k = min(k, flat.numel())
-    return torch.kthvalue(flat, k).values
+    n = flat.numel()
+    keep = n - int(trim_fraction * n)     # how many entries survive
+    keep = max(1, min(keep, n))           # always keep at least one
+    return torch.topk(flat, keep).values[-1]
 
 
 def ties_merge(
@@ -658,7 +667,7 @@ def ties_merge(
         stacked = torch.stack(deltas, dim=0)          # (num_tasks, *param_shape)
 
         # --- Step 2: Elect sign ---
-        # Sum of all trimmed deltas to determine majority sign
+        # Sum of all trimmed deltas: the sign carrying the most mass wins
         sign_sum = stacked.sum(dim=0)
         elected_sign = torch.sign(sign_sum)             # +1 or -1 per parameter
         # Handle exact zero: assign +1 arbitrarily
@@ -869,7 +878,7 @@ See [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-land
 
     **Q:** "You have two 7B LLaMA fine-tunes — one specialized for SQL generation, one for Python coding. You want a single model that does both well, but you have no training data and no GPU. What are your options and which would you choose?"
 
-    **A:** The main options are (a) SLERP merge — interpolates along the unit sphere to preserve norms and avoids the magnitude collapse of linear averaging; (b) task arithmetic — subtract the base model from each fine-tune to get task vectors, then add both scaled task vectors back to the base; (c) TIES merge — same as task arithmetic but first trims small-magnitude parameters and resolves sign conflicts by majority vote, reducing interference between the two tasks.
+    **A:** The main options are (a) SLERP merge — interpolates along the unit sphere to preserve norms and avoids the magnitude collapse of linear averaging; (b) task arithmetic — subtract the base model from each fine-tune to get task vectors, then add both scaled task vectors back to the base; (c) TIES merge — same as task arithmetic but first trims small-magnitude parameters and resolves sign conflicts by electing, per position, the sign carrying the largest total magnitude, reducing interference between the two tasks.
     
     I would choose TIES with a moderate trim density (e.g., keep top 20-40% of each task vector), because SQL and Python code share many parameters (tokenization, syntax awareness) but diverge on dialect-specific idioms, and TIES's sign-election step explicitly handles the parameter-level conflicts that arise from that overlap. I would set the scale $\lambda$ to around 0.4–0.6 for each task vector and eval on a held-out set to tune it. If I had even a small validation set, I could do a grid search over $\lambda$ and density in CPU memory in minutes.
 
@@ -911,7 +920,7 @@ If your use case involves distribution shifts after merging, the evaluation fram
     - **Use `peft` for all three.** Prompt tuning, prefix tuning, P-tuning and IA3 are one config object away (`PromptTuningConfig`, `PrefixTuningConfig`, `IA3Config`) behind the same `get_peft_model` call as LoRA; only weight-space methods (IA3, LoRA) survive `merge_and_unload()`, and only LoRA-shaped adapters get first-class multi-tenant serving.
     - **IA3** multiplies learned scale vectors into key, value, and FFN activations; its ~0.0075% parameter overhead (a few hundred thousand parameters at 7B) can be *folded into weights* at inference for zero latency cost.
     - **Task arithmetic** defines a task vector as $\theta_\text{ft} - \theta_\text{base}$; tasks can be added, subtracted, and composed algebraically — no new training required.
-    - **TIES-Merging** reduces inter-task interference by trimming small-magnitude parameters, electing a majority sign per position, and averaging only the agreeing values.
+    - **TIES-Merging** reduces inter-task interference by trimming small-magnitude parameters, electing per position the sign with the largest total magnitude, and averaging only the agreeing values.
     - **DARE** provides a stochastic alternative to deterministic trimming: random dropout on task-vector entries with rescaling to preserve expectation.
     - **Model soups** average several fine-tunes of the same base model; the average generalizes better than any individual due to implicit ensembling in weight space.
     - **Merging only works reliably when models share the same pre-trained initialization.** Different base checkpoints live in geometrically unrelated parameter spaces.
@@ -955,7 +964,7 @@ If your use case involves distribution shifts after merging, the evaluation fram
 - Li & Liang. **"Prefix-Tuning: Optimizing Continuous Prompts for Generation"**, ACL 2021. Introduces per-layer prefix injection and the MLP reparameterization trick.
 - Liu et al. **"P-Tuning v2: Prompt Tuning Can Be Comparable to Fine-tuning Universally Across Scales and Tasks"**, ACL 2022. Deep prefix tuning for NLU tasks.
 - Liu et al. (T-Few). **"Few-Shot Parameter-Efficient Fine-Tuning is Better and Cheaper than In-Context Learning"**, NeurIPS 2022. Introduces IA3 and the T-Few training recipe.
-- Wortsman et al. **"Model Soups: Averaging Weights of Multiple Fine-Tuned Models Improves Accuracy and Robustness"**, ICML 2022. The foundational model-soup paper.
+- Wortsman et al. **"Model Soups: Averaging Weights of Multiple Fine-Tuned Models Improves Accuracy Without Increasing Inference Time"**, ICML 2022. The foundational model-soup paper.
 - Ilharco et al. **"Editing Models with Task Arithmetic"**, ICLR 2023. Formalizes task vectors; shows arithmetic composition of skills.
 - Yadav et al. **"TIES-Merging: Resolving Interference When Merging Models"**, NeurIPS 2023. TIES algorithm with comprehensive multi-task experiments.
 - Yu et al. **"Language Models are Super Mario: Absorbing Abilities from Homologous Models as a Free Lunch"**, 2023. Introduces DARE (Drop And REscale).
@@ -1126,4 +1135,4 @@ If your use case involves distribution shifts after merging, the evaluation fram
     \theta_\text{merge} = 0.5 \times [\,0.6,\ 0,\ 0.4,\ -0.4\,] = [\,0.3,\ 0,\ 0.2,\ -0.2\,].
     $$
 
-    Note how TIES resolved the conflict at index 0: both tasks wanted a large-magnitude update but with *opposite* signs ($+0.6$ vs $-0.5$). Naive averaging would have given $(0.6 - 0.5)/2 = 0.05$ — near-total cancellation. Sign election picked the majority-by-sum direction ($+$) and the disjoint average kept only the agreeing $0.6$, preventing the two tasks from destructively interfering.
+    Note how TIES resolved the conflict at index 0: both tasks wanted a large-magnitude update but with *opposite* signs ($+0.6$ vs $-0.5$). Naive averaging would have given $(0.6 - 0.5)/2 = 0.05$ — near-total cancellation. Sign election picked the direction carrying the larger total magnitude ($+$, since $0.6 > 0.5$) and the disjoint average kept only the agreeing $0.6$, preventing the two tasks from destructively interfering.

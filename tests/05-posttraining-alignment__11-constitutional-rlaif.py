@@ -399,19 +399,21 @@ def build_spin_pairs(
 ) -> list:
     """
     For each (prompt, gold) pair in the human dataset:
-      - Generate a response from the current policy (the 'player' copy).
-      - Use gold_response as 'chosen', policy response as 'rejected'.
+      - Generate a response from the 'opponent player' (the policy at iteration t;
+        in a faithful implementation, a frozen copy of the previous iteration's weights).
+      - Use gold_response as 'chosen', opponent response as 'rejected'. The 'main
+        player' is the model being trained, which only has to tell the two apart.
     This creates a preference signal that pushes the policy distribution
     toward the human data distribution.
     """
     pairs = []
     for prompt, gold_response in human_data:
-        # The 'main player' generates the rejected sample
-        policy_response = model_generate(f"Human: {prompt}\n\nAssistant:")
+        # The 'opponent player' (the policy at iteration t) generates the rejected sample
+        opponent_response = model_generate(f"Human: {prompt}\n\nAssistant:")
         pairs.append(PreferencePair(
             prompt=prompt,
             chosen=gold_response,
-            rejected=policy_response,
+            rejected=opponent_response,
             principle="Match the quality and style of high-quality human responses.",
             judge_rationale="Human data is used as gold reference.",
         ))
@@ -440,48 +442,63 @@ print("build_spin_pairs OK:", spin_pairs)
 
 class WeakToStrongTrainer:
     """
-    Illustrative trainer that implements the 'bootstrapping' weak-to-strong strategy.
-    In practice you would use your distributed training stack, but this
-    sketch shows the key loss computation.
+    Burns et al.'s auxiliary confidence loss for weak-to-strong training.
+    In practice you would use your distributed training stack; this sketch
+    isolates the loss, which is the only non-obvious part.
     """
 
     def __init__(
         self,
         strong_model: nn.Module,
-        weak_labels: torch.Tensor,   # shape [N], float in [0,1]
-        confidence_weight: float = 0.1,
+        weak_labels: torch.Tensor,   # shape [N], float in [0,1] (soft weak-supervisor labels)
+        alpha_max: float = 0.75,     # steady-state weight on the self-confidence term
+        warmup_frac: float = 0.2,    # fraction of training over which alpha ramps 0 -> alpha_max
+        threshold: float = 0.5,      # set so hardened preds match the weak label balance
     ):
         self.model = strong_model
         self.weak_labels = weak_labels
-        self.conf_w = confidence_weight
+        self.alpha_max = alpha_max
+        self.warmup_frac = warmup_frac
+        self.threshold = threshold
+
+    def alpha(self, step: int, total_steps: int) -> float:
+        """Linear warmup 0 -> alpha_max over the first `warmup_frac` of training,
+        then held at alpha_max (the reference implementation's schedule)."""
+        step_frac = step / total_steps
+        frac = 1.0 if step_frac >= self.warmup_frac else step_frac / self.warmup_frac
+        return self.alpha_max * frac
 
     def compute_loss(
         self,
         logits: torch.Tensor,     # shape [B, 2] for binary classification
         indices: torch.Tensor,    # which examples in the batch
+        step: int,
+        total_steps: int,
     ) -> torch.Tensor:
-        """
-        Main loss = cross-entropy with weak labels.
-        Auxiliary loss = learn the *confidence* of weak labels
-                         (treat examples with extreme weak probabilities as high-confidence).
-        """
-        weak = self.weak_labels[indices]  # [B] floats
-        probs = torch.sigmoid(logits[:, 1])  # binary case: P(positive)
+        weak = self.weak_labels[indices]              # [B] floats in [0,1]
+        probs = torch.softmax(logits, dim=-1)[:, 1]   # strong model's P(positive)
 
-        # Primary BCE against weak labels
-        ce_loss = F.binary_cross_entropy(probs, weak)
+        # Term 1: imitate the weak supervisor.
+        weak_ce = F.binary_cross_entropy(probs, weak)
 
-        # Confidence signal: |weak - 0.5| is high when weak supervisor is confident
-        weak_confidence = (2 * (weak - 0.5).abs())  # maps [0,1] to [0,1]
-        # Encourage the strong model to be right where the weak label is confident
-        conf_loss = F.binary_cross_entropy(probs, weak, weight=weak_confidence)
+        # Term 2: imitate the strong model's OWN hardened prediction.
+        hardened = (probs > self.threshold).float().detach()
+        self_ce = F.binary_cross_entropy(probs, hardened)
 
-        return ce_loss + self.conf_w * conf_loss
+        a = self.alpha(step, total_steps)
+        return (1.0 - a) * weak_ce + a * self_ce
 
 
 toy_strong_model = nn.Linear(4, 2)
 toy_weak_labels = torch.tensor([0.9, 0.1, 0.8, 0.2, 0.6, 0.4], dtype=torch.float32)
-trainer = WeakToStrongTrainer(toy_strong_model, toy_weak_labels, confidence_weight=0.1)
+trainer = WeakToStrongTrainer(toy_strong_model, toy_weak_labels,
+                              alpha_max=0.75, warmup_frac=0.2)
+
+# alpha ramps 0 -> alpha_max over the FIRST warmup_frac, then stays there.
+assert trainer.alpha(0, 100) == 0.0
+assert abs(trainer.alpha(10, 100) - 0.5 * 0.75) < 1e-9   # halfway through warmup
+assert abs(trainer.alpha(20, 100) - 0.75) < 1e-9         # end of warmup
+assert abs(trainer.alpha(99, 100) - 0.75) < 1e-9         # held for the rest of training
 
 toy_indices = torch.tensor([0, 1, 2, 3])
 toy_logits = torch.tensor([
@@ -491,7 +508,7 @@ toy_logits = torch.tensor([
     [0.2, -0.5],
 ], dtype=torch.float32)
 
-loss = trainer.compute_loss(toy_logits, toy_indices)
+loss = trainer.compute_loss(toy_logits, toy_indices, step=50, total_steps=100)
 assert loss.dim() == 0, "compute_loss should return a scalar tensor"
 assert torch.isfinite(loss), "compute_loss returned a non-finite value"
 print("WeakToStrongTrainer.compute_loss OK:", loss.item())

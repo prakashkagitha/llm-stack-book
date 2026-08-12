@@ -426,20 +426,27 @@ The biggest practical risk of RLAIF is *bias amplification*: the judge model's p
 
 Self-rewarding LMs (Yuan et al., Meta, 2024) push the RLAIF idea further: instead of a separate judge model, the *same model* acts as both policy and reward model. The training loop alternates between (1) generating candidate responses and (2) scoring them using the model itself in "judge mode."
 
-The model is fine-tuned on a joint objective: it must be good at answering user queries *and* good at evaluating responses according to rubrics. Concretely, during the scoring step the model is prompted with a rubric:
+The model is fine-tuned on a joint objective: it must be good at answering user queries *and* good at evaluating responses according to rubrics. Concretely, during the scoring step the model is prompted with an *additive* 5-point rubric — one point per satisfied criterion, accumulated into a single total, which is what gives step 3 below a well-defined ordering over candidates:
 
 ```text
-Review the following response to a user's query.
-Score it on a scale from 1 to 5 on each of:
-  - Instruction following
-  - Accuracy
-  - Helpful completeness
-  - Safety
+Review the user's question and the corresponding response using the additive
+5-point scoring system below. Points are accumulated for each criterion met:
+  +1 if the response is relevant and provides some information.
+  +1 if it addresses a substantial portion of the user's request.
+  +1 if it answers the basic elements of the question in a useful way.
+  +1 if it is clearly written from an AI Assistant's perspective, addressing
+     the question directly and comprehensively.
+  +1 if it is impeccably tailored, without extraneous information, and
+     reflects expert knowledge and insight.
 
+Question: {prompt}
 Response: {response}
 
-Scores (format: IFollow=X, Accuracy=X, Completeness=X, Safety=X):
+Briefly justify your total, then conclude on a new line with exactly:
+Score: <total out of 5>
 ```
+
+The criteria above are Yuan et al.'s helpfulness rubric; a safety-oriented deployment typically appends its own criteria (or gates on a separate constitution-driven judge), but note that adding independent per-dimension scores costs you the total order that step 3 relies on.
 
 The training loop is:
 
@@ -607,19 +614,21 @@ def build_spin_pairs(
 ) -> list[PreferencePair]:
     """
     For each (prompt, gold) pair in the human dataset:
-      - Generate a response from the current policy (the 'player' copy).
-      - Use gold_response as 'chosen', policy response as 'rejected'.
+      - Generate a response from the 'opponent player' (the policy at iteration t;
+        in a faithful implementation, a frozen copy of the previous iteration's weights).
+      - Use gold_response as 'chosen', opponent response as 'rejected'. The 'main
+        player' is the model being trained, which only has to tell the two apart.
     This creates a preference signal that pushes the policy distribution
     toward the human data distribution.
     """
     pairs = []
     for prompt, gold_response in human_data:
-        # The 'main player' generates the rejected sample
-        policy_response = model_generate(f"Human: {prompt}\n\nAssistant:")
+        # The 'opponent player' (the policy at iteration t) generates the rejected sample
+        opponent_response = model_generate(f"Human: {prompt}\n\nAssistant:")
         pairs.append(PreferencePair(
             prompt=prompt,
             chosen=gold_response,
-            rejected=policy_response,
+            rejected=opponent_response,
             principle="Match the quality and style of high-quality human responses.",
             judge_rationale="Human data is used as gold reference.",
         ))
@@ -652,7 +661,7 @@ $$
 \mathcal{L}(\theta) = (1-\alpha)\, \mathrm{CE}\big(f_\theta(x),\, f_\text{weak}(x)\big) + \alpha\, \mathrm{CE}\big(f_\theta(x),\, \hat f_t(x)\big),
 $$
 
-with $\alpha$ ramped from 0 up to a maximum over training. Early on the student learns the task from the supervisor; later, the second term rewards *committing* to a belief, which on examples where the weak label is wrong means committing against it. The paper reports recovering on the order of 80 % of the weak-to-strong performance gap on NLP tasks with this loss — a large effect for a two-line change, and the cleanest existing evidence that "the strong model already knows, we just have to elicit it" is more than a slogan.
+with $\alpha$ warmed up linearly from 0 to a maximum over the first fraction of training (20 % in the paper) and held at that maximum thereafter. Early on the student learns the task from the supervisor; once the term is at full strength, the second term rewards *committing* to a belief, which on examples where the weak label is wrong means committing against it. The paper reports recovering on the order of 80 % of the weak-to-strong performance gap on NLP tasks with this loss — a large effect for a two-line change, and the cleanest existing evidence that "the strong model already knows, we just have to elicit it" is more than a slogan.
 
 ```python
 import torch
@@ -670,8 +679,8 @@ class WeakToStrongTrainer:
         self,
         strong_model: nn.Module,
         weak_labels: torch.Tensor,   # shape [N], float in [0,1] (soft weak-supervisor labels)
-        alpha_max: float = 0.75,     # final weight on the self-confidence term
-        warmup_frac: float = 0.2,    # fraction of training on pure weak supervision
+        alpha_max: float = 0.75,     # steady-state weight on the self-confidence term
+        warmup_frac: float = 0.2,    # fraction of training over which alpha ramps 0 -> alpha_max
         threshold: float = 0.5,      # set so hardened preds match the weak label balance
     ):
         self.model = strong_model
@@ -681,9 +690,11 @@ class WeakToStrongTrainer:
         self.threshold = threshold
 
     def alpha(self, step: int, total_steps: int) -> float:
-        """Linear ramp 0 -> alpha_max after an initial pure-weak-supervision warmup."""
-        frac = (step / total_steps - self.warmup_frac) / (1.0 - self.warmup_frac)
-        return self.alpha_max * max(0.0, min(1.0, frac))
+        """Linear warmup 0 -> alpha_max over the first `warmup_frac` of training,
+        then held at alpha_max (the reference implementation's schedule)."""
+        step_frac = step / total_steps
+        frac = 1.0 if step_frac >= self.warmup_frac else step_frac / self.warmup_frac
+        return self.alpha_max * frac
 
     def compute_loss(
         self,
@@ -886,7 +897,7 @@ def run_alignment_pipeline(
 
 Every loop in this chapter assumes the model can *judge*. That assumption breaks below roughly a billion parameters, and if you are building Stack-100M you need to know which techniques survive the drop and which quietly produce garbage.
 
-**Dead at 100M: self-critique and self-reward.** SL-CAI asks the model to find a principle violation in its own text; self-rewarding LMs ask it to score its own output on a four-part rubric. A 100M model does neither reliably — its "critiques" are fluent restatements of the principle, and its rubric scores correlate near-zero with quality. Running these loops does not merely fail to help, it manufactures confidently-labeled noise that DPO will happily fit.
+**Dead at 100M: self-critique and self-reward.** SL-CAI asks the model to find a principle violation in its own text; self-rewarding LMs ask it to score its own output against a multi-criterion rubric. A 100M model does neither reliably — its "critiques" are fluent restatements of the principle, and its rubric scores correlate near-zero with quality. Running these loops does not merely fail to help, it manufactures confidently-labeled noise that DPO will happily fit.
 
 **Alive at 100M: rejection sampling against a program.** RFT is the one self-improvement loop that requires *no judging ability whatsoever* — only a non-zero pass@$k$ and a verifier that is a piece of code, not a model. This is exactly why the capstone's post-training stage is built on on-policy pair mining and GRPO over an exact-match checker rather than on a learned reward model; see [Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html).
 

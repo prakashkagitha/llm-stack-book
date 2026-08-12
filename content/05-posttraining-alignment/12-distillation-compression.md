@@ -10,7 +10,7 @@ Geoffrey Hinton, Oriol Vinyals, and Jeff Dean introduced *knowledge distillation
 
 ### Why Soft Targets Contain More Information
 
-Consider a cat-vs-dog classifier. A hard label says `cat = 1, dog = 0`. But a well-trained teacher might output `cat = 0.92, dog = 0.06, tiger = 0.02`. That distribution says: this cat looks vaguely tiger-like and not at all dog-like. This inter-class similarity is information the student can use to generalize better from less data.
+Consider a cat-vs-dog classifier. A hard label says `cat = 1, dog = 0`. But a well-trained teacher might output `cat = 0.92, dog = 0.02, tiger = 0.06`. That distribution says: this cat looks vaguely tiger-like and not at all dog-like. This inter-class similarity is information the student can use to generalize better from less data.
 
 The same principle applies to language models. When a teacher assigns probability 0.3 to "Paris", 0.2 to "London", and 0.15 to "Berlin" as the next token after "The capital of France is", the student learns a richer, more structured representation than it would from the hard label "Paris" alone.
 
@@ -48,7 +48,7 @@ Common choices are $\tau \in [2, 5]$ and $\alpha \in [0.1, 0.5]$.
 
     At $\tau = 4$: logits become $[0.75, 0.25, 0.125]$, softmax gives $[0.467, 0.283, 0.250]$ — much softer.
 
-    The soft distribution at $\tau = 4$ tells the student that tokens 1 and 2 are plausible alternatives, carrying meaningful signal about inter-token similarity. At $\tau = 1$ this information is almost entirely suppressed. Setting $\tau$ too high (say, 20) eventually flattens the distribution toward uniform, losing the ordering information — this is why values of 2–5 are typical.
+    The soft distribution at $\tau = 4$ tells the student that tokens 1 and 2 are plausible alternatives, carrying meaningful signal about inter-token similarity. At $\tau = 1$ this information is almost entirely suppressed. Setting $\tau$ too high (say, 20) flattens the distribution toward uniform. The *ordering* survives — softmax is order-preserving at every $\tau > 0$ — but the gaps between probabilities shrink like $1/\tau$, until the signal is smaller than gradient noise and bf16 rounding error. That is why values of 2–5 are typical.
 
 {{tool:distillation-temperature}}
 
@@ -168,8 +168,8 @@ The student now learns to imitate the teacher's complete output behavior. A crit
 
     Every loss in Sections 5.1–5.2 assumes $z^T$ and $z^S$ index the *same* vocabulary and that position $t$ denotes the same text span in both models. If your teacher is a Qwen model and your student has its own byte-level BPE — as Stack-100M does, see [A Byte-Level BPE Tokenizer From Scratch](../14-capstone/03-tokenizer.html) — neither assumption holds and the KL is simply meaningless. Three ways out, in increasing order of effort:
 
-    1. **Give the student the teacher's tokenizer.** This is why the DeepSeek-R1-Distill releases keep the Qwen and Llama vocabularies intact. Cheapest option, and it constrains your architecture choices very little.
-    2. **Use SeqKD / trajectory distillation.** These need only the teacher's *text*, so any teacher can teach any student — including a closed API model you can never get logits from. This is the route the capstone takes in [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html), and it is the right default at 100M scale.
+    1. **Give the student the teacher's tokenizer.** In practice this means distilling *within a model family* — e.g. Qwen2.5-7B-Instruct into Qwen2.5-0.5B-Instruct, as the `GKDTrainer` example above does — so the two vocabularies are identical by construction. Cheapest option, and it constrains your architecture choices very little.
+    2. **Use SeqKD / trajectory distillation.** These need only the teacher's *text*, so any teacher can teach any student — including a closed API model you can never get logits from. This is the route the DeepSeek-R1-Distill releases took: R1 (whose own tokenizer is DeepSeek's, not Qwen's or Llama's) generated ~800k verified traces, which were then plain-SFT'd into off-the-shelf Qwen2.5 and Llama-3 checkpoints — no shared index set required. It is also the route the capstone takes in [A Narrow Auto-Research Agent](../14-capstone/10-agentic-narrow.html), and it is the right default at 100M scale.
     3. **Cross-tokenizer logit distillation.** The Universal Logit Distillation loss (Boizard et al., TMLR 2025) matches the two distributions with an optimal-transport cost instead of assuming a shared index set. Powerful, but adds real machinery.
 
 ### Word-Level vs Sequence-Level vs Intermediate Features
@@ -713,14 +713,14 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
 
     **Teacher forward pass (inference only, no gradient):**
     - 70B params × 2 bytes (BF16) = 140 GB. Requires a minimum of 2 × A100 80GB or 4 × A100 40GB.
-    - Teacher activations for a batch of 8 × 512 tokens at 8,192 hidden dim: roughly 8 × 512 × 8192 × 80 layers × 2 bytes ≈ 5.4 GB (5 GiB). Manageable.
+    - Teacher activations for a batch of 8 × 512 tokens at 8,192 hidden dim: because the teacher runs under `torch.no_grad()`, nothing is retained for the backward pass, so each layer's buffer is freed as soon as the next layer consumes it — peak activation memory is *flat in depth*, a couple of live buffers of 8 × 512 × 8192 × 2 bytes ≈ 67 MB each plus attention workspace. What actually costs you is the single tensor you have to keep — the logits, 8 × 512 × $V$ × 2 bytes, which at a 32k vocabulary is ≈ 0.26 GB and doubles if you upcast to fp32 as the training loop above does. Manageable. (Had you needed to *keep* all 80 layers — as you do on the student side — it would be 80 × 67 MB ≈ 5.4 GB.)
 
     **Student forward + backward:**
     - 7B params × 2 bytes = 14 GB for weights.
     - Gradients: another 14 GB in bf16 (28 GB if you keep them in fp32).
     - fp32 master copy of the weights: 4 bytes/param = 28 GB.
     - Adam optimizer states: two fp32 moments = 8 bytes/param = 56 GB.
-    - Activations for the same batch: ≈ 400 MB with gradient checkpointing.
+    - Activations for the same batch: ≈ 1.1 GB with gradient checkpointing (one saved hidden state per layer boundary, 8 × 512 × 4096 × 32 layers × 2 bytes), plus the recompute buffer for whichever layer is currently being replayed.
     - Total student-side memory: 2 + 2 + 4 + 8 = 16 bytes/param, i.e. roughly 112 GB with bf16 gradients — *well over* a single A100 80GB, which is the trap this arithmetic exists to catch. Switching to 8-bit Adam (2 bytes/param = 14 GB of states) drops the total to $10P \approx 70$ GB and squeezes onto one card; sharding the optimizer across 2 GPUs with ZeRO-2/FSDP is the other standard answer.
 
     **Practical setup:** teacher on 2× A100 (tensor parallel), student on 1× A100 with 8-bit Adam (or sharded across 2× A100 with ZeRO-2). To avoid re-running the teacher every epoch you want a logit cache — but caching the *full* distribution is hopeless: 32,000 vocab × 2 bytes = 64 KB per token, i.e. ~64 TB per billion tokens. Cache the **top-k** instead (Section 5.6): $k = 64$ at BF16 values plus `uint16` indices is 256 bytes per token, so 100M tokens costs ~26 GB — the difference between "impossible" and "one NVMe drive."

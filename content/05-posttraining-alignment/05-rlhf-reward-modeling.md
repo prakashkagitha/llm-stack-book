@@ -268,7 +268,7 @@ trainer = RewardTrainer(
         output_dir="rm-out",
         per_device_train_batch_size=8,
         num_train_epochs=1,                  # RMs overfit fast -- one epoch is standard
-        learning_rate=1e-5,                   # ~10x lower than SFT; the head is the new part
+        learning_rate=1e-5,                   # TRL's default; below the 2e-5 full-SFT LR of 5.1
         max_length=1024,                      # pairs longer than this are dropped, not truncated
         center_rewards_coefficient=0.01,      # auxiliary penalty on (r_w + r_l)^2, see below
     ),
@@ -399,13 +399,19 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
     with torch.no_grad():
         responses = actor.generate(**queries, max_new_tokens=512, do_sample=True)
 
-    # full sequence = prompt ++ response; build a mask marking response tokens
+    # Full sequence = prompt ++ response, plus a mask marking response tokens.
+    # `build_sequences_and_mask` also RE-PACKS each row to RIGHT padding (the
+    # prompt was LEFT-padded for generation), so seq is [prompt][response][pad...].
+    # That re-pack is mandatory: our RewardModel reads its score at
+    # `attention_mask.sum(1) - 1`, which is the last real token only under right
+    # padding -- with leading pads it would score a token inside the prompt.
     seq, resp_mask = build_sequences_and_mask(queries, responses)
 
     # ---- 2. SCORE & ANCHOR (all under no_grad; these models are not updated). ----
     with torch.no_grad():
         # Terminal scalar reward for each complete response (frozen RM).
-        scores = reward_model(seq, attention_mask=(seq != tokenizer.pad_token_id))  # (B,)
+        attn = (seq != tokenizer.pad_token_id)     # right-padded => 1...1 0...0
+        scores = reward_model(seq, attention_mask=attn)                             # (B,)
 
         # Per-token log-probs from the FROZEN reference (for the KL penalty).
         ref_logprobs = token_logprobs(ref_model, seq, resp_mask)                    # (B, T)
