@@ -1,0 +1,823 @@
+{
+  "summary": "Find cross-chapter inconsistencies (6 themes) -> fix per file (Opus-5)",
+  "agentCount": 26,
+  "logs": [
+    "Cross-chapter consistency: scanning 6 themes (read-only)…",
+    "Found disagreements in 20 files; fixing per file…",
+    "[fix:content/05-posttraining-alignment/07-dpo-and-variants.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/13-interview-prep/08-ten-day-study-plan.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/01-foundations/03-calculus-optimization.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/03-pretraining/15-synthetic-data.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/14-capstone/04-architecture.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/14-capstone/12-retrospective-and-scaleup.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/14-capstone/01-overview-and-landscape.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/14-capstone/08-mid-training.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/15-production-stack/04-pretrain-torchtitan.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/06-rl-infra/03-trl.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:capstone/README.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/99-appendix/03-papers-reading-list.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/07-inference-serving/12-inference-economics.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/05-posttraining-alignment/12-distillation-compression.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/14-capstone/07-pretraining-run.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/13-interview-prep/02-ml-breadth-rapidfire.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/99-appendix/05-from-scratch-index.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/14-capstone/05-mini-scaling-laws.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/07-inference-serving/08-disaggregated-chunked-prefill.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "[fix:content/12-production-mlops/03-caching-routing-cost.md] failed: You've hit your session limit · resets 8:30am (UTC)",
+    "Consistency: 0 cross-chapter fixes across 20 files."
+  ],
+  "result": {
+    "themes": 6,
+    "files": 20,
+    "fixes": 0,
+    "findings": {
+      "content/01-foundations/03-calculus-optimization.md": [
+        {
+          "quote": "Take the book's capstone model, Stack-100M, at roughly $n = 1.2 \\times 10^8$ parameters trained in mixed precision",
+          "canonical": "~1.01e8 parameters (101,353,728), giving ≈1.62 GB of fp32 master+grad+Adam state at 16 B/param and ≈0.20 GB of bf16 weights — not 1.9 GB / 0.24 GB",
+          "why": "capstone/PLAN.md §1 and Ch. 14.1/14.4 fix the total at exactly 101,353,728 (~101.35M); 1.2e8 is ~18% high and both derived memory figures in the same sentence ('about 1.9 GB', 'the 0.24 GB of bf16 weights') are wrong as a direct consequence. Ch. 14.4's memory table gives 405 MB fp32 weights, 405 MB fp32 grads and a 1.28 GB total trainable state; Ch. 12.1, 6.2, 6.3, 3.5 and 3.6 all quote ~0.2 GB for the bf16 weights."
+        },
+        {
+          "quote": "You pay 4 bytes/param for the fp32 master weights, 4 for the fp32 gradients, and 4 each for Adam's $m$ and $v$ — 16 bytes/param, or about 1.9 GB — on top of the 0.24 GB of bf16 weights the forward pass actually uses.",
+          "canonical": "16 bytes/param = 2 (bf16 weight) + 2 (bf16 grad) + 4 (fp32 master) + 4 (m) + 4 (v), inclusive of the bf16 weights",
+          "why": "The headline 16 matches, but the breakdown does not: this chapter charges 4 bytes for fp32 gradients and then adds the bf16 weights *on top* of the 16, for an actual total of 18 bytes/param. The canonical decomposition (content/03-pretraining/05-distributed-data-parallel.md 'Summing: 2Ψ + 2Ψ + 4Ψ + 4Ψ + 4Ψ = 16Ψ bytes', content/04-kernels-efficiency/10-memory-efficient-training.md 'M_static = 2P + 4P + 2P + 4P + 4P = 16P') puts the bf16 weights and bf16 gradients *inside* the 16 and is what the chapter it cross-references (content/03-pretraining/09-optimizers.md) uses. Consequence: the Stack-100M budget here reads 2.16 GB where the canonical rule gives ~1.9 GB total."
+        }
+      ],
+      "content/14-capstone/07-pretraining-run.md": [
+        {
+          "quote": "500 warmup / 31,647 stable / 6,000 decay, exactly Ch. 14.6's frozen split",
+          "canonical": "2,000 warmup / 32,332 stable / 3,815 decay (decay_frac = 0.10) of 38,147 total steps",
+          "why": "Ch. 14.6 is the chapter that fixes the schedule ('Ch. 14.6's frozen table') and states it repeatedly: line 745 `warmup_steps` 2,000; line 746 `decay_frac` 0.10 ≈3,815 steps; line 815 'Frozen Stack-100M numbers: … 2,000 warmup / 32,332 stable / 3,815 decay'; line 951 'call it with warmup_steps = 2_000, stable_steps = 32_332, decay_steps = 3_815'. Ch. 14.8 lines 33, 41 and 987 independently corroborate ('the decay_frac = 0.10 leg … 3,815 of 38,147 steps'), and the shipped capstone/stacklm/train/loop.py docstring says 'the flagship uses decay_frac=0.10'. The claim of being verbatim from 14.6 is false in all three phase lengths."
+        },
+        {
+          "quote": "stop_at_step: int = 32_147     # THIS chapter stops here: 16.9B tokens, LR still at plateau",
+          "canonical": "stop_at_step = 34,332 (= 38,147 − 3,815), i.e. ~18.0B tokens before the handoff",
+          "why": "Ch. 14.6 line 563 ('Ch. 14.7 deliberately stops at step 34,332 and hands over a pre-decay checkpoint'), line 747 ('Ch. 14.7 stops at 34,332') and line 761 ('which is why Ch. 14.7 runs only to step 34,332') all name 34,332, derived from the frozen decay_frac=0.10. The accompanying `decay_steps: int = 6_000` (line 205) and the prose 'leaving 3.15B tokens of decay for Ch. 14.8' (line 244) also contradict Ch. 14.8, whose mid-training budget is 1.2B + 0.6B + 0.2B = ~2.0B tokens = 3,813 steps, which Ch. 14.8 line 987 calls 'Ch. 14.7's 3,815-step decay leg'."
+        },
+        {
+          "quote": "warmup_steps: int = 500",
+          "canonical": "warmup_steps = 2,000 (≈1.05B tokens, 5.2% of the run)",
+          "why": "Ch. 14.6's frozen hyperparameter table (line 745: '| `warmup_steps` | 2,000 | ≈1.05B tokens, 5.2% of the run |'), its summary line 815, and its reproduction recipe at line 951 all fix warmup at 2,000; 14.7's own comment on line 194 claims this config block is \"Ch. 14.6's frozen table, verbatim\"."
+        },
+        {
+          "quote": "$32{,}147 \\times 524{,}288 \\approx 16.85\\times10^9$ tokens: ... \\approx 20.5 \\text{ GPU-hours} (lines 1183-1186; config `stop_at_step: int = 32_147` at line 206)",
+          "canonical": "18.0e9 tokens (34,332 steps) / 227,951 ≈ 78,964 s ≈ 21.9 GPU-hours for the stable phase",
+          "why": "The stable phase is 18B tokens everywhere else: PLAN.md:29, 14.1:378 and 453, 14.12:133 and 246, and Ch. 14.6's frozen schedule — 2,000 warmup / 32,332 stable / 3,815 decay, hand-over at step 34,332 = 18.0B tokens, stated twice (06-optimizer-and-schedule.md:563 and 747). 14.7's stop_at_step is 2,185 steps short of 14.6's 34,332, so 16.85B tokens and 20.5 GPU-hr under-state the canonical pretrain line by ~1.4 GPU-hr and sit below the 22-hour floor of the band."
+        },
+        {
+          "quote": "plus roughly 3.8 more GPU-hours for Ch. 14.8's 6,000 decay steps ($\\approx 3.15\\times10^9$ tokens) (line 1188; `decay_steps=6_000` at line 594)",
+          "canonical": "≈3.5–3.6 GPU-hours for Ch. 14.8's 3,815 decay steps (≈2.0B tokens)",
+          "why": "Ch. 14.6:746-761 fixes decay_frac = 0.10 ⇒ 3,815 steps ⇒ 2.00B tokens, and 14.8:33 spends exactly that ~2B window ('exactly the decay_frac = 0.10 leg that Chapter 14.6's frozen schedule reserved (3,815 of 38,147 steps)'); 14.12:246 and 14.1:454 price it at 3.6 / ~3.5 GPU-hr. 14.7 bills a different token count and a different number of hours for the same stage."
+        },
+        {
+          "quote": "The two peaks are `6e-3` and `3e-3` — a **2:1 ratio, not an\norder of magnitude**.",
+          "canonical": "Muon peak LR 0.02, AdamW peak LR 3e-3 — an empirical ~6.7:1 ratio",
+          "why": "Adjacent to the theme via Muon, and a direct contradiction: this chapter attributes 6e-3 to Ch. 14.6, but content/14-capstone/06-optimizer-and-schedule.md is the authoritative optimizer chapter and derives 0.02 from a documented sweep (argmin 1.6e-2 → back off to 8e-3 → ×sqrt(8) batch transfer → 0.02) and pins it as `TrainConfig.muon_peak_lr` at :128, :278, :618-622, :735, :808, explicitly calling the ratio \"~6.7:1\" and warning that treating the two peaks as near-equal is \"the single most common Muon bug.\" content/14-capstone/09-post-training.md:308 also uses `muon_lr=0.02`. The same file repeats 6e-3 at :574 and :593."
+        }
+      ],
+      "content/15-production-stack/04-pretrain-torchtitan.md": [
+        {
+          "quote": "you get 500 warmup / ~31,647 stable / ~6,000 decay — Ch. 14.6's frozen split",
+          "canonical": "2,000 warmup / 32,332 stable / 3,815 decay (decay_frac = 0.10) — i.e. torchtitan `warmup_steps = 2000`, `decay_ratio ≈ 0.10`",
+          "why": "Part XV derives its config from Part XIV, but reproduces Ch. 14.7's deviant numbers while attributing them to Ch. 14.6, which actually specifies 2,000 / 32,332 / 3,815 (lines 745, 746, 815, 951). The same wrong warmup appears at line 128 (`warmup_steps = 500`) and line 548 (`lr_warmup_steps: 500`)."
+        },
+        {
+          "quote": "steps           = 32147                       # cfg.stop_at_step  (stable-phase end; 16.9B tokens)",
+          "canonical": "34,332 (stable-phase end; ≈18.0B tokens)",
+          "why": "Ch. 14.6, the authority for the frozen schedule (lines 563/747/761), puts the pre-decay handoff at step 34,332 with 3,815 decay steps remaining. 32147 propagates Ch. 14.7's divergent value; it recurs at lines 292, 294, 298, in the checkpoint path at line 429, and as `train_steps: 32147  # stable-phase end (Ch. 14.7 stop_at_step)` at line 537."
+        },
+        {
+          "quote": "the 16.9B-token stable phase ($\\approx 32{,}147$ steps) (line 496)",
+          "canonical": "the 18.0B-token stable phase (34,332 steps)",
+          "why": "Propagates Ch. 14.7's non-canonical stop step into Part XV, where it feeds an 8-GPU-hr H100 comparison against 'the single A100's ~22–29 GPU-hours'. PLAN.md:29, 14.1:378, 14.6:747 and 14.12:133 all put the stable phase at 18B tokens / 34,332 steps, and the sibling passage in content/15-production-stack/01-toolchain-map.md:170 correctly uses 1.8e10."
+        }
+      ],
+      "capstone/README.md": [
+        {
+          "quote": "**Memory ladder (quantization):** fp32 ≈406MB → bf16 ≈203MB",
+          "canonical": "fp32 ≈405 MB (101,353,728 × 4 B = 405.4 MB; 101.32M quantizable × 4 B = 405.3 MB)",
+          "why": "Ch. 14.11's exact quantization table (line 1139: 'fp32 | 101.32M × 4 B = 405.3 MB | — | ≈405 MB') and Ch. 14.4's memory table (405 MB master weights) both give 405 MB, and 14.11 repeats '~405MB' at lines 3, 606, 847, 1008, 1332, 1333 and 1424. The README's other rungs (203/102/63 MB) match the book exactly, so only the fp32 rung disagrees — minor in magnitude, but the same quantity stated with two different values."
+        },
+        {
+          "quote": "| **Pretrain, 20B tokens, WSD stable (14.7)** | 22.0 | 39.60 | (line 147)",
+          "canonical": "Pretrain, 18B tokens, WSD stable phase (14.7) | 21.6 | 38.88 (21.9 / 39.42 at the measured 227,951 tok/s)",
+          "why": "PLAN.md:29 fixes the stable phase at 18B tokens ('The 18B-token WSD stable phase costs ≈ 22–29 GPU-hours'), and 14.1:378 states the ~20B budget is 18B stable + ~2B mid-training, not 20B plus mid-training. README's row double-counts the mid-training tokens (it bills ~3B more on the next line) and its 22.0 GPU-hr contradicts 14.12's 21.6."
+        },
+        {
+          "quote": "| Mid-training: 8192 ctx + anneal, ~3B tok (14.8) | 4.5 | 8.10 | (line 148)",
+          "canonical": "Mid-training: anneal + 8192 ctx + capability, ~2B tok (14.8) | 3.6 | 6.48",
+          "why": "Ch. 14.8:33 and 14.6:746 fix the mid-training window at ~2.0B tokens (the 3,815-step decay leg); 14.12:260 derives the 3.6 GPU-hr line item from that split and 14.1:454 quotes ~3.5. README's ~3B tokens / 4.5 GPU-hr agrees with no chapter."
+        },
+        {
+          "quote": "| Scaling-law ladder {4M,9M,19M,43M} (14.5) | 4.5 | 8.10 | (line 146)",
+          "canonical": "Scaling-law ladder + data-mixture screen (14.5) | 4.9 | 8.82 (Ch. 14.12's bill; 5.6 GPU-hr / ~USD 9.8 by Ch. 14.5's own printed output)",
+          "why": "Ch. 14.12 owns the canonical itemized bill and lists 4.9 / 8.82 for this stage, while Ch. 14.5 prints 4.70 + 0.92 GPU-hr. README's 4.5 matches neither."
+        },
+        {
+          "quote": "| **Subtotal** | **38.7** | **82.66** | ... | **Grand total** | | **≈ $100** | (lines 155-157)",
+          "canonical": "Subtotal 37.8 GPU-hr / USD 81.04; re-run tax USD 17.01; grand total ≈ USD 98",
+          "why": "README's cost table is an earlier variant of Ch. 14.12 §14.12.3, which 14.1:450 and 14.5:359 both identify as the single itemized cost table in the book. Because the per-stage rows differ, the subtotal (38.7 / 82.66 vs 37.8 / 81.04), the tax (17.40 vs 17.01) and the total (≈$100 vs ≈USD 98) all disagree with the canonical bill."
+        }
+      ],
+      "content/14-capstone/12-retrospective-and-scaleup.md": [
+        {
+          "quote": "which corresponds to ~231,500 tokens/s and **MFU(6ND) ≈ 45%** — matching the worked example in Chapter 14.7 almost exactly (line 139)",
+          "canonical": "227,951 tokens/s and MFU(6ND) = 44.5% (58.2% attention-inclusive), giving 21.9 GPU-hr for the 18B-token stable phase",
+          "why": "Ch. 14.7 (07-pretraining-run.md:1170-1190) is the authoritative measurement: 524,288 tok / 2.3 s = 227,951 tok/s → 44.5% MFU(6ND). 14.12 back-solves from an assumed u = 0.59 instead of the measured 0.582, then asserts the two are the same run, so this is a genuine same-quantity/different-value clash rather than two different quantities."
+        },
+        {
+          "quote": "tps = 231_500                    # sustained tokens/sec logged by the pretrain loop (line 210, in stacklm/cost.py)",
+          "canonical": "tps = 227_951 — the tokens/sec Ch. 14.7's loop actually logs",
+          "why": "The comment claims this is what the pretrain loop logs, but the only measured loop in the book logs 227,951 (14.7:1172; 14.2:1348 explicitly says 'Ch. 14.7 measures 227,951 tokens/s'). A derived planning figure is presented as the measurement, and it is the input to the bill's pretrain line."
+        },
+        {
+          "quote": "# -> stable phase: 21.6 GPU-hr  MFU(6ND)=45.1%  peak_frac=59.2% (line 214)",
+          "canonical": "stable phase: 21.9 GPU-hr  MFU(6ND)=44.5%  peak_frac=58.2%",
+          "why": "14.7:1175/1180, 14.1:426, 14.2:1355 and content/04-kernels-efficiency/01-roofline-performance.md:199 all fix the canonical pair for this single run at 44.5% (6ND) / 58.2% (attention-inclusive). 45.1% / 59.2% is a third pair for the same loop — exactly the confusion these chapters warn about."
+        },
+        {
+          "quote": "the stable phase sustained 231,500 tokens/sec, which the chapter says gives 21.6 GPU-hours at MFU(6ND) 45.1% over 18B tokens (Exercise 2, line 1099)",
+          "canonical": "227,951 tokens/sec → 21.9 GPU-hours at MFU(6ND) 44.5% over 18B tokens",
+          "why": "Same defect as the main text, and the worked answer at line 1120 propagates it through the ratio 231,500/200,000 = 1.158. Ch. 14.7 is the authoritative measurement."
+        },
+        {
+          "quote": "Chapter 14.5 prices the four-rung ladder at **4.11 GPU-hours** and the six-candidate data-mixture screen at a further **0.80** (line 262)",
+          "canonical": "Chapter 14.5 prices the ladder at 4.70 GPU-hours (USD 8.22) and the mixture screen at 0.92 GPU-hours (USD 1.61) — 5.6 GPU-hr together",
+          "why": "Ch. 14.5 owns the ladder cost and prints it from runnable code: 'ladder wall-clock (1xA100, 35% MFU) = 4.70 GPU-hr ~ USD 8.22' (05-mini-scaling-laws.md:355) and '0.92 GPU-hr ~ USD 1.61' (line 870), summarized as ~4.7 and ~0.9 at lines 7, 359, 952 and 959. 14.12 attributes to 14.5 numbers 14.5 does not contain (4.11 corresponds to MFU 0.40, not the 0.35 the ladder code uses), so the ladder row and the 37.8 subtotal are ~0.7 GPU-hr light."
+        },
+        {
+          "quote": "the one that makes a 100M model in 2026 vastly better than GPT-2 (117M) in 2019 at the same size",
+          "canonical": "GPT-2 (124M)",
+          "why": "Contradicts the capstone's own opening chapter, content/14-capstone/01-overview-and-landscape.md §3, which frames the whole project against \"reproduce GPT-2 (124M parameters) from scratch\" and §84 \"Karpathy's GPT-2 reproduction trained a 124M-parameter model\" — the same comparison, same model, different number. 124M is also the value derived and asserted in content/02-transformer/07-build-gpt-from-scratch.md (§1033) and content/03-pretraining/17-end-to-end-pretrain-recipe.md (§236), and used consistently in six other chapters. Because this sentence's rhetorical point is \"at the same size\" as Stack-100M's 101.35M, the wrong figure also distorts the comparison it is making."
+        }
+      ],
+      "content/14-capstone/04-architecture.md": [
+        {
+          "quote": "it needs $\\approx$49–65% model-FLOPs utilization ($14.2/29$ to $14.2/22$) (line 152)",
+          "canonical": "≈45–58% attention-inclusive MFU (equivalently 0.34–0.45 under 6ND)",
+          "why": "The 22–29 GPU-hr band is defined by PLAN.md:29-31 and derived in 14.1:405-415 for the **18B-token stable phase** (C = 1.434e19 ⇒ 12.8 h at 100% MFU ⇒ 12.8/29 = 44% to 12.8/22 = 58%). 14.4 divides the **20B-token** figure (14.2 h at 100% MFU) by the 18B band, inflating the required utilization to 49–65% — above the 58.2% the book calls the top of what this shape sustains, and contradicting 14.1:607's 'MFU 0.45–0.58 attention-inclusive'."
+        }
+      ],
+      "content/14-capstone/08-mid-training.md": [
+        {
+          "quote": "keeps the whole project inside its canonical **≈35 GPU-hour, ~USD 90–100** envelope, itemized in Ch. 14.12 (line 863)",
+          "canonical": "≈38 GPU-hour (37.8), ~USD 90–100",
+          "why": "Ch. 14.12 owns the itemized bill: its subtotal row is 37.8 GPU-hr (line 254), restated as '~38 GPU-hours' in the chapter takeaway (line 996) and used as the denominator of '~13% of the project's 37.8 GPU-hours' (line 262). '≈35' matches no total in that table, and 14.8 explicitly calls it the canonical figure."
+        },
+        {
+          "quote": "Budget ~3.1 GPU-hours (~USD 3–6) at Ch. 14.7's measured 58.2% MFU, not ~1.9. (line 888; same 3.1 at line 863)",
+          "canonical": "≈3.6 GPU-hours (~USD 6.48) — the mid-training line in Ch. 14.12's bill (≈3.5 in Ch. 14.1:454)",
+          "why": "Both chapters agree on the FLOP count (2.05e18) but not the price: 14.12:260 derives 3.6 GPU-hr at the reduced u ≈ 0.50 sustained once the micro-batch drops 4× for 8192-token sequences and says 'the table's number was never a guess'; 14.1 quotes ~3.5. 14.8 reuses the 2048-token 58.2% rate at 8192 and gets 3.1, then asserts 3.1 is 'the honest line item' for that same Ch. 14.12 table."
+        }
+      ],
+      "content/14-capstone/01-overview-and-landscape.md": [
+        {
+          "quote": "eval + quantization (Ch. 14.11) — together **≈13 GPU-hr, ≈USD 25** (line 454)",
+          "canonical": "≈16 GPU-hr, ≈USD 29 (37.8 total − 21.6 pretrain = 16.2 GPU-hr / USD 29.2; 15.9 GPU-hr / USD 28.6 excluding the 0.3 tokenizer line, which this bullet omits)",
+          "why": "The bullet states it is giving 'the shape' of Ch. 14.12's table, which 14.1 itself calls the one itemized cost table in the book. Summing 14.12's non-pretrain rows (4.9 + 3.6 + 1.0 + 1.2 + 3.0 + 1.0 + 1.2 = 15.9) contradicts ≈13, and 21.6 + 13 = 34.6 is where 14.8's stray '≈35 GPU-hour' project total comes from."
+        }
+      ],
+      "content/03-pretraining/15-synthetic-data.md": [
+        {
+          "quote": "The *entire* Stack-100M pretraining run over all 20B tokens is a ~20 GPU-hour job on one A100 (line 184)",
+          "canonical": "≈24.4 GPU-hours for the full 20B-token budget (the 18B stable phase alone is the ≈22–29 GPU-hr band)",
+          "why": "14.7:1189 and 14.2:76/1355 both compute 20e9 / 227,951 ≈ 24.4 A100-hours for the full budget, and PLAN.md:215 makes ≈22–29 GPU-hr the contract value for the stable phase alone. '~20 GPU-hour for all 20B tokens' sits below the floor of the canonical band and is used here to anchor a synthetic-data cost comparison."
+        }
+      ],
+      "content/13-interview-prep/02-ml-breadth-rapidfire.md": [
+        {
+          "quote": "**Per token, full MHA:** $2 \\times L \\times h \\times d_h \\times 2\\text{ bytes} = 2 \\times 32 \\times 32 \\times 128 \\times 2 = 2{,}097{,}152$ bytes $\\approx$ **2 MiB per token**.",
+          "canonical": "0.5 MiB (524,288 bytes) per token; the 8,192-token MHA sequence is 4 GiB, not 16 GiB, and the GQA-8 variant is 1 GiB, not 4 GiB",
+          "why": "The written formula 2·L·n_kv·d_head·bytes is the canonical one from content/04-kernels-efficiency/06-paged-attention-kv.md, but the product is evaluated 4x too large (2·32·32·128·2 = 524,288, not 2,097,152). For this exact config (32 layers, d_model=4096, bf16) content/06-rl-infra/01-anatomy-rl-system.md states '~0.5 MB per token', content/10-multimodal-and-arch/02-vision-language-models.md computes '524,288 bytes/token (=0.5 MB/token)', and content/02-transformer/11-ssm-and-alternatives.md gets the same. The error propagates through the two downstream figures ('16 GiB' and 'drops to 4 GiB'), and it also disagrees with the sister chapter content/13-interview-prep/06-llm-deepdive-questions.md, which does the 70B version correctly."
+        }
+      ],
+      "content/13-interview-prep/08-ten-day-study-plan.md": [
+        {
+          "quote": "\\text{bytes} = 2\\,(\\text{K,V}) \\times L \\times S \\times d \\times 2\\,(\\text{fp16}) = 2 \\times 32 \\times 4096 \\times 4096 \\times 2 \\approx 4.3\\text{ GB}.",
+          "canonical": "≈2.15 GB (2 GiB) — the memorization line should be 'KV cache ≈ 2 GB per 4k-token sequence' for a 7B MHA model",
+          "why": "2·32·4096·4096·2 = 2,147,483,648 bytes ≈ 2.15 GB; the stated 4.3 GB is exactly 2x the value the chapter's own (canonical) formula yields. The canonical per-token figure of 0.5 MB for a 32-layer d=4096 model (content/06-rl-infra/01-anatomy-rl-system.md, content/10-multimodal-and-arch/02-vision-language-models.md) gives 4096 × 0.5 MB = 2 GB. The wrong number is then promoted to a memorize-this constant three times in the same chapter (lines 225, 355, 389: 'roughly 4 GB of KV cache for one 4k-token sequence', 'KV cache ≈ 4 GB / 4k seq', 'KV cache ≈ 4 GB per 4k-token sequence for a 7B model')."
+        }
+      ],
+      "content/99-appendix/03-papers-reading-list.md": [
+        {
+          "quote": "Under Chinchilla's equal-allocation rule: $N_{\\text{opt}} \\approx \\sqrt{C / 6}$.",
+          "canonical": "N_opt = sqrt(C/120) (since D = 20N and C = 6ND = 120N²) — for C = 10^23 that is ≈29B parameters and ≈580B tokens, not 410B parameters and 40B tokens",
+          "why": "The authoritative chapter content/03-pretraining/04-scaling-laws.md and the appendix's own sibling content/99-appendix/02-math-reference.md both fix D/N ≈ 20. The sqrt(C/6) form silently assumes D = N (1 token per parameter), and the worked example's answer (410B params on 40B tokens = 0.1 tokens/param) contradicts the ~20 tokens/param rule by more than two orders of magnitude — and also contradicts the same example's own framing sentence ('a 70B parameter model on 1T tokens', i.e. ~14 tokens/param). The root misstatement is on line 76: 'the optimal allocation … is approximately equal numbers of parameters N and tokens D'; Chinchilla's result is equal scaling *exponents* (a ≈ b ≈ 0.5), not equal counts."
+        },
+        {
+          "quote": "LLaMA 2 7B was trained for about 2 T tokens — roughly 30$\\times$ more than the compute-optimal point.",
+          "canonical": "roughly 14x more than the compute-optimal point (2T / 140B)",
+          "why": "The compute-optimal token budget for a 7B model is ~140B tokens under the canonical 20 tokens/param rule, as stated explicitly in content/99-appendix/02-math-reference.md ('for N = 7B, optimal D = 140 B tokens') and content/03-pretraining/17-end-to-end-pretrain-recipe.md ('a 7B model on the order of 140B'). 2T/140B ≈ 14.3x, so '30x' is inconsistent with the book's own Chinchilla constant."
+        }
+      ],
+      "content/06-rl-infra/03-trl.md": [
+        {
+          "quote": "- Policy + optimizer states (Adam): roughly $7 \\times 10^9 \\times 2 + 7 \\times 10^9 \\times 8 = 70$ GB",
+          "canonical": "16 bytes/param → 7e9 × 16 = 112 GB for a trained 7B model, and ~250+ GB (not ~170 GB) for the naive four-model PPO stack",
+          "why": "This accounting uses 10 bytes/param for a trained model (2 bf16 weights + 8 Adam moments), dropping the 2 bytes of bf16 gradients and the 4 bytes of fp32 master weights that the canonical 16-bytes/param rule includes. The rule is stated as 2+2+4+4+4 in content/03-pretraining/05-distributed-data-parallel.md and content/04-kernels-efficiency/10-memory-efficient-training.md, and the identical 7B RLHF quantity is given as 112 GB in content/05-posttraining-alignment/05-rlhf-reward-modeling.md ('= 16 bytes/param → ~112 GB') and content/06-rl-infra/07-colocated-vs-disaggregated.md ('≈16P bytes … 112 GB'). Even inside Part VI this conflicts: content/06-rl-infra/04-verl.md uses 'the chapter's convention that Adam fp32 master weights + two moments cost 12 bytes/parameter'. The error propagates to the chapter's headline '~170 GB' (canonical: ~250+ GB, per content/05-posttraining-alignment/05-rlhf-reward-modeling.md) and to Exercise 5's 10-bytes/param restatement and 312 GB 13B figure (canonical: 13e9 × (16+16+2+2) = 468 GB)."
+        }
+      ],
+      "content/05-posttraining-alignment/12-distillation-compression.md": [
+        {
+          "quote": "- Adam optimizer states: two fp32 moments = 8 bytes/param = 56 GB.\n    - Activations for the same batch: ≈ 400 MB with gradient checkpointing.\n    - Total student-side memory: roughly 85 GB with bf16 gradients",
+          "canonical": "16 bytes/param → ~112 GB of weights + gradients + optimizer state for a 7B student (14 GB bf16 weights + 14 GB bf16 grads + 28 GB fp32 master + 56 GB Adam moments)",
+          "why": "The tally omits the 4-bytes/param fp32 master copy (28 GB for 7B) that is an explicit line item of the canonical 16-bytes/param rule in content/03-pretraining/05-distributed-data-parallel.md, content/03-pretraining/08-mixed-precision-fp8.md and content/04-kernels-efficiency/10-memory-efficient-training.md. The same Part V states the canonical number for the same model size: content/05-posttraining-alignment/03-peft-lora-qlora.md says full fine-tuning a 7B is 'roughly 16 bytes per parameter: about 112 GB'. The 85 GB figure changes the chapter's conclusion (85 GB is 'just over' one A100-80GB; 112 GB is comfortably over two-thirds again)."
+        }
+      ],
+      "content/05-posttraining-alignment/07-dpo-and-variants.md": [
+        {
+          "quote": "only ~10% of the total weight + gradient + Adam-state footprint of a full fine-tune (~18–20 bytes/param)",
+          "canonical": "~16 bytes/param (2 bf16 weight + 2 bf16 grad + 4 fp32 master + 4 m + 4 v)",
+          "why": "The canonical mixed-precision figure is 16 bytes/param (content/03-pretraining/05-distributed-data-parallel.md, content/03-pretraining/09-optimizers.md, content/04-kernels-efficiency/10-memory-efficient-training.md, content/05-posttraining-alignment/03-peft-lora-qlora.md, content/05-posttraining-alignment/05-rlhf-reward-modeling.md). content/03-pretraining/05-distributed-data-parallel.md names 18 only as the alternative fp32-gradient accounting; 20 is not derivable from any accounting in the book. The quoted range excludes the canonical value entirely, and the '~10%' claim it supports is itself the 16-byte answer (2/16 = 12.5%), not the 18–20 one."
+        }
+      ],
+      "content/07-inference-serving/12-inference-economics.md": [
+        {
+          "quote": "chunked prefill + stall-free scheduling; up to 6.9× higher throughput over vLLM at the same TTFT SLO on multi-GPU deployments",
+          "canonical": "2.6x higher serving capacity for Mistral-7B on one A100 and up to 5.6x for Falcon-180B with pipeline parallelism, versus vLLM",
+          "why": "Same paper (Agrawal et al., Sarathi-Serve, OSDI 2024, arXiv 2403.02310) cited with a different headline number. The authoritative chunked-prefill chapter, content/07-inference-serving/08-disaggregated-chunked-prefill.md:649, says \"2.6–5.6× higher serving capacity over vLLM baselines\", and content/07-inference-serving/02-continuous-batching.md:525 gives the same 2.6x/5.6x split with the exact model/hardware attribution. 6.9x appears nowhere else in the book and matches no reported Sarathi-Serve result."
+        },
+        {
+          "quote": "formalises \"goodput\" (SLO-attaining requests/s) and shows disaggregating prefill and decode onto separate GPU pools yields up to 4.5× better goodput",
+          "canonical": "up to 7.4x more requests served under tight SLOs",
+          "why": "Same paper (Zhong et al., DistServe, OSDI 2024, arXiv 2401.09670) cited with a different headline number. The authoritative disaggregation chapter states 7.4x twice — content/07-inference-serving/08-disaggregated-chunked-prefill.md:632 (\"reported up to 7.4x more requests served under tight SLOs (2–4x is the more typical range practitioners report...)\") and :643 (\"showed 7.4× throughput gains under tight SLOs\"). 4.5x looks like the superseded arXiv-v1 figure (4.48x) and is not hedged as such here."
+        },
+        {
+          "quote": "**Agrawal et al., \"Sarathi-Serve: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills\"**, OSDI 2024.",
+          "canonical": "Agrawal et al., \"Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve,\" OSDI 2024 (the \"Piggybacking Decodes with Chunked Prefills\" title belongs to the separate SARATHI 2023 paper, arXiv 2308.16369)",
+          "why": "Merges two distinct papers into one citation. The book elsewhere keeps them separate and correct: content/07-inference-serving/08-disaggregated-chunked-prefill.md:645 (SARATHI 2023) vs :649 (Taming Throughput-Latency, OSDI 2024); content/07-inference-serving/02-continuous-batching.md:524/525; content/12-production-mlops/01-serving-system-design.md:549; content/99-appendix/03-papers-reading-list.md:287."
+        }
+      ],
+      "content/07-inference-serving/08-disaggregated-chunked-prefill.md": [
+        {
+          "quote": "**Agrawal et al., \"Sarathi-Serve: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills,\" OSDI 2024.**",
+          "canonical": "Agrawal et al., \"Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve,\" OSDI 2024",
+          "why": "Same title conflation as above, and it contradicts this chapter's own Going Deeper entries 25 lines earlier (:645 cites SARATHI 2023 with the piggybacking title and arXiv 2308.16369; :649 cites the OSDI 2024 paper with the Taming Throughput-Latency title and arXiv 2403.02310)."
+        }
+      ],
+      "content/12-production-mlops/03-caching-routing-cost.md": [
+        {
+          "quote": "**Dao et al., \"FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning,\" ICLR 2024**",
+          "canonical": "Dao, \"FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning\" (2023)",
+          "why": "Different author form and year for the same paper. FlashAttention-2 is single-authored by Tri Dao, and roughly ten chapters cite it as \"Dao, *FlashAttention-2* ... (2023)\" (content/04-kernels-efficiency/02-flash-attention-1.md:634, 03-flash-attention-2-3.md:612, 04-triton-kernels.md:914, 05-cuda-essentials.md:695, content/02-transformer/03-attention-from-scratch.md:533 and 04-mha-gqa-mla.md:503, content/05-posttraining-alignment/02-chat-templates-packing.md:909, content/01-foundations/08-gpu-architecture.md:601, content/99-appendix/03-papers-reading-list.md:123). content/03-pretraining/13-long-context-pretraining.md:755 shares the \"Dao et al.\" half of the error."
+        }
+      ],
+      "content/14-capstone/05-mini-scaling-laws.md": [
+        {
+          "quote": "Chapter 14.6 *measures* it — a $\\times 2$ sweep on this chapter's S4 rung, transferred across batch size — and lands on **`muon_lr = 6e-3`**.",
+          "canonical": "Chapter 14.6 lands on muon_lr = 0.02 (AdamW 3e-3, ~6.7:1)",
+          "why": "Explicitly attributes 6e-3 to Ch. 14.6, which states 0.02. Also propagates into this chapter's code constants (`MUON_LR = 6e-3  # measured on the S4 rung in Ch. 14.6` at :307) and into the ladder's AdamW rule at :136, which calls 3e-3 \"= `muon_lr / 2`, the 2:1 ratio Chapter 14.6 fixes\" — whereas Ch. 14.6 fixes ~6.7:1."
+        }
+      ],
+      "content/99-appendix/05-from-scratch-index.md": [
+        {
+          "quote": "12 \\times (4 \\times 768^2 + 2 \\times 768^2 \\times 4 + 2 \\times 768) + 50257 \\times 768 \\approx 117\\text{M params}\n$$\n— the GPT-2 small configuration.",
+          "canonical": "~124M parameters (the expression as written evaluates to 84,953,088 + 38,597,376 = 123,550,464 ≈ 123.6M ≈ 124M)",
+          "why": "content/02-transformer/07-build-gpt-from-scratch.md is the authoritative from-scratch-GPT chapter this appendix entry indexes; its Exercise 2 solution (§1025–1033) works the identical d=768/12-layer/vocab-50257 config step by step and concludes \"exactly the famous 'GPT-2 small = 124M parameters'\". content/03-pretraining/17-end-to-end-pretrain-recipe.md §236 independently re-derives ≈123.6M for the same shape, and 124M is the figure used in content/03-pretraining/02-data-cleaning-dedup.md, /04-scaling-laws.md, /05-distributed-data-parallel.md, content/07-inference-serving/06-speculative-decoding.md, content/11-evaluation/03-eval-harnesses.md and content/13-interp-safety-gov/02-knowledge-editing-unlearning.md. 117M is also arithmetically inconsistent with the formula printed immediately to its left, so this is both a cross-chapter contradiction and a self-contained math error."
+        }
+      ]
+    },
+    "results": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "workflowProgress": [
+    {
+      "type": "workflow_phase",
+      "index": 1,
+      "title": "Find"
+    },
+    {
+      "type": "workflow_phase",
+      "index": 2,
+      "title": "Fix"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 1,
+      "label": "find:hardware-specs",
+      "phaseIndex": 1,
+      "phaseTitle": "Find",
+      "agentId": "ac3e944b9161161b2",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "startedAt": 1786511839774,
+      "queuedAt": 1786511833758,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "GPU hardware specs (NVIDIA A100 / H100 / H200 / B200-Blackw…",
+      "promptPreview": "You are auditing a large LLM-systems textbook for CROSS-CHAPTER INCONSISTENCY on ONE theme — cases where two or more chapters state the SAME fact/number with DIFFERENT values. This is the one defect class a per-chapter review cannot catch. Do NOT edit anything; report only.\n\nTHEME: GPU hardware specs stated across the book: NVIDIA A100 (peak bf16 dense TFLOP/s and HBM bandwidth), H100 (peak bf16 d…",
+      "lastProgressAt": 1786512048621,
+      "tokens": 96128,
+      "toolCalls": 41,
+      "durationMs": 208846,
+      "resultPreview": "{\"theme\":\"GPU hardware specs (NVIDIA A100 / H100 / H200 / B200-Blackwell peak dense bf16 TFLOP/s, FP8 TFLOP/s, HBM bandwidth, HBM capacity, SM counts, NVLink bandwidth) stated across chapters; authoritative chapter = content/01-foundations/08-gpu-architecture.md\",\"canonical_summary\":\"The authoritative spec table in content/01-foundations/08-gpu-architecture.md (lines 382-404) fixes: A100 = 108 SMs…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 2,
+      "label": "find:stack100m-config",
+      "phaseIndex": 1,
+      "phaseTitle": "Find",
+      "agentId": "a5de2ee99b2a6a206",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "startedAt": 1786511839682,
+      "queuedAt": 1786511833759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Stack-100M capstone config book-wide (architecture: d_model…",
+      "promptPreview": "You are auditing a large LLM-systems textbook for CROSS-CHAPTER INCONSISTENCY on ONE theme — cases where two or more chapters state the SAME fact/number with DIFFERENT values. This is the one defect class a per-chapter review cannot catch. Do NOT edit anything; report only.\n\nTHEME: The Stack-100M capstone config wherever it appears book-wide: d_model=512, n_layers=30, n_heads=8, n_kv_heads=2, head…",
+      "lastProgressAt": 1786512192448,
+      "tokens": 110882,
+      "toolCalls": 34,
+      "durationMs": 352766,
+      "resultPreview": "{\"theme\":\"Stack-100M capstone config book-wide (architecture: d_model=512, n_layers=30, n_heads=8, n_kv_heads=2, head_dim=64, SwiGLU intermediate=1408, vocab=32768, 101,353,728 total / ~84.6M non-embedding params; plus the frozen training-schedule constants that travel with it)\",\"canonical_summary\":\"The architecture half of the theme is essentially clean. capstone/PLAN.md §1 fixes vocab_size=32768…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 3,
+      "label": "find:capstone-cost-mfu",
+      "phaseIndex": 1,
+      "phaseTitle": "Find",
+      "agentId": "a322da61e1239a3e1",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "startedAt": 1786511840218,
+      "queuedAt": 1786511833759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "capstone-cost-mfu",
+      "promptPreview": "You are auditing a large LLM-systems textbook for CROSS-CHAPTER INCONSISTENCY on ONE theme — cases where two or more chapters state the SAME fact/number with DIFFERENT values. This is the one defect class a per-chapter review cannot catch. Do NOT edit anything; report only.\n\nTHEME: The capstone cost/throughput/MFU numbers: pretraining ~22-29 GPU-hr (~25 planning), whole project ~USD 90-100, the me…",
+      "lastProgressAt": 1786512320016,
+      "tokens": 127806,
+      "toolCalls": 28,
+      "durationMs": 479797,
+      "resultPreview": "{\"theme\":\"capstone-cost-mfu\",\"canonical_summary\":\"CANONICAL SET (what everything should agree with)\\n\\n1) Measured throughput & MFU conventions — Ch. 14.7 is authoritative (`content/14-capstone/07-pretraining-run.md:1165-1197`): dt = 2.3 s/step × 524,288 tok = **227,951 tok/s**, which is **44.5% MFU under 6ND** and **58.2% attention-inclusive** (6N = 608.4 MFLOP/tok, +188.7 attention = 797.1 MFLOP…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 4,
+      "label": "find:core-formulas-constants",
+      "phaseIndex": 1,
+      "phaseTitle": "Find",
+      "agentId": "a020798dc9d9204f4",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "startedAt": 1786511841875,
+      "queuedAt": 1786511833759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Recurring formulas/constants: 6ND training FLOPs, KV-cache …",
+      "promptPreview": "You are auditing a large LLM-systems textbook for CROSS-CHAPTER INCONSISTENCY on ONE theme — cases where two or more chapters state the SAME fact/number with DIFFERENT values. This is the one defect class a per-chapter review cannot catch. Do NOT edit anything; report only.\n\nTHEME: Recurring formulas/constants that must be stated identically everywhere: the 6ND training-FLOP rule, KV-cache size = …",
+      "lastProgressAt": 1786512367561,
+      "tokens": 161140,
+      "toolCalls": 41,
+      "durationMs": 525686,
+      "resultPreview": "{\"theme\":\"Recurring formulas/constants: 6ND training FLOPs, KV-cache size = 2·L·n_kv·d_head·s·bytes, Chinchilla ~20 tokens/param, Adam mixed-precision 16 bytes/param, roofline ridge point = peak_FLOPs/bandwidth\",\"canonical_summary\":\"Canonical values, established by the authoritative chapters and used by the clear majority of the book:\\n\\n1. **6ND training FLOPs** — `content/03-pretraining/04-scali…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 5,
+      "label": "find:benchmark-citations",
+      "phaseIndex": 1,
+      "phaseTitle": "Find",
+      "agentId": "a1cc0fc71ffd4526b",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "startedAt": 1786511843245,
+      "queuedAt": 1786511833759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Recurring benchmark/speedup figures and paper attributions …",
+      "promptPreview": "You are auditing a large LLM-systems textbook for CROSS-CHAPTER INCONSISTENCY on ONE theme — cases where two or more chapters state the SAME fact/number with DIFFERENT values. This is the one defect class a per-chapter review cannot catch. Do NOT edit anything; report only.\n\nTHEME: Recurring benchmark/speedup figures and paper attributions cited in more than one chapter: FlashAttention speedups, S…",
+      "lastProgressAt": 1786512174333,
+      "tokens": 152004,
+      "toolCalls": 41,
+      "durationMs": 331088,
+      "resultPreview": "{\"theme\":\"Recurring benchmark/speedup figures and paper attributions cited in more than one chapter (FlashAttention, Sarathi-Serve, PagedAttention/vLLM, DistServe, SGLang, EAGLE, Chinchilla/Kaplan, Muon/Kimi, DeepSeek MLA/MTP)\",\"canonical_summary\":\"Most of this theme is already consistent book-wide. Verified-consistent recurring figures: PagedAttention/vLLM (Kwon et al., SOSP 2023; 60–80% KV waste…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 6,
+      "label": "find:model-landscape-facts",
+      "phaseIndex": 1,
+      "phaseTitle": "Find",
+      "agentId": "afbb06e6d9d0796a6",
+      "model": "claude-opus-5[1m]",
+      "state": "done",
+      "startedAt": 1786511841681,
+      "queuedAt": 1786511833759,
+      "attempt": 1,
+      "lastToolName": "StructuredOutput",
+      "lastToolSummary": "Recurring facts about named real models (parameter counts, …",
+      "promptPreview": "You are auditing a large LLM-systems textbook for CROSS-CHAPTER INCONSISTENCY on ONE theme — cases where two or more chapters state the SAME fact/number with DIFFERENT values. This is the one defect class a per-chapter review cannot catch. Do NOT edit anything; report only.\n\nTHEME: Recurring facts about named real models stated in multiple chapters: parameter counts, context-window lengths, vocab …",
+      "lastProgressAt": 1786512345218,
+      "tokens": 198042,
+      "toolCalls": 53,
+      "durationMs": 503537,
+      "resultPreview": "{\"theme\":\"Recurring facts about named real models (parameter counts, context-window lengths, vocab sizes, release framing) stated across multiple chapters — GPT-2/3/4o, Llama 2/3/3.1/3.2/4, Qwen2/Qwen3, DeepSeek-V2/V3/R1, Mixtral/Mistral, Gemma 2/3, Kimi K2, SmolLM2/3.\",\"canonical_summary\":\"The theme is very nearly consistent book-wide. Verified-consistent canonical values across all mentions:\\n\\n…"
+    },
+    {
+      "type": "workflow_agent",
+      "index": 7,
+      "label": "fix:content/01-foundations/03-calculus-optimization.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "ae01592230e242df1",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372599,
+      "queuedAt": 1786512370582,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/01-foundations/03-calculus-optimization.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"Take the book's capstone m…",
+      "lastProgressAt": 1786512372903,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 304
+    },
+    {
+      "type": "workflow_agent",
+      "index": 8,
+      "label": "fix:content/14-capstone/07-pretraining-run.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "aeb6d0190d9ece350",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512373329,
+      "queuedAt": 1786512370582,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/14-capstone/07-pretraining-run.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"500 warmup / 31,647 stable / 6,000 …",
+      "lastProgressAt": 1786512373567,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 237
+    },
+    {
+      "type": "workflow_agent",
+      "index": 9,
+      "label": "fix:content/15-production-stack/04-pretrain-torchtitan.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "ada376db31da27d11",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372832,
+      "queuedAt": 1786512370582,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/15-production-stack/04-pretrain-torchtitan.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"you get 500 warmup / ~3…",
+      "lastProgressAt": 1786512373071,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 239
+    },
+    {
+      "type": "workflow_agent",
+      "index": 10,
+      "label": "fix:capstone/README.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a5b3b062cee36dc17",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372915,
+      "queuedAt": 1786512370582,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: capstone/README.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"**Memory ladder (quantization):** fp32 ≈406MB → bf16 ≈203M…",
+      "lastProgressAt": 1786512373212,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 297
+    },
+    {
+      "type": "workflow_agent",
+      "index": 11,
+      "label": "fix:content/14-capstone/12-retrospective-and-scaleup.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a145f8cb85c5ed6a3",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372742,
+      "queuedAt": 1786512370582,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/14-capstone/12-retrospective-and-scaleup.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"which corresponds to ~231…",
+      "lastProgressAt": 1786512372993,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 251
+    },
+    {
+      "type": "workflow_agent",
+      "index": 12,
+      "label": "fix:content/14-capstone/04-architecture.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "abcc40934485d4f6e",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372732,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/14-capstone/04-architecture.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"it needs $\\\\approx$49–65% model-FLOPs …",
+      "lastProgressAt": 1786512372992,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 259
+    },
+    {
+      "type": "workflow_agent",
+      "index": 13,
+      "label": "fix:content/14-capstone/08-mid-training.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a435941cdea3c95cc",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372800,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/14-capstone/08-mid-training.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"keeps the whole project inside its can…",
+      "lastProgressAt": 1786512373037,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 237
+    },
+    {
+      "type": "workflow_agent",
+      "index": 14,
+      "label": "fix:content/14-capstone/01-overview-and-landscape.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a03095ee4dd6529ef",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372544,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/14-capstone/01-overview-and-landscape.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"eval + quantization (Ch. 14.…",
+      "lastProgressAt": 1786512372994,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 450
+    },
+    {
+      "type": "workflow_agent",
+      "index": 15,
+      "label": "fix:content/03-pretraining/15-synthetic-data.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "acb72ae780deb3869",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372610,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/03-pretraining/15-synthetic-data.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"The *entire* Stack-100M pretraini…",
+      "lastProgressAt": 1786512372948,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 338
+    },
+    {
+      "type": "workflow_agent",
+      "index": 16,
+      "label": "fix:content/13-interview-prep/02-ml-breadth-rapidfire.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a6141c4c52bf79422",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512374193,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/13-interview-prep/02-ml-breadth-rapidfire.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"**Per token, full MHA:**…",
+      "lastProgressAt": 1786512374458,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 265
+    },
+    {
+      "type": "workflow_agent",
+      "index": 17,
+      "label": "fix:content/13-interview-prep/08-ten-day-study-plan.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a7e8b2bb152f7940e",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372613,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/13-interview-prep/08-ten-day-study-plan.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"\\\\text{bytes} = 2\\\\,(\\\\tex…",
+      "lastProgressAt": 1786512372890,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 276
+    },
+    {
+      "type": "workflow_agent",
+      "index": 18,
+      "label": "fix:content/99-appendix/03-papers-reading-list.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a4c8eafc596b9ea02",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372965,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/99-appendix/03-papers-reading-list.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"Under Chinchilla's equal-alloca…",
+      "lastProgressAt": 1786512373215,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 250
+    },
+    {
+      "type": "workflow_agent",
+      "index": 19,
+      "label": "fix:content/06-rl-infra/03-trl.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "ab776bafaa286d6cf",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372791,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/06-rl-infra/03-trl.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"- Policy + optimizer states (Adam): roughly $7 …",
+      "lastProgressAt": 1786512373072,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 280
+    },
+    {
+      "type": "workflow_agent",
+      "index": 20,
+      "label": "fix:content/05-posttraining-alignment/12-distillation-compression.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "aac7e23417e26cfff",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512373134,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/05-posttraining-alignment/12-distillation-compression.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"- Adam optim…",
+      "lastProgressAt": 1786512373383,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 249
+    },
+    {
+      "type": "workflow_agent",
+      "index": 21,
+      "label": "fix:content/05-posttraining-alignment/07-dpo-and-variants.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a7be020d5ad664f31",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372634,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/05-posttraining-alignment/07-dpo-and-variants.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"only ~10% of the tot…",
+      "lastProgressAt": 1786512372854,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 220
+    },
+    {
+      "type": "workflow_agent",
+      "index": 22,
+      "label": "fix:content/07-inference-serving/12-inference-economics.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a49e547d8e43f0631",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512372838,
+      "queuedAt": 1786512370583,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/07-inference-serving/12-inference-economics.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"chunked prefill + stal…",
+      "lastProgressAt": 1786512373325,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 487
+    },
+    {
+      "type": "workflow_agent",
+      "index": 23,
+      "label": "fix:content/07-inference-serving/08-disaggregated-chunked-prefill.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a696c709d28bf92bd",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512374628,
+      "queuedAt": 1786512370584,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/07-inference-serving/08-disaggregated-chunked-prefill.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"**Agrawal et…",
+      "lastProgressAt": 1786512374996,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 368
+    },
+    {
+      "type": "workflow_agent",
+      "index": 24,
+      "label": "fix:content/12-production-mlops/03-caching-routing-cost.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "ab8c8f26e39a180dd",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512374832,
+      "queuedAt": 1786512370584,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/12-production-mlops/03-caching-routing-cost.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"**Dao et al., \\\"FlashA…",
+      "lastProgressAt": 1786512375056,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 223
+    },
+    {
+      "type": "workflow_agent",
+      "index": 25,
+      "label": "fix:content/14-capstone/05-mini-scaling-laws.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a64cbf96ab6ee9a5f",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512374684,
+      "queuedAt": 1786512370584,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/14-capstone/05-mini-scaling-laws.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"Chapter 14.6 *measures* it — a $\\…",
+      "lastProgressAt": 1786512374972,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 288
+    },
+    {
+      "type": "workflow_agent",
+      "index": 26,
+      "label": "fix:content/99-appendix/05-from-scratch-index.md",
+      "phaseIndex": 2,
+      "phaseTitle": "Fix",
+      "agentId": "a805d78bcd34d9e9e",
+      "model": "claude-opus-5[1m]",
+      "state": "error",
+      "startedAt": 1786512374570,
+      "queuedAt": 1786512370584,
+      "attempt": 1,
+      "promptPreview": "You are fixing CROSS-CHAPTER CONSISTENCY defects in ONE file of a textbook. Auditors found places in this file that state a shared fact with the WRONG value; correct each to the canonical value. Verify before editing; do not fabricate.\n\nFile: content/99-appendix/05-from-scratch-index.md\n\nFlagged inconsistencies in this file (JSON: quote, canonical, why):\n[{\"quote\":\"12 \\\\times (4 \\\\times 768^2 + 2 …",
+      "lastProgressAt": 1786512374844,
+      "error": "You've hit your session limit · resets 8:30am (UTC)",
+      "tokens": 0,
+      "toolCalls": 0,
+      "durationMs": 274
+    }
+  ],
+  "totalTokens": 846002,
+  "totalToolCalls": 238
+}

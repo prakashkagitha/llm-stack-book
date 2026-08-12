@@ -15,7 +15,7 @@ from collections import defaultdict
 import numpy as np
 
 from stacklm.data import (DataMixEntry, PackedMemmapDataset, build_shards,
-                          stream_source)                              # Ch. 14.2
+                          load_hf_stream, stream_source)              # Ch. 14.2
 from stacklm.tokenizer import StackTokenizer                          # Ch. 14.3
 
 MIN_DOC_TOKENS = 4096          # half the target window; see the assertion below
@@ -49,15 +49,23 @@ def repo_level_documents(files, sep: str = "\n\n# ==== file: {path} ====\n\n"):
         yield {"text": body, "source": "starcoder_repo", "repo": repo}
 
 
-# The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records. The first three are
-# genuinely long; the next is a length-FILTERED slice of a pretrain source; the
-# last is the deliberately SHORT anti-drift anchor (ProLong; Llama 3).
+# The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records -- FULL loading
+# coordinates, not just repo ids: three of these repos are multi-config (no
+# default) and starcoderdata stores text under `content` and is sharded by
+# language, so an entry missing those fields raises or yields nothing (Ch. 14.2,
+# "the dataset id is not enough"). The first three are genuinely long; the next is
+# a length-FILTERED slice of a pretrain source; the last is the deliberately SHORT
+# anti-drift anchor (ProLong; Llama 3).
 LONG_SOURCES = [
-    (DataMixEntry("starcoder_repo",   "bigcode/starcoderdata",     0.35, "code"),  True),
-    (DataMixEntry("books_pg19",       "deepmind/pg19",             0.25, "web"),   False),
-    (DataMixEntry("arxiv_proofpile2", "EleutherAI/proof-pile-2",   0.15, "math"),  False),
-    (DataMixEntry("fineweb_edu_long", "HuggingFaceFW/fineweb-edu", 0.15, "web"),   False),
-    (DataMixEntry("cosmopedia_v2",    "HuggingFaceTB/cosmopedia",  0.10, "synthetic"), False),
+    (DataMixEntry("starcoder_repo", "bigcode/starcoderdata", 0.35, "code",
+                  hf_data_dir="python", text_column="content", gated=True), True),
+    (DataMixEntry("books_pg19", "deepmind/pg19", 0.25, "web"), False),
+    (DataMixEntry("arxiv_proofpile2", "EleutherAI/proof-pile-2", 0.15, "math",
+                  hf_config="arxiv"), False),
+    (DataMixEntry("fineweb_edu_long", "HuggingFaceFW/fineweb-edu", 0.15, "web",
+                  hf_config="sample-100BT"), False),
+    (DataMixEntry("cosmopedia_v2", "HuggingFaceTB/smollm-corpus", 0.10, "synthetic",
+                  hf_config="cosmopedia-v2"), False),   # v2 is NOT in the `cosmopedia` repo
 ]
 
 
@@ -86,7 +94,10 @@ def verify_positions(shard_dir: str, seq_len: int, floor: int = 4096,
 def main(out_root: str, seq_len: int, tokenizer_path: str):
     tok = StackTokenizer.load(tokenizer_path)     # Ch. 14.3, vocab 32768
     for entry, repo_level in LONG_SOURCES:
-        raw = stream_source(entry)                # Ch. 14.2 streaming reader
+        # Repo-level grouping needs the RAW rows (`repo_name`, `path`, `content`);
+        # `stream_source` normalizes every row to {"text","source","domain"} and
+        # drops exactly the fields the grouping keys on.
+        raw = load_hf_stream(entry) if repo_level else stream_source(entry)
         docs = repo_level_documents(raw) if repo_level else raw
         if entry.name != "cosmopedia_v2":         # the short-form anchor stays unfiltered
             docs = length_filtered(docs, tok)
