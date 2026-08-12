@@ -42,7 +42,7 @@ The fix is conceptually simple: **let the generators keep generating while the t
 
 The async design replaces the barrier with a **rollout queue** and a **weight-update channel**. Three logical components run concurrently:
 
-1. **Inference workers** (generators): a pool of vLLM/SGLang engines that pull prompts, sample completions with the *current* policy weights they hold, compute rewards (or ship completions to a verifier), and push finished rollouts onto the queue. They never block on the trainer.
+1. **Inference workers** (generators): a pool of vLLM/SGLang engines that pull prompts, sample completions with the *current* policy weights they hold, compute rewards (or ship completions to a verifier), and push finished rollouts onto the queue. They never wait on a trainer step barrier — only on queue backpressure when they get too far ahead.
 2. **Trainer**: pulls a batch of rollouts off the queue, computes the loss, steps the optimizer, and — every $N$ steps — publishes new weights to a versioned store.
 3. **Weight broadcaster**: pushes published weights into the inference workers. A worker swaps to the new weights at a safe boundary (between requests, or via an atomic in-place update) and tags every subsequent rollout with the **policy version** it was generated under.
 
@@ -93,7 +93,7 @@ $$
 J^{\text{clip}}(\theta) = \mathbb{E}\Big[\sum_t \min\big(\rho_t \hat A_t,\; \operatorname{clip}(\rho_t, 1-\varepsilon, 1+\varepsilon)\,\hat A_t\big)\Big].
 $$
 
-Clipping caps how far the target policy can move per step on any single token, bounding the per-token contribution to $[1-\varepsilon, 1+\varepsilon]\cdot|\hat A_t|$. This is the workhorse correction; for $s=1$ staleness it is usually sufficient by itself.
+Clipping removes the *incentive* to move the target policy far on any single token: when $\hat A_t > 0$, the per-token contribution is capped above at $(1+\varepsilon)\hat A_t$, so pushing $\rho_t$ higher buys nothing and the gradient through that token vanishes. Be precise about what it does *not* do, because this trips people up. The $\min$ is pessimistic, not two-sided: for $\hat A_t > 0$ and $\rho_t < 1-\varepsilon$ it selects the *unclipped* $\rho_t \hat A_t$, which shrinks toward $0$; and for $\hat A_t < 0$ and $\rho_t > 1+\varepsilon$ it again selects the unclipped $\rho_t \hat A_t$, whose magnitude grows **without bound** as $\rho_t \to \infty$. That asymmetry — the clip is inactive on exactly the branch that can blow up — is why dual-clip PPO exists, and why a separate hard cap on the raw ratio (the truncated importance sampling below) is still required. Clipping is nonetheless the workhorse correction; for $s=1$ staleness it is usually sufficient by itself.
 
 **2. Truncated importance sampling (TIS).** Clipping the *PPO* ratio is not enough when the gap between the generation engine and the training engine is large or systematic. A second ratio appears in async/disaggregated RL that practitioners often miss: the **inference engine** (vLLM, in fp16/fp8 with fused kernels) and the **training engine** (PyTorch FSDP, possibly bf16 with different kernels) do **not** produce numerically identical log-probs for the same tokens and weights. The behavior log-prob you logged at generation time, $\pi_{\theta_{\text{old}}}^{\text{infer}}$, differs from what the trainer would compute, $\pi_{\theta_{\text{old}}}^{\text{train}}$. Truncated importance sampling caps the behavior-side ratio at a constant $C$:
 
@@ -137,11 +137,12 @@ def async_ppo_loss(
 
     # --- 2. Per-token PPO ratio rho_t = pi_theta / pi_theta_old (computed in log-space) -------
     log_ratio = logp_train - logp_behavior                     # (B, T)
-    ratio = torch.exp(log_ratio)                               # rho_t
+    raw_ratio = torch.exp(log_ratio)                           # rho_t, UNCAPPED (keep for diagnostics)
 
     # --- 3. Truncated importance sampling: cap the ratio so a few outlier tokens can't blow up.
     #        We cap the *raw* ratio used as an IS weight; the clip below provides the trust region.
-    ratio = torch.clamp(ratio, max=tis_cap)
+    #        Note this needs a NEW name: the diagnostics below must see the uncapped ratio.
+    ratio = torch.clamp(raw_ratio, max=tis_cap)
 
     # --- 4. PPO clipped surrogate, token level. advantages broadcast across the sequence. -----
     adv = advantages.unsqueeze(1)                              # (B, 1) -> broadcast to (B, T)
@@ -155,9 +156,13 @@ def async_ppo_loss(
 
     # --- diagnostics that you MUST watch in async runs ----------------------------------------
     with torch.no_grad():
-        approx_kl = ((ratio - 1.0) - log_ratio)                # k3 estimator of KL(old||new), per token
+        # Both diagnostics use raw_ratio, NOT the TIS-capped ratio. The k3 estimator
+        # r - 1 - log r is only guaranteed nonnegative when r and log r are the SAME
+        # quantity; mixing a capped r with an uncapped log r yields negative "KL" and
+        # systematically hides engine mismatch exactly when it is worst.
+        approx_kl = ((raw_ratio - 1.0) - log_ratio)            # k3 estimator of KL(old||new), per token
         approx_kl = (approx_kl * mask).sum() / mask.sum().clamp(min=1.0)
-        clipfrac = (((ratio < 1 - eps_low) | (ratio > 1 + eps_high)).float() * mask).sum() / mask.sum().clamp(min=1.0)
+        clipfrac = (((raw_ratio < 1 - eps_low) | (raw_ratio > 1 + eps_high)).float() * mask).sum() / mask.sum().clamp(min=1.0)
         dropped = 1.0 - fresh.mean()
     return loss, {"approx_kl": approx_kl.item(),
                   "clipfrac": clipfrac.item(),
@@ -225,7 +230,7 @@ async def trainer_loop(model, optimizer, rq: RolloutQueue, weight_box, steps, ba
             weight_box.publish(model.state_dict(), version=step)        # generators pick this up lazily
 ```
 
-`weight_box` is the versioned weight store. Its `publish` is the broadcaster's job; in a single-node setup it is a shared object, but at scale it is a sharded broadcast — discussed in [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html). The key property of this loop: **neither the trainer nor any worker ever blocks on the other.** Workers always have weights to sample with; the trainer always has rollouts to consume. The only coupling is the soft staleness gate.
+`weight_box` is the versioned weight store. Its `publish` is the broadcaster's job; in a single-node setup it is a shared object, but at scale it is a sharded broadcast — discussed in [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html). The key property of this loop: **neither the trainer nor any worker ever blocks on a per-step *barrier*.** They do still block on the queue, but only softly and self-correctingly — the trainer waits only if the queue happens to be empty, and a worker waits only if the bounded queue is full (that is the backpressure discussed below, and it is a feature). In the steady state neither wait fires: workers always have weights to sample with, the trainer always has rollouts to consume, and the only algorithmic coupling is the soft staleness gate.
 
 ### Throughput bookkeeping
 
@@ -344,16 +349,27 @@ def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90, mag_tol=2
     T = recomputed_hidden.shape[0]
     passes = 0
     for t in range(T):
-        # How many of the prover's top-k indices also appear in our top-k for this token?
-        shared = len(set(commitment["idx"][t].tolist()) & set(ref["idx"][t].tolist()))
-        # And do the shared components' coarse magnitudes roughly agree?
-        ok_idx = shared / k >= tol_frac
-        # (a full check also compares q_vals on the shared indices within mag_tol buckets)
-        passes += int(ok_idx)
+        # index -> (coarse magnitude bucket, sign) for the prover's and our own top-k.
+        prover = {i: (v, s) for i, v, s in zip(commitment["idx"][t].tolist(),
+                                              commitment["qval"][t].tolist(),
+                                              commitment["sign"][t].tolist())}
+        ours   = {i: (v, s) for i, v, s in zip(ref["idx"][t].tolist(),
+                                               ref["qval"][t].tolist(),
+                                               ref["sign"][t].tolist())}
+        shared = prover.keys() & ours.keys()
+        # (i) the dominant components must mostly be the SAME coordinates ...
+        ok_idx = len(shared) / k >= tol_frac
+        # (ii) ... and on those coordinates the coarse magnitudes must agree within mag_tol
+        #      quantization buckets and the signs must match exactly. Without this second
+        #      check, verification is a pure index-set test and the committed qval/sign are
+        #      dead payload -- an adversary reproducing only the top-k index pattern passes.
+        ok_mag = all(abs(prover[i][0] - ours[i][0]) <= mag_tol and prover[i][1] == ours[i][1]
+                     for i in shared)
+        passes += int(ok_idx and ok_mag)
     return passes / T >= tol_frac     # accept only if MOST tokens are consistent
 ```
 
-The economics are what make it work: the **commitment is tiny** (top-$k$ ints, a few hundred bytes per token at most, often compressed much further), and **verification is a single batched prefill** — cheaper than the original autoregressive generation by the ratio of "one parallel forward over $T$ tokens" to "$T$ sequential forwards with KV-cache growth." So the trainer can afford to verify **every** rollout (or a random audited subset) before admitting it to the training stream, at a cost that is a small fraction of generation. A worker that submits a forged completion fails the check and its rollout is rejected (and, in an incentivized network, the worker is penalized).
+The economics are what make it work. First, the **commitment is tiny**: the raw dict above is ~1 KB per token, but the real scheme encodes the top-$k$ structure of a whole *block* of tokens (32 in TOPLOC) into a few hundred bytes total — on the order of bytes per token, which is what makes shipping proofs over a WAN free in bandwidth terms. Second, **verification is a single batched prefill**. Be careful about *why* that is cheap: it is not cheaper in FLOPs — one parallel forward over $T$ tokens and $T$ autoregressive decode steps both cost roughly $2NT$ for an $N$-parameter dense model, plus the same $O(T^2 d)$ of attention. The saving is arithmetic intensity: prefill is compute-bound (one big matmul over all $T$ positions), while low-batch decode is memory-bandwidth-bound (the entire weight matrix is re-read from HBM to produce a single token). In wall-clock and GPU-hours that is typically a one-to-two-orders-of-magnitude win, not a factor of $T$. So the trainer can afford to verify **every** rollout (or a random audited subset) before admitting it to the training stream, at a cost that is a small fraction of generation. A worker that submits a forged completion fails the check and its rollout is rejected (and, in an incentivized network, the worker is penalized).
 
 !!! note "Aside: why locality-sensitive, not cryptographic, hashing"
     A normal cryptographic hash (SHA-256) of the activations is useless here: flip one low bit and the hash is completely different, so an honest worker on different hardware would always fail. TOPLOC's insight is to hash a *quantity that is stable under benign perturbation* — the identity and coarse magnitude of the dominant activation components — so the commitment is **locality-sensitive**: nearby activation tensors produce consistent commitments, distant ones (different model/precision) do not. It trades the exactness of a cryptographic proof for *robust statistical confidence* that is appropriate for floating-point ML, and that is exactly the right tradeoff for verifying inference on heterogeneous GPUs.
@@ -477,7 +493,7 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
 - Prime Intellect, **INTELLECT-1: Launching the First Decentralized Training of a 10B Parameter Model** and **OpenDiLoCo** (2024) — globally-distributed low-communication pretraining.
 - Prime Intellect, **INTELLECT-2** and the **prime-rl** framework (2025) — globally-distributed asynchronous RL for reasoning models; and **INTELLECT-3** (2025), a 106B MoE reasoning model trained end-to-end with prime-rl's async agentic RL.
 - Douillard, Feng, Rusu, et al. (DeepMind), **DiLoCo: Distributed Low-Communication Training of Language Models** (2023) — many local steps between rare global syncs.
-- Ong, et al. (Prime Intellect), **TOPLOC: A Locality-Sensitive Hashing Scheme for Trustless Verifiable Inference** (2024) — verifying that an untrusted GPU ran the claimed model.
+- Ong, et al. (Prime Intellect), **TOPLOC: A Locality-Sensitive Hashing Scheme for Trustless Verifiable Inference** (2025) — verifying that an untrusted GPU ran the claimed model.
 - Schulman, Wolski, Dhariwal, et al., **Proximal Policy Optimization Algorithms** (2017) — the clipped surrogate that doubles as the staleness corrector.
 - Espeholt, et al. (DeepMind), **IMPALA: Scalable Distributed Deep-RL with Importance Weighted Actor-Learner Architectures** (2018) — the classic decoupled actor-learner with V-trace off-policy correction, the conceptual ancestor of async LLM RL.
 
@@ -536,7 +552,7 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
     \prod_{t=1}^{L} \rho_t = e^{-2.0} \approx 0.135 .
     $$
 
-    **(c) What this shows and the fix.** A tiny, even *unbiased-looking* per-token noise floor produces sequence-level weights that swing over a range of roughly $7.39 / 0.135 \approx 55\times$ — and with random rather than constant $\delta$ the variance of the product is effectively unbounded. This is the "variance explosion" the chapter warns about: the sequence ratio $\prod_t \rho_t$ is astronomically sensitive because errors multiply over thousands of tokens. The defense is **PPO clipping applied per token**: each factor is replaced by $\operatorname{clip}(\rho_t, 1-\varepsilon, 1+\varepsilon)$, so no single token's contribution can leave $[1-\varepsilon, 1+\varepsilon]$ and the multiplicative product can never compound into an extreme value. Because the clip acts at the token level (and the loss is a *sum* over clipped per-token terms, not a product), it caps how far the target policy can move on any one token and bounds each term's magnitude to $[1-\varepsilon,1+\varepsilon]\cdot|\hat A_t|$. (**Truncated importance sampling**, which caps the raw behavior-side ratio at a constant $C$, is the complementary defense specifically aimed at this systematic engine-mismatch bias.)
+    **(c) What this shows and the fix.** A tiny, even *unbiased-looking* per-token noise floor produces sequence-level weights that swing over a range of roughly $7.39 / 0.135 \approx 55\times$ — and with random rather than constant $\delta$ the variance of the product is effectively unbounded. This is the "variance explosion" the chapter warns about: the sequence ratio $\prod_t \rho_t$ is astronomically sensitive because errors multiply over thousands of tokens. The primary defense is the **token-level objective itself**: it never forms $\prod_t \rho_t$ at all. The surrogate is a *sum* of per-token terms $\min\big(\rho_t \hat A_t,\ \operatorname{clip}(\rho_t, 1-\varepsilon, 1+\varepsilon)\hat A_t\big)$, so the multiplicative compounding computed in (a)/(b) simply never arises — a uniform $\delta$ per-token bias perturbs each term by $O(\delta)$ rather than by $e^{L\delta}$. **PPO clipping** then bounds each term from above when $\hat A_t > 0$ (at $(1+\varepsilon)\hat A_t$), removing the incentive to chase a large ratio on any one token. Note that it does *not* bound the term when $\hat A_t < 0$ and $\rho_t > 1+\varepsilon$, where the $\min$ selects the unclipped $\rho_t \hat A_t$; that residual case is covered by **truncated importance sampling**, which hard-caps the raw behavior-side ratio at a constant $C$ and is also the defense specifically aimed at this systematic engine-mismatch bias.
 
 **4.** *(Conceptual — the silent async bug.)* A colleague reports that their async run's `approx_kl`, measured on *fresh* rollouts during the very first epoch over that data (staleness $s = 0$), is not zero — it sits around $0.03$ and slowly drifts upward — even though reward initially climbs. They insist staleness must be the problem and ask you to lower $s_{\max}$. Explain why lowering $s_{\max}$ will not help, identify the actual root cause, and describe the two fixes the chapter prescribes plus the one diagnostic you would log to confirm.
 
@@ -584,7 +600,7 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
     print("forged (different model) passes:", verdict_forged) # expect False
     ```
 
-    **Why it behaves this way.** `toploc_verify` recomputes the top-$k$ largest-magnitude activation indices per token and checks the fraction shared with the prover's committed indices against `tol_frac = 0.90`, accepting only if most tokens agree. Under **benign noise** ($10^{-3}$ scale) the dominant components barely move: the same large-$|h|$ coordinates stay in the top-$k$, so per-token index overlap is well above $0.90$ and the run passes. Under a **large perturbation** ($1.0$ scale, comparable to the signal) the ranking of components is scrambled, the top-$k$ index sets diverge, per-token overlap falls below tolerance, and verification fails. That is exactly the locality-sensitive property the chapter wants: *nearby* activation tensors (honest run, benign hardware noise) produce consistent commitments, while *distant* ones (different model / precision / fabricated tokens) do not — robust to benign numerics, sensitive to real model changes. (You can sweep the perturbation scale from $10^{-3}$ up to $1.0$ to see the verdict flip as the noise starts to re-rank the dominant components.)
+    **Why it behaves this way.** `toploc_verify` recomputes the top-$k$ largest-magnitude activation indices per token, checks the fraction shared with the prover's committed indices against `tol_frac = 0.90`, and additionally requires that the shared components' coarse magnitude buckets agree within `mag_tol` and their signs match — accepting only if most tokens pass both. Under **benign noise** ($10^{-3}$ scale) the dominant components barely move: the same large-$|h|$ coordinates stay in the top-$k$, so per-token index overlap is well above $0.90$ and the run passes. Under a **large perturbation** ($1.0$ scale, comparable to the signal) the ranking of components is scrambled, the top-$k$ index sets diverge, per-token overlap falls below tolerance, and verification fails. That is exactly the locality-sensitive property the chapter wants: *nearby* activation tensors (honest run, benign hardware noise) produce consistent commitments, while *distant* ones (different model / precision / fabricated tokens) do not — robust to benign numerics, sensitive to real model changes. (You can sweep the perturbation scale from $10^{-3}$ up to $1.0$ to see the verdict flip as the noise starts to re-rank the dominant components.)
 
 **6.** *(Implementation — modify the async loss.)* The chapter's `async_ppo_loss` applies a *hard* staleness gate: rollouts with $s \le s_{\max}$ are kept at full weight, everything staler is dropped. A colleague proposes a *soft* alternative: instead of a cliff at $s_{\max}$, down-weight each rollout's loss contribution by an exponential staleness decay $w(s) = \gamma^{s}$ (with, say, $\gamma = 0.8$), while *still* hard-dropping anything past a safety ceiling $s_{\text{ceil}}$. Modify `async_ppo_loss` to implement this, keeping the token-level aggregation correct (the denominator must reflect the same weighting as the numerator), and explain in one sentence why a per-sample weight must be folded into *both*.
 
@@ -611,10 +627,10 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
 
         # --- 2. Per-token PPO ratio (log-space) --------------------------------------------------
         log_ratio = logp_train - logp_behavior
-        ratio = torch.exp(log_ratio)
+        raw_ratio = torch.exp(log_ratio)                           # uncapped, for diagnostics
 
         # --- 3. Truncated importance sampling (behavior-side cap) --------------------------------
-        ratio = torch.clamp(ratio, max=tis_cap)
+        ratio = torch.clamp(raw_ratio, max=tis_cap)
 
         # --- 4. PPO clipped surrogate, token level ----------------------------------------------
         adv = advantages.unsqueeze(1)
@@ -626,9 +642,9 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
         loss = -(per_token * mask).sum() / mask.sum().clamp(min=1.0)
 
         with torch.no_grad():
-            approx_kl = ((ratio - 1.0) - log_ratio)
+            approx_kl = ((raw_ratio - 1.0) - log_ratio)            # k3 on the UNCAPPED ratio
             approx_kl = (approx_kl * mask).sum() / mask.sum().clamp(min=1.0)
-            clipfrac = (((ratio < 1 - eps_low) | (ratio > 1 + eps_high)).float()
+            clipfrac = (((raw_ratio < 1 - eps_low) | (raw_ratio > 1 + eps_high)).float()
                         * mask).sum() / mask.sum().clamp(min=1.0)
             eff_dropped = 1.0 - (soft_w > 0).float().mean()        # fully-ceiling-dropped fraction
         return loss, {"approx_kl": approx_kl.item(),

@@ -12,7 +12,10 @@ earlier ones:
                                run_in_sandbox, code_reward, extract_code_block
     - block #3 (line ~290) -- the assembled rlvr_reward function that routes
                                to math_is_correct / code_reward, plus the
-                               _is_degenerate anti-hacking guard
+                               _is_degenerate anti-hacking guard. Its
+                               format/constraint branch calls a reader-supplied
+                               `constraint_is_satisfied`, so only the math and
+                               code domains are exercised here.
 
 Block #2 (line ~267) is a Lean 4 theorem-prover snippet -- not Python, SKIP.
 Block #4 (line ~378, `mixed_reward`) is a non-standalone fragment: it calls
@@ -79,11 +82,15 @@ def normalize_numeric(s: str):
     # LaTeX \frac{a}{b}  or  \dfrac{a}{b}
     m = re.fullmatch(r"\\d?frac\{(-?\d+)\}\{(-?\d+)\}", s)
     if m:
-        return Fraction(int(m.group(1)), int(m.group(2)))
+        # A model can and will emit \frac{1}{0}; Fraction(1, 0) raises, and an
+        # exception here would take down the trainer. Treat it as unparseable.
+        den = int(m.group(2))
+        return None if den == 0 else Fraction(int(m.group(1)), den)
     # plain a/b
     m = re.fullmatch(r"(-?\d+)\s*/\s*(-?\d+)", s)
     if m:
-        return Fraction(int(m.group(1)), int(m.group(2)))
+        den = int(m.group(2))
+        return None if den == 0 else Fraction(int(m.group(1)), den)
     try:
         return Fraction(s)            # exact for integers / decimals like '0.50'
     except (ValueError, ZeroDivisionError):
@@ -118,8 +125,16 @@ assert math_is_correct(r"first \boxed{7} then \boxed{0.50}", "1/2") == 1.0
 assert math_is_correct(r"<answer>42</answer>", "42") == 1.0
 assert math_is_correct(r"\boxed{\frac{3}{4}}", "0.75") == 1.0
 assert math_is_correct(r"\boxed{8}", "9") == 0.0
+assert math_is_correct(r"\boxed{1/0}", "1") == 0.0   # degenerate: must not raise
 
 print("[block #0] math verifier sanity asserts passed")
+
+# extra regression coverage for the zero-denominator guard: none of these may
+# raise (a raising reward function kills the trainer mid-run).
+for _bad in (r"\boxed{1/0}", r"\boxed{\frac{1}{0}}", r"\boxed{0/0}"):
+    assert math_is_correct(_bad, "1") == 0.0
+assert math_is_correct(r"\boxed{1}", "1/0") == 0.0   # malformed *gold* too
+print("[block #0] zero-denominator answers score 0.0 without raising")
 
 
 # =============================================================================
@@ -170,9 +185,12 @@ def code_reward(completion: str, test_cases: list[dict],
     Verifiable code reward = fraction of hidden unit tests passed.
     `test_cases` is a list of {"input": "...", "expected": "..."} dicts.
     The model's `completion` is expected to define a function `entry_point`
-    that reads from stdin and prints to stdout. We assemble a harness so the
-    model's code NEVER sees the test inputs as data it can inspect.
+    that reads from stdin and prints to stdout. The harness feeds one test's
+    input on stdin, so the model's code NEVER sees the expected outputs or the
+    rest of the hidden suite -- only the single input it is being run on.
     """
+    if not test_cases:            # missing/empty suite: score 0, never divide by zero
+        return 0.0
     program = extract_code_block(completion)
     if program is None:
         return 0.0
@@ -237,6 +255,11 @@ def rlvr_reward(question: str, response: str, gold: str,
         accuracy = math_is_correct(response, gold)          # {0, 1}
     elif domain == "code":
         accuracy = code_reward(response, test_cases)         # [0, 1] graded
+    elif domain in ("format", "constraint"):
+        # The third verifier family (§"What makes a reward 'verifiable'"): YOUR
+        # programmatic rule check -- JSON-schema validity, sentence count,
+        # forbidden word absent -- returning {0, 1}.
+        accuracy = constraint_is_satisfied(response, gold)   # reader-supplied
     else:
         accuracy = 0.0
 
@@ -300,5 +323,11 @@ rc = rlvr_reward(
 assert abs(rc["accuracy"] - (2 / 3)) < 1e-9
 assert rc["format"] == 0.0   # no <think>/boxed tags in the code completion
 print(f"[block #3] rlvr_reward (code domain) = {rc}")
+
+# a code row whose test column failed to parse must score 0, not crash.
+assert code_reward(_sample_completion, []) == 0.0
+assert rlvr_reward("Sum two numbers.", _sample_completion, gold="",
+                   domain="code", test_cases=None)["total"] == 0.0
+print("[block #3] missing/empty test suite scores 0.0 instead of raising")
 
 print("\nAll RLVR reasoning-chapter blocks executed successfully.")

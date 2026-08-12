@@ -54,7 +54,7 @@ $$
 R(q, o) = \underbrace{\mathbb{1}[\text{boxed answer matches gold}]}_{\text{accuracy, the real signal}} \; + \; \underbrace{\lambda \cdot \mathbb{1}[\text{response uses } \texttt{<think>}\,/\,\texttt{<answer>} \text{ format}]}_{\text{small format shaping}}
 $$
 
-with $\lambda$ small (the format term teaches *structure*, not *content*; keep it a fraction of the accuracy reward so the model can never profit by formatting a wrong answer). There is **no reward model, no value network, no human preference data, no demonstrations of how to reason.** The prompts are hard math and code problems with known answers.
+with $\lambda$ small (the format term teaches *structure*, not *content*; keep it a fraction of the accuracy reward so a well-formatted *wrong* answer can never out-score a correct one). There is **no reward model, no value network, no human preference data, no demonstrations of how to reason.** The prompts are hard math and code problems with known answers.
 
 ### What emerges
 
@@ -127,11 +127,15 @@ def normalize_numeric(s: str):
     # LaTeX \frac{a}{b}  or  \dfrac{a}{b}
     m = re.fullmatch(r"\\d?frac\{(-?\d+)\}\{(-?\d+)\}", s)
     if m:
-        return Fraction(int(m.group(1)), int(m.group(2)))
+        # A model can and will emit \frac{1}{0}; Fraction(1, 0) raises, and an
+        # exception here would take down the trainer. Treat it as unparseable.
+        den = int(m.group(2))
+        return None if den == 0 else Fraction(int(m.group(1)), den)
     # plain a/b
     m = re.fullmatch(r"(-?\d+)\s*/\s*(-?\d+)", s)
     if m:
-        return Fraction(int(m.group(1)), int(m.group(2)))
+        den = int(m.group(2))
+        return None if den == 0 else Fraction(int(m.group(1)), den)
     try:
         return Fraction(s)            # exact for integers / decimals like '0.50'
     except (ValueError, ZeroDivisionError):
@@ -166,6 +170,7 @@ assert math_is_correct(r"first \boxed{7} then \boxed{0.50}", "1/2") == 1.0
 assert math_is_correct(r"<answer>42</answer>", "42") == 1.0
 assert math_is_correct(r"\boxed{\frac{3}{4}}", "0.75") == 1.0
 assert math_is_correct(r"\boxed{8}", "9") == 0.0
+assert math_is_correct(r"\boxed{1/0}", "1") == 0.0   # degenerate: must not raise
 ```
 
 This is the *minimal* version. Production math verifiers (the widely-used `math-verify` library, or the checker in PRM800K / the MATH dataset tooling) additionally use a symbolic engine (SymPy) to compare expressions like `(x+1)^2` vs `x^2+2x+1`, handle sets and tuples and intervals, and canonicalize LaTeX aggressively. The principle is the same: **parse, normalize to a canonical form, compare for equivalence — never raw strings.** A weak verifier is a silent reward-hacking vector: if your checker marks `0.5` wrong against `1/2`, the model learns to *avoid* decimal answers, distorting behavior for no good reason.
@@ -254,9 +259,12 @@ def code_reward(completion: str, test_cases: list[dict],
     Verifiable code reward = fraction of hidden unit tests passed.
     `test_cases` is a list of {"input": "...", "expected": "..."} dicts.
     The model's `completion` is expected to define a function `entry_point`
-    that reads from stdin and prints to stdout. We assemble a harness so the
-    model's code NEVER sees the test inputs as data it can inspect.
+    that reads from stdin and prints to stdout. The harness feeds one test's
+    input on stdin, so the model's code NEVER sees the expected outputs or the
+    rest of the hidden suite — only the single input it is being run on.
     """
+    if not test_cases:            # missing/empty suite: score 0, never divide by zero
+        return 0.0
     program = extract_code_block(completion)
     if program is None:
         return 0.0
@@ -329,6 +337,11 @@ def rlvr_reward(question: str, response: str, gold: str,
         accuracy = math_is_correct(response, gold)          # {0, 1}
     elif domain == "code":
         accuracy = code_reward(response, test_cases)         # [0, 1] graded
+    elif domain in ("format", "constraint"):
+        # The third verifier family (§"What makes a reward 'verifiable'"): YOUR
+        # programmatic rule check -- JSON-schema validity, sentence count,
+        # forbidden word absent -- returning {0, 1}.
+        accuracy = constraint_is_satisfied(response, gold)
     else:
         accuracy = 0.0
 
@@ -386,9 +399,9 @@ Now the worked example. We feed this reward into GRPO (whose advantage mechanics
     \hat A_6 \approx \frac{-0.567}{0.502} \approx -1.13.
     $$
 
-    **What the policy learns from this group.** Every token of the two fully-correct-with-format responses ($o_1, o_5$) gets pushed up hardest ($+1.06$); the bare-correct $o_2$ is pushed up but *less* ($+0.86$) — the model feels a gentle pull toward also producing the `<think>` structure, exactly the intended effect of the small format bonus. The two wrong-but-formatted answers ($o_3, o_4$) are pushed down ($-0.93$), and the degenerate $o_6$ is pushed down hardest ($-1.13$). The dominant signal, by far, is **correctness** ($\pm 1.0$ accuracy swamps the $\pm 0.1$ format term), which is precisely what keeps the model honest: it cannot profit from format alone.
+    **What the policy learns from this group.** Every token of the two fully-correct-with-format responses ($o_1, o_5$) gets pushed up hardest ($+1.06$); the bare-correct $o_2$ is pushed up but *less* ($+0.86$) — the model feels a gentle pull toward also producing the `<think>` structure, exactly the intended effect of the small format bonus. The two wrong-but-formatted answers ($o_3, o_4$) are pushed down ($-0.93$), and the degenerate $o_6$ is pushed down hardest ($-1.13$). The dominant signal, by far, is **correctness** ($\pm 1.0$ accuracy swamps the $\pm 0.1$ format term), which is precisely what keeps the model honest: format shaping can re-rank responses *within* an accuracy tier (note $o_3, o_4$ do sit above $o_6$), but it can never lift a wrong answer above a right one.
 
-    **Sanity on magnitudes:** the format bonus moved $o_1$'s advantage from $+0.86$ (what it would have been at reward $1.0$) to $+1.06$ — about a 23% relative nudge. Tune $\lambda$ so this nudge is *noticeable but not dominant*; if you set the format bonus to, say, $0.5$, a well-formatted *wrong* answer ($R=0.5$) would out-score a badly-formatted *right* one ($R=1.0$)? No — $1.0 > 0.5$ still — but the *gap* shrinks dangerously, and the model starts spending capacity on formatting instead of solving. Small format weights are not aesthetic; they are a reward-hacking defense.
+    **Sanity on magnitudes:** the format bonus is what separates $o_1$ ($+1.06$) from $o_2$ ($+0.86$), the otherwise identical correct-but-unformatted response — about a 23% relative nudge. (Careful with the counterfactual framing: re-scoring $o_1$ itself at $1.0$ would also shift the group mean and $\sigma$, giving $+0.93$ rather than $+0.86$; the clean comparison is across the two responses in the *same* group.) Tune $\lambda$ so this nudge is *noticeable but not dominant*; if you set the format bonus to, say, $0.5$, a well-formatted *wrong* answer ($R=0.5$) would out-score a badly-formatted *right* one ($R=1.0$)? No — $1.0 > 0.5$ still — but the *gap* shrinks dangerously, and the model starts spending capacity on formatting instead of solving. Small format weights are not aesthetic; they are a reward-hacking defense.
 
 ## From narrow RLVR to general reasoning
 
@@ -722,7 +735,7 @@ The deepest takeaway is a shift in worldview. For a decade, the bottleneck of su
 
     **Key assumption:** execution is a *pure function* of `(source_code, stdin)` — same code + same input always yields the same `(ok, stdout, stderr)`. This holds for the deterministic algorithmic problems RLVR typically uses.
 
-    **Where it breaks:** any nondeterministic program — one that reads the clock, uses an unseeded RNG, depends on wall-time, hashing/set-iteration order, or (in principle) network/environment state. For such code a cached result may not match a fresh run, so caching is only sound when the harness pins determinism (seed RNGs, no network — which the sandbox already blocks, no time-dependence). A secondary caveat: the cache is unbounded here; a production version needs an LRU/size cap so it does not grow without limit over an epoch.
+    **Where it breaks:** any nondeterministic program — one that reads the clock, uses an unseeded RNG, depends on wall-time, hashing/set-iteration order, or (in principle) network/environment state. For such code a cached result may not match a fresh run, so caching is only sound when the harness pins determinism (seed RNGs, no time-dependence, and no network — note the chapter's illustrative `run_in_sandbox` does *not* actually block sockets; a production sandbox must, with a network namespace or seccomp). A secondary caveat: the cache is unbounded here; a production version needs an LRU/size cap so it does not grow without limit over an epoch.
 
 **6.** *(Conceptual — is formal-math RLVR truly unhackable?)* A colleague argues: "A Lean proof kernel has *zero* false positives, so a Lean-based RLVR run is completely unhackable — unlike the math checker (normalization gaps) or the code sandbox (escapes, test leakage)." Using §"Building real verifiers III," explain what is right about this and identify the residual trust surface that keeps even formal RLVR from being *fully* airtight. Name the two concrete exploits the chapter lists at that boundary and the defenses.
 

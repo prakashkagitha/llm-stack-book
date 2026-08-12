@@ -39,21 +39,27 @@ class ModelActor:
         self.model = torch.nn.Linear(hidden_size, hidden_size).to(self.device)
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
 
-    def forward(self, x_ref):
-        """Receive a Ray object reference, run forward pass, return a new ref."""
-        x = ray.get(x_ref)           # deserialize tensor from object store
+    def forward(self, x):
+        """Run a forward pass. `x` arrives already materialized: Ray
+        auto-dereferences top-level ObjectRef arguments to a `.remote()` call
+        before the method body runs, so calling `ray.get(x)` here would raise
+        a ValueError. Returning the tensor directly is enough — Ray puts the
+        return value into the object store for you."""
         x = x.to(self.device)
         with torch.no_grad():
             out = self.model(x)
-        return ray.put(out.cpu())    # put result back into object store
+        return out.cpu()
 
-    def update(self, loss_ref):
-        """Apply a gradient update given a remote loss tensor."""
-        loss = ray.get(loss_ref).to(self.device)
+    def update(self, x, target):
+        """Apply a gradient update. The loss must be computed *here*: a tensor
+        that round-tripped through the object store carries no autograd graph,
+        so `backward()` on a received loss would raise."""
+        x, target = x.to(self.device), target.to(self.device)
         self.optimizer.zero_grad()
+        loss = torch.nn.functional.mse_loss(self.model(x), target)
         loss.backward()
         self.optimizer.step()
-        return "updated"
+        return loss.item()
 
 # --- Controller (runs on CPU driver) ---
 ray.init()
@@ -135,10 +141,10 @@ ray.shutdown()
 A critical performance property of Ray's object store is **zero-copy reads for numpy arrays on the same node**. When rollout tokens and log-probabilities are placed in the object store, a training worker on that node maps the shared-memory pages directly instead of copying. The caveat, and the source of a warning message every RLHF engineer eventually sees: the mapped buffer is **read-only**, so `torch.from_numpy(ray.get(ref))` yields a tensor you must `.clone()` before writing to (PyTorch emits "The given NumPy array is not writable" otherwise). Torch tensors themselves round-trip through numpy in Ray's serializer, and CUDA tensors are always copied to host memory first — so keep experience batches on CPU as numpy, and never route GPU tensors through the object store. For a batch of 1024 sequences of length 2048, the per-token logprob array is approximately:
 
 $$
-1024 \times 2048 \times 4 \text{ bytes} \approx 8 \text{ GB}
+1024 \times 2048 \times 4 \text{ bytes} \approx 8 \text{ MB}
 $$
 
-Eliminating even one copy of that tensor per step saves gigabytes of PCIe or NVLink bandwidth per iteration.
+One float per token is small; the point is that the *whole* experience batch — token ids, old log-probs, reference log-probs, rewards, advantages, values — is a handful of such arrays, i.e. tens of megabytes, and it crosses actor boundaries several times per iteration (rollout → reward → reference → critic → trainer). Every avoided copy removes a serialize-plus-memcpy from the critical path between phases, which is latency, not bandwidth, that you get back.
 
 Across nodes there is no such trick: Ray serializes the object (cloudpickle, with numpy buffers handled out-of-band) and copies it over the network, so cross-node object transfers should be minimized — keep rollout workers and the training workers that consume their output on the same node when possible.
 
@@ -170,7 +176,19 @@ Path B is what every serious framework does today. Modern vLLM exposes exactly t
 # --- vLLM side: a worker extension, loaded into every vLLM worker rank ---
 # (saved as e.g. rlhf_utils.py so vLLM can import it by string name)
 import torch
-from vllm.distributed.utils import stateless_init_process_group
+from vllm.distributed.utils import StatelessProcessGroup
+from vllm.distributed.device_communicators.pynccl import PyNcclCommunicator
+
+
+def stateless_init_process_group(master_addr, master_port, rank, world_size,
+                                 device):
+    """Build a side-channel NCCL communicator that ignores torch.distributed's
+    global state. This helper is *not* a vLLM public API — it is defined here,
+    exactly as in vLLM's `examples/offline_inference/rlhf_utils.py`, and both
+    the trainer and the vLLM workers import it from this module."""
+    pg = StatelessProcessGroup.create(host=master_addr, port=master_port,
+                                      rank=rank, world_size=world_size)
+    return PyNcclCommunicator(pg, device=device)
 
 
 class WeightSyncExtension:
@@ -197,7 +215,11 @@ class WeightSyncExtension:
 
 # --- Driver side: the engine must live in a Ray actor, not in this process ---
 import ray
+import torch
 from vllm import LLM
+from rlhf_utils import stateless_init_process_group   # same helper as above
+
+master_addr, master_port = "127.0.0.1", 51216   # any free port on this host
 
 
 @ray.remote(num_gpus=0)   # the engine's own workers claim the GPUs
@@ -221,9 +243,16 @@ class VLLMEngineActor:
 engine = VLLMEngineActor.remote()
 
 # Once, at startup: trainer is rank 0, the 2 vLLM workers are ranks 1 and 2.
-ray.get(engine.rpc.remote("init_weight_update_group",
-                          master_addr, master_port, 1, 1 + 2))
-# ...and the trainer joins the SAME group as rank 0 (world_size=3), symmetrically.
+# Group creation is a RENDEZVOUS: do NOT block on this handle yet, or the
+# workers wait for rank 0 while rank 0 (this process) waits for them.
+handle = engine.rpc.remote("init_weight_update_group",
+                           master_addr, master_port, 1, 1 + 2)
+# ...the trainer joins the SAME group as rank 0 (world_size=3), symmetrically,
+# and only then do we collect the workers' side of the rendezvous.
+weight_update_group = stateless_init_process_group(
+    master_addr, master_port, 0, 1 + 2, torch.device("cuda:0")
+)
+ray.get(handle)
 
 def push_weights(model, engine, weight_update_group):
     """Broadcast every parameter, one at a time, trainer -> vLLM workers."""
@@ -233,7 +262,10 @@ def push_weights(model, engine, weight_update_group):
         # This is why the engine has to be a Ray actor — a plain in-process
         # `LLM.collective_rpc` blocks, and the broadcast below never happens.
         handle = engine.rpc.remote("update_weight", name, p.dtype, p.shape)
-        torch.distributed.broadcast(p.data, src=0, group=weight_update_group)
+        # Same communicator API as the receive side: this is a PyNcclCommunicator,
+        # NOT a torch.distributed ProcessGroup, so use its own `.broadcast`.
+        weight_update_group.broadcast(p.data, src=0,
+                                      stream=torch.cuda.current_stream())
         ray.get(handle)                        # now the recv is complete
     ray.get(engine.reset_prefix_cache.remote())  # old-weight prefixes must go
 ```
@@ -723,7 +755,13 @@ class RolloutActor:
                     do_sample=True,
                     temperature=0.9,
                     return_dict_in_generate=True,
-                    output_scores=True,
+                    # `output_logits` gives the RAW model logits. Do not use
+                    # `output_scores`: those are post-processing (here divided
+                    # by temperature=0.9), so their log-probs would describe a
+                    # different distribution than the one `PolicyActor.ppo_step`
+                    # recomputes — and the PPO ratio would never be 1 even
+                    # immediately after a weight sync.
+                    output_logits=True,
                 )
             # Decode generated tokens (excluding prompt)
             gen_tokens = out.sequences[0, inputs["input_ids"].shape[1]:]
@@ -731,17 +769,21 @@ class RolloutActor:
 
             # Compute per-token log-probabilities
             logprobs = []
-            for step, score in enumerate(out.scores):
-                lp = F.log_softmax(score, dim=-1)
+            for step, step_logits in enumerate(out.logits):
+                lp = F.log_softmax(step_logits, dim=-1)
                 tok_id = gen_tokens[step].item()
                 logprobs.append(lp[0, tok_id].item())
 
             results.append((response, logprobs))
         return results
 
-    def update_weights(self, state_dict_ref):
-        """Load new weights from Ray object store."""
-        state_dict = ray.get(state_dict_ref)
+    def update_weights(self, state_dict):
+        """Load new weights pushed from the policy actor.
+
+        `state_dict` arrives already materialized — Ray dereferences the
+        top-level ObjectRef passed to `.remote()` before this body runs, so an
+        extra `ray.get()` here would raise a ValueError.
+        """
         self.model.load_state_dict(state_dict)
         self.model.eval()
         return True
@@ -884,7 +926,7 @@ In any Ray-based RLHF system, throughput is determined by the slowest stage in t
 
 1. **Rollout (generation):** autoregressive decoding is memory-bandwidth-bound. vLLM's PagedAttention and continuous batching partially amortize this, but for long sequences it dominates.
 2. **Reward model scoring:** if the RM is large (e.g., 70B), its forward pass can match or exceed policy update time.
-3. **Weight synchronization:** transferring 140 GB of bf16 parameters over PCIe (16 GB/s) takes ~9 seconds per sync. This motivates reducing sync frequency or using NVLink.
+3. **Weight synchronization:** transferring 140 GB of bf16 parameters over PCIe Gen3 x16 (~16 GB/s) takes ~9 seconds per sync; Gen4 and NVLink are several times faster (worked out below). This motivates reducing sync frequency or using NVLink.
 4. **Python controller overhead:** for very short update steps (small models), the Ray controller's Python overhead can be significant — on the order of 10–50 ms per step.
 
 !!! example "Weight Sync Bandwidth Example"
@@ -895,11 +937,13 @@ In any Ray-based RLHF system, throughput is determined by the slowest stage in t
     - **PCIe Gen4** (64 GB/s bidirectional): $140 \text{ GB} / 64 \text{ GB/s} \approx 2.2$ seconds.
     - **InfiniBand HDR** (25 GB/s per link, 8 links): $140 \text{ GB} / 200 \text{ GB/s} \approx 0.7$ seconds.
 
+    These are peak *aggregate* figures, so treat them as optimistic lower bounds: a weight broadcast is one-directional, so the usable rate is roughly half the bidirectional number, and a parameter-by-parameter loop never saturates the link on the small tensors.
+
     If PPO update epochs take roughly 30 seconds, weight sync adds 1–7% overhead depending on interconnect — acceptable. But for smaller models where updates are faster (say, 5 seconds for a 7B model), sync overhead can reach 20–40% without careful optimization (e.g., overlapping sync with the next rollout batch).
 
 ### Reducing Weight Sync Overhead
 
-Three strategies used in practice:
+Four strategies used in practice:
 
 1. **Lazy sync:** only sync every $N$ PPO epochs rather than every step. Trades off staleness of the rollout policy for reduced communication cost.
 2. **Sync only what changes:** with full fine-tuning every parameter is dirty after every Adam step, so there is nothing to skip. But under **LoRA** only the adapter matrices are trainable — a few hundred MB rather than 140 GB — and vLLM can serve them through its LoRA path or merge them on receipt. OpenRLHF exposes this via `--lora_rank`; it turns weight sync from a first-order cost into a rounding error, at the price of the capacity limits discussed in [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html).
@@ -915,19 +959,19 @@ OpenRLHF supports this through an asynchronous-training mode that launches rollo
 ```python
 # Conceptual async pipeline
 import ray
-from queue import Queue
 
 def async_ppo_loop(policy_actor, vllm_actor, reward_actor, prompts,
                     batch_size, num_steps, sync_every=1):
-    rollout_queue = Queue(maxsize=2)  # prefetch up to 2 batches
+    # Depth-1 prefetch: exactly one rollout is in flight while we train.
 
     # Kick off first rollout
     rollout_future = vllm_actor.rollout.remote(prompts[:batch_size])
 
     for step in range(num_steps):
         # Overlap: while we update on current batch, prefetch next rollout
+        # Batch `step` is already in flight (or done); launch batch `step + 1`.
         next_rollout_future = vllm_actor.rollout.remote(
-            prompts[step * batch_size : (step + 1) * batch_size]
+            prompts[(step + 1) * batch_size : (step + 2) * batch_size]
         )
 
         # Get current batch (may already be ready)
@@ -987,7 +1031,7 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
     - **NeMo-Aligner** uses Megatron-LM 3D parallelism + TRT-LLM rollouts. Its strength is throughput on homogeneous NVIDIA clusters: all-reduce and point-to-point transfers use pre-established NCCL communicators with no Python coordination overhead.
     - **Weight synchronization** (from training actor to rollout engine) is a key engineering cost. On a 70B model, even NVLink sync takes ~0.2 seconds; PCIe can take 2+ seconds. Sync frequency should be tuned to balance policy staleness against communication overhead.
     - Ray's **placement groups** with `STRICT_PACK` are essential for multi-GPU actors: they guarantee that all shards of a tensor-parallel group land on the same node, enabling fast NVLink communication within the group.
-    - The **object store** provides zero-copy reads for co-located processes — critical for large experience batches (rollout tokens + log-probs) that can reach 8+ GB per batch.
+    - The **object store** provides zero-copy reads for co-located processes — useful for experience batches (rollout tokens + log-probs), which run to tens of MB per batch and are passed between actors several times per iteration.
     - The Megatron-native design (NeMo-Aligner, now succeeded by **NeMo-RL**) is the better choice when your cluster is NVIDIA DGX-based, your models are homogeneous in size, and you want NVIDIA's kernel optimizations and TRT-LLM throughput. OpenRLHF is the better choice when you need flexibility, fast iteration, or heterogeneous actor sizes.
     - Switching `--advantage_estimator` from `gae` to `group_norm` (**GRPO**) or `reinforce_baseline` (REINFORCE++) deletes the critic actor entirely — a topology change, not just an algorithm change, freeing an entire model's worth of parameters, gradients and optimizer state. This is why most 2026 reasoning-RL runs are critic-free.
     - Both frameworks support **async rollout pipelines** where generation and training overlap; published results report on the order of 40% wall-clock reduction, at the cost of off-policy staleness.

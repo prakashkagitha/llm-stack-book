@@ -91,13 +91,13 @@ The Qwen tokenizer's special-token list includes `<|im_start|>`, `<|im_end|>`, `
 | Model family | Turn-start token | Turn-end token | System handling |
 |---|---|---|---|
 | ChatML / GPT-4 | `<\|im_start\|>role` | `<\|im_end\|>` | First `system` turn |
-| Llama 2 | `[INST]` | `[/INST]` | Embedded in first `[INST]` |
+| Llama 2 | `[INST]` | `[/INST]` (user) / `</s>` (assistant) | Embedded in first `[INST]` |
 | Llama 3 | `<\|start_header_id\|>role<\|end_header_id\|>` | `<\|eot_id\|>` | First `system` turn |
 | Qwen 2+ | `<\|im_start\|>role` | `<\|im_end\|>` | First `system` turn |
-| Mistral v1 | `[INST]` | `[/INST]` | No system turn (injected into user) |
+| Mistral v1 | `[INST]` | `[/INST]` (user) / `</s>` (assistant) | No system turn (injected into user) |
 | Gemma | `<start_of_turn>role` | `<end_of_turn>` | Injected into user |
 
-The HuggingFace `tokenizers` library stores a Jinja2 template string in the tokenizer's `chat_template` field so that `tokenizer.apply_chat_template(messages)` always returns the correct string for that model. This is the canonical way to apply templates in Python — do not hard-code delimiter strings yourself.
+HuggingFace `transformers` stores a Jinja2 template string in the tokenizer's `chat_template` field — persisted in `tokenizer_config.json` (or a sidecar `chat_template.jinja`) — so that `tokenizer.apply_chat_template(messages)` always returns the correct string for that model. (`apply_chat_template` lives on `transformers`' `PreTrainedTokenizerBase`; the Rust `tokenizers` package underneath knows only about encoding, not about chat.) This is the canonical way to apply templates in Python — do not hard-code delimiter strings yourself.
 
 ## Building a Chat Template from Scratch
 
@@ -177,6 +177,13 @@ def build_chatml_loss_mask(
     Strategy: we tokenize the full sequence, then for each assistant
     turn we find the span [start_of_content, end_of_turn] and set
     loss_mask = True only for those positions.
+
+    Caveat: this right-truncates at max_length, which checklist item 6
+    warns against — a conversation longer than max_length loses its tail.
+    Truncate from the left (drop early turns, keep the system turn and
+    the most recent turns) in production, and drop any example whose
+    loss_mask ends up all-False: an all -100 row makes the masked loss
+    0/0 = NaN and poisons the whole batch.
     """
     # Render full string (no generation prompt needed for training)
     full_text = format_chatml(messages, add_generation_prompt=False)
@@ -227,12 +234,13 @@ def build_chatml_loss_mask(
             while j < len(ids) and ids[j] != im_end_id:
                 j += 1
             # Mark content tokens for loss (include <|im_end|> itself so the
-            # model learns to emit the stop token)
-            if j < len(ids):
-                loss_mask[content_start : j + 1] = True
+            # model learns to emit the stop token). If truncation cut this
+            # turn short, j == len(ids) and we still supervise the surviving
+            # tail rather than silently dropping it from the loss.
+            loss_mask[content_start : min(j + 1, len(ids))] = True
             i = j + 1
         else:
-            # Not an assistant turn; skip to the next <|im_end|>
+            # Not an assistant turn; advance one token and keep scanning
             i += 1
 
     return input_ids, loss_mask
@@ -257,12 +265,13 @@ def build_chatml_loss_mask(
     <|im_start|>assistant\n4.<|im_end|>\n
     ```
 
-    Approximate token counts (Qwen-2 tokenizer):
-    - System turn: 2 (im_start + "system\n") + ~6 (content) + 1 (im_end) + 1 (newline) = ~10 tokens
-    - User turn: ~10 tokens
-    - Assistant turn: ~6 tokens
+    Approximate token counts (Qwen-2 tokenizer). Note the header costs **three** tokens, not two: Qwen-2's GPT-4-style pre-tokenizer splits `\s*[\r\n]+` into its own pre-token, so the role name and the newline can never merge — `<|im_start|>` + `system` + `\n`.
 
-    Total ≈ 26 tokens. Of those, **only the assistant content** (tokens for "4." plus `<|im_end|>`) — roughly 3 tokens — have `loss_mask = True`. The rest (system turn, user turn, role headers) are masked to zero. This is the "train on completions only" principle.
+    - System turn: 3 (im_start + "system" + "\n") + ~6 (content) + 1 (im_end) + 1 (newline) = ~11 tokens
+    - User turn: 3 + ~7 (content) + 1 + 1 = ~12 tokens
+    - Assistant turn: 3 + 2 ("4" + ".") + 1 + 1 = ~7 tokens
+
+    Total ≈ 30 tokens. Of those, **only the assistant content** (tokens for "4." plus `<|im_end|>`) — roughly 3 tokens — have `loss_mask = True`. The rest (system turn, user turn, role headers) are masked to zero. This is the "train on completions only" principle.
 
     For a dataset of on the order of 100,000 conversations averaging ~200 tokens each, roughly 30–40% of tokens are typically assistant tokens and thus supervised. Packing (discussed below) ensures we do not pay for the other 60–70% with wasted sequence length.
 
@@ -284,9 +293,10 @@ n_new = tok.add_special_tokens(
 )
 tok.eos_token = "<|im_end|>"      # generation must stop at end-of-turn
 
-# 2. Attach the template. Each piece is a RAW string so that the "\n" stays a
-#    two-character Jinja escape instead of becoming a literal newline inside a
-#    Jinja string literal (which is a parse error).
+# 2. Attach the template. Each piece is a RAW string so the "\n" stays a
+#    two-character Jinja escape rather than a real newline inside the Jinja
+#    string literal. Both parse and render identically, but the raw form keeps
+#    the saved chat_template on one line per rule and easy to diff.
 tok.chat_template = (
     r"{% for m in messages %}"
     r"{% if m['role'] == 'assistant' %}"
@@ -313,20 +323,30 @@ input_ids = torch.tensor(out["input_ids"])
 loss_mask = torch.tensor(out["assistant_masks"], dtype=torch.bool)
 ```
 
-New special tokens also need embeddings. Rows appended by `resize_token_embeddings` are randomly initialised and, because each new token appears at most a handful of times per batch, they can stay near that random init for a long time — which is why `<|im_end|>` is sometimes emitted unreliably early in a run. Initialising them at the *mean* of the existing embedding rows starts them in-distribution and is a one-line fix:
+New special tokens also need embeddings, and a row initialised far outside the distribution of the existing embedding matrix trains slowly — because each new token appears at most a handful of times per batch, it can sit near its initialisation for a long time, which is why `<|im_end|>` is sometimes emitted unreliably early in a run. Modern `transformers` already handles this: `resize_token_embeddings(new_num_tokens, pad_to_multiple_of=None, mean_resizing=True)` defaults to `mean_resizing=True` (since v4.46) and samples the appended rows from a multivariate normal fitted to the mean and covariance of the old rows, so they start in-distribution *and* distinct from one another.
 
 ```python
 old_vocab = model.get_input_embeddings().weight.shape[0]
-model.resize_token_embeddings(len(tok))          # new rows are appended at the end
+model.resize_token_embeddings(len(tok))   # mean_resizing=True by default
+```
+
+If you are pinned to an older `transformers`, or you deliberately pass `mean_resizing=False`, do the equivalent by hand — but add per-row noise. Broadcasting a single mean vector into every new row would give `<|im_start|>` and `<|im_end|>` byte-identical embeddings (and, under weight tying, identical output rows), a degenerate symmetry the library's sampling exists to avoid:
+
+```python
 with torch.no_grad():
     for mod in (model.get_input_embeddings(), model.get_output_embeddings()):
         if mod is None:                          # some models have no separate head
             continue
         W = mod.weight
-        W[old_vocab:] = W[:old_vocab].mean(dim=0, keepdim=True)
+        n_new = W.shape[0] - old_vocab
+        mu    = W[:old_vocab].mean(dim=0, keepdim=True)
+        sigma = W[:old_vocab].std()
+        W[old_vocab:] = mu + 0.02 * sigma * torch.randn(
+            n_new, W.shape[1], dtype=W.dtype, device=W.device
+        )
 ```
 
-For Stack-100M you can sidestep this entirely: reserve `<|im_start|>`, `<|im_end|>` and a block of spare `<|reserved_N|>` ids when you *train* the BPE tokenizer, so the vocabulary — and therefore every checkpoint's embedding shape — is fixed from the first pretraining step. The rows are still effectively untrained (those ids never occur in raw web text), so the mean-init trick above is still worth applying at the start of SFT.
+For Stack-100M you can sidestep this entirely: reserve `<|im_start|>`, `<|im_end|>` and a block of spare `<|reserved_N|>` ids when you *train* the BPE tokenizer, so the vocabulary — and therefore every checkpoint's embedding shape — is fixed from the first pretraining step. The rows are still effectively untrained (those ids never occur in raw web text), so the in-distribution re-initialisation above is still worth applying at the start of SFT.
 
 ## Loss Masking in Depth
 
@@ -389,7 +409,7 @@ A common mistake is to supervise only the *last* assistant turn. This wastes sig
 The causal mask of the transformer still lets each assistant token attend to everything before it (including previous user turns), so learning is coherent — the model sees the full context, it just does not receive gradient for repeating the prompt tokens.
 
 !!! warning "Common pitfall: off-by-one in the loss shift"
-    HuggingFace's `CausalLMOutputWithCrossAttentions` shifts labels internally: the model is given `input_ids[:-1]` and predicts `labels[1:]`. If you pre-shift labels yourself and also let the model shift, every label is off by two positions — completely wrong. Use the convention above: pass the *full* `input_ids` as labels with `-100` masking, and let HuggingFace do the single shift internally.
+    HuggingFace `*ForCausalLM.forward` shifts labels internally whenever you pass `labels`: it runs the model over the *full* `input_ids` (all $T$ positions produce logits) and then aligns `logits[..., :-1, :]` with `labels[..., 1:]` inside the loss function (`ForCausalLMLoss`). Nothing is truncated on the input side, and `CausalLMOutputWithCrossAttentions` is only the dataclass the result is returned in — it performs no computation. If you pre-shift labels yourself and also let the model shift, every label is off by two positions — completely wrong. Use the convention above: pass the *full* `input_ids` as labels with `-100` masking, and let HuggingFace do the single shift internally.
 
 ## System Prompts and Role Tokens
 
@@ -401,7 +421,7 @@ Not all models have a dedicated system role. Llama 2's template embeds the syste
 
 ### Role Tokens as Special Tokens
 
-When role markers like `<|im_start|>` are added to the tokenizer vocabulary, they receive their own embedding vectors in the model's embedding table. These are randomly initialised at fine-tuning time (unless the base model already included them during pretraining, as many modern bases do). Because only a handful of examples per token appear in each gradient step, the embeddings for `<|im_end|>` and role names typically need a higher learning rate or more warm-up steps than ordinary parameters, or they remain near their random init.
+When role markers like `<|im_start|>` are added to the tokenizer vocabulary, they receive their own embedding vectors in the model's embedding table. These are freshly initialised at fine-tuning time (unless the base model already included them during pretraining, as many modern bases do) — by default, sampled to match the mean and covariance of the existing rows, as described above. Because only a handful of examples per token appear in each gradient step, the embeddings for `<|im_end|>` and role names typically need a higher learning rate or more warm-up steps than ordinary parameters, or they remain near their initialisation.
 
 One practical consequence: if you fine-tune a model on ChatML format but then serve it with a Llama 3-format prompt, the special tokens your model was trained with may not exist in the serving tokenizer — and vice versa. Always version and lock your tokenizer alongside your model weights.
 
@@ -842,7 +862,7 @@ Each flag maps onto something we built by hand: `assistant_only_loss=True` is `b
 !!! interview "Interview Corner"
     **Q:** You are fine-tuning a 13B-parameter model on a multi-turn chat dataset with average conversation length of 400 tokens and a context length of 4,096. A colleague suggests just padding everything to 4,096. What is wrong with that approach, and what would you do instead?
 
-    **A:** Padding to 4,096 when conversations are ~400 tokens means roughly 90% of each sequence is padding. The model wastes FLOPs computing attention over PAD tokens, and gradient normalisation by total sequence length (including padding) dilutes the signal. You should apply **sequence packing**: concatenate multiple conversations into a single 4,096-token row using first-fit-decreasing bin packing. With ~400-token conversations you can fit about 10 per row, achieving ~98% utilisation. To prevent cross-conversation attention leakage you either pass `cu_seqlens` to Flash Attention's variable-length API, or build a block-diagonal causal mask. Additionally, apply a **loss mask** so only assistant turns contribute to the cross-entropy loss — prompt tokens should have label `-100`.
+    **A:** Padding to 4,096 when conversations are ~400 tokens means roughly 90% of each sequence is padding. The model wastes FLOPs and memory computing attention over PAD tokens — that is the whole cost, and it is pure waste: because pad positions carry `labels = -100`, they contribute to neither the numerator nor the denominator of the loss, so they do not dilute the gradient, they just burn compute. You should apply **sequence packing**: concatenate multiple conversations into a single 4,096-token row using first-fit-decreasing bin packing. With ~400-token conversations you can fit about 10 per row, achieving ~98% utilisation. To prevent cross-conversation attention leakage you either pass `cu_seqlens` to Flash Attention's variable-length API, or build a block-diagonal causal mask. Additionally, apply a **loss mask** so only assistant turns contribute to the cross-entropy loss — prompt tokens should have label `-100`.
 
 ## Practical Checklist for Template Consistency
 
@@ -923,7 +943,7 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
 
     Empirically, the chapter notes that prompt-masked SFT converges to lower perplexity on held-out *completions* (not full sequences) and produces fewer verbatim repetitions of the system prompt in responses.
 
-**2.** *(Quantitative)* Take the worked example from the chapter: a 26-token packed conversation in which exactly 3 tokens are assistant content (`loss_mask = True`) and the other 23 are masked. During one forward pass the model assigns the following per-token negative log-probabilities $-\log p_\theta(x_t \mid x_{<t})$ to the three supervised positions: $0.50$, $1.00$, $0.30$. Using the chapter's masked-loss formula, compute $\mathcal{L}_{\text{masked}}$. Then compute what the loss *would* have been if you had (incorrectly) normalised by the full sequence length $T = 26$ while still summing only the supervised terms. By what factor do the two differ, and which normaliser does the chapter say is correct?
+**2.** *(Quantitative)* Take the worked example from the chapter: a 30-token packed conversation in which exactly 3 tokens are assistant content (`loss_mask = True`) and the other 27 are masked. During one forward pass the model assigns the following per-token negative log-probabilities $-\log p_\theta(x_t \mid x_{<t})$ to the three supervised positions: $0.50$, $1.00$, $0.30$. Using the chapter's masked-loss formula, compute $\mathcal{L}_{\text{masked}}$. Then compute what the loss *would* have been if you had (incorrectly) normalised by the full sequence length $T = 30$ while still summing only the supervised terms. By what factor do the two differ, and which normaliser does the chapter say is correct?
 
 ??? note "Solution"
     The chapter's masked loss is
@@ -944,13 +964,13 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
     \mathcal{L}_{\text{masked}} = \frac{1.80}{3} = 0.60.
     $$
 
-    Wrong normaliser, dividing by $T = 26$:
+    Wrong normaliser, dividing by $T = 30$:
 
     $$
-    \frac{1.80}{26} \approx 0.0692.
+    \frac{1.80}{30} = 0.06.
     $$
 
-    They differ by a factor of $26/3 \approx 8.67$. The chapter is explicit that the denominator must be the number of *supervised* tokens ($\sum_t m_t$), not the total sequence length, "so that longer prompts do not dilute the gradient." Normalising by $T$ would shrink both the loss and its gradient by the prompt-to-completion ratio, and — worse — that ratio varies example to example, so it would silently reweight examples by how much prompt they happen to carry.
+    They differ by a factor of $30/3 = 10$. The chapter is explicit that the denominator must be the number of *supervised* tokens ($\sum_t m_t$), not the total sequence length, "so that longer prompts do not dilute the gradient." Normalising by $T$ would shrink both the loss and its gradient by the prompt-to-completion ratio, and — worse — that ratio varies example to example, so it would silently reweight examples by how much prompt they happen to carry.
 
 **3.** *(Quantitative)* You are packing an SFT dataset with `max_length = 1024`. The five examples have token lengths: A = 700, B = 500, C = 450, D = 300, E = 150. Apply the chapter's **first-fit-decreasing** bin packer (sort longest-first, then place each example in the first bin it fits). List the resulting bins and their fill. Then compute the token utilisation both **without** packing (one right-padded row per example) and **with** packing, and state how many training rows each approach produces.
 
@@ -1058,12 +1078,12 @@ Cross-reference: [Supervised Fine-Tuning & Instruction Tuning](../05-posttrainin
     - The loop handles multiple tool calls in one conversation (e.g. multi-turn tool use) by advancing `cursor` past each closed block.
     - If the delimiters were promoted to genuine *special tokens*, you would instead match single ids via `convert_tokens_to_ids("<tool_call>")` — the same simplification the chapter draws between special tokens (immune to BPE splitting) and ordinary strings.
 
-**6.** *(Conceptual / short calculation)* Checklist item 3 says a quick sanity check before training is `(labels != -100).float().mean()`, which should land in roughly $0.25$-$0.50$ for chat data. For the 26-token worked example (3 supervised tokens) this quantity is $3/26 \approx 0.115$ — well below that band. Give two reasons the chapter's own text explains why a single tiny example falls under the typical range, and describe one dataset-level situation that would push the *aggregate* fraction *above* $0.50$.
+**6.** *(Conceptual / short calculation)* Checklist item 3 says a quick sanity check before training is `(labels != -100).float().mean()`, which should land in roughly $0.25$-$0.50$ for chat data. For the 30-token worked example (3 supervised tokens) this quantity is $3/30 = 0.10$ — well below that band. Give two reasons the chapter's own text explains why a single tiny example falls under the typical range, and describe one dataset-level situation that would push the *aggregate* fraction *above* $0.50$.
 
 ??? note "Solution"
-    Why the single toy example reads low ($\approx 0.115$):
+    Why the single toy example reads low ($0.10$):
 
-    1. **Fixed template overhead dominates a short example.** Every turn pays a fixed cost of role headers and delimiters (`<|im_start|>role\n`, `<|im_end|>`, newline) that are always masked. In the 26-token example the system and user turns plus all role headers are ~23 masked tokens against a 2-3 token answer ("4."), so structure swamps content. The chapter's own count shows roughly 10 + 10 tokens of masked system/user turn versus ~3 supervised assistant tokens.
+    1. **Fixed template overhead dominates a short example.** Every turn pays a fixed cost of role headers and delimiters (`<|im_start|>role\n`, `<|im_end|>`, newline) that are always masked. In the 30-token example the system and user turns plus all role headers are ~27 masked tokens against a 2-3 token answer ("4."), so structure swamps content. The chapter's own count shows roughly 11 + 12 tokens of masked system/user turn versus ~3 supervised assistant tokens.
 
     2. **It is one turn with a very short completion.** The chapter's 0.25-0.50 figure is an *aggregate* over a dataset that averages ~200 tokens and where "roughly 30-40% of tokens are typically assistant tokens." A single Q->"4." example has an unusually long prompt relative to its answer, so it sits below the aggregate band. (This is exactly why the checklist compares the mean over a *batch/dataset*, not one row.)
 

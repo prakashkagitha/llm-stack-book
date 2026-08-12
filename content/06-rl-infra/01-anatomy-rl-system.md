@@ -71,7 +71,7 @@ In the *colocated* design these are the same bytes time-sliced on the same GPUs;
 
 The **rollout engine** turns prompts into *experience*: it samples one or more responses per prompt by autoregressive decoding under the current policy. This is the inference half of the loop, and it is almost always **the dominant cost** of an RL step — typically 60–80% of wall-clock — because long-CoT responses are thousands of decode steps each, and decode is memory-bandwidth-bound.
 
-Its interface: in come prompts (and a sampling config: temperature, top-p, max tokens, group size $G$); out come, per response, the **token ids**, the **per-token log-probs under the behavior policy** $\log \pi_{\theta_{\text{old}}}(o_t\mid\cdot)$, and stop/length metadata. Those behavior log-probs are not optional decoration — they are the denominator of the importance ratio and *must* come from the same forward pass that sampled the tokens, or you introduce subtle bias (more on this below and in [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html)).
+Its interface: in come prompts (and a sampling config: temperature, top-p, max tokens, group size $G$); out come, per response, the **token ids**, the **per-token log-probs under the behavior policy** $\log \pi_{\theta_{\text{old}}}(o_t\mid\cdot)$, and stop/length metadata. Those behavior log-probs are not optional decoration — they are the denominator of the importance ratio, and they must be obtained under a *consistent* set of numerics: either the sampler's own log-probs, or (more commonly, and what the toy code below does) recomputed in the trainer's numerics. What you must not do is mix the two, or you introduce a systematic bias in the ratio (more on this in the warning box below and in [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html)).
 
 In a toy script the rollout engine is `model.generate()`. In a real system it is a **dedicated inference server** — vLLM ([vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html)) or SGLang ([SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) — because those give you continuous batching ([Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)), PagedAttention KV management ([PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)), and 10–30× the throughput of naive HuggingFace generation. The price you pay is that this engine has its *own* copy of the weights in its *own* memory layout, which is exactly the weight-sync problem.
 
@@ -99,7 +99,7 @@ Crucially, the learner is *compute-bound* and uses **training parallelism** (sha
 
 ### 5. The reference model
 
-The **reference model** $\pi_{\text{ref}}$ is a **frozen** copy of the policy (usually the SFT checkpoint you started RL from). Its only job is to provide $\log\pi_{\text{ref}}(o_t\mid\cdot)$ so the learner can compute the KL-divergence penalty that keeps the policy from drifting too far and reward-hacking ([Reward Hacking, Over-Optimization & Alignment Failures](../05-posttraining-alignment/13-reward-hacking-failures.html)). It is forward-only (no gradients, no optimizer state) so it is cheap in *compute* but still costs a full set of weights in *memory*. Some recipes — notably R1-Zero — drop the KL term entirely and therefore drop the reference model, saving that memory. When present, it is usually colocated with the learner (it needs the same tokenized batch and the same log-prob machinery) and is a prime candidate for offload-to-CPU or quantization since it is never updated.
+The **reference model** $\pi_{\text{ref}}$ is a **frozen** copy of the policy (usually the SFT checkpoint you started RL from). Its only job is to provide $\log\pi_{\text{ref}}(o_t\mid\cdot)$ so the learner can compute the KL-divergence penalty that keeps the policy from drifting too far and reward-hacking ([Reward Hacking, Over-Optimization & Alignment Failures](../05-posttraining-alignment/13-reward-hacking-failures.html)). It is forward-only (no gradients, no optimizer state) so it is cheap in *compute* but still costs a full set of weights in *memory*. Some recipes — notably DAPO, which states outright that it excludes the KL term, and several open reasoning reproductions (Dr. GRPO, open-r1 variants) — drop the KL penalty entirely and therefore drop the reference model, saving that memory. (Note that DeepSeek-R1/R1-Zero *as published* keep a $\beta\,\mathrm{KL}(\pi_\theta\Vert\pi_{\text{ref}})$ term in the GRPO objective; it is the follow-on recipes that deleted it.) When present, it is usually colocated with the learner (it needs the same tokenized batch and the same log-prob machinery) and is a prime candidate for offload-to-CPU or quantization since it is never updated.
 
 ### 6. The experience / replay buffer
 
@@ -145,18 +145,21 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # ===========================================================================
 # A minimal, COLOCATED, SYNCHRONOUS RL-for-LLM loop that exhibits all six
-# components and the full dataflow. Toy model + rule reward so it runs on a
-# laptop GPU. This is the mental-model reference for the whole of Part VI.
+# components and the full dataflow. Toy model + rule reward so it fits on a
+# single ~24 GB GPU. This is the mental-model reference for all of Part VI.
 # ===========================================================================
 MODEL  = "Qwen/Qwen2.5-0.5B-Instruct"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 tok    = AutoTokenizer.from_pretrained(MODEL)
 
-# --- COMPONENT 2: the ACTOR/POLICY (trainable θ). In a colocated design the
-#     SAME object serves both generation and training (time-sliced). ---------
-policy = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to(device)
+# --- COMPONENT 1: the ACTOR/POLICY (trainable θ). In a colocated design the
+#     SAME object serves both generation and training (time-sliced).
+#     Trainable weights are fp32: a pure-bf16 AdamW step of size ~lr=1e-6 is
+#     far below one bf16 ulp (~1e-4 near |w|=0.02) and rounds away entirely --
+#     see ../03-pretraining/08-mixed-precision-fp8.html. ---------------------
+policy = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.float32).to(device)
 
-# --- COMPONENT 6: the REFERENCE model (frozen θ_ref, for the KL term). -------
+# --- COMPONENT 5: the REFERENCE model (frozen θ_ref, for the KL term). -------
 reference = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to(device)
 reference.eval()
 for p in reference.parameters():
@@ -165,11 +168,12 @@ for p in reference.parameters():
 # --- COMPONENT 4 belongs to the LEARNER: the optimizer over θ. ---------------
 opt = torch.optim.AdamW(policy.parameters(), lr=1e-6)
 
-G            = 8       # group size: responses sampled per prompt
+G            = 4       # group size: responses sampled per prompt
 KL_BETA      = 0.02    # KL penalty weight (0.0 to drop the reference entirely)
 CLIP_EPS     = 0.2     # PPO/GRPO clip
 PPO_EPOCHS   = 2       # gradient epochs reusing the SAME rollouts (off-policy reuse)
-MAX_NEW      = 256
+MAX_NEW      = 64      # keep B*T small: the full-vocab (151936) logits below
+                       # are the memory hog, not the 0.5B weights
 
 # ------------------- COMPONENT 3: the REWARD / VERIFIER ---------------------
 def reward_fn(response_text: str, gold: str) -> float:
@@ -181,11 +185,12 @@ def reward_fn(response_text: str, gold: str) -> float:
         r += 0.2
     return r
 
-# ------------- COMPONENT 1: the ROLLOUT / GENERATION ENGINE -----------------
+# ------------- COMPONENT 2: the ROLLOUT / GENERATION ENGINE -----------------
 @torch.no_grad()
 def rollout(prompts, golds):
-    """Sample G responses per prompt under θ_old. Returns the EXPERIENCE BUFFER
-    fields: padded token ids, response mask, behavior log-probs, rewards."""
+    """Sample G responses per prompt under θ_old. Returns COMPONENT 6, the
+    EXPERIENCE BUFFER: padded token ids, response mask, behavior log-probs,
+    rewards."""
     policy.eval()
     seqs, plens, rewards = [], [], []
     for q, gold in zip(prompts, golds):
@@ -198,7 +203,14 @@ def rollout(prompts, golds):
                               max_new_tokens=MAX_NEW, num_return_sequences=G,
                               pad_token_id=tok.eos_token_id)
         for g in range(G):
-            full = out[g]
+            # generate() RIGHT-PADS every finished sample up to the longest one
+            # in the batch, using pad_token_id (= eos here). Trim back to the
+            # true end-of-response, or the mask below would mark those pads as
+            # generated tokens and we would train on <eos><eos>... .
+            gen  = out[g][plen:]
+            hit  = (gen == tok.eos_token_id).nonzero()
+            rlen = plen + (hit[0].item() + 1 if hit.numel() else gen.shape[0])
+            full = out[g][:rlen]
             text = tok.decode(full[plen:], skip_special_tokens=True)
             rewards.append(reward_fn(text, gold))     # <-- COMPONENT 3 invoked
             seqs.append(full); plens.append(plen)
@@ -211,6 +223,8 @@ def rollout(prompts, golds):
     for i, (s, plen) in enumerate(zip(seqs, plens)):
         input_ids[i, :s.shape[0]] = s
         resp_mask[i, plen:s.shape[0]] = 1.0           # 1 on generated tokens only
+                                                      # (s is already trimmed to
+                                                      #  its true length above)
     rewards = torch.tensor(rewards, device=device)
 
     # Behavior log-probs logπ_old: in a colocated design we recompute them with
@@ -240,7 +254,7 @@ def learner_step(input_ids, mask, old_lp, advantage, ref_lp):
     ratio   = (new_lp - old_lp).exp()                            # π_θ / π_old
     surr    = -torch.min(ratio * A,
                          torch.clamp(ratio, 1 - CLIP_EPS, 1 + CLIP_EPS) * A)
-    if KL_BETA > 0:                                              # COMPONENT 6 used here
+    if KL_BETA > 0:                                              # COMPONENT 5 used here
         log_r = ref_lp - new_lp
         kl    = log_r.exp() - log_r - 1.0                        # Schulman k3, >= 0
         surr  = surr + KL_BETA * kl
@@ -285,7 +299,7 @@ Read that loop until the six components and the seven dataflow stages are obviou
 Newcomers reading a real RL config are ambushed by the fact that there is no single "batch size." There are three *nested* ones, and conflating them is how people accidentally train far more off-policy than they intended.
 
 1. **Rollout batch** — how many *prompts* the controller hands to the generation engine per outer iteration (veRL `data.train_batch_size`, OpenRLHF `--rollout_batch_size`, TRL `generation_batch_size`). Multiplied by the group size $G$ (veRL `actor_rollout_ref.rollout.n`, OpenRLHF `--n_samples_per_prompt`, TRL `num_generations`) it gives the number of responses generated before *any* weight update. Larger is better for generation throughput (more concurrency for continuous batching) and lowers advantage variance, but stretches the interval between updates.
-2. **Mini-batch** — how much of that rollout batch is consumed per *optimizer step* (veRL `actor_rollout_ref.actor.ppo_mini_batch_size`, OpenRLHF `--train_batch_size`). This is the knob that decides on-policyness. If mini-batch equals rollout batch you take exactly one optimizer step per rollout and the update is **fully on-policy** ($r_{i,t}\equiv 1$, clipping never fires). If it is smaller you take several steps on data generated by weights that are already stale by the time you reach the last one.
+2. **Mini-batch** — how much of that rollout batch is consumed per *optimizer step* (veRL `actor_rollout_ref.actor.ppo_mini_batch_size`, OpenRLHF `--train_batch_size`). This is the knob that decides on-policyness. If mini-batch equals rollout batch *and you take a single gradient epoch over it*, you take exactly one optimizer step per rollout and the update is **fully on-policy** ($r_{i,t}\equiv 1$, clipping never fires). If it is smaller you take several steps on data generated by weights that are already stale by the time you reach the last one.
 3. **Micro-batch** — how much fits in GPU memory at once (veRL `ppo_micro_batch_size_per_gpu`, OpenRLHF `--micro_train_batch_size`, TRL `per_device_train_batch_size` with `gradient_accumulation_steps`). Micro-batches are gradient-accumulated into one mini-batch, so this is a pure *memory* knob with **no** effect on the math — changing it must not change your loss curve, which makes it a good sanity check on an implementation.
 
 Combine these with the number of gradient epochs over the same rollouts (PPO's `ppo_epochs`, TRL's `num_iterations`, `PPO_EPOCHS` in the toy code above) and you get an explicit staleness budget: the final gradient step of an iteration is
@@ -364,7 +378,7 @@ Abstract tensions become concrete the moment you try to put a real run on real G
 
     That is ~140 GB *before activations and KV cache* — already more than a single 80 GB GPU. So even a "small" 7B GRPO run is **multi-GPU**: you shard the policy + optimizer with FSDP across several GPUs ([Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html)), CPU-offload or shard the reference, and give the vLLM replica its own slice of the same GPUs (colocated) or its own GPUs (disaggregated). The optimizer state (84 GB) is the single biggest line item — which is exactly why critic-free GRPO (no second model's optimizer state) and LoRA-style RL ([PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignment/03-peft-lora-qlora.html), which trains tiny adapters and slashes the optimizer-state term) are so attractive for RL.
 
-    **KV cache for the rollout.** During generation, peak concurrent sequences each hold a KV cache of (layers × 2 × kv-heads × head-dim × seqlen × 2 B). For a 7B model that is on the order of ~0.5 MB per token; at 512 concurrent sequences of ~1{,}200 tokens that is roughly $512\times1200\times0.5\text{ MB}\approx 300$ GB of KV if fully concurrent — which is why the rollout engine uses PagedAttention and continuous batching to bound concurrency rather than holding all 512 at once ([PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)).
+    **KV cache for the rollout.** During generation, peak concurrent sequences each hold a KV cache of (layers × 2 × kv-heads × head-dim × seqlen × 2 B). The per-token cost depends strongly on whether the model uses MHA or GQA: an *MHA* 7B such as Llama-2-7B ($32\times2\times32\times128\times2\text{ B}$) costs ~0.5 MB per token, while GQA models cost far less — ~0.125 MB/token for Llama-3-8B or Mistral-7B (8 kv-heads) and only ~0.055 MB/token for Qwen2.5-7B (28 layers, 4 kv-heads). At 512 concurrent sequences of ~1{,}200 tokens that is $512\times1200\times0.5\text{ MB}\approx 300$ GB of KV in the MHA case and still ~33–75 GB for the GQA models — in every case far more than the HBM you have left over after the weights and optimizer state, which is why the rollout engine uses PagedAttention and continuous batching to bound concurrency rather than holding all 512 at once ([PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html)).
 
     **Time accounting (the relay race).** Suppose on this cluster the rollout engine decodes the batch in ~40 s (dominated by the 1{,}000-token mean length × 512 responses, mitigated by batching), the verifier scores in ~1 s (CPU, parallel), advantage is ~0 s, and the learner does $E=2$ epochs over 512 sequences in ~10 s. Plus weight sync. The step looks like:
 
@@ -372,7 +386,7 @@ Abstract tensions become concrete the moment you try to put a real run on real G
     T_{\text{step}} \approx \underbrace{40}_{\text{generate}} + \underbrace{1}_{\text{reward}} + \underbrace{10}_{\text{train}} + \underbrace{T_{\text{sync}}}_{\text{weight sync}} \;\text{seconds}.
     $$
 
-    Generation is **~78%** of the step even before sync. If this is disaggregated with a separate training pool, those training GPUs are idle for the 41 s of generate+reward — *idle 80% of the step*. That single number is why colocation and async RL exist. And if weight sync is a cross-node 14 GB broadcast (×, say, several DP ranks gathering shards), $T_{\text{sync}}$ can be a few seconds — non-trivial against a 10 s training phase.
+    Generation is **~78%** of the step even before sync. If this is disaggregated with a separate training pool, those training GPUs are idle for the 41 s of generate+reward — *idle 80% of the step*. That single number is why colocation and async RL exist. And if weight sync is a cross-node 14 GB broadcast, the pure wire time is $14/100\approx0.14$ s on a 100 GB/s fabric and $14/25\approx0.6$ s over a single 200 Gb/s NIC; add gathering the FSDP shards, resharding into the inference layout, and the engine-side weight load and $T_{\text{sync}}$ is realistically a few hundred milliseconds to ~1 s — non-trivial against a 10 s training phase.
 
     **The lever.** To cut wall-clock you attack the 40 s first: faster/quantized rollout engine, more inference parallelism, shorter responses (or remove the length-inflating GRPO biases — see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)), or overlap generation of step $k{+}1$ with training of step $k$ (async). Optimizing the 10 s training phase is almost pointless until generation is handled. *In RL, generation is the budget.*
 
@@ -427,7 +441,7 @@ Three load-bearing ideas to carry forward:
 
     **Recent advances (2023–2026)**
 
-    - [DeepSeek-AI, *DeepSeek-R1* (2025)](https://arxiv.org/abs/2501.12948) — rule-based verifier reward + GRPO at scale; showed that critic-free RL with zero KL reference can produce frontier reasoning, reshaping production RL-infra priorities.
+    - [DeepSeek-AI, *DeepSeek-R1* (2025)](https://arxiv.org/abs/2501.12948) — rule-based verifier reward + GRPO at scale; showed that critic-free RL (no value network, though the published objective does keep a KL-to-reference term) can produce frontier reasoning, reshaping production RL-infra priorities. Later recipes such as DAPO drop the KL term — and with it the reference model — outright.
     - [Sheng et al., *HybridFlow: A Flexible and Efficient RLHF Framework* (2024)](https://arxiv.org/abs/2409.19256) — single-controller Ray architecture with 3D-HybridEngine for zero-redundancy weight resharding between training and inference layouts; 1.5–20× throughput gains.
     - [Fu et al., *AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning* (2025)](https://arxiv.org/abs/2505.24298) — fully async decoupled generation/training achieving up to 2.77× speedup over synchronous baselines.
     - [Jaghouar et al., *INTELLECT-2* (2025)](https://arxiv.org/abs/2505.07291) — first globally decentralized RL run of a 32B model, introducing TOPLOC rollout verification and SHARDCAST weight broadcast for untrusted inference workers.
@@ -457,7 +471,7 @@ Three load-bearing ideas to carry forward:
 
 ## Exercises
 
-**1.** *(Conceptual.)* The chapter's "four-copies rule" says up to four copies of the model may coexist on the cluster: the trainable **policy**, its **inference replica**, the **reference**, and a learned **reward model**. For each of the *first three*, state (a) whether it carries gradients and optimizer state, (b) whether its weights ever change during the run, and (c) roughly how many bytes-per-parameter of resident state it costs. Then explain why the R1-Zero recipe can delete one of these copies entirely, and which one.
+**1.** *(Conceptual.)* The chapter's "four-copies rule" says up to four copies of the model may coexist on the cluster: the trainable **policy**, its **inference replica**, the **reference**, and a learned **reward model**. For each of the *first three*, state (a) whether it carries gradients and optimizer state, (b) whether its weights ever change during the run, and (c) roughly how many bytes-per-parameter of resident state it costs. Then explain why a **zero-KL recipe** (such as DAPO) can delete one of these copies entirely, and which one.
 
 ??? note "Solution"
     | Copy | Gradients + optimizer state? | Weights change? | Resident state per param |
@@ -468,7 +482,7 @@ Three load-bearing ideas to carry forward:
 
     (a)/(b)/(c): Only the policy is trainable, so only it carries gradients and AdamW state -- the dominant memory line item. The inference replica has no optimizer and never updates itself; its parameters change only because the weight-sync arrow (stage (g)) copies fresh $\theta$ into it. The reference is fully frozen: no gradients, no optimizer, weights never move, so it costs just one set of bf16 weights and is a prime candidate for CPU-offload or quantization.
 
-    R1-Zero drops the **reference model**. The reference exists only to supply $\log\pi_{\text{ref}}$ for the KL-divergence penalty $\beta\,\mathrm{KL}(\pi_\theta \Vert \pi_{\text{ref}})$. R1-Zero sets the KL term to zero (`KL_BETA = 0.0` in the toy code), so nothing ever queries the reference; it can be removed, saving a full set of weights in memory.
+A zero-KL recipe drops the **reference model**. The reference exists only to supply $\log\pi_{\text{ref}}$ for the KL-divergence penalty $\beta\,\mathrm{KL}(\pi_\theta \Vert \pi_{\text{ref}})$. Setting $\beta = 0$ (`KL_BETA = 0.0` in the toy code) means nothing ever queries the reference, so it can be removed, saving a full set of weights in memory. DAPO states this explicitly ("we exclude the KL term"); note that DeepSeek-R1/R1-Zero as published *do* keep the KL term, so they still pay for the reference copy.
 
 **2.** *(Quantitative.)* Redo the chapter's memory accounting for a **13B** policy instead of 7B: KL on (reference resident), critic-free GRPO (no critic), rule-based reward (no reward model). Use bf16 = 2 B/param for weights and gradients, and AdamW = 12 B/param for optimizer state. Ignore activations and KV cache. (a) Give the size of each resident copy and the total. (b) Which single line item is largest? (c) What is the minimum number of 80 GB GPUs just to hold this static footprint?
 

@@ -46,12 +46,17 @@ def compute_gae(rewards, values, gamma=1.0, lam=0.95, mask=None):
     advantages = torch.zeros_like(rewards)
     last_gae = torch.zeros(B, device=rewards.device)
     # Append a bootstrap value of 0 past the end (terminal state).
+    zeros = torch.zeros(B, device=rewards.device)
     for t in reversed(range(T)):
-        next_value = values[:, t + 1] if t + 1 < T else torch.zeros(B, device=rewards.device)
+        # Whether V(s_{t+1}) and the carried A_{t+1} exist is decided by the
+        # mask at t+1, NOT at t: at the last real token the next slot is
+        # padding, so we must bootstrap from 0 rather than from V(pad).
+        next_mask = mask[:, t + 1] if t + 1 < T else zeros
+        next_value = values[:, t + 1] * next_mask if t + 1 < T else zeros
         # TD residual delta_t = r_t + gamma * V(s_{t+1}) - V(s_t)
-        delta = rewards[:, t] + gamma * next_value * mask[:, t] - values[:, t]
+        delta = rewards[:, t] + gamma * next_value - values[:, t]
         # Recurrence: A_t = delta_t + gamma*lam*A_{t+1}
-        last_gae = delta + gamma * lam * last_gae * mask[:, t]
+        last_gae = delta + gamma * lam * last_gae * next_mask
         advantages[:, t] = last_gae
     returns = advantages + values          # value-function targets
     return advantages * mask, returns * mask
@@ -157,8 +162,13 @@ def ppo_clip_loss(ratio, adv, mask, eps_low=0.2, eps_high=0.28):
     unclipped = ratio * adv
     clipped = torch.clamp(ratio, 1 - eps_low, 1 + eps_high) * adv
     loss = -torch.min(unclipped, clipped)
-    # diagnostic: fraction of tokens where the clip was active
-    clipfrac = ((ratio > 1 + eps_high) | (ratio < 1 - eps_low)).float()
+    # Diagnostic: fraction of tokens where the clip was *active*, i.e. where
+    # `min` actually selected the clipped branch. The bound alone is not
+    # enough -- with adv > 0 and ratio < 1-eps_low the clamp binds but `min`
+    # still picks the unclipped term, so nothing is clipped. This sign
+    # condition is what TRL and verl log.
+    clipfrac = (((ratio > 1 + eps_high) & (adv > 0))
+                | ((ratio < 1 - eps_low) & (adv < 0))).float()
     clipfrac = (clipfrac * mask).sum() / mask.sum()
     return (loss * mask).sum() / mask.sum(), clipfrac
 
@@ -194,9 +204,10 @@ def entropy_from_logits(logits, mask):
 # Block #9 (line ~403): loss aggregation
 # ---------------------------------------------------------------------------
 
-def aggregate_loss(per_token_loss, mask, mode="token_mean"):
+def aggregate_loss(per_token_loss, mask, mode="token_mean", max_len=None):
     """Reduce (B, T) per-token loss to a scalar. The mode silently changes
-    the objective — choose deliberately."""
+    the objective — choose deliberately. `max_len` is the fixed generation
+    cap used by the `token_mean_fixed` mode."""
     if mode == "token_mean":
         # every token equal -> long sequences contribute proportionally more
         return (per_token_loss * mask).sum() / mask.sum().clamp_min(1.0)
@@ -206,9 +217,13 @@ def aggregate_loss(per_token_loss, mask, mode="token_mean"):
         seq_loss = (per_token_loss * mask).sum(dim=1) / seq_len
         return seq_loss.mean()
     elif mode == "token_mean_fixed":
-        # DAPO-style: divide by a fixed constant (e.g. max_len) so the
-        # denominator does not depend on batch composition
-        return (per_token_loss * mask).sum() / per_token_loss.shape[1]
+        # Dr. GRPO / DAPO-style: divide by B * max_len, a constant that depends
+        # neither on the sequences' lengths nor on how much padding this batch
+        # happens to carry. NOTE: per_token_loss.shape[1] is the *padded* width
+        # of this batch, so it would NOT be a fixed constant.
+        if max_len is None:
+            raise ValueError("token_mean_fixed requires max_len")
+        return (per_token_loss * mask).sum() / (per_token_loss.shape[0] * max_len)
     else:
         raise ValueError(mode)
 
@@ -242,8 +257,9 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
     loss = (per_tok * mask).sum() / mask.sum().clamp_min(1.0) - ent_coef * ent
     # 6) Diagnostics — log these every step.
     with torch.no_grad():
-        clipfrac = (((ratio > 1 + eps_high) | (ratio < 1 - eps_low)).float()
-                    * mask).sum() / mask.sum()
+        clipped_sel = (((ratio > 1 + eps_high) & (adv > 0))
+                       | ((ratio < 1 - eps_low) & (adv < 0))).float()
+        clipfrac = (clipped_sel * mask).sum() / mask.sum()
         approx_kl = (kl * mask).sum() / mask.sum()
     return loss, {"clipfrac": clipfrac.item(), "kl": approx_kl.item(),
                   "entropy": ent.item(), "ratio_mean": ratio.mean().item()}
@@ -280,6 +296,18 @@ def test_compute_gae():
     adv1, _ = compute_gae(rewards, values, gamma=1.0, lam=1.0)
     R = rewards[:, -1:].expand_as(values)           # terminal reward broadcast
     assert torch.allclose(adv1, R - values, atol=1e-5)
+
+    # The bootstrap must be masked by the mask at t+1, not at t: on a padded
+    # sequence the LAST REAL token is terminal, so its advantage is exactly
+    # r - V(s_t) with no V(pad) leaking in (this is what a t-indexed mask got
+    # wrong -- it left a gamma*(1-lam)*V(pad) term on the reward-carrying token).
+    rew2 = torch.zeros(2, 5)
+    rew2[1, 2] = 1.0                                 # terminal reward at last real token
+    val2 = torch.randn(2, 5)                         # deliberately large critic values
+    m2 = torch.ones(2, 5)
+    m2[1, 3:] = 0.0
+    adv2, _ = compute_gae(rew2, val2, gamma=1.0, lam=0.95, mask=m2)
+    assert torch.allclose(adv2[1, 2], 1.0 - val2[1, 2], atol=1e-6)
 
     print("compute_gae: advantages =")
     print(advantages)
@@ -437,13 +465,20 @@ def test_aggregate_loss():
                          [1.0, 1.0, 1.0, 1.0]])
     tm = aggregate_loss(per_tok, mask, "token_mean")
     sm = aggregate_loss(per_tok, mask, "seq_mean")
-    tmf = aggregate_loss(per_tok, mask, "token_mean_fixed")
+    tmf = aggregate_loss(per_tok, mask, "token_mean_fixed", max_len=4)
     # token_mean: (2*1 + 4*3)/6 = 14/6; the long seq dominates (12/14 of the sum).
     assert torch.allclose(tm, torch.tensor(14.0 / 6.0))
     # seq_mean: mean([1.0, 3.0]) = 2.0; each sequence counts once.
     assert torch.allclose(sm, torch.tensor(2.0))
-    # token_mean_fixed: 14 / T(=4) = 3.5.
-    assert torch.allclose(tmf, torch.tensor(3.5))
+    # token_mean_fixed: 14 / (B*max_len) = 14 / (2*4) = 1.75 -- same order as the
+    # other two reductions (a per-token mean), unlike a T-only denominator.
+    assert torch.allclose(tmf, torch.tensor(1.75))
+    # The fixed denominator must not depend on batch composition: pad the batch
+    # out to width 6 and the value is unchanged.
+    per_tok_pad = torch.nn.functional.pad(per_tok, (0, 2))
+    mask_pad = torch.nn.functional.pad(mask, (0, 2))
+    assert torch.allclose(
+        aggregate_loss(per_tok_pad, mask_pad, "token_mean_fixed", max_len=4), tmf)
     # The chapter's whole point: same data, different objective.
     assert not torch.allclose(tm, sm)
     try:

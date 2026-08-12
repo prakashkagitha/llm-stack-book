@@ -94,6 +94,9 @@ def normalize_latex_number(s: str) -> str:
     s = strip_boxed(s)
     # Remove dollar signs
     s = s.replace('$', '').strip()
+    # LaTeX escapes a literal percent sign: "50\%" -> "50%". Without this the
+    # percent branch below sees a trailing backslash and float() blows up.
+    s = s.replace(r'\%', '%')
     # Normalize whitespace
     s = re.sub(r'\s+', ' ', s)
     return s
@@ -111,6 +114,17 @@ def try_numeric(s: str) -> Optional[float]:
             return float(s[:-1]) / 100.0
         except ValueError:
             pass
+    # Handle mixed numbers: "3 1/4" -> 3.25. Fraction() rejects the embedded
+    # space, and the sympy fallback would read "3 1/4" as juxtaposed
+    # multiplication 3 * (1/4) = 3/4 — silently wrong rather than unparsed.
+    # (Capture the sign separately: "-3 1/4" is -(3 + 1/4), and int("-0")
+    # would lose the sign on the "-0 1/2" form.)
+    m = re.fullmatch(r'(-?)(\d+)\s+(\d+)\s*/\s*(\d+)', s)
+    if m:
+        sign = -1.0 if m.group(1) else 1.0
+        whole, num, den = int(m.group(2)), int(m.group(3)), int(m.group(4))
+        if den != 0:
+            return sign * (whole + num / den)
     # Handle fractions: "3/4"
     try:
         return float(Fraction(s))
@@ -203,11 +217,21 @@ def extract_answer_from_completion(completion: str) -> str:
     return ""
 
 
-def math_reward(prompt: str, completion: str, gold_answer: str) -> float:
+def math_reward(
+    prompt: str,
+    completion: str,
+    gold_answer: str,
+    format_bonus: float = 0.1,
+) -> float:
     """
-    Main entry point: return reward in {0.0, 0.1, 1.0} for a math response.
-    A small partial reward of 0.1 is returned when the format is correct
-    but the answer is wrong, to encourage the model to use \boxed{}.
+    Main entry point: return reward in {0.0, format_bonus, 1.0} for a math
+    response. `format_bonus` is returned when the format is correct but the
+    answer is wrong, to encourage the model to use \boxed{}.
+
+    Pass format_bonus=0.0 whenever the caller already adds a *separate*
+    weighted format term (as the TRL and pipeline examples later in this
+    chapter do). Otherwise the format signal is counted twice and the
+    effective lambda_f is double what the config says.
     """
     pred = extract_answer_from_completion(completion)
     if not pred:
@@ -217,11 +241,11 @@ def math_reward(prompt: str, completion: str, gold_answer: str) -> float:
         return 1.0
     else:
         # Small reward for correct format, zero for content
-        return 0.1  # format reward (optional — see section on reward shaping)
+        return format_bonus  # see section on reward shaping
 ```
 
 !!! warning "Floating-point equality traps"
-    Never use `pred == gold` on raw strings. `"0.333"` and `"1/3"` are mathematically the same. `"3.0"` and `"3"` differ as strings. Always normalize before comparing, and use a tolerance for floats (relative tolerance around $10^{-6}$ works for competition math).
+    Never use `pred == gold` on raw strings. `"0.5"` and `"1/2"` are mathematically the same; `"3.0"` and `"3"` differ as strings. Always normalize before comparing, and use a tolerance for floats (relative tolerance around $10^{-6}$ works for competition math). Note that the tolerance is a *policy* choice, not a formatting fix: a truncated decimal like `"0.333"` against a gold of `"1/3"` has relative error $10^{-3}$, so `math_equivalent` correctly returns `False` at `rtol = 1e-6`. If you want to accept truncations, decide explicitly how many digits count as an answer — do not paper over it by loosening `rtol` globally, which would start accepting genuinely wrong answers.
 
 ### Use the Library: `math-verify`
 
@@ -309,8 +333,19 @@ def run_tests_in_subprocess(
         # inserted test functions end up misaligned relative to the
         # surrounding `try:` block and raise IndentationError.
         indented_tests = textwrap.indent(test_suite, "    ")
-        runner = f'''import sys, json, traceback
+        runner = f'''import sys, io, json, traceback
 sys.path.insert(0, {repr(tmpdir)})
+
+# The parent parses this process's stdout as one JSON object, so generated
+# code must not be able to write to it. `from solution import *` executes the
+# solution's module-level statements, and a stray print() there (or in a test)
+# would prepend text to the stream, make json.loads() fail, and score a
+# passing solution 0.0 — a systematic false negative of exactly the kind the
+# false-negative section warns about. Swap stdout for a throwaway buffer and
+# keep a private handle for the result line. (human-eval does the same thing
+# with its `swallow_io` context manager.)
+_result_stdout = sys.stdout
+sys.stdout = io.StringIO()
 
 results = {{"passed": 0, "total": 0, "error": ""}}
 try:
@@ -329,7 +364,7 @@ except Exception as e:
     results["error"] = traceback.format_exc()
     results["total"] = 1  # At least one test failed
 
-print(json.dumps(results))
+print(json.dumps(results), file=_result_stdout)
 '''
         runner_path = os.path.join(tmpdir, "runner.py")
         with open(runner_path, "w") as f:
@@ -430,7 +465,7 @@ You do not have to build the isolation layer yourself; each rung of the ladder h
 | Userspace kernel | `google/gvisor` (`docker run --runtime=runsc …`) | ~100–300 ms cold | Kernel-exploit escapes: syscalls hit gVisor's Go kernel, not the host's |
 | microVM | `firecracker-microvm/firecracker`, and [E2B](https://github.com/e2b-dev/E2B) which wraps it behind an SDK | ~150 ms boot, snapshot-restore faster | Hardware-virtualization boundary; strongest practical isolation |
 
-The pragmatic 2026 default for an RLVR run is gVisor or Firecracker underneath a warm pool: keep the pool code below exactly as written and change only the `docker run` line (`--runtime=runsc`) or swap the subprocess for an E2B `Sandbox` handle. Do not skip the layer entirely — the `reliability_guard` approach is deliberately shipped commented-out in `human-eval` precisely because monkey-patching `os` inside the same interpreter is trivially reversible by generated code.
+The pragmatic 2026 default for an RLVR run is gVisor or Firecracker underneath a warm pool: keep the pool code below exactly as written and change only the `docker run` line (`--runtime=runsc`) or swap the subprocess for an E2B `Sandbox` handle. Do not skip the layer entirely. `human-eval` makes this point in its own source: `reliability_guard()` *does* run, but the `exec(check_program, exec_globals)` line right after it is shipped commented out behind a warning telling you to sandbox first and "uncomment the following line and proceed at your own risk," and `reliability_guard`'s docstring says outright that it "is NOT a security sandbox." Monkey-patching `os` and `shutil` inside the same interpreter is an accident guard, not a security boundary.
 
 ### Building a Sandboxed Execution Service
 
@@ -452,6 +487,7 @@ import select
 import subprocess
 import json
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -461,10 +497,34 @@ SANDBOX_IMAGE = "python:3.11-slim"
 # and run as a non-root user, but we keep it simple here.
 
 SANDBOX_RUNNER = """
-import sys, json, traceback, signal, resource
+import sys, io, json, traceback, signal, resource
 
 # Hard memory limit: 256 MB
 resource.setrlimit(resource.RLIMIT_AS, (256 * 1024 * 1024, 256 * 1024 * 1024))
+
+# Per-task wall-clock guard, set below the pool's client-side timeout so a
+# runaway task is interrupted *inside* the worker and the worker stays
+# reusable, instead of the client giving up and tearing the container down.
+# Do NOT use RLIMIT_CPU here: that limit is cumulative over the process
+# lifetime, so a long-lived warm worker would eventually be killed even when
+# every individual task is fast.
+TASK_TIMEOUT = 4
+
+
+class TaskTimeout(Exception):
+    pass
+
+
+def _on_alarm(signum, frame):
+    raise TaskTimeout("task exceeded %ds" % TASK_TIMEOUT)
+
+
+signal.signal(signal.SIGALRM, _on_alarm)
+
+# Results are framed as one JSON object per line on the real stdout, so
+# generated code must not be able to write there — a stray print() would be
+# read as the result line and score a passing solution 0.0.
+_result_stdout = sys.stdout
 
 # Read tasks from stdin until EOF
 for line in sys.stdin:
@@ -472,7 +532,9 @@ for line in sys.stdin:
     code = task["code"]
     tests = task["tests"]
     result = {"passed": 0, "total": 0, "error": ""}
-    
+
+    sys.stdout = io.StringIO()   # swallow prints from generated code
+    signal.alarm(TASK_TIMEOUT)
     try:
         exec_globals = {}
         exec(compile(code, "<generated>", "exec"), exec_globals)
@@ -483,12 +545,20 @@ for line in sys.stdin:
             try:
                 fn()
                 result["passed"] += 1
+            except TaskTimeout:
+                raise            # alarm already fired; do not run more tests
             except Exception:
                 pass
+    except TaskTimeout:
+        result["error"] = "task timeout"
+        result["total"] = max(result["total"], 1)
     except Exception:
         result["error"] = traceback.format_exc()[-500:]
         result["total"] = 1
-    
+    finally:
+        signal.alarm(0)
+        sys.stdout = _result_stdout
+
     print(json.dumps(result), flush=True)
 """
 
@@ -496,6 +566,7 @@ for line in sys.stdin:
 @dataclass
 class SandboxWorker:
     proc: subprocess.Popen
+    name: str                     # container name, so we can kill the container
     lock: threading.Lock = field(default_factory=threading.Lock)
     last_used: float = field(default_factory=time.time)
 
@@ -517,9 +588,11 @@ class SandboxPool:
 
     def _spawn(self) -> SandboxWorker:
         """Start a sandbox process that reads JSON tasks from stdin."""
+        name = f"sbx-{uuid.uuid4().hex[:12]}"
         proc = subprocess.Popen(
             [
                 "docker", "run", "--rm", "--interactive",
+                "--name", name,             # so we can kill the *container*
                 "--network=none",           # No network
                 "--memory=256m",            # 256 MB RAM limit
                 "--cpus=1",                 # 1 vCPU
@@ -534,7 +607,23 @@ class SandboxPool:
             stderr=subprocess.DEVNULL,
             text=True,
         )
-        return SandboxWorker(proc=proc)
+        return SandboxWorker(proc=proc, name=name)
+
+    def _kill(self, worker: SandboxWorker) -> None:
+        """
+        Tear down a worker *container*, not just the client.
+
+        `worker.proc` is the local `docker run` client; SIGKILLing it does not
+        stop the container — the daemon keeps it running, `--rm` never fires,
+        and code spinning inside exec() never returns to the stdin loop to
+        observe EOF. Every timeout would then leak a live container pinned at
+        --cpus=1 for the rest of the run. Kill by container name first.
+        """
+        subprocess.run(
+            ["docker", "kill", worker.name],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+        worker.proc.kill()
 
     def execute(self, code: str, tests: str) -> dict:
         """
@@ -558,7 +647,7 @@ class SandboxPool:
         except Exception as e:
             # Worker is dead (or wedged); kill and replace it, keeping the
             # registry in sync so shutdown can reap every live container.
-            worker.proc.kill()
+            self._kill(worker)
             self._all_workers.remove(worker)
             worker = self._spawn()
             self._all_workers.append(worker)
@@ -566,10 +655,16 @@ class SandboxPool:
         finally:
             worker.last_used = time.time()
             self._available.put(worker)  # Return worker to pool
+
+    def shutdown(self) -> None:
+        """Reap every container. Call this on service shutdown."""
+        for w in list(self._all_workers):
+            self._kill(w)
+        self._all_workers.clear()
 ```
 
 !!! tip "Practical sandbox tuning"
-    For RLVR training at scale (e.g., 4096 rollout completions per training step), you typically need a pool of 64-256 sandbox workers per GPU node, each handling ~20 requests/second. The bottleneck shifts from process startup (eliminated by warm pools) to test suite I/O. Keep test suites small (under 1 KB) and use in-memory temp files rather than disk I/O.
+    Size the pool from the arithmetic below rather than from a rule of thumb: with millisecond-scale Python tests a single warm worker handles ~20 completions/second, so a 4096-completion step every 30 s needs only tens of workers, and you reach the hundreds only when one sample costs seconds (compiled languages, integration tests). The bottleneck shifts from process startup (eliminated by warm pools) to test suite I/O. Keep test suites small (under 1 KB) and use in-memory temp files rather than disk I/O.
 
 ### Throughput Arithmetic
 
@@ -981,9 +1076,16 @@ from trl import GRPOConfig, GRPOTrainer
 from math_verifier import math_reward, extract_answer_from_completion
 
 def correctness_reward(completions, gold_answer, **kwargs) -> list[float]:
-    """One float per completion. `gold_answer` comes from the dataset column."""
+    """
+    One float per completion. `gold_answer` comes from the dataset column.
+    format_bonus=0.0 keeps this component *pure* correctness: `format_reward`
+    below is already registered as its own weighted component, so leaving the
+    built-in 0.1 in would double-count format and mislabel the TRL per-component
+    log ("correctness" would be nonzero for a well-formatted wrong answer).
+    """
     texts = [c[0]["content"] if isinstance(c, list) else c for c in completions]
-    return [math_reward("", t, g) for t, g in zip(texts, gold_answer)]
+    return [math_reward("", t, g, format_bonus=0.0)
+            for t, g in zip(texts, gold_answer)]
 
 def format_reward(completions, **kwargs) -> list[float]:
     texts = [c[0]["content"] if isinstance(c, list) else c for c in completions]
@@ -1078,8 +1180,8 @@ async def lifespan(app: FastAPI):
     global _sandbox_pool
     _sandbox_pool = SandboxPool(pool_size=16, timeout=10.0)
     yield
-    for w in _sandbox_pool._all_workers:
-        w.proc.kill()
+    # shutdown() kills the containers, not just the local docker clients.
+    _sandbox_pool.shutdown()
 
 
 app = FastAPI(title="Reward Server", lifespan=lifespan)
@@ -1238,8 +1340,10 @@ async def compute_rewards_for_batch(
         # Format reward: 1 if \boxed{} is present, 0 otherwise
         has_boxed = bool(re.search(r'\\boxed\s*\{', comp))
         format_r[i] = 1.0 if has_boxed else 0.0
-        # Correctness reward
-        correctness[i] = math_reward(prompt, comp, gold)
+        # Correctness reward. format_bonus=0.0: the format signal is already
+        # the separate `format_lambda * format_r` term below, and counting it
+        # twice would make the effective lambda_f 2x the configured value.
+        correctness[i] = math_reward(prompt, comp, gold, format_bonus=0.0)
 
     combined = correctness + format_lambda * format_r
 

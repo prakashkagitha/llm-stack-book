@@ -2,7 +2,7 @@
 
 In [Supervised Fine-Tuning & Instruction Tuning](../05-posttraining-alignment/01-sft-instruction-tuning.html) we fine-tuned a model the obvious way: load every weight, compute a loss, backpropagate, and update *all* of the parameters with an optimizer. For a 7-billion-parameter model in bf16 that is already a budget problem. The weights are 14 GB. Adam keeps two more states per parameter — first and second moment — and those, plus a master fp32 copy of the weights, push the *training* footprint to roughly 16 bytes per parameter: about 112 GB for a 7B model, before a single activation is stored. A 70B model is out of reach of anything but a multi-node cluster. And you pay this for *every* fine-tune: a separate 14 GB checkpoint per customer, per task, per experiment.
 
-**Parameter-Efficient Fine-Tuning (PEFT)** is the family of methods that sidesteps this. The bet is simple and, empirically, correct: you do not need to move all the weights to adapt a pretrained model to a downstream task. You can freeze the giant pretrained backbone and train a *tiny* number of new parameters — often well under 1% of the total — and recover most, sometimes all, of the quality of full fine-tuning. The dominant member of this family, by a wide margin, is **LoRA** (Low-Rank Adaptation), and its quantization-aware cousin **QLoRA** is what made fine-tuning a 65B model on a single consumer GPU a reality.
+**Parameter-Efficient Fine-Tuning (PEFT)** is the family of methods that sidesteps this. The bet is simple and, empirically, correct: you do not need to move all the weights to adapt a pretrained model to a downstream task. You can freeze the giant pretrained backbone and train a *tiny* number of new parameters — often well under 1% of the total — and recover most, sometimes all, of the quality of full fine-tuning. The dominant member of this family, by a wide margin, is **LoRA** (Low-Rank Adaptation), and its quantization-aware cousin **QLoRA** is what made fine-tuning a 65B model on a single 48 GB GPU a reality.
 
 This chapter is the deep dive on the *low-rank* branch of PEFT: the math of $W + BA$, where to apply it, how alpha scaling and initialization actually work, merging adapters back into the base weights, the four-bit machinery of QLoRA (NF4, double quantization, paged optimizers), and the 2023–2025 refinements — DoRA, rsLoRA, LoRA+, VeRA. We finish with a from-scratch LoRA implementation you can read end to end, and with how to *serve* hundreds of LoRAs on one GPU. The prompt/prefix-tuning and model-merging branches of PEFT live in the next chapter, [PEFT II: Prompt/Prefix Tuning, IA3, Model Merging & Soups](../05-posttraining-alignment/04-peft-prompt-merging.html).
 
@@ -44,7 +44,7 @@ Two practical consequences fall out immediately. First, because $W_0$ is frozen,
 
 The scalar $\frac{\alpha}{r}$ in front of $BA$ is the single most misunderstood knob in LoRA. Here is the honest explanation.
 
-$\alpha$ (alpha) is a constant you choose; $r$ is the rank. The factor decouples the *magnitude* of the adaptation from the *rank*. Suppose you tuned everything beautifully at $r = 8$ and now want to try $r = 16$ to give the adapter more capacity. If there were no scaling, doubling $r$ would roughly double the typical norm of $BA x$ (more rank-1 terms summing up), which effectively changes your learning rate and forces you to re-tune. By dividing by $r$, the *effective scale* of the update stays roughly constant as you sweep $r$, so the learning rate you found transfers. The authors recommend setting $\alpha$ once (commonly $\alpha = 2r$, i.e. an effective scale of 2, or $\alpha = r$ for a scale of 1) and then sweeping $r$ freely.
+$\alpha$ (alpha) is a constant you choose; $r$ is the rank. The factor decouples the *magnitude* of the adaptation from the *rank*. Suppose you tuned everything beautifully at $r = 8$ and now want to try $r = 16$ to give the adapter more capacity. If there were no scaling, growing $r$ would grow the typical norm of $BA x$ — you are summing $r$ roughly independent rank-1 terms, so the norm grows like $\sqrt{r}$ (doubling $r$ multiplies it by $\approx 1.41$, not by 2) — which effectively changes your learning rate and forces you to re-tune. Dividing by $r$ is the original, deliberately conservative fix: it stops the update from growing with rank, so the learning rate you found roughly transfers. (Because the true growth is $\sqrt{r}$, dividing by $r$ actually *over*-corrects and shrinks the adapter at high rank — precisely the defect rsLoRA repairs with $1/\sqrt{r}$, below.) The authors recommend setting $\alpha$ once (commonly $\alpha = 2r$, i.e. an effective scale of 2, or $\alpha = r$ for a scale of 1) and then sweeping $r$ freely.
 
 A common practitioner convention is "set $\alpha = 2r$." It is not magic — it just means the effective scale $\alpha/r = 2$. If you ever see a config with $r=16, \alpha=32$, that is exactly this. We will revisit this in the **rsLoRA** section, where Kalajdzievski (2023) shows the $1/r$ scaling is actually *suboptimal* at high rank and $1/\sqrt{r}$ is the principled choice.
 
@@ -214,7 +214,8 @@ model[0] = LoRALinear(model[0], r=4, alpha=8)
 model[2] = LoRALinear(model[2], r=4, alpha=8)
 n = mark_only_lora_trainable(model)
 total = sum(p.numel() for p in model.parameters())
-print(f"trainable {n} / {total}  ({100*n/total:.2f}%)")   # ~ a few % on this toy
+print(f"trainable {n} / {total}  ({100*n/total:.2f}%)")   # 800 / 5408 = 14.79% here:
+# the ratio is only tiny at real model scale, where r << d makes 2dr negligible vs d*k.
 
 # Snapshot a frozen base weight to prove it does NOT change.
 W0_before = model[0].base.weight.detach().clone()
@@ -356,9 +357,16 @@ In a real run you hand that `LoraConfig` to **TRL**'s `SFTTrainer` rather than w
 # The full training + save + reload path (transformers + peft + trl + bitsandbytes).
 from trl import SFTTrainer, SFTConfig
 
+# Start from the *unwrapped* 4-bit base: TRL calls get_peft_model itself. Handing it a
+# model you already wrapped, together with peft_config, is a hard error in TRL.
+base_4bit = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Llama-2-7b-hf", quantization_config=bnb_config, device_map="auto",
+)
+base_4bit = prepare_model_for_kbit_training(base_4bit)
+
 trainer = SFTTrainer(
-    model=model,                      # the 4-bit base (TRL applies peft_config for you
-    train_dataset=train_ds,           #  if you pass an unwrapped model + peft_config)
+    model=base_4bit,                  # the unwrapped 4-bit base; TRL applies peft_config
+    train_dataset=train_ds,
     peft_config=lora_config,
     args=SFTConfig(
         output_dir="out/qlora-7b",
@@ -389,7 +397,13 @@ model = PeftModel.from_pretrained(base, "out/qlora-7b/adapter")  # attach adapte
 merged = model.merge_and_unload()      # fold BA into W0, return a plain transformer
 merged.save_pretrained("out/llama2-7b-tuned")          # a normal, full-size checkpoint
 
-# Or keep it unmerged and hot-swap between several adapters on one base:
+# NOTE: merge_and_unload() folds the delta into the base weights *in place* and strips
+# the LoRA layers, so `model`/`base` are now the merged model. The hot-swap path is an
+# alternative, and it has to start over from a clean, unmerged base:
+base = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Llama-2-7b-hf", dtype=torch.bfloat16, device_map="auto",
+)
+model = PeftModel.from_pretrained(base, "out/qlora-7b/adapter", adapter_name="sql")
 model.load_adapter("out/other-task/adapter", adapter_name="other")
 model.set_adapter("other")             # switch which adapter is active
 ```
@@ -435,13 +449,13 @@ $$
 
 {{fig:dora-magnitude-direction-decomposition}}
 
-where $\lVert \cdot \rVert_c$ is the column-wise norm. DoRA then trains the magnitude $m$ (a small trainable vector, one scalar per column) **directly**, while adapting the *direction* with a LoRA-style low-rank update:
+where $\lVert \cdot \rVert_c$ is the vector-wise norm taken over each **output unit's incoming weight vector** — i.e. over a row of the PyTorch `(out_features, in_features)` weight, which is the weight-normalization split of Salimans & Kingma applied per neuron. DoRA then trains the magnitude $m$ (a small trainable vector, one scalar per output channel) **directly**, while adapting the *direction* with a LoRA-style low-rank update:
 
 $$
 W' = m \cdot \frac{W_0 + \frac{\alpha}{r} B A}{\lVert W_0 + \frac{\alpha}{r} B A \rVert_c}.
 $$
 
-By separating "how big" from "which way," DoRA's learning dynamics more closely resemble full fine-tuning, and it consistently beats LoRA at the *same* rank — often letting you reach LoRA-$r$ quality at $r/2$. The cost is a slightly more expensive forward (the column-norm and the magnitude rescale) and a few extra trainable parameters ($m$). DoRA can be merged just like LoRA. Here is the core forward in code:
+By separating "how big" from "which way," DoRA's learning dynamics more closely resemble full fine-tuning, and it consistently beats LoRA at the *same* rank — often letting you reach LoRA-$r$ quality at $r/2$. The cost is a slightly more expensive forward (the per-output-channel norm and the magnitude rescale) and a few extra trainable parameters ($m$). DoRA can be merged just like LoRA. Here is the core forward in code:
 
 ```python
 import torch, torch.nn as nn, torch.nn.functional as F
@@ -458,22 +472,22 @@ class DoRALinear(nn.Module):
         self.lora_A = nn.Parameter(torch.empty(r, in_f))
         self.lora_B = nn.Parameter(torch.zeros(out_f, r))
         nn.init.kaiming_uniform_(self.lora_A, a=5 ** 0.5)
-        # Magnitude m = the column-wise norm of the pretrained weight (init so W'=W0).
+        # Magnitude m = per-output-channel norm of the pretrained weight (init so W'=W0).
         with torch.no_grad():
-            self.m = nn.Parameter(base.weight.norm(dim=0, keepdim=True))  # (1, in)
+            self.m = nn.Parameter(base.weight.norm(dim=1, keepdim=True))  # (out, 1)
 
     def forward(self, x):
         # Effective directional weight = W0 + scaled low-rank update.
         delta = self.scaling * (self.lora_B @ self.lora_A)          # (out, in)
         V = self.base.weight + delta                                 # direction (unnormalized)
-        V_norm = V.norm(dim=0, keepdim=True) + 1e-8                  # column norms (1, in)
+        V_norm = V.norm(dim=1, keepdim=True) + 1e-8                  # per-row norms (out, 1)
         W_eff = self.m * (V / V_norm)                                # rescale to magnitude m
-        return F.linear(x, W_eff)                                    # (no separate base path)
+        return F.linear(x, W_eff, self.base.bias)                    # (no separate base path)
 ```
 
 At init, `delta = 0` (because `lora_B = 0`), so `V = W0`, `V_norm = ||W0||_c`, `m = ||W0||_c`, and therefore `W_eff = ||W0||_c * (W0 / ||W0||_c) = W0` — the adapter is again a perfect no-op at step 0, as it must be.
 
-One implementation detail matters for cost: as written, the column norm `V_norm` is part of the autograd graph, which makes DoRA's backward noticeably heavier than LoRA's. The DoRA paper's own trick is to **detach** the denominator — treat $\lVert V \rVert_c$ as a constant w.r.t. the gradient (`V_norm = V.norm(dim=0, keepdim=True).detach()`) — which the authors report leaves accuracy essentially unchanged while cutting the extra training memory substantially. PEFT implements this behind `use_dora=True` in `LoraConfig`, so in practice DoRA is a one-word change to a LoRA config, not a new training script. Note also that the DoRA forward reconstructs the *full* `W_eff` matrix, so DoRA over a 4-bit base is more awkward than QLoRA — check your library's support before combining them.
+One implementation detail matters for cost: as written, the norm `V_norm` is part of the autograd graph, which makes DoRA's backward noticeably heavier than LoRA's. The DoRA paper's own trick is to **detach** the denominator — treat $\lVert V \rVert_c$ as a constant w.r.t. the gradient (`V_norm = V.norm(dim=1, keepdim=True).detach()`) — which the authors report leaves accuracy essentially unchanged while cutting the extra training memory substantially. PEFT implements this behind `use_dora=True` in `LoraConfig`, so in practice DoRA is a one-word change to a LoRA config, not a new training script. Note also that the DoRA forward reconstructs the *full* `W_eff` matrix, so DoRA over a 4-bit base is more awkward than QLoRA — check your library's support before combining them.
 
 ### VeRA — sharing frozen random matrices across layers
 
@@ -522,9 +536,16 @@ llm = LLM(model="meta-llama/Llama-2-7b-hf",
 sql = LoRARequest("sql-adapter", 1, "out/sql/adapter")      # (name, unique int id, path)
 support = LoRARequest("support-adapter", 2, "out/support/adapter")
 
-# Requests carrying *different* adapters coexist in one continuously-batched step.
+# `LLM.generate` is blocking, so two separate calls run one after the other:
 llm.generate(["SELECT ..."], SamplingParams(max_tokens=64), lora_request=sql)
 llm.generate(["Hi, my order..."], SamplingParams(max_tokens=64), lora_request=support)
+
+# To actually see *different* adapters coexist in one continuously-batched step, submit
+# the requests together — one call with a per-prompt adapter list (or, in production,
+# the server path below, where concurrent client requests are batched by the scheduler).
+llm.generate(["SELECT ...", "Hi, my order..."],
+             SamplingParams(max_tokens=64),
+             lora_request=[sql, support])
 ```
 
 and the server path is `vllm serve <base> --enable-lora --lora-modules sql=out/sql/adapter support=out/support/adapter`, after which clients simply pass `"model": "sql"` in the OpenAI-compatible request body. **SGLang** exposes an equivalent `--enable-lora` / `--lora-paths` interface; **TensorRT-LLM** supports multi-LoRA too but wants the ranks and adapter count fixed at engine-build time. Note the constraint the flags expose: `max_lora_rank` and `max_loras` are *compile-time-ish* capacity limits, so a fleet of adapters is much easier to serve if you standardize on one rank. The result: thousands of customers, *near* base-model throughput, sub-second adapter hot-swap, and a memory bill of (one base) + (a small adapter cache). This is the economic backbone of "fine-tuned model" SaaS offerings.

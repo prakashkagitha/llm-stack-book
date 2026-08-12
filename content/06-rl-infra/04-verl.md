@@ -4,7 +4,7 @@ In [The Anatomy of an RL-for-LLM System](../06-rl-infra/01-anatomy-rl-system.htm
 
 This chapter is about the framework that broke that wall and became the default substrate for serious RL-for-LLM research and production in 2024–2026: **veRL** (the "volcano engine Reinforcement Learning" library, often stylized `verl`), built on the ideas in the **HybridFlow** paper (Sheng et al., 2024). veRL's central thesis is deceptively small and enormously consequential: **the *control flow* of an RL algorithm and the *computation* of each stage live at different scales, so they should be programmed at different scales.** The high-level dataflow — "generate, score, compute advantages, update" — is written *once*, as ordinary single-threaded Python on a driver process (the **single controller**). Each heavy stage — generation, the actor forward/backward, the critic, the reference log-probs — runs as a SPMD (single-program-multiple-data) program across many GPUs (the **multi-controller** workers). HybridFlow is the glue that lets a single line of driver code like `advantages = compute_advantage(rewards, values)` dispatch onto, and gather results from, hundreds of GPU workers, *and* lets the system **reshard** a model's weights between the layout the trainer wants and the layout the rollout engine wants — without ever round-tripping through disk.
 
-By the end you will understand: why naive single-controller and naive multi-controller architectures each fail; what the `WorkerGroup` / `ResourcePool` / `@register(dispatch=...)` machinery actually does; how the **3D-HybridEngine** reshards FSDP/Megatron training weights into vLLM's tensor-parallel inference layout with near-zero redundant memory; how Ray placement groups colocate the actor, critic, and rollout engine on the same GPUs; and why this design is what lets veRL scale where a TRL-style monolith cannot. We will write a miniature single-controller dispatcher and a from-scratch resharding routine so the mechanism is concrete, not magic.
+By the end you will understand: why naive single-controller and naive multi-controller architectures each fail; what the `WorkerGroup` / `ResourcePool` / `@register(dispatch_mode=...)` machinery actually does; how the **3D-HybridEngine** reshards FSDP/Megatron training weights into vLLM's tensor-parallel inference layout with near-zero redundant memory; how Ray placement groups colocate the actor, critic, and rollout engine on the same GPUs; and why this design is what lets veRL scale where a TRL-style monolith cannot. We will write a miniature single-controller dispatcher and a from-scratch resharding routine so the mechanism is concrete, not magic.
 
 ## Two architectures, two failure modes
 
@@ -48,7 +48,7 @@ The driver issues *one* logical instruction per stage — `actor.generate_sequen
 
 ## The HybridFlow programming model
 
-Let us make the abstraction concrete with the actual building blocks veRL exposes. There are four that you must understand: `ResourcePool`, `Worker` / `WorkerGroup`, the `@register(dispatch=...)` decorator, and the `DataProto` container.
+Let us make the abstraction concrete with the actual building blocks veRL exposes. There are four that you must understand: `ResourcePool`, `Worker` / `WorkerGroup`, the `@register(dispatch_mode=...)` decorator, and the `DataProto` container.
 
 ### Resource pools and worker groups
 
@@ -100,27 +100,31 @@ Notice that step 6 — the part researchers most want to change — is *local, s
 
 ### The dispatch decorator: how one call becomes N
 
-The magic that turns `self.actor_rollout_wg.generate_sequences(prompt_batch)` (one call on the driver) into "run the SPMD generate program on all 8 ranks and gather" is the **`@register(dispatch=...)`** decorator on the worker method. It declares *how the input should be split across ranks* and *how the outputs should be combined*. veRL ships a small set of dispatch modes; the important ones:
+The magic that turns `self.actor_rollout_wg.generate_sequences(prompt_batch)` (one call on the driver) into "run the SPMD generate program on all 8 ranks and gather" is the **`@register(dispatch_mode=...)`** decorator on the worker method (the real signature is `register(dispatch_mode=Dispatch.ALL_TO_ALL, execute_mode=Execute.ALL, blocking=True, ...)`, and the mode is a `Dispatch` enum member, not a string). It declares *how the input should be split across ranks* and *how the outputs should be combined*. veRL ships a small set of dispatch modes; the important ones:
 
 | Dispatch mode | Input handling | Output handling | Used for |
 |---|---|---|---|
-| `ONE_TO_ALL` | broadcast the same args to every rank | take rank 0's result | broadcasts, barriers, config |
+| `ONE_TO_ALL` | broadcast the same args to every rank | return the list from all ranks (`collect_all_to_all`) | `init_model`, config, barriers |
 | `ALL_TO_ALL` | pass args through unchanged | return list from all ranks | generic collectives |
-| `DP_COMPUTE_PROTO` | **shard the batch along the data-parallel dim**, one slice per DP rank | **concatenate** the per-rank `DataProto`s back into one | the workhorse: generation, log-prob, update |
-| `MEGATRON_COMPUTE_PROTO` | shard over DP, replicate within TP/PP groups | gather from DP ranks only | Megatron-backed workers |
+| `DP_COMPUTE_PROTO` | **chunk the batch across all `world_size` ranks**, one slice per rank | **concatenate** all `world_size` per-rank `DataProto`s back into one | the workhorse for pure data-parallel (FSDP) groups |
+| mesh dispatch — `make_nd_compute_dataproto_dispatch_fn(mesh_name=...)` (`MEGATRON_COMPUTE_PROTO` in veRL ≤0.6) | shard over DP, replicate within TP/PP groups | collect from one rank per DP group only | Megatron / any TP-or-PP-sharded worker |
 
-The cleverness of `DP_COMPUTE_PROTO` is that it understands the worker's *parallelism topology*: it splits the batch only across the **data-parallel** ranks and *replicates* it across the **tensor/pipeline-parallel** ranks (which all need the same data to cooperate on one micro-batch). The driver does not know or care about TP — it just hands over a batch and gets back a batch. Here is a from-scratch sketch of what the decorator does, so the mechanism is not a black box:
+Note what `DP_COMPUTE_PROTO` does *not* do: it has no topology awareness at all. `dispatch_dp_compute_data_proto` chunks into `world_size` pieces and `collect_dp_compute_data_proto` concatenates all `world_size` outputs, so it is correct exactly when the group is purely data-parallel — an FSDP worker group with no TP. (When such a worker nonetheless runs vLLM at TP>1 inside it, the *rollout sharding manager* re-replicates the data with an `all_gather` inside the TP group and re-chunks the results afterwards; the dispatch layer stays oblivious.) The genuinely topology-aware modes are the mesh dispatchers: they split the batch across the **data-parallel** dimension only, *replicate* each slice across the **tensor/pipeline-parallel** ranks (which all need the same data to cooperate on one micro-batch), and collect from one representative rank per DP group. Either way the driver does not know or care about TP — it just hands over a batch and gets back a batch. Here is a from-scratch sketch of the topology-aware version, so the mechanism is not a black box:
 
 ```python
-# A miniature reconstruction of veRL's dispatch mechanism. The real one is more
-# careful about padding, async futures, and TP/PP replication, but this captures
-# the single-controller -> multi-controller fan-out/fan-in exactly.
+# A miniature reconstruction of veRL's TOPOLOGY-AWARE (mesh) dispatch mechanism —
+# the mode veRL calls MEGATRON_COMPUTE_PROTO (<=0.6) / make_nd_compute_dataproto_
+# dispatch_fn(mesh_name=...) (0.7+). The real one is more careful about padding and
+# async futures, but this captures the single-controller -> multi-controller
+# fan-out/fan-in exactly. (Plain DP_COMPUTE_PROTO is the tp_size == 1 special case.)
 
 import functools
+import ray
+from verl.protocol import DataProto
 
 # Dispatch functions: given a WorkerGroup and the call's args, return a LIST of
 # (args, kwargs) — one entry per rank.
-def dispatch_dp_compute_proto(worker_group, batch):
+def dispatch_nd_compute_proto(worker_group, batch):
     dp_size = worker_group.dp_size            # number of data-parallel groups
     tp_size = worker_group.tp_size            # ranks per DP group (TP * PP)
     chunks = batch.chunk(dp_size)             # split the BATCH across DP groups only
@@ -131,7 +135,7 @@ def dispatch_dp_compute_proto(worker_group, batch):
     return per_rank                            # length == world_size
 
 # Collect functions: given the list of per-rank outputs, fold them into one result.
-def collect_dp_compute_proto(worker_group, outputs):
+def collect_nd_compute_proto(worker_group, outputs):
     dp_size = worker_group.dp_size
     tp_size = worker_group.tp_size
     # Keep only ONE representative per DP group (TP ranks computed identical batch
@@ -140,14 +144,14 @@ def collect_dp_compute_proto(worker_group, outputs):
     return DataProto.concat(reps)
 
 DISPATCH = {
-    "DP_COMPUTE_PROTO": (dispatch_dp_compute_proto, collect_dp_compute_proto),
+    "ND_COMPUTE_PROTO": (dispatch_nd_compute_proto, collect_nd_compute_proto),
 }
 
-def register(dispatch):
+def register(dispatch_mode):
     """Decorator placed on Worker methods. Records the dispatch mode so the
     WorkerGroup proxy knows how to fan out / fan in when the DRIVER calls it."""
     def decorator(fn):
-        fn._dispatch_mode = dispatch
+        fn._dispatch_mode = dispatch_mode
         @functools.wraps(fn)
         def inner(self, *args, **kwargs):     # runs ON the worker (one rank)
             return fn(self, *args, **kwargs)
@@ -155,22 +159,24 @@ def register(dispatch):
     return decorator
 
 class WorkerGroupProxy:
-    """Lives on the DRIVER. `self.workers` are Ray actor handles (one per rank)."""
-    def __init__(self, workers, dp_size, tp_size):
+    """Lives on the DRIVER. `self.workers` are Ray actor handles (one per rank);
+    `worker_cls` is the Worker CLASS, which is where @register stashed the mode."""
+    def __init__(self, worker_cls, workers, dp_size, tp_size):
+        self.worker_cls = worker_cls
         self.workers, self.dp_size, self.tp_size = workers, dp_size, tp_size
 
     def call(self, method_name, batch):
         dispatch_fn, collect_fn = DISPATCH[
-            getattr(WorkerClass, method_name)._dispatch_mode]
+            getattr(self.worker_cls, method_name)._dispatch_mode]
         per_rank_args = dispatch_fn(self, batch)            # split + replicate
         # Launch the SAME method on every rank in parallel (Ray remote calls).
-        futures = [w.__getattr__(method_name).remote(*a)
+        futures = [getattr(w, method_name).remote(*a)
                    for w, a in zip(self.workers, per_rank_args)]
         outputs = ray.get(futures)                          # gather all ranks
         return collect_fn(self, outputs)                    # fold into one DataProto
 ```
 
-So when the driver writes `actor_rollout_wg.generate_sequences(batch)`, under the hood the proxy (1) consults the dispatch mode registered on `generate_sequences`, (2) splits the batch across DP groups and replicates within TP, (3) launches the method on all ranks via Ray, (4) gathers, and (5) concatenates. The driver wrote one line; 8 GPUs ran an SPMD generation. **That is HybridFlow.**
+So when the driver writes `actor_rollout_wg.generate_sequences(batch)`, under the hood the proxy (1) consults the dispatch mode registered on `generate_sequences`, (2) splits the batch across DP groups and replicates within TP (or, for `DP_COMPUTE_PROTO`, simply chunks it across every rank), (3) launches the method on all ranks via Ray, (4) gathers, and (5) concatenates. The driver wrote one line; 8 GPUs ran an SPMD generation. **That is HybridFlow.**
 
 {{fig:verl-dispatch-fanout}}
 
@@ -212,8 +218,12 @@ def reshard_column_parallel(local_shard: torch.Tensor,
     OUTPUT dim) from train_tp_size shards to rollout_tp_size shards, IN GPU MEMORY.
 
     local_shard : this rank's slice of the full weight, shape (in_dim, out_dim/p).
-    Returns this rank's rollout slice, shape (in_dim, out_dim/q), or None if this
-    rank is not used by the rollout engine (q < p case).
+    Returns this rank's rollout slice, shape (in_dim, out_dim/q). EVERY rank gets a
+    slice: with q < p the p ranks of one training TP group become p/q independent
+    rollout replicas of TP degree q, so no GPU is idle during generation.
+    Assumes q <= p and q | p (the usual case); when the rollout group is *wider*
+    than the training group (q > p, e.g. FSDP training where the effective p is 1)
+    the gather group must be the rollout TP group that jointly holds the parameter.
 
     Mechanism:
       1. all-gather the p training shards WITHIN the (small) TP group -> full weight.
@@ -234,14 +244,12 @@ def reshard_column_parallel(local_shard: torch.Tensor,
     rollout_shards = full_weight.chunk(q, dim=1)     # list of q tensors
 
     # --- Step 3: which rollout shard does THIS physical GPU own? ---
-    # The 3D-HybridEngine maps rank_in_group -> a rollout shard id so that the
-    # first q ranks of the training group become the q rollout ranks. Ranks >= q
-    # are idle during rollout (their weights were gathered above and can be freed).
-    if rank_in_group < q:
-        my_rollout_shard = rollout_shards[rank_in_group].contiguous()
-        return my_rollout_shard                      # (in_dim, out_dim/q)
-    else:
-        return None                                  # not a rollout rank
+    # The 3D-HybridEngine maps rank_in_group -> a rollout shard id by wrapping mod q,
+    # so the p ranks of the training group tile into p/q GENERATION REPLICAS, each a
+    # complete TP-q copy of the model. Rank r serves shard r % q of replica r // q;
+    # every GPU generates, which is what keeps the colocated cluster fully utilized.
+    my_rollout_shard = rollout_shards[rank_in_group % q].contiguous()
+    return my_rollout_shard                          # (in_dim, out_dim/q)
 
 # Row-parallel weights (split along the INPUT dim) are symmetric: all-gather along
 # dim=0 instead of dim=1, then re-chunk along dim=0. Attention QKV and o_proj need
@@ -449,7 +457,7 @@ For the book's capstone this cuts the other way, and it is worth being honest ab
 !!! interview "Interview Corner"
     **Q:** Explain HybridFlow's "single-controller + multi-controller" hybrid. Why is *neither* extreme good enough on its own, and give one concrete operation that lives on each side of the boundary.
 
-    **A:** The two design extremes each fail in a complementary way. A pure **single-controller** system (one driver issues every op as a remote call) makes the RL algorithm trivially readable and editable, but it funnels all the batch data — log-probs, masks, response ids — through the driver, which becomes a serialization and network bottleneck, and it cannot express the *intra-stage* collectives (the all-reduces inside the actor's backward), so it can't compose parallelism. A pure **multi-controller** SPMD system (every GPU runs the same program, like Megatron) is maximally efficient and composes tensor/pipeline/data parallelism natively, but it buries the RL control flow inside replicated SPMD code, so changing the advantage estimator means editing distributed code full of explicit collectives and rank arithmetic. HybridFlow uses **single-controller between stages** (one driver runs the readable `generate → score → advantage → update` loop; only the small logical batch crosses this boundary) and **multi-controller within each stage** (each stage is a `WorkerGroup` of SPMD ranks; the heavy collectives stay inside). A `@register(dispatch=DP_COMPUTE_PROTO)` decorator fans one driver call out to all ranks (splitting the batch across data-parallel ranks, replicating within tensor-parallel ranks) and gathers results back. Concrete examples: **on the single-controller side**, `advantages = compute_advantage(rewards, values)` — tiny tensors, local Python, no collectives. **On the multi-controller side**, `actor.update_actor(batch)` — a sharded FSDP/Megatron forward-backward whose all-reduces never touch the driver. The 3D-HybridEngine additionally reshards the actor between the trainer's FSDP/Megatron layout and vLLM's tensor-parallel rollout layout *in GPU memory*, so the same weights serve both stages without a disk round-trip.
+    **A:** The two design extremes each fail in a complementary way. A pure **single-controller** system (one driver issues every op as a remote call) makes the RL algorithm trivially readable and editable, but it funnels all the batch data — log-probs, masks, response ids — through the driver, which becomes a serialization and network bottleneck, and it cannot express the *intra-stage* collectives (the all-reduces inside the actor's backward), so it can't compose parallelism. A pure **multi-controller** SPMD system (every GPU runs the same program, like Megatron) is maximally efficient and composes tensor/pipeline/data parallelism natively, but it buries the RL control flow inside replicated SPMD code, so changing the advantage estimator means editing distributed code full of explicit collectives and rank arithmetic. HybridFlow uses **single-controller between stages** (one driver runs the readable `generate → score → advantage → update` loop; only the small logical batch crosses this boundary) and **multi-controller within each stage** (each stage is a `WorkerGroup` of SPMD ranks; the heavy collectives stay inside). A `@register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)` decorator fans one driver call out to all ranks and gathers the results back — chunking the batch across the group's ranks for a pure data-parallel (FSDP) group, or, with the topology-aware mesh dispatch, splitting across data-parallel ranks and replicating within tensor-parallel ranks. Concrete examples: **on the single-controller side**, `advantages = compute_advantage(rewards, values)` — tiny tensors, local Python, no collectives. **On the multi-controller side**, `actor.update_actor(batch)` — a sharded FSDP/Megatron forward-backward whose all-reduces never touch the driver. The 3D-HybridEngine additionally reshards the actor between the trainer's FSDP/Megatron layout and vLLM's tensor-parallel rollout layout *in GPU memory*, so the same weights serve both stages without a disk round-trip.
 
 !!! interview "Interview Corner"
     **Q:** In a colocated veRL run, the actor trains with FSDP and generates with vLLM at TP=2. Walk through what physically happens to the weights and optimizer state in one RL step, and where the memory peaks are.
@@ -458,7 +466,7 @@ For the book's capstone this cuts the other way, and it is worth being honest ab
 
 !!! key "Key Takeaways"
     - **HybridFlow = single-controller *between* stages + multi-controller *within* stages.** The driver runs the readable `generate → score → advantage → update` loop on small logical batches; each heavy stage runs as an SPMD `WorkerGroup`. This beats both pure single-controller (driver bottleneck, can't compose parallelism) and pure multi-controller (RL logic buried in distributed code).
-    - **The `@register(dispatch=...)` decorator** turns one driver method call into a fan-out across all ranks of a worker group and a fan-in of the results. `DP_COMPUTE_PROTO` shards the batch across data-parallel ranks and replicates within tensor-parallel ranks — the driver never sees the intra-stage collectives.
+    - **The `@register(dispatch_mode=...)` decorator** turns one driver method call into a fan-out across all ranks of a worker group and a fan-in of the results. `DP_COMPUTE_PROTO` chunks the batch across every rank (right for a pure-FSDP group); the topology-aware mesh dispatch (`MEGATRON_COMPUTE_PROTO` / `make_nd_compute_dataproto_dispatch_fn`) shards across data-parallel ranks and replicates within tensor-parallel ranks. Either way the driver never sees the intra-stage collectives.
     - **The 3D-HybridEngine reshards the actor in GPU memory** between the trainer's FSDP/Megatron layout and the rollout engine's vLLM/SGLang tensor-parallel layout. It gathers-within-a-TP-group then re-splits, bounding the transient memory to one TP group's weights and avoiding any disk checkpoint round-trip per step.
     - **Optimizer state never moves.** Only bf16 parameters are copied for rollout; gradients and Adam state stay in the training layout. The train peak (activations) and rollout peak (KV cache) happen at different times, which is what makes colocation fit.
     - **Ray provides placement groups and addressable workers**, enabling colocation of the actor, critic, reference, and rollout engine on the *same* GPUs (time-sliced). This maximizes GPU utilization. NCCL still does the fast collectives inside each worker group.
@@ -528,12 +536,12 @@ For the book's capstone this cuts the other way, and it is worth being honest ab
 
     The quantity that depends on getting this right is the **importance-sampling ratio** in the PPO/GRPO objective, $r_t = \exp(\log \pi_{\text{new}}(a_t) - \log \pi_{\text{old}}(a_t))$. The `old_log_prob` in the denominator must be computed by the *same* engine that will later compute `new_log_prob` during the update; otherwise the ratio is systematically biased at step zero (it would not equal 1 even before any gradient step), corrupting the clipping and the gradient. By recomputing `old_log_prob` under the training engine, veRL keeps the ratio self-consistent. Note this is a *correctness* fix, not a performance one — it costs an extra forward pass every step.
 
-**3.** (Quantitative) An actor `WorkerGroup` occupies a world of 8 ranks configured with tensor-parallel degree 2 (and no pipeline parallelism), so in the dispatch code `tp_size = 2` and `dp_size = 4`. The driver calls a method registered with `DP_COMPUTE_PROTO` on a `DataProto` batch of `B = 1024` samples. Using the chapter's `dispatch_dp_compute_proto` / `collect_dp_compute_proto` sketch: (a) how many samples does each of the 8 ranks receive? (b) which ranks' outputs does the collect function keep, and (c) how many samples are in the final reassembled `DataProto`? (d) If you had *mistakenly* concatenated all 8 ranks' outputs instead of one representative per DP group, how many samples would you get and why is that wrong?
+**3.** (Quantitative) An actor `WorkerGroup` occupies a world of 8 ranks configured with tensor-parallel degree 2 (and no pipeline parallelism), so in the dispatch code `tp_size = 2` and `dp_size = 4`. The driver calls a method registered with the chapter's topology-aware mesh dispatch (veRL's `MEGATRON_COMPUTE_PROTO` / `make_nd_compute_dataproto_dispatch_fn`, *not* plain `DP_COMPUTE_PROTO`, which would chunk across all 8 ranks) on a `DataProto` batch of `B = 1024` samples. Using the chapter's `dispatch_nd_compute_proto` / `collect_nd_compute_proto` sketch: (a) how many samples does each of the 8 ranks receive? (b) which ranks' outputs does the collect function keep, and (c) how many samples are in the final reassembled `DataProto`? (d) If you had *mistakenly* concatenated all 8 ranks' outputs instead of one representative per DP group, how many samples would you get and why is that wrong?
 
 ??? note "Solution"
-    (a) `DP_COMPUTE_PROTO` splits the batch across the **data-parallel** dimension only. With `dp_size = 4`, the batch is chunked into 4 pieces of $1024 / 4 = 256$ samples each. Each chunk is then *replicated* to every rank in its TP group (`tp_size = 2`). So all 8 ranks receive **256 samples** — ranks 0 and 1 get chunk 0, ranks 2 and 3 get chunk 1, ranks 4 and 5 get chunk 2, ranks 6 and 7 get chunk 3.
+    (a) The mesh dispatch splits the batch across the **data-parallel** dimension only. With `dp_size = 4`, the batch is chunked into 4 pieces of $1024 / 4 = 256$ samples each. Each chunk is then *replicated* to every rank in its TP group (`tp_size = 2`). So all 8 ranks receive **256 samples** — ranks 0 and 1 get chunk 0, ranks 2 and 3 get chunk 1, ranks 4 and 5 get chunk 2, ranks 6 and 7 get chunk 3.
 
-    (b) `collect_dp_compute_proto` keeps one representative per DP group: `outputs[dp_rank * tp_size]` for `dp_rank` in $\{0,1,2,3\}$ with `tp_size = 2`, i.e. ranks **0, 2, 4, 6**.
+    (b) `collect_nd_compute_proto` keeps one representative per DP group: `outputs[dp_rank * tp_size]` for `dp_rank` in $\{0,1,2,3\}$ with `tp_size = 2`, i.e. ranks **0, 2, 4, 6**.
 
     (c) Concatenating those 4 representatives of 256 samples each gives $4 \times 256 = \mathbf{1024}$ samples — the original batch order is reconstructed.
 
@@ -583,7 +591,7 @@ For the book's capstone this cuts the other way, and it is worth being honest ab
 **6.** (Implementation) The chapter's `reshard_column_parallel` reshards a *column*-parallel weight (split along the output dim, `dim=1`). Implement the symmetric `reshard_row_parallel` for a **row-parallel** weight (e.g. an MLP down-projection, split along the *input* dim, `dim=0`), resharding from `train_tp_size` shards to `rollout_tp_size` shards in GPU memory. Keep the same three-step structure and the same rank-to-rollout-shard mapping, and state which dimension changes versus the column-parallel case.
 
 ??? note "Solution"
-    The only change is the axis: a row-parallel weight is split along the **input** dimension (`dim=0`), so both the all-gather reconstruction and the re-split happen along `dim=0` instead of `dim=1`. The gather-within-a-small-TP-group then re-split logic, and the `rank_in_group < q` ownership mapping, are identical.
+    The only change is the axis: a row-parallel weight is split along the **input** dimension (`dim=0`), so both the all-gather reconstruction and the re-split happen along `dim=0` instead of `dim=1`. The gather-within-a-small-TP-group then re-split logic, and the `rank_in_group % q` ownership mapping (which tiles the p training ranks into p/q generation replicas so no GPU idles), are identical.
 
     ```python
     import torch
@@ -597,8 +605,8 @@ For the book's capstone this cuts the other way, and it is worth being honest ab
         train_tp_size shards to rollout_tp_size shards, IN GPU MEMORY.
 
         local_shard : this rank's slice, shape (in_dim/p, out_dim).
-        Returns this rank's rollout slice, shape (in_dim/q, out_dim), or None if
-        this rank is not used by the rollout engine (q < p case).
+        Returns this rank's rollout slice, shape (in_dim/q, out_dim). Every rank
+        gets one: the p ranks tile into p/q generation replicas (assumes q <= p).
         """
         p, q = train_tp_size, rollout_tp_size
 
@@ -613,10 +621,8 @@ For the book's capstone this cuts the other way, and it is worth being honest ab
         rollout_shards = full_weight.chunk(q, dim=0)     # list of q tensors
 
         # --- Step 3: which rollout shard does THIS physical GPU own? ---
-        if rank_in_group < q:
-            return rollout_shards[rank_in_group].contiguous()  # (in_dim/q, out_dim)
-        else:
-            return None                                  # not a rollout rank
+        # Same mod-q tiling as the column case: p/q generation replicas, no idle rank.
+        return rollout_shards[rank_in_group % q].contiguous()  # (in_dim/q, out_dim)
     ```
 
     Versus the column-parallel case, the changed dimension is `dim=1 -> dim=0` in both the `torch.cat` (step 1) and the `chunk` (step 2), and the divisibility assertion is now on the input dim rather than the output dim. As the chapter notes, attention QKV/`o_proj` weights need additional *head-aware* regrouping so whole heads stay intact after re-sharding, which neither the pure column nor pure row routine handles on its own.

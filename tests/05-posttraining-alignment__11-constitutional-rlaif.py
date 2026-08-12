@@ -295,21 +295,11 @@ def robust_ai_label(
         if i % 2 == 0:
             pair = ai_label_pair(model_generate, prompt, response_a, response_b)
         else:
-            # Swap positions, then flip the verdict back
-            pair_swapped = ai_label_pair(model_generate, prompt, response_b, response_a)
-            # After swap, 'chosen' refers to the winner in swapped order;
-            # re-map: if swapped chosen == response_b, verdict was "A" in swapped = B in original
-            if pair_swapped.chosen == response_b:
-                # original A won after swap-correction
-                pair = PreferencePair(
-                    prompt=prompt, chosen=response_a, rejected=response_b,
-                    principle=pair_swapped.principle, judge_rationale=pair_swapped.judge_rationale
-                )
-            else:
-                pair = PreferencePair(
-                    prompt=prompt, chosen=response_b, rejected=response_a,
-                    principle=pair_swapped.principle, judge_rationale=pair_swapped.judge_rationale
-                )
+            # Swap the presentation order. No verdict re-mapping is needed:
+            # ai_label_pair stores the winning response *string* in `chosen`,
+            # not the positional letter, so the returned pair is already
+            # expressed in terms of the original response_a / response_b.
+            pair = ai_label_pair(model_generate, prompt, response_b, response_a)
 
         votes.append(pair.chosen)
         rationales.append(pair.judge_rationale)
@@ -331,17 +321,18 @@ def robust_ai_label(
     )
 
 
-# A judge that always says "VERDICT: A" regardless of which response is passed
-# as A. Because robust_ai_label swaps positions on odd rounds and corrects the
-# verdict back, a judge with a genuine (order-independent) preference for the
-# *content* of response_a should still land on "Response A text" as the
-# consistent majority winner across all 5 votes.
-def mock_judge_always_a_slot(prompt: str) -> str:
-    return "Reasoning: The first-listed response is judged better here.\nVERDICT: A"
+# A judge with a genuine, order-independent preference for the *content* of
+# "Response A text": it reads the prompt and votes for whichever slot holds it.
+# Such a judge is consistent under position swapping, so all 5 votes should
+# agree and the winner should be "Response A text".
+def mock_judge_prefers_content_a(prompt: str) -> str:
+    slot_a = prompt.split("Response A:\n", 1)[1].split("\n\nResponse B:", 1)[0]
+    verdict = "A" if slot_a == "Response A text" else "B"
+    return f"Reasoning: the content of 'Response A text' is better.\nVERDICT: {verdict}"
 
 
 robust_result = robust_ai_label(
-    mock_judge_always_a_slot,
+    mock_judge_prefers_content_a,
     "Test prompt",
     "Response A text",
     "Response B text",
@@ -352,6 +343,25 @@ assert robust_result is not None, "expected a non-ambiguous consistent verdict"
 assert robust_result.chosen == "Response A text"
 assert robust_result.rejected == "Response B text"
 print("robust_ai_label OK:", robust_result)
+
+
+# A purely position-biased judge always votes for whatever is listed first.
+# Position-debiasing must expose this: 3 votes for response_a, 2 for response_b,
+# consistency 0.6 < 0.7, so the ambiguous example is discarded.
+def mock_judge_always_a_slot(prompt: str) -> str:
+    return "Reasoning: The first-listed response is judged better here.\nVERDICT: A"
+
+
+biased_result = robust_ai_label(
+    mock_judge_always_a_slot,
+    "Test prompt",
+    "Response A text",
+    "Response B text",
+    n_votes=5,
+    consistency_threshold=0.7,
+)
+assert biased_result is None, "a purely position-biased judge must be filtered out"
+print("robust_ai_label (position-biased judge filtered) OK")
 
 # A judge that flips its verdict slot every call has no genuine content
 # preference and should discard the example as inconsistent, or at least

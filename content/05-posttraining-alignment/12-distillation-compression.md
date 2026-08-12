@@ -44,9 +44,9 @@ Common choices are $\tau \in [2, 5]$ and $\alpha \in [0.1, 0.5]$.
 
     Suppose a teacher has logits $z^T = [3.0, 1.0, 0.5]$ for three tokens.
 
-    At $\tau = 1$: softmax gives $[0.825, 0.112, 0.068]$ — nearly all mass on token 0.
+    At $\tau = 1$: softmax gives $[0.821, 0.111, 0.067]$ — nearly all mass on token 0.
 
-    At $\tau = 4$: logits become $[0.75, 0.25, 0.125]$, softmax gives $[0.388, 0.317, 0.295]$ — much softer.
+    At $\tau = 4$: logits become $[0.75, 0.25, 0.125]$, softmax gives $[0.467, 0.283, 0.250]$ — much softer.
 
     The soft distribution at $\tau = 4$ tells the student that tokens 1 and 2 are plausible alternatives, carrying meaningful signal about inter-token similarity. At $\tau = 1$ this information is almost entirely suppressed. Setting $\tau$ too high (say, 20) eventually flattens the distribution toward uniform, losing the ordering information — this is why values of 2–5 are typical.
 
@@ -147,7 +147,7 @@ Two practical notes. First, `lmbda=1.0` makes every step pay for a generation pa
 
 ### Imitation-Gap and Capacity Gap
 
-A practical tension: if the teacher is vastly larger than the student, the student cannot represent the teacher's distribution accurately. Hinton et al. called this the *capacity gap*. Empirically, distilling a 70B teacher into a 1B student often underperforms distilling a 13B teacher into the same 1B student, because the 70B model's distribution is "too complex" for the student to model. Progressive distillation — chaining 70B → 13B → 3B → 1B — often produces better final results.
+A practical tension: if the teacher is vastly larger than the student, the student cannot represent the teacher's distribution accurately. This is usually called the *capacity gap* — the term and the systematic study come from Cho & Hariharan, *On the Efficacy of Knowledge Distillation* (ICCV 2019), and Mirzadeh et al., *Improved Knowledge Distillation via Teacher Assistant* (AAAI 2020), which also introduced the teacher-assistant chaining described next, not from the original Hinton et al. paper. Empirically, distilling a 70B teacher into a 1B student often underperforms distilling a 13B teacher into the same 1B student, because the 70B model's distribution is "too complex" for the student to model. Progressive distillation — chaining 70B → 13B → 3B → 1B — often produces better final results.
 
 ## 5.3 Sequence-Level Knowledge Distillation
 
@@ -217,7 +217,7 @@ Pruning removes weights or entire structures from a trained model. Unlike distil
 
 The simplest approach: set the smallest-magnitude weights to zero. A weight $w$ is pruned if $|w| < \theta$ for some threshold $\theta$ chosen to achieve a target sparsity level $s$ (e.g., 50% of weights are zero).
 
-Unstructured sparsity at 50–70% has minimal accuracy impact on large models but provides limited wall-clock speedup on standard GPUs, because hardware is optimized for dense matrix multiplications. The benefit is mainly in model file size and in specialized sparse-compute hardware.
+Unstructured sparsity at 50% (and up to roughly 60% for the very largest models) has minimal accuracy impact; push much beyond that and quality degrades sharply unless you allocate sparsity non-uniformly across layers. Even where accuracy holds, unstructured sparsity provides limited wall-clock speedup on standard GPUs, because hardware is optimized for dense matrix multiplications. The benefit is mainly in model file size and in specialized sparse-compute hardware.
 
 ### SparseGPT: One-Shot Unstructured Pruning
 
@@ -227,9 +227,9 @@ For each linear layer with weight matrix $W \in \mathbb{R}^{d_\text{out} \times 
 
 1. Collect activation statistics $H = X^T X / N$ using calibration data (typically 128 samples).
 2. For each column $q$: compute the pruning score $\text{score}(w_{ij}) = w_{ij}^2 / [H^{-1}]_{jj}$ (analogous to the OBS weight saliency).
-3. Prune the lowest-score weights in that column to zero.
+3. Select the mask *per output row*, not per column: within a block of columns (the reference implementation uses blocks of 128), prune the lowest-score entries of each row of that block.
 4. Update the remaining weights in the column to compensate: $\delta w = -\frac{w_q}{[H^{-1}]_{qq}} H^{-1}_{:,q}$.
-5. Update $H$ using Cholesky rank-1 updates.
+5. No per-row Hessian update is needed. Because every output row is pruned in the *same* column order, all rows share one sequence of inverse Hessians, so the Cholesky factor of $H^{-1}$ is computed **once** for the whole layer and successive rows of it are simply read off as the sweep proceeds. This is SparseGPT's central trick — it is exactly what the predecessor exact-OBS/OBC method could not do, since per-row Hessian downdates cost $O(d_\text{in}^3)$ *per row*.
 
 SparseGPT achieves 50–60% sparsity on models like LLaMA with near-zero perplexity increase, and can be extended to 2:4 structured sparsity (2 nonzeros per 4 weights) that maps directly to NVIDIA's sparse tensor core format and yields about 1.5–2x throughput improvement.
 
@@ -642,7 +642,7 @@ $$
 \alpha = \mathbb{E}_{x \sim p_d} \left[ \min\!\left(1, \frac{p_t(x|c)}{p_d(x|c)}\right) \right]
 $$
 
-where $p_t$ is the target distribution and $p_d$ is the draft distribution. When $p_d \approx p_t$, most proposals are accepted. This is exactly the goal of distillation: minimize $\text{KL}(p_t \| p_d)$.
+where $p_t$ is the target distribution and $p_d$ is the draft distribution. Rewriting the expectation gives $\alpha = \sum_x \min(p_d(x), p_t(x)) = 1 - \text{TV}(p_t, p_d)$ (Exercise 3 derives this): the acceptance rate is *exactly* one minus the total-variation distance. So the draft-training objective is to shrink TV, and distillation is the practical way to do it — a KL surrogate is the standard tractable proxy, and it upper-bounds TV via Pinsker's inequality, $\text{TV} \le \sqrt{\text{KL}/2}$.
 
 Training draft models with KD from the target model (rather than from scratch) measurably improves acceptance rates. The target model is available at inference time to provide soft-target signals during training.
 
@@ -662,7 +662,7 @@ This is distillation within a single model — the final layers teach the early-
 
 ### EAGLE: Speculative Drafting with Feature Distillation
 
-EAGLE (Li et al., 2024) takes this further: the draft model conditions on the target model's hidden states (feature distillation) rather than just its output tokens. The draft model is a single transformer layer trained to predict the next token conditioned on the target model's feature map at layer $L-1$. Because the draft model has access to the verifier's internal representations, it achieves acceptance rates in the range of 2–3× speedup on typical text generation tasks. EAGLE-3 (Li et al., 2025) — the current standard-bearer, integrated into vLLM and SGLang — drops feature prediction in favor of direct token prediction with multi-layer feature fusion ("training-time test"), which lets acceptance keep improving as you scale draft-training data and pushes speedups up to ~6.5×.
+EAGLE (Li et al., 2024) takes this further: the draft model conditions on the target model's hidden states (feature distillation) rather than just its output tokens. The draft model is a single transformer layer trained to predict the next *feature* — the target's second-top-layer hidden state — conditioned on the previous features plus the shifted token embeddings; tokens are then read off by passing the predicted feature through the target's frozen LM head. Because the draft model has access to the verifier's internal representations, it achieves acceptance rates in the range of 2–3× speedup on typical text generation tasks. EAGLE-3 (Li et al., 2025) — the current standard-bearer, integrated into vLLM and SGLang — drops feature prediction in favor of direct token prediction with multi-layer feature fusion ("training-time test"), which lets acceptance keep improving as you scale draft-training data and pushes speedups up to ~6.5×.
 
 Training your own draft head is packaged too: the SGLang project ships [SpecForge](https://github.com/sgl-project/SpecForge), a training framework for EAGLE-style draft models that exports checkpoints SGLang can serve directly, and vLLM loads EAGLE/EAGLE-3 heads through its speculative-decoding config. In other words, the whole loop of this section — *distill a draft from your target model, then serve the pair* — is now a two-library workflow rather than a research project.
 
@@ -713,16 +713,16 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
 
     **Teacher forward pass (inference only, no gradient):**
     - 70B params × 2 bytes (BF16) = 140 GB. Requires a minimum of 2 × A100 80GB or 4 × A100 40GB.
-    - Teacher activations for a batch of 8 × 512 tokens at 8,192 hidden dim: roughly 8 × 512 × 8192 × 80 layers × 2 bytes ≈ 4 GB. Manageable.
+    - Teacher activations for a batch of 8 × 512 tokens at 8,192 hidden dim: roughly 8 × 512 × 8192 × 80 layers × 2 bytes ≈ 5.4 GB (5 GiB). Manageable.
 
     **Student forward + backward:**
     - 7B params × 2 bytes = 14 GB for weights.
-    - Gradients: another 14 GB (fp32 = 28 GB, or bf16 = 14 GB).
-    - Adam optimizer states: 2× gradients = 28 GB (fp32).
+    - Gradients: another 14 GB in bf16 (28 GB if you keep them in fp32).
+    - Adam optimizer states: two fp32 moments = 8 bytes/param = 56 GB.
     - Activations for the same batch: ≈ 400 MB with gradient checkpointing.
-    - Total student-side memory: roughly 55–60 GB — fits on a single A100 80GB with gradient checkpointing.
+    - Total student-side memory: roughly 85 GB with bf16 gradients — *just over* a single A100 80GB, which is the trap this arithmetic exists to catch. Switching to 8-bit Adam (2 bytes/param = 14 GB of states) brings the total to ≈ 42 GB and fits comfortably; sharding the optimizer across 2 GPUs with ZeRO-2/FSDP is the other standard answer.
 
-    **Practical setup:** teacher on 2× A100 (tensor parallel), student on 1× A100. To avoid re-running the teacher every epoch you want a logit cache — but caching the *full* distribution is hopeless: 32,000 vocab × 2 bytes = 64 KB per token, i.e. ~64 TB per billion tokens. Cache the **top-k** instead (Section 5.6): $k = 64$ at BF16 values plus `uint16` indices is 256 bytes per token, so 100M tokens costs ~26 GB — the difference between "impossible" and "one NVMe drive."
+    **Practical setup:** teacher on 2× A100 (tensor parallel), student on 1× A100 with 8-bit Adam (or sharded across 2× A100 with ZeRO-2). To avoid re-running the teacher every epoch you want a logit cache — but caching the *full* distribution is hopeless: 32,000 vocab × 2 bytes = 64 KB per token, i.e. ~64 TB per billion tokens. Cache the **top-k** instead (Section 5.6): $k = 64$ at BF16 values plus `uint16` indices is 256 bytes per token, so 100M tokens costs ~26 GB — the difference between "impossible" and "one NVMe drive."
 
 !!! sota "State of the Art & Resources (2026)"
     Knowledge distillation, pruning, and compression are now standard components of every production LLM pipeline: small reasoning models distilled from 70B+ teachers routinely match earlier frontier performance, and one-shot pruning methods (SparseGPT, Wanda) can halve parameter counts with negligible accuracy loss. The field has converged on combining distillation → structured pruning → quantization for edge deployment.
@@ -737,7 +737,7 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
     - [Frantar & Alistarh, *SparseGPT: Massive Language Models Can Be Accurately Pruned in One-Shot* (2023)](https://arxiv.org/abs/2301.00774) — Hessian-based one-shot pruning to 50–60% sparsity on LLaMA/OPT with negligible perplexity loss.
     - [Sun et al., *A Simple and Effective Pruning Approach for Large Language Models* (2024)](https://arxiv.org/abs/2306.11695) — Wanda: prune by |weight| × activation norm, no Hessian inversion needed.
     - [Agarwal et al., *On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes* (2024)](https://arxiv.org/abs/2306.13649) — GKD: trains student on its own rollouts with teacher feedback, fixing distribution mismatch in standard KD.
-    - [Gu et al., *MiniLLM: On-Policy Distillation of Large Language Models* (2024)](https://arxiv.org/abs/2306.08543) — replaces forward KL with reverse KL to prevent student from over-spreading onto low-probability teacher regions.
+    - [Gu et al., *MiniLLM: Knowledge Distillation of Large Language Models* (ICLR 2024)](https://arxiv.org/abs/2306.08543) — replaces forward KL with reverse KL to prevent student from over-spreading onto low-probability teacher regions.
     - [Muralidharan et al., *Compact Language Models via Pruning and Knowledge Distillation* (2024)](https://arxiv.org/abs/2407.14679) — the Minitron recipe: activation-based importance estimation, structured depth/width pruning, then distillation from the unpruned parent; the standard way to derive a family of model sizes from one pretraining run.
     - [Boizard et al., *Towards Cross-Tokenizer Distillation: the Universal Logit Distillation Loss for LLMs* (TMLR 2025)](https://arxiv.org/abs/2402.12030) — an optimal-transport loss that removes the shared-tokenizer requirement of token-level KD.
     - [Li et al., *EAGLE-3: Scaling up Inference Acceleration of Large Language Models via Training-Time Test* (2025)](https://arxiv.org/abs/2503.01840) — the 2026 draft-model standard (in vLLM/SGLang): direct token prediction + multi-layer feature fusion, speedups up to ~6.5× with a scaling law in draft-training data. See the earlier [EAGLE (2024)](https://arxiv.org/abs/2401.15077) for the original feature-distillation formulation.
@@ -942,5 +942,5 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
     - Sequence-level KD (SeqKD) uses the teacher's greedy output as hard training targets — a simple, cheap alternative to per-token KL that still captures teacher behavior.
     - Reasoning distillation (e.g., R1-style) works by collecting verified chain-of-thought traces from a large model and using them as SFT targets for a small model. The student learns *behavior*, not just output distributions.
     - SparseGPT and Wanda enable one-shot unstructured pruning of LLMs at 50%+ sparsity with near-zero perplexity degradation. Wanda's criterion (|w| × activation norm) requires no Hessian inversion and is extremely fast.
-    - Speculative decoding's draft models are conceptually distilled students: a good draft model minimizes $\text{KL}(p_\text{target} \| p_\text{draft})$, and training the draft with KD from the target measurably improves acceptance rates.
+    - Speculative decoding's draft models are conceptually distilled students: the acceptance rate is exactly $1 - \text{TV}(p_\text{target}, p_\text{draft})$, so a good draft minimizes that distance, and training the draft with KD from the target (a tractable KL surrogate) measurably improves acceptance rates.
     - Compression techniques stack: distillation → structured pruning → quantization → speculative decoding can take a 70B model to a practical on-device deployment. The quality at each step depends heavily on the ordering and the calibration data.

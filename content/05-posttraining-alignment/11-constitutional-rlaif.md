@@ -297,21 +297,11 @@ def robust_ai_label(
         if i % 2 == 0:
             pair = ai_label_pair(model_generate, prompt, response_a, response_b)
         else:
-            # Swap positions, then flip the verdict back
-            pair_swapped = ai_label_pair(model_generate, prompt, response_b, response_a)
-            # After swap, 'chosen' refers to the winner in swapped order;
-            # re-map: if swapped chosen == response_b, verdict was "A" in swapped = B in original
-            if pair_swapped.chosen == response_b:
-                # original A won after swap-correction
-                pair = PreferencePair(
-                    prompt=prompt, chosen=response_a, rejected=response_b,
-                    principle=pair_swapped.principle, judge_rationale=pair_swapped.judge_rationale
-                )
-            else:
-                pair = PreferencePair(
-                    prompt=prompt, chosen=response_b, rejected=response_a,
-                    principle=pair_swapped.principle, judge_rationale=pair_swapped.judge_rationale
-                )
+            # Swap the presentation order. No verdict re-mapping is needed:
+            # ai_label_pair stores the winning response *string* in `chosen`,
+            # not the positional letter, so the returned pair is already
+            # expressed in terms of the original response_a / response_b.
+            pair = ai_label_pair(model_generate, prompt, response_b, response_a)
 
         votes.append(pair.chosen)
         rationales.append(pair.judge_rationale)
@@ -574,10 +564,10 @@ The one operational wrinkle: each RFT round trains new weights, so the vLLM engi
 Zelikman et al. (2022) introduced STaR (Self-Taught Reasoner), which addresses a key problem: when $k$ is small and the problem is hard, the model may produce zero correct completions for many prompts, yielding no training signal. STaR adds a *rationalization hint*: when the model fails, show it the ground-truth answer and ask it to construct a chain-of-thought that leads to that answer, then use that chain-of-thought as an additional training example.
 
 $$
-\mathcal{D}_\text{STaR} = \underbrace{\{(x, r_{\text{sampled}}, y^*) : r \text{ correct}\}}_{\text{self-generated rationales}} \cup \underbrace{\{(x \| y^*, r_{\text{hint}}, y^*) : r \text{ incorrect}\}}_{\text{hint-conditioned rationales}}
+\mathcal{D}_\text{STaR} = \underbrace{\{(x, r_{\text{sampled}}, y^*) : r_{\text{sampled}} \sim \pi(\cdot \mid x),\; r_{\text{sampled}} \text{ correct}\}}_{\text{self-generated rationales}} \cup \underbrace{\{(x, r_{\text{hint}}, y^*) : r_{\text{hint}} \sim \pi(\cdot \mid x \| y^*),\; \text{no correct } r_{\text{sampled}}\}}_{\text{hint-conditioned rationales}}
 $$
 
-where $x$ is the question, $r$ is the rationale, and $y^*$ is the correct answer. The hint set provides training signal even when the model cannot solve problems cold.
+where $x$ is the question, $r$ is the rationale, and $y^*$ is the correct answer. Note where the hint appears: $y^*$ conditions only the *sampling* of $r_{\text{hint}}$; the stored training input is the plain question $x$, because the answer is not available at inference time. Training on $x \| y^*$ would teach the model to read off an answer it is supposed to derive. The hint set provides training signal even when the model cannot solve problems cold.
 
 ### ReST: Reinforced Self-Training
 
@@ -709,8 +699,10 @@ class WeakToStrongTrainer:
         weak_ce = F.binary_cross_entropy(probs, weak)
 
         # Term 2: imitate the strong model's OWN hardened prediction.
-        # .detach() is load-bearing: the target must be a constant, otherwise the
-        # model minimizes this term by collapsing to a single class.
+        # The hardening is what makes this a real objective: comparison returns a
+        # non-differentiable bool tensor, so the target is already a gradient-free
+        # constant (the .detach() below is a no-op kept only to document that
+        # f_hat_t(x) is a stop-gradient target, matching the paper's notation).
         hardened = (probs > self.threshold).float().detach()
         self_ce = F.binary_cross_entropy(probs, hardened)
 
@@ -803,7 +795,7 @@ class AlignmentPipelineConfig:
     # Any strong open-weights instruct model served locally with vLLM; a frontier
     # API model works too but costs ~100x more and adds a network round trip.
     rlaif_judge_model: str = "Qwen/Qwen3-32B"
-    rlaif_n_votes: int = 5                 # majority-vote ensemble (0 => use soft logprob labels)
+    rlaif_n_votes: int = 5                 # majority-vote ensemble size (must be >= 1)
     rlaif_consistency_threshold: float = 0.7
 
     # Rejection sampling (RFT)
@@ -973,7 +965,7 @@ Every loop in this chapter assumes the model can *judge*. That assumption breaks
 
 **2.** In the RFT worked example, the seed policy $\pi_0$ solves 30% of problems at $k=1$ and reaches pass@32 $\approx$ 70%. Assume that for a single problem, each of the $k$ independent samples is correct with the same probability $p$, so that pass@$k = 1 - (1-p)^k$.
 
-  (a) Using the pass@32 = 0.70 figure, solve for the implied per-sample success probability $p$ on the *average problem that has any chance of being solved*, and compare it to the greedy accuracy of 30%.
+  (a) Using the pass@32 = 0.70 figure, solve for the implied per-sample success probability $p$, and compare it to the greedy accuracy of 30%. What does the comparison tell you about the homogeneous-$p$ assumption?
 
   (b) With that same $p$, what would pass@8 be? Comment on the diminishing return of increasing $k$.
 
@@ -986,7 +978,7 @@ Every loop in this chapter assumes the model can *judge*. That assumption breaks
 
     So $p \approx 1 - 0.9631 = 0.0369$, about **3.7% per sample**.
 
-    This is far below the 30% greedy ($k=1$) accuracy. The reason: greedy decoding picks the single highest-probability continuation, which is much more likely to be correct than an average temperature-0.8 sample. The pass@32 metric aggregates 32 low-probability-of-correctness *sampled* attempts, each individually weak, but the *union* over 32 tries still reaches 70%. RFT exploits exactly this gap — it harvests the rare correct samples and trains on them, converting sampling-time compute into greedy capability.
+    This is far below the 30% greedy ($k=1$) accuracy — a factor of roughly 8. Greedy decoding does beat an average temperature-0.8 sample, but not by that much (in practice single-sample accuracy at $T=0.8$ lands within a few points of greedy on math benchmarks), so most of the gap is an artifact of the *homogeneous-$p$ idealization*. Real per-problem success rates are wildly heterogeneous: many problems sit near $p \approx 0$ and a handful near $p \approx 1$. Because $1-(1-p)^{32}$ is concave in $p$, fitting one global $p$ to an aggregate pass@32 badly understates the *mean* per-sample accuracy (Jensen). Part (b) exposes the inconsistency directly. What survives the idealization is the qualitative mechanism: individual samples are weak, the *union* over many tries is much stronger, and RFT harvests exactly those rare correct samples, converting sampling-time compute into greedy capability.
 
     **(b)** With $p = 0.0369$:
 
@@ -996,7 +988,7 @@ Every loop in this chapter assumes the model can *judge*. That assumption breaks
 
     $0.9631^8 = \exp(8 \ln 0.9631) = \exp(8 \times -0.03763) = \exp(-0.3010) \approx 0.740.$
 
-    So pass@8 $\approx 1 - 0.740 = 0.26$, i.e. about **26%**.
+    So pass@8 $\approx 1 - 0.740 = 0.26$, i.e. about **26%** — *below* the 30% greedy number, which would say that eight independent samples are collectively worse than one greedy decode. That is a red flag for the single-$p$ model, not a property of the benchmark; with heterogeneous per-problem $p$, pass@8 would comfortably exceed greedy.
 
     Diminishing returns: pass@$k = 1-(1-p)^k$ is concave in $k$, so each additional sample adds less coverage than the one before it — it can only help on problems not yet solved, and $(1-p)^k$ decays geometrically. Numerically, the first 8 samples buy ~26 points of coverage (~3.3 points/sample), whereas the next 24 samples (from $k=8$ to $k=32$) buy ~44 more points (~1.8 points/sample); beyond that, once most solvable problems are already covered, extra samples mostly re-solve them. This is why ReST raises the reward threshold each round instead of only cranking $k$.
 
@@ -1043,19 +1035,9 @@ Every loop in this chapter assumes the model can *judge*. That assumption breaks
         if i % 2 == 0:
             pair = ai_label_pair(model_generate, prompt, response_a, response_b)
         else:
-            pair_swapped = ai_label_pair(model_generate, prompt, response_b, response_a)
-            if pair_swapped.chosen == response_b:
-                pair = PreferencePair(
-                    prompt=prompt, chosen=response_a, rejected=response_b,
-                    principle=pair_swapped.principle,
-                    judge_rationale=pair_swapped.judge_rationale,
-                )
-            else:
-                pair = PreferencePair(
-                    prompt=prompt, chosen=response_b, rejected=response_a,
-                    principle=pair_swapped.principle,
-                    judge_rationale=pair_swapped.judge_rationale,
-                )
+            # Swapped presentation order; `chosen` already holds the winning
+            # response string, so no re-mapping is needed.
+            pair = ai_label_pair(model_generate, prompt, response_b, response_a)
 
         votes.append(pair.chosen)
         rationales.append(pair.judge_rationale)
@@ -1085,7 +1067,7 @@ Every loop in this chapter assumes the model can *judge*. That assumption breaks
 **5.** Implement a `star_dataset` function in the chapter's style that realizes the STaR construction
 
   $$
-  \mathcal{D}_\text{STaR} = \{(x, r_\text{sampled}, y^*) : r \text{ correct}\} \cup \{(x \| y^*, r_\text{hint}, y^*) : r \text{ incorrect}\}
+  \mathcal{D}_\text{STaR} = \{(x, r_\text{sampled}, y^*) : r_\text{sampled} \sim \pi(\cdot \mid x),\; \text{correct}\} \cup \{(x, r_\text{hint}, y^*) : r_\text{hint} \sim \pi(\cdot \mid x \| y^*)\}
   $$
 
   Given a `model_generate` callable, a list of `(question, gold_answer)` pairs, an `answer_checker(question, rationale) -> bool`, and a sample budget `k`, it should: for each problem, sample up to `k` rationales; if any is correct, keep the first correct `(question, rationale)`; otherwise fall back to *rationalization* by prompting the model with the gold answer revealed as a hint, and keep the resulting hint-conditioned rationale. Return a list of `(prompt, rationale)` training pairs. Explain in one sentence why the hint branch is what prevents zero training signal on hard problems.

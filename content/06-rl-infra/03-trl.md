@@ -103,10 +103,17 @@ sft_config = SFTConfig(
     max_length=2048,                  # hard cap; packing fills bins to this
     packing=True,                     # bin-pack examples (see packing_strategy)
     packing_strategy="bfd",           # best-fit-decreasing (TRL default)
-    dataset_text_field="text",        # column containing formatted text
+    dataset_text_field="text",        # column of raw text; only consulted for
+                                      # non-conversational datasets (this is the default)
 )
 
+# ultrachat_200k ships three columns: `prompt`, `prompt_id`, and `messages`. Drop the
+# first two — TRL's dataset prep branches on column names, and a stray `prompt` column
+# makes it read the rows as prompt-completion pairs and look for a `completion` column
+# that does not exist. With `messages` alone it is an unambiguous conversational
+# dataset and the chat template is applied automatically.
 dataset = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft")
+dataset = dataset.remove_columns(["prompt", "prompt_id"])
 
 trainer = SFTTrainer(
     model=model,
@@ -188,7 +195,7 @@ TRL's `DPOTrainer` handles the tricky plumbing of keeping a frozen reference mod
 
 ### How DPOTrainer manages memory
 
-When you pass a `model` to `DPOTrainer` without a `ref_model`, TRL clones the model's adapter weights (if PEFT) or does a deepcopy (if full fine-tuning) at trainer initialization and keeps it frozen. During forward, both passes can share the same GPU memory for the frozen backbone if LoRA is used — the base weights are identical; only the adapter delta changes.
+When you pass a `model` to `DPOTrainer` without a `ref_model`, what TRL does depends on whether the model is PEFT-wrapped. With PEFT it keeps **no second model at all** (`self.ref_model = None`) and obtains the reference forward pass by temporarily switching the adapters off — the base weights *are* $\pi_\text{ref}$. With full fine-tuning it instantiates a second frozen copy of the model from the same checkpoint at trainer initialization. That is why LoRA makes the reference essentially free: both passes read the same resident base tensors, and only the adapter delta is added or skipped.
 
 Two `DPOConfig` knobs address the case where a second full copy will not fit:
 
@@ -332,7 +339,9 @@ ppo_config = PPOConfig(
     num_mini_batches=1,              # splits of the batch per inner epoch
     response_length=53,              # generated tokens per rollout
     kl_coef=0.05,                    # fixed per-token KL penalty vs. ref_policy
-    kl_estimator="k1",               # k1 = logp_ref - logp_policy; "k3" is lower-variance
+    kl_estimator="k1",               # k1 = logp_policy - logp_ref (unbiased); "k3" =
+                                     # (r - 1) - log r with r = π_ref/π_θ: also unbiased,
+                                     # non-negative, and lower-variance
     cliprange=0.2,                   # PPO policy clip epsilon
     cliprange_value=0.2,             # value-function clip
     vf_coef=0.1,                     # value-loss weight
@@ -361,10 +370,11 @@ The `missing_eos_penalty` knob is worth internalizing: without it, a policy lear
 PPO is expensive: you hold *four* models simultaneously — the trained policy, the trained critic (`value_model`, itself a full backbone plus scalar head, not just a head bolted onto the policy), the frozen reference, and the frozen reward model — plus optimizer states for the two trainable ones. For a 7B policy in bf16:
 - Policy + optimizer states (Adam): roughly $7 \times 10^9 \times 2 + 7 \times 10^9 \times 8 = 70$ GB
 - Reference model (inference-only, bf16): ~14 GB
-- Reward model + critic: another ~14 GB each in bf16, and the critic carries its own Adam states
+- Reward model (frozen, bf16): ~14 GB
+- Critic: ~14 GB of bf16 weights **plus its own Adam states** (~56 GB), so ~70 GB — it is trained just like the policy
 - Activations and rollout buffer: varies
 
-Total can easily exceed 100 GB for a 7B model, requiring at least two A100-80GB cards. This cost motivated the GRPO and DPO approaches that eliminate the critic (and, with verifiable rewards, the reward model too — leaving a single trainable model).
+Summing the four models gives $70 + 14 + 14 + 70 \approx 170$ GB of weights and optimizer state for a 7B policy, before activations and rollout buffers — three A100-80GB cards at an absolute minimum, and four in practice. This cost motivated the GRPO and DPO approaches that eliminate the critic (and, with verifiable rewards, the reward model too — leaving a single trainable model).
 
 {{fig:rl-trainer-memory-footprint}}
 
@@ -536,7 +546,7 @@ trainer.save_model("./grpo-math-final")
 
     and then requires `generation_batch_size % num_generations == 0`, because a generation batch must contain *whole* groups — a half-group has no valid baseline. Note that `generation_batch_size` is counted in **completions**, so the number of unique prompts per generation batch is `generation_batch_size / num_generations`. (`auto_find_batch_size` is rejected for the same reason: halving the batch on OOM would split groups.)
 
-    To shrink memory, lower `per_device_train_batch_size` to a value that still keeps the product divisible by `num_generations`, or raise `steps_per_generation` above `gradient_accumulation_steps` — the latter keeps the same number of prompts per *generation* while spreading the backward pass over more micro-steps.
+    To shrink memory, lower `per_device_train_batch_size` and raise `gradient_accumulation_steps` (or `steps_per_generation`, which defaults to it) by the *same* factor: activation memory is set by the per-micro-step batch, so halving it halves activations, while `generation_batch_size` — and therefore the prompt count per generation batch and the effective batch of the update — stays exactly where it was. Raising `steps_per_generation` *on its own* does the opposite of saving memory: by the formula above it multiplies `generation_batch_size`, enlarging the rollout buffer, and once `steps_per_generation > gradient_accumulation_steps` the generation batch spans several optimizer steps, making the later ones off-policy.
 
 ### The GRPO training loop internals
 
@@ -721,7 +731,7 @@ clip_ratio/high_mean            # ... and at the upper bound (epsilon_high)
 sampling/importance_sampling_ratio/mean   # vLLM-vs-training correction (see above)
 ```
 
-A healthy GRPO run shows `reward` trending up, `entropy` decaying slowly rather than crashing, `clip_ratio/*` around 0.1–0.2, and `kl` below 10–15 when it is enabled at all. Two metrics deserve more attention than they usually get:
+A healthy GRPO run shows `reward` trending up, `entropy` decaying slowly rather than crashing, and `kl` below 10–15 when it is enabled at all. Read `clip_ratio/*` with its regime in mind: when `num_iterations=1` and each generation batch is consumed inside a single optimizer step, $\pi_\text{old}$ *is* the current policy — TRL either skips the extra forward pass outright (substituting `per_token_logps.detach()`) or, under vLLM, recomputes it from the very same weights — so $\rho_i \equiv 1$, nothing is ever clipped, and both `clip_ratio/low_mean` and `clip_ratio/high_mean` sit at ~0. A zero there is the expected reading, not a bug. Once you enable genuine off-policy reuse ($\mu > 1$ or a generation batch spread over several optimizer steps) the fractions become informative and should stay small, on the order of a few percent; a clip fraction climbing past ~0.05 means the policy has drifted far from the sampler and the update is mostly being thrown away. Two metrics deserve more attention than they usually get:
 
 - **`frac_reward_zero_std`** is your rollout-efficiency gauge. Every group it counts is compute you paid for and received no gradient from (Exercise 4 works through why). If it sits above ~0.5, your dataset is mostly too easy or too hard for the current policy and the fix is curriculum/filtering, not hyperparameters — see [RL Data, Curriculum & Replay Management](../06-rl-infra/12-rl-data-curriculum-replay.html).
 - **`completions/clipped_ratio`** rising alongside `completions/mean_length` is the classic length-exploitation signature. Add an explicit length penalty, or set `mask_truncated_completions=True` so truncated rollouts stop contributing noise to the loss.
@@ -748,7 +758,7 @@ A healthy GRPO run shows `reward` trending up, `entropy` decaying slowly rather 
 
     **Q:** A colleague proposes using TRL's `GRPOTrainer` with `num_generations=16` to train a 13B reasoning model on GSM8K. You have 4 × A100-80GB GPUs. What bottlenecks do you anticipate, and how would you address them?
 
-    **A:** Three main bottlenecks arise. First, **memory**: 13B in bf16 is ~26 GB; with LoRA adapters the model fits on one GPU, and setting `beta=0.0` (the default) means no reference model is loaded at all — appropriate here, since GSM8K's reward is a verifier, not a learned RM. Enable `gradient_checkpointing=True` to halve activation memory. Second, **generation throughput**: generating 16 completions per prompt is the dominant wall-clock cost. Enable `use_vllm=True`; on only 4 GPUs prefer `vllm_mode="colocate"` (share all 4, `vllm_gpu_memory_utilization≈0.3`) over `"server"`, which would idle whole GPUs on each side of the loop. Third, **batch arithmetic**: `generation_batch_size = per_device_train_batch_size × 4 × steps_per_generation` counts *completions* and must be divisible by 16, so `per_device_train_batch_size=4` with `gradient_accumulation_steps=8` gives 128 completions = 8 prompts per optimizer step — thin on prompt diversity. Raise `steps_per_generation` to 32 for 512 completions (32 prompts) per step instead of shrinking the group. Monitor `frac_reward_zero_std` (GSM8K rows a 13B model always or never solves are pure waste) and `clip_ratio/high_mean` (target 0.1–0.2).
+    **A:** Three main bottlenecks arise. First, **memory**: 13B in bf16 is ~26 GB; with LoRA adapters the model fits on one GPU, and setting `beta=0.0` (the default) means no reference model is loaded at all — appropriate here, since GSM8K's reward is a verifier, not a learned RM. Enable `gradient_checkpointing=True` to halve activation memory. Second, **generation throughput**: generating 16 completions per prompt is the dominant wall-clock cost. Enable `use_vllm=True`; on only 4 GPUs prefer `vllm_mode="colocate"` (share all 4, `vllm_gpu_memory_utilization≈0.3`) over `"server"`, which would idle whole GPUs on each side of the loop. Third, **batch arithmetic**: `generation_batch_size = per_device_train_batch_size × 4 × steps_per_generation` counts *completions* and must be divisible by 16, so `per_device_train_batch_size=4` with `gradient_accumulation_steps=8` gives 128 completions = 8 prompts per optimizer step — thin on prompt diversity. Raise `gradient_accumulation_steps` to 32 (`steps_per_generation` follows it by default) so each optimizer step aggregates 512 completions = 32 prompts, instead of shrinking the group; the cost is 4x more generation per update. Raising `steps_per_generation` alone would *not* do this — it would enlarge the generation batch to 32 prompts but still consume it over 4 optimizer steps of 8 prompts each, with rollouts up to 3 steps stale. Monitor `frac_reward_zero_std` (GSM8K rows a 13B model always or never solves are pure waste); `clip_ratio/*` stays at ~0 here because `num_iterations=1` makes the ratio identically 1, and only becomes a useful signal if you turn on off-policy reuse.
 
 ## Building a Custom Reward Function Pipeline
 
@@ -766,6 +776,12 @@ from trl.rewards import (
                                    # short correct answers > long correct answers
 )
 
+# Weighted sum, one weight per function (default: all 1.0). Set it on the *config*,
+# and do it BEFORE building the trainer: GRPOTrainer.__init__ copies
+# `args.reward_weights` into `self.reward_weights` once, and the loss reads only that
+# snapshot — assigning to the config afterwards is a silent no-op.
+grpo_config.reward_weights = [1.0, 0.2, 1.0, 1.0]
+
 trainer = GRPOTrainer(
     model=model,
     args=grpo_config,
@@ -776,10 +792,8 @@ trainer = GRPOTrainer(
         get_soft_overlong_punishment(max_completion_len=512, soft_punish_cache=64),
         get_repetition_penalty_reward(ngram_size=3, max_penalty=-0.5),
     ],
-    # Weighted sum, one weight per function (default: all 1.0)
     processing_class=tokenizer,
 )
-grpo_config.reward_weights = [1.0, 0.2, 1.0, 1.0]
 ```
 
 Note the factory pattern: functions that need configuration (`get_*`) return a closure, because `reward_funcs` entries are called as `f(prompts=..., completions=..., **dataset_columns)` with no room for extra arguments. You can also pass a *model* (or a Hub model id) in `reward_funcs`, in which case TRL scores completions with that sequence classifier — this is how you mix a learned reward model with programmatic checks in one run.
@@ -956,7 +970,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 trl grpo \
 
     The only extra memory is the adapter delta itself (a few hundred MB for rank-64 on a 7B model), which is negligible. So the reference is "free."
 
-    Under **full** fine-tuning there are no adapters to disable — every parameter of the policy is being updated, so the reference (the pre-update weights) genuinely differs from the policy everywhere. TRL must therefore hold a second, frozen `deepcopy` of the entire model (e.g., another ~14 GB in bf16 for a 7B model). That is the case the chapter describes when it says TRL "does a deepcopy (if full fine-tuning) at trainer initialization." The alternative for very large full-FT models is the EMA-style `sync_ref_model=True` / `ref_model_sync_steps=N` scheme, which periodically snapshots the policy as the new reference instead of keeping a permanent second copy.
+    Under **full** fine-tuning there are no adapters to disable — every parameter of the policy is being updated, so the reference (the pre-update weights) genuinely differs from the policy everywhere. TRL must therefore hold a second, frozen copy of the entire model, which it instantiates from the same checkpoint at trainer initialization (e.g., another ~14 GB in bf16 for a 7B model). The one escape hatch is `precompute_ref_log_probs=True`, which also sets `ref_model = None` — it caches the reference log-probs in a preprocessing pass and then never needs the weights again. The alternative for very large full-FT models is the EMA-style `sync_ref_model=True` / `ref_model_sync_steps=N` scheme, which periodically snapshots the policy as the new reference instead of keeping a permanent second copy.
 
 **2.** You launch a GRPO run on **8 GPUs** with `per_device_train_batch_size=16`, `num_generations=8`, `gradient_accumulation_steps=4`, and `steps_per_generation` left unset. (a) What is `generation_batch_size`, and is it in prompts or completions? (b) How many *unique prompts* contribute to one optimizer step? (c) If each completion is capped at `max_completion_length=512`, how many generated tokens does one optimizer step cost in the worst case? (d) Your colleague raises `num_generations` from 8 to 12 for a stabler baseline, leaving everything else alone, and TRL refuses to start. Reproduce the error message, and give two different one-line fixes. (e) Hitting OOM, they then set `auto_find_batch_size=True`. TRL refuses that too — why is this refusal *specific to GRPO* rather than a general `Trainer` restriction?
 
@@ -1032,21 +1046,21 @@ Report the two log-ratios, the implicit reward margin, and the final loss. Is th
 
     (c) Prompts that are always solved or never solved waste rollout compute — you pay for $G$ generations but get no gradient. Effective GRPO training wants prompts of intermediate difficulty (mixed success within a group), which maximizes `train/reward_std` and hence the useful signal. This is why curated, difficulty-balanced datasets (and curriculum/filtering) matter, and it connects to the practitioner tip that small $G$ gives noisy baselines: with few samples you also more often land on the all-correct or all-wrong degenerate cases.
 
-**5.** The chapter estimates PPO memory for a 7B model at ~100 GB. (a) Reproduce the policy + optimizer and reference-model figures using the chapter's byte accounting, then redo the calculation for a **13B** model. (b) With that 13B number, how many A100-80GB cards does full-FT PPO minimally need? (c) Explain, in memory terms, how switching to GRPO + LoRA lets the same 13B model train on a single 80 GB card.
+**5.** The chapter estimates full-FT PPO memory for a 7B model at ~170 GB. (a) Reproduce the four-model figure (policy + Adam, critic + Adam, reference, reward model) using the chapter's byte accounting, then redo the calculation for a **13B** model. (b) With that 13B number, how many A100-80GB cards does full-FT PPO minimally need? (c) Explain, in memory terms, how switching to GRPO + LoRA lets the same 13B model train on a single 80 GB card.
 
 ??? note "Solution"
 
-    (a) The chapter's accounting for the policy under full fine-tuning is bf16 weights (2 bytes/param) plus Adam optimizer states (8 bytes/param, i.e. fp32 first + second moment), giving 10 bytes/param; the reference is inference-only bf16 (2 bytes/param).
+    (a) The chapter's accounting for a *trained* model under full fine-tuning is bf16 weights (2 bytes/param) plus Adam optimizer states (8 bytes/param, i.e. fp32 first + second moment), giving 10 bytes/param; a *frozen* model is inference-only bf16 (2 bytes/param). PPO trains two models (policy and critic) and freezes two (reference and reward model), so the bill is $10 + 10 + 2 + 2 = 24$ bytes/param.
 
     7B check:
-    $$\text{policy+opt} = 7\times10^9 \times (2 + 8) = 70 \text{ GB}, \qquad \text{ref} = 7\times10^9 \times 2 = 14 \text{ GB},$$
-    totaling ~84 GB before activations/rollout buffers — consistent with the chapter's "easily exceed 100 GB."
+    $$\underbrace{70}_{\text{policy+Adam}} + \underbrace{70}_{\text{critic+Adam}} + \underbrace{14}_{\text{ref}} + \underbrace{14}_{\text{RM}} = 168 \text{ GB},$$
+    i.e. the chapter's ~170 GB, before activations and rollout buffers.
 
-    13B:
-    $$\text{policy+opt} = 13\times10^9 \times 10 = 130 \text{ GB}, \qquad \text{ref} = 13\times10^9 \times 2 = 26 \text{ GB},$$
-    totaling ~156 GB before activations, value-head, and rollout buffers.
+    13B, i.e. $13\times10^9 \times 24$ bytes:
+    $$\underbrace{130}_{\text{policy+Adam}} + \underbrace{130}_{\text{critic+Adam}} + \underbrace{26}_{\text{ref}} + \underbrace{26}_{\text{RM}} = 312 \text{ GB},$$
+    before activations and rollout buffers.
 
-    (b) 156 GB already exceeds one 80 GB card and, once activations and the rollout buffer are added, comfortably needs **at least two** A100-80GB cards (160 GB aggregate) — and realistically FSDP sharding across more.
+    (b) $312 / 80 = 3.9$, so **at least four** A100-80GB cards just to hold the parameters and optimizer state — and realistically five or six once activations, the rollout buffer, and FSDP's gather buffers are counted. (If you keep only the policy and reference in mind you get 156 GB and are tempted to answer "two," but that ignores the critic and reward model that PPO must hold simultaneously — the whole reason GRPO exists.)
 
     (c) GRPO + LoRA collapses this on three fronts:
     - **No value head / critic.** GRPO replaces the learned value function with the group-mean baseline, so there is no critic model or its optimizer states to hold.

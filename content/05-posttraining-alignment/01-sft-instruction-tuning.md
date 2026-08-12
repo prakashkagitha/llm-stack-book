@@ -155,7 +155,7 @@ When fine-tuning a pretrained model, you have a spectrum of choices about which 
 
 ### Full Fine-Tuning
 
-All $N$ parameters of the model are updated by gradient descent. For a 7B-parameter model in float32, the parameters alone require ~28 GB. Full fine-tuning additionally needs optimizer states: AdamW maintains a first and second moment per parameter, adding another ~56 GB for a total of ~84 GB at float32 — or ~42 GB at bf16/float32 mixed precision. This typically requires multiple high-memory GPUs.
+All $N$ parameters of the model are updated by gradient descent. For a 7B-parameter model in float32, the parameters alone require ~28 GB. Full fine-tuning additionally needs gradients (another ~28 GB in fp32) and optimizer states: AdamW maintains a first and second moment per parameter, adding ~56 GB more, for a total of ~112 GB at float32. Mixed precision only shrinks the weight line — the moments stay in fp32 — so bf16 weights with fp32 gradients and fp32 moments still costs ~98 GB (14 + 28 + 56), before activations. This typically requires multiple high-memory GPUs.
 
 Full fine-tuning gives the model the most flexibility to adapt, and it is the preferred choice when:
 - You have abundant compute.
@@ -190,10 +190,10 @@ See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignmen
 
     (This accounting assumes gradients are kept in fp32 and omits the fp32 *master* copy of the weights that some mixed-precision setups also hold, which would add another ~28 GB. Activation checkpointing trades roughly 30% extra compute for most of the activation term — see [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html).)
 
-    **QLoRA (4-bit frozen base + fp32 LoRA adapters, r=64):**
+    **QLoRA (4-bit frozen base + fp32 LoRA adapters on all linear layers, r=64):**
     - Quantized base: 7B × 0.5 bytes ≈ 3.5 GB
-    - LoRA trainable params ≈ 80M × 4 bytes ≈ 0.3 GB
-    - AdamW states for LoRA ≈ 0.6 GB
+    - LoRA trainable params ≈ 160M × 4 bytes ≈ 0.6 GB (QLoRA adapts all seven linear layers per block; at $r=16$ that is ~40M, so $r=64$ is ~160M — see [PEFT I](../05-posttraining-alignment/03-peft-lora-qlora.html))
+    - AdamW states for LoRA ≈ 1.3 GB
     - Activations: ~4–8 GB
     - **Total: ~10–15 GB** → fits on a single 24 GB RTX 3090 or 4090
 
@@ -221,7 +221,7 @@ The phenomenon is well-studied in continual learning: when a neural network is t
 
 **Data mixing.** Blending a small fraction (5–10%) of pretraining data back into the SFT mix preserves general capabilities. This is sometimes called replay or data mixing and is common in practice.
 
-**LoRA/PEFT.** Because LoRA freezes the base weights, it is structurally immune to overwriting pretrained knowledge. The base model's general knowledge is perfectly preserved; only the low-rank adapter changes. This is a major practical advantage of PEFT beyond just memory efficiency.
+**LoRA/PEFT.** Because LoRA freezes the base weights, the pretrained parameters are never overwritten and the original model is exactly recoverable by discarding the adapter — and constraining the update to a low-rank subspace empirically forgets much less than full fine-tuning at matched task quality (Biderman et al., *LoRA Learns Less and Forgets Less*, 2024). It is not immunity, though: the model you actually serve is $W + AB$, a different function from the base, so general capability can still degrade — just less, and reversibly. This is a major practical advantage of PEFT beyond just memory efficiency.
 
 **Elastic Weight Consolidation (EWC, Kirkpatrick et al., 2017).** Adds a penalty term to the loss that discourages changes to parameters that were important for previous tasks, weighted by the Fisher information matrix. Rarely used in LLM SFT today (too expensive to compute exactly) but conceptually important.
 
@@ -230,7 +230,7 @@ The phenomenon is well-studied in continual learning: when a neural network is t
 
     **A:** This is classic catastrophic forgetting. Several things likely went wrong: (1) the learning rate was too high, causing large weight updates that overwrote general-capability weights; (2) training ran for too many epochs, overfitting the medical distribution; and (3) there was no data mixing to maintain coverage of general tasks.
 
-    To fix it: reduce the learning rate to around 1×10⁻⁵, train for 1–2 epochs maximum, and add a data mix — include 5–10% of a general instruction dataset (e.g., ShareGPT or FLAN subset) alongside the medical data. Alternatively, switch to LoRA/QLoRA, which freezes the base weights and prevents forgetting structurally. Evaluate on a held-out general benchmark (e.g., MMLU or MT-Bench) alongside the domain-specific eval to track both capabilities simultaneously.
+    To fix it: reduce the learning rate to around 1×10⁻⁵, train for 1–2 epochs maximum, and add a data mix — include 5–10% of a general instruction dataset (e.g., ShareGPT or FLAN subset) alongside the medical data. Alternatively, switch to LoRA/QLoRA, which freezes the base weights and restricts the update to a low-rank subspace — that reliably forgets *less* (and lets you recover the original model by dropping the adapter), though the merged model can still lose some general capability, so you still measure it. Evaluate on a held-out general benchmark (e.g., MMLU or MT-Bench) alongside the domain-specific eval to track both capabilities simultaneously.
 
 ## A Complete SFT Training Loop
 
@@ -464,7 +464,10 @@ def train(args):
     ]
     optimizer = torch.optim.AdamW(optimizer_grouped_params, lr=args.lr)
 
-    total_steps = (len(dataloader) // args.grad_accum_steps) * args.num_epochs
+    # ceil, not floor: the epoch's trailing partial window is also stepped
+    # (see the flush condition below), so it consumes a scheduler step too.
+    steps_per_epoch = math.ceil(len(dataloader) / args.grad_accum_steps)
+    total_steps = steps_per_epoch * args.num_epochs
     warmup_steps = int(0.03 * total_steps)  # 3% warmup, a common heuristic
 
     scheduler = get_cosine_schedule_with_warmup(
@@ -505,8 +508,14 @@ def train(args):
                 window_loss += loss_sum.item()
                 window_tokens += n_tokens
 
-            # Optimizer step every grad_accum_steps mini-batches
-            if (step + 1) % args.grad_accum_steps == 0:
+            # Optimizer step every grad_accum_steps mini-batches -- AND at the
+            # end of the epoch, so a trailing partial window is flushed rather
+            # than left in .grad to leak into the next epoch's first window
+            # (which would double-count it and break the exact per-token
+            # normalization). len(dataloader) is rarely a multiple of
+            # grad_accum_steps.
+            is_last_microbatch = (step + 1) == len(dataloader)
+            if (step + 1) % args.grad_accum_steps == 0 or is_last_microbatch:
                 if window_tokens > 0:
                     # Divide the accumulated gradient by the window's true
                     # response-token count -> the exact per-token mean
@@ -592,9 +601,9 @@ The expected result: exactly one BOS token at position 0 (never two), every prom
 
 ### Key Implementation Notes
 
-**Gradient accumulation.** With `batch_size=4` and `grad_accum_steps=8`, the effective batch size is 32. Accumulation is critical for SFT because (a) individual examples vary widely in length, and (b) a larger effective batch reduces gradient noise, which matters for a small dataset.
+**Gradient accumulation.** With `batch_size=4` and `grad_accum_steps=8`, the effective batch size is 32. Accumulation is critical for SFT because (a) individual examples vary widely in length, and (b) a larger effective batch reduces gradient noise, which matters for a small dataset. Note the epoch-end flush: the number of micro-batches per epoch is almost never a multiple of `grad_accum_steps`, and gradients left in `.grad` at the epoch boundary would silently be folded into the next epoch's first window and normalized by the wrong token count.
 
-**Loss normalization under gradient accumulation.** This is the subtlest correctness issue in the whole loop, and the reason `compute_sft_loss` returns a sum rather than a mean. The naive implementation computes `F.cross_entropy(..., reduction="mean")` — the mean over *this microbatch's* response tokens — and divides by `grad_accum_steps`. That weights every microbatch equally, so a microbatch holding 40 response tokens contributes as much gradient as one holding 900. The gradient you take is then a *mean of means*, $\frac{1}{G}\sum_g \frac{L_g}{n_g}$, not the gradient of the loss over the accumulation window, $\frac{\sum_g L_g}{\sum_g n_g}$ — and changing `grad_accum_steps` silently changes the objective. Response-only masking is exactly what makes $n_g$ vary wildly, so SFT suffers far more than pretraining (where every packed window has the same number of targets). This is the gradient-accumulation normalization bug that HuggingFace and Unsloth publicized in late 2024 and subsequently fixed across `transformers` and TRL. The fix above accumulates unnormalized sums and divides the accumulated *gradient* by the window's true token count — exact, single-pass, no extra forward. Backpropagating an unnormalized sum makes raw gradients on the order of $10^3\times$ larger than a mean's, which is safe here because bf16 carries fp32's dynamic range, and we rescale *before* clipping so `max_norm=1.0` still means what it says. Under DDP, all-reduce `window_tokens` across ranks and divide by the global total instead, since DDP averages gradients across ranks. The same fix, with the same reasoning, appears in the capstone's SFT loop ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)).
+**Loss normalization under gradient accumulation.** This is the subtlest correctness issue in the whole loop, and the reason `compute_sft_loss` returns a sum rather than a mean. The naive implementation computes `F.cross_entropy(..., reduction="mean")` — the mean over *this microbatch's* response tokens — and divides by `grad_accum_steps`. That weights every microbatch equally, so a microbatch holding 40 response tokens contributes as much gradient as one holding 900. The gradient you take is then a *mean of means*, $\frac{1}{G}\sum_g \frac{L_g}{n_g}$, not the gradient of the loss over the accumulation window, $\frac{\sum_g L_g}{\sum_g n_g}$ — and changing `grad_accum_steps` silently changes the objective. Response-only masking is exactly what makes $n_g$ vary wildly, so SFT suffers far more than pretraining (where every packed window has the same number of targets). This is the gradient-accumulation normalization bug that HuggingFace and Unsloth publicized in late 2024 and subsequently fixed across `transformers` and TRL. The fix above accumulates unnormalized sums and divides the accumulated *gradient* by the window's true token count — exact, single-pass, no extra forward. Backpropagating an unnormalized sum makes raw gradients on the order of $10^3\times$ larger than a mean's, which is safe here because bf16 carries fp32's dynamic range, and we rescale *before* clipping so `max_norm=1.0` still means what it says. Under DDP there is one extra factor to keep straight: DDP *averages* gradients across ranks (it all-reduces and divides by `world_size`), so after the sync each parameter holds $\frac{1}{R}\sum_r \nabla L_r$ while the exact global per-token mean is $\frac{\sum_r \nabla L_r}{\sum_r n_r}$. All-reduce `window_tokens` to get the global count $N$, then divide by `N / world_size` — i.e. `p.grad.div_(global_tokens / dist.get_world_size())`. Dividing by $N$ alone would shrink every gradient by a factor of `world_size`, silently scaling the effective learning rate down by the number of GPUs. The same fix, with the same reasoning, appears in the capstone's SFT loop ([Post-Training: SFT, DPO, and Narrow RLVR (GRPO) That Works at 100M](../14-capstone/09-post-training.html)).
 
 **BF16 training.** We use `torch_dtype=torch.bfloat16` for the model. BF16 has the same dynamic range as float32 (8 exponent bits) but less precision (7 mantissa bits vs. 23). This is the preferred format for SFT on modern GPUs with bf16 tensor cores — see [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
 
@@ -611,7 +620,7 @@ The expected result: exactly one BOS token at position 0 (never two), every prom
     Total tokens in the dataset: 10,000 × 512 = 5,120,000 tokens.
     For 3 epochs: 15,360,000 total tokens processed.
 
-    On a single A100 80GB GPU, a 7B model in bf16 achieves roughly 10,000–20,000 tokens/second during forward+backward (very roughly). At 15,000 tokens/second: ~1,024 seconds ≈ 17 minutes per epoch, or about 51 minutes for 3 epochs. (Real numbers depend heavily on sequence packing efficiency — see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html).)
+    On a single A100 80GB GPU, a 7B model in bf16 achieves roughly 10,000–20,000 tokens/second during forward+backward (very roughly). At 15,000 tokens/second: 5,120,000 / 15,000 ≈ 341 seconds ≈ 5.7 minutes per epoch, or ~1,024 seconds ≈ 17 minutes for all 3 epochs. (Real numbers depend heavily on sequence packing efficiency — see [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html).)
 
     Number of optimizer steps ≈ 15,360,000 / 16,384 ≈ 937 steps.
     With warmup_steps = 3% × 937 ≈ 28 warmup steps, the learning rate climbs linearly for the first 28 steps then follows a cosine decay.
@@ -690,7 +699,7 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
 **Chat template parity.** At inference time, apply exactly the same chat template you used at training time. A common mistake is training with the LLaMA-2 Alpaca template but inferring with the LLaMA-2 Chat template — the model will produce incoherent outputs.
 
 !!! warning "The length bias trap"
-    SFT on a dataset where "correct" responses are consistently long will produce a model that gives verbose answers even when brevity is preferred. This is a form of shortcut learning: the model learns that long responses reduce training loss (because long responses contain more plausible next tokens). Prefer a response length distribution that matches your target use case, and consider length-normalizing your loss.
+    SFT on a dataset where "correct" responses are consistently long will produce a model that gives verbose answers even when brevity is preferred. Two things drive it, and neither is the model "choosing" length to reduce its loss (under teacher forcing the targets are fixed, so it cannot): the model simply imitates the long demonstrations, and per-token loss normalization weights every example in proportion to its response length, so verbose examples dominate the gradient (Exercise 5 makes this precise). Prefer a response length distribution that matches your target use case, and consider length-normalizing your loss.
 
 !!! sota "State of the Art & Resources (2026)"
     Instruction tuning has matured into a well-understood first stage of the post-training pipeline: the field has converged on response-only loss masking, curated data over raw quantity (the LIMA finding), and parameter-efficient adapters (LoRA/QLoRA) as the default compute strategy. Current frontier work focuses on data curation at scale, verifiable-reward RL layered on top of SFT, distilling long chain-of-thought reasoning traces into smaller models via plain SFT, and fully open replication of the entire post-training stack.
@@ -738,7 +747,7 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
     - Landmark datasets — FLAN, Alpaca, ShareGPT, OpenHermes — each introduced a key insight: task diversity, cheap synthesis, multi-turn realism, and quality curation respectively.
     - SFT is Stage 1 of the three-stage recipe: SFT → Reward Modeling → RL alignment. A strong SFT model is a prerequisite for stable and effective RLHF/DPO.
     - **Catastrophic forgetting** is the main risk: mitigate with low learning rates (~1–5 × 10⁻⁵), short training (1–3 epochs), data mixing, and/or LoRA.
-    - LoRA/QLoRA freeze base weights structurally, preventing forgetting and reducing GPU memory from ~120 GB (full 7B) to ~12–15 GB — enabling SFT on a single consumer GPU.
+    - LoRA/QLoRA freeze the base weights, which reduces (but does not eliminate) forgetting — the base is exactly recoverable by dropping the adapter — and cuts GPU memory from ~120 GB (full 7B) to ~12–15 GB, enabling SFT on a single consumer GPU.
     - Always evaluate SFT models on both a capability benchmark and a forgetting probe simultaneously: verifiable IFEval plus a length-controlled AlpacaEval 2.0 / Arena-Hard win rate for quality, MMLU delta from base for forgetting — all runnable from a pinned `lm-evaluation-harness`.
     - Write the training loop once to understand it, then run production SFT through **TRL**'s `SFTTrainer` (`completion_only_loss` / `assistant_only_loss`, `packing`, `peft_config`) or a YAML wrapper over it (axolotl, LLaMA-Factory, Unsloth, open-instruct) — and at inference apply exactly the chat template used during training, since template mismatch is the most common cause of degraded SFT outputs in production.
 
@@ -847,8 +856,9 @@ Evaluating instruction-following quality is genuinely hard. There is no single-n
         shift_labels = labels[:, 1:].contiguous()        # (B, L-1)
         B = shift_labels.size(0)
 
-        # Per-token loss, no reduction. Masked positions still produce a
-        # value here, so we zero them out with the mask below.
+        # Per-token loss, no reduction. ignore_index already returns exactly
+        # 0.0 at masked positions; the mask below is what makes the
+        # denominator (seq_counts) match the numerator.
         per_token = F.cross_entropy(
             shift_logits.view(-1, shift_logits.size(-1)),
             shift_labels.view(-1),

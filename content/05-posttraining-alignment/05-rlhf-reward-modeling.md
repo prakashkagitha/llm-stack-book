@@ -214,7 +214,7 @@ The two non-obvious lines are worth dwelling on. First, `F.softplus(-delta)` is 
 To implement the InstructGPT regularizer — all $\binom{K}{2}$ pairs from a prompt in one step — you encode the $K$ completions once and form all pairwise terms from the $K$ scalars:
 
 ```python
-def all_pairs_bt_loss(rewards_K, chosen_better_mask):
+def all_pairs_bt_loss(rewards_K):
     """rewards_K : (K,) scalar reward for the K completions of ONE prompt,
                    ordered by the human ranking (index 0 = most preferred).
        Since they are ranked, every pair (i, j) with i < j has y_i preferred.
@@ -288,7 +288,7 @@ The headline metric is **preference accuracy** on a held-out set — the fractio
 - **Reward distribution:** plot the histogram of scores on a fixed eval set across training. A healthy RM has well-separated chosen/rejected distributions; a collapsing one pushes everything to extremes.
 - **Score on a fixed anchor set:** because rewards are only identified up to a constant, track *gaps* between fixed reference responses, not absolute values, to compare checkpoints.
 
-Held-out accuracy on your own data is necessary but self-referential: it shares the biases of your annotators. The standardized external check is **RewardBench** (Ai2), which scores an RM on curated pairs across chat, reasoning, and safety categories, so you can see *where* your RM is weak rather than just that it is 72% overall. It runs as a package on any HF sequence-classification RM (`pip install reward-bench`, then the `rewardbench` CLI pointed at your model path), and RewardBench 2 is the harder best-of-4 successor on fresh unseen prompts. Treat its per-category breakdown as a smoke test before you ever start PPO — an RM that is at chance on the reasoning subset will happily reward confident wrong math.
+Held-out accuracy on your own data is necessary but self-referential: it shares the biases of your annotators. The standardized external check is **RewardBench** (Ai2), which scores an RM on curated pairs across chat, reasoning, and safety categories, so you can see *where* your RM is weak rather than just that it is 72% overall. It runs as a package on any HF sequence-classification RM (`pip install rewardbench`, then the `rewardbench` CLI pointed at your model path), and RewardBench 2 is the harder best-of-4 successor on fresh unseen prompts. Treat its per-category breakdown as a smoke test before you ever start PPO — an RM that is at chance on the reasoning subset will happily reward confident wrong math.
 
 ## Reward model evaluation and reward hacking
 
@@ -338,7 +338,7 @@ When people say RLHF is "memory-hungry and operationally heavy," this is what th
 | 3 | **Reward** $r_\phi$ | scores the full response with one scalar | **no (frozen)** | trained in Stage 2 | supplies the optimization signal |
 | 4 | **Reference** $\pi_{\text{ref}}$ | frozen copy of the SFT model | **no (frozen)** | SFT model | the KL anchor that keeps the policy from drifting/hacking |
 
-This table is not an abstraction — it is literally the constructor signature of the libraries. TRL's `PPOTrainer` takes four model arguments named `policy`, `ref_model`, `reward_model`, and `value_model`; veRL calls the same four roles `actor`, `ref`, `reward`, and `critic` and gives each its own resource pool in its config ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)). If you can name the four and say which are frozen, you can read any RLHF config file.
+This table is not an abstraction — it is literally the constructor signature of the libraries. TRL's `PPOTrainer` takes four model arguments named `model`, `ref_model`, `reward_model`, and `value_model` (they were `policy` and `ref_policy` in TRL 0.12); veRL calls the same four roles `actor`, `ref`, `reward`, and `critic` and gives each its own resource pool in its config ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)). If you can name the four and say which are frozen, you can read any RLHF config file.
 
 ### The actor and the reference
 
@@ -362,7 +362,7 @@ The **critic** $V_\psi$ is the subtle one. It is a value network that, at each t
 
 Four models is a lot of GPU. If the policy is a $7$B-parameter model in bf16, then in the worst case:
 
-- **Actor:** trained, so it carries weights + gradients + Adam optimizer states. Roughly $2$ bytes (bf16 weights) $+ 2$ (grad) $+ 8$ (fp32 Adam moments, two states) $\approx 16$ bytes/param $\to \sim 112$ GB before activations.
+- **Actor:** trained, so it carries weights + gradients + Adam optimizer states. Roughly $2$ bytes (bf16 weights) $+ 2$ (bf16 grad) $+ 4$ (fp32 master weights) $+ 8$ (fp32 Adam moments, two states) $= 16$ bytes/param $\to \sim 112$ GB before activations.
 - **Critic:** also trained; another full set of weights+grads+optimizer states, often similar size $\to$ on the order of another $\sim 100$ GB (a $7$B critic), or less if smaller.
 - **Reward:** frozen, inference only $\to \sim 14$ GB (bf16 weights, no grad/optimizer).
 - **Reference:** frozen, inference only $\to \sim 14$ GB.
@@ -392,6 +392,9 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
     # ---- 1. ROLLOUT: actor generates responses to a batch of prompts. ----
     #     In production this runs on a fast inference engine (vLLM/SGLang);
     #     see "The Generation–Training Loop & Rollout Engines".
+    #     Prompts must be LEFT-padded: a decoder-only model continues from the
+    #     right edge, so right-padded prompts make it continue from <pad>.
+    tokenizer.padding_side = "left"
     queries = tokenizer(prompts, return_tensors="pt", padding=True)
     with torch.no_grad():
         responses = actor.generate(**queries, max_new_tokens=512, do_sample=True)
@@ -418,7 +421,7 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
     #     GENERATED token and resp_mask marks real vs right-padding. Getting this
     #     alignment wrong (leaving prompt columns in) is the #1 RLHF plumbing bug.
     kl_per_token = actor_logprobs.detach() - ref_logprobs                           # (B, T)
-    rewards = -beta_kl * kl_per_token                                               # KL "rent"
+    rewards = -beta_kl * kl_per_token * resp_mask                                   # KL "rent"
     last = resp_mask.sum(dim=1) - 1                                                 # final real resp token
     rewards[torch.arange(rewards.size(0)), last] += scores                          # add terminal r_φ
 
@@ -599,7 +602,7 @@ Trace the four models through it: the **actor** generates (step 1) and supplies 
 
     The **actor's log-probs in the KL term must be detached** (`actor_logprobs.detach()`). The KL penalty is folded into the scalar per-token *reward* signal that feeds advantage estimation; it is not the differentiable policy-gradient objective. If the actor term were left attached, gradients would flow into the actor through the reward signal itself (double-counting / wrong objective). The differentiable dependence of the loss on $\pi_\theta$ is supplied separately by the PPO clipped surrogate in the update step, exactly as in the skeleton's step 3/step 5. (The reference log-probs are already grad-free since the reference is frozen.)
 
-**6.** You are budgeting GPU memory for an RLHF run whose policy is a **13B**-parameter model in bf16, using the chapter's byte-accounting (bf16 weight = 2 bytes/param; a *trained* model also carries 2 bytes gradient + 8 bytes fp32 Adam moments = 16 bytes/param total; a *frozen* model carries only its 2 bytes/param of weights). (a) Estimate the resident footprint of the naive four-model setup, assuming the critic is also 13B. (b) Now apply two economizers from the chapter: use a small **1.5B** reward model, and **fold the value head onto the actor** so there is no separate critic model. Re-estimate the footprint. (c) By what factor did the footprint shrink, and which single model dominates it now?
+**6.** You are budgeting GPU memory for an RLHF run whose policy is a **13B**-parameter model in bf16, using the chapter's byte-accounting (bf16 weight = 2 bytes/param; a *trained* model also carries 2 bytes bf16 gradient + 4 bytes fp32 master weights + 8 bytes fp32 Adam moments = 16 bytes/param total; a *frozen* model carries only its 2 bytes/param of weights). (a) Estimate the resident footprint of the naive four-model setup, assuming the critic is also 13B. (b) Now apply two economizers from the chapter: use a small **1.5B** reward model, and **fold the value head onto the actor** so there is no separate critic model. Re-estimate the footprint. (c) By what factor did the footprint shrink, and which single model dominates it now?
 
 ??? note "Solution"
     Use bytes/param $\times$ #params, then convert ($1\,\text{GB} \approx 10^9$ bytes for this back-of-envelope).

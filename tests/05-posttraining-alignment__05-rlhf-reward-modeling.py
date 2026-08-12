@@ -205,7 +205,7 @@ def test_reward_model_block():
 # Copied verbatim from the chapter.
 # =============================================================================
 
-def all_pairs_bt_loss(rewards_K, chosen_better_mask):
+def all_pairs_bt_loss(rewards_K):
     """rewards_K : (K,) scalar reward for the K completions of ONE prompt,
                    ordered by the human ranking (index 0 = most preferred).
        Since they are ranked, every pair (i, j) with i < j has y_i preferred.
@@ -225,23 +225,23 @@ def test_all_pairs_bt_loss_block():
     # strictly less than log 2 (the loss at a tie).
     K = 5
     ordered = torch.tensor([4.0, 3.0, 2.0, 1.0, 0.0])
-    loss_ordered = all_pairs_bt_loss(ordered, None)
+    loss_ordered = all_pairs_bt_loss(ordered)
     import math
     assert loss_ordered.item() < math.log(2.0)
 
     # All-equal scores -> every pair contributes exactly softplus(0) = log 2.
     tied = torch.zeros(K)
-    loss_tied = all_pairs_bt_loss(tied, None)
+    loss_tied = all_pairs_bt_loss(tied)
     assert abs(loss_tied.item() - math.log(2.0)) < 1e-6
 
     # Reversing the ranking (model has every pair backwards) must be strictly
     # worse than both the ordered and the tied case.
     reversed_scores = torch.tensor([0.0, 1.0, 2.0, 3.0, 4.0])
-    loss_reversed = all_pairs_bt_loss(reversed_scores, None)
+    loss_reversed = all_pairs_bt_loss(reversed_scores)
     assert loss_reversed.item() > loss_tied.item() > loss_ordered.item()
 
     # Additive-constant invariance also holds for the all-pairs form.
-    loss_shift = all_pairs_bt_loss(ordered + 100.0, None)
+    loss_shift = all_pairs_bt_loss(ordered + 100.0)
     assert abs(loss_shift.item() - loss_ordered.item()) < 1e-5
 
     # Sanity: C(K,2) pairs actually feed the mean (K*(K-1)/2 upper-tri entries).
@@ -274,6 +274,9 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
     # ---- 1. ROLLOUT: actor generates responses to a batch of prompts. ----
     #     In production this runs on a fast inference engine (vLLM/SGLang);
     #     see "The Generation–Training Loop & Rollout Engines".
+    #     Prompts must be LEFT-padded: a decoder-only model continues from the
+    #     right edge, so right-padded prompts make it continue from <pad>.
+    tokenizer.padding_side = "left"
     queries = tokenizer(prompts, return_tensors="pt", padding=True)
     with torch.no_grad():
         responses = actor.generate(**queries, max_new_tokens=512, do_sample=True)
@@ -296,7 +299,7 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
 
     # ---- 4. Build the per-token reward: KL penalty everywhere + RM score at end. ----
     kl_per_token = actor_logprobs.detach() - ref_logprobs                           # (B, T)
-    rewards = -beta_kl * kl_per_token                                               # KL "rent"
+    rewards = -beta_kl * kl_per_token * resp_mask                                   # KL "rent"
     last = resp_mask.sum(dim=1) - 1                                                 # final resp idx
     rewards[torch.arange(rewards.size(0)), last] += scores                          # add terminal r_φ
 

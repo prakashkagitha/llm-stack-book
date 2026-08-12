@@ -124,7 +124,8 @@ if __name__ == "__main__":
     trainable = sum(p.numel() for p in wrapper.parameters() if p.requires_grad)
     total     = sum(p.numel() for p in wrapper.parameters())
     print(f"Trainable: {trainable:,}  Total: {total:,}  Fraction: {trainable/total:.5%}")
-    # Trainable: 7,680  Total: 124,447,232  Fraction: 0.00617%
+    # Trainable: 7,680  Total: 124,447,488  Fraction: 0.00617%
+    # (HF gpt2 has 124,439,808 unique params with a tied lm_head; + 10 x 768 soft tokens)
 ```
 
 ### Scaling Behavior
@@ -235,17 +236,17 @@ P-tuning v2 (Liu et al., 2022) is essentially a cleaned-up, scaled version of pr
 
 ### Motivation
 
-Liu et al. (T-Few, 2022) asked: what is the minimal intervention that can still adapt behavior effectively? Instead of adding parameters (adapters) or input tokens (prefix tuning), IA3 **rescales** three specific activation vectors inside the transformer using learned scale vectors with as few as a few thousand parameters per task.
+Liu et al. (T-Few, 2022) asked: what is the minimal intervention that can still adapt behavior effectively? Instead of adding parameters (adapters) or input tokens (prefix tuning), IA3 **rescales** three specific activation vectors inside the transformer using learned scale vectors — on the order of a few hundred thousand parameters per task (~0.01 % of the backbone).
 
 ### Mechanism
 
 For each transformer layer, IA3 introduces three learned vectors:
 
 $$
-l_k, l_v \in \mathbb{R}^{d_k}, \quad l_{ff} \in \mathbb{R}^{d_{ff}},
+l_k, l_v \in \mathbb{R}^{d_{kv}}, \quad l_{ff} \in \mathbb{R}^{d_{ff}},
 $$
 
-and modifies the forward pass as:
+where $d_{kv} = n_\text{kv} \times d_\text{head}$ is the *full output width of the key/value projections* — one scale entry per K/V channel, shared across positions and across the query heads that read it (this is what both the T-Few reference code and `peft`'s `IA3Layer` learn: a vector of length `out_features` of `k_proj`/`v_proj`). The forward pass becomes:
 
 $$
 \text{Attn}(Q, K, V) = \text{softmax}\!\left(\frac{Q (l_k \odot K)^\top}{\sqrt{d_k}}\right)(l_v \odot V),
@@ -267,13 +268,13 @@ After this fold, the model has the same parameter count as the base model and no
 
 ### Parameter Count
 
-For a 7B model with $L = 32$ layers, $d_k = 128$, $d_{ff} = 14336$:
+For a 7B model with $L = 32$ layers, GQA with $n_\text{kv} = 8$ key/value heads of width $d_\text{head} = 128$ (so $d_{kv} = 1024$), and $d_{ff} = 14336$:
 
 $$
-\text{params} = L \times (d_k + d_k + d_{ff}) = 32 \times (128 + 128 + 14336) = 32 \times 14592 \approx 467{,}000.
+\text{params} = L \times (d_{kv} + d_{kv} + d_{ff}) = 32 \times (1024 + 1024 + 14336) = 32 \times 16384 = 524{,}288.
 $$
 
-That is roughly 0.007 % of 7B — smaller than a LoRA rank-8 adapter.
+That is roughly 0.0075 % of 7B — smaller than a LoRA rank-8 adapter. (With full multi-head attention the K/V projections are $d = 4096$ wide instead, giving $32 \times (4096 + 4096 + 14336) = 720{,}896$; either way the count lands in the few-hundred-thousand range, not the few-thousand range you might guess from "just a scale vector".)
 
 ```python
 import torch
@@ -302,11 +303,16 @@ class IA3Attention(nn.Module):
         # IA3 learnable scale vectors — initialized to 1 (identity)
         self.l_k = nn.Parameter(torch.ones(d_k))
         self.l_v = nn.Parameter(torch.ones(d_k))
+        self.folded = False    # set by fold_weights(); see forward()
 
     def forward(self, x):
         Q = self.W_q(x)                            # (B, T, d_k)
-        K = self.W_k(x) * self.l_k                # element-wise scale on K
-        V = self.W_v(x) * self.l_v                # element-wise scale on V
+        if self.folded:
+            K = self.W_k(x)                       # scales already baked into W_k
+            V = self.W_v(x)                       # scales already baked into W_v
+        else:
+            K = self.W_k(x) * self.l_k            # element-wise scale on K
+            V = self.W_v(x) * self.l_v            # element-wise scale on V
 
         scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)
         attn   = F.softmax(scores, dim=-1)
@@ -316,14 +322,18 @@ class IA3Attention(nn.Module):
     def fold_weights(self):
         """
         Bake IA3 scales into W_k and W_v so inference has zero overhead.
-        After calling this, l_k and l_v can be deleted.
+        Idempotent: calling it twice would otherwise square the scales.
+        Note we do NOT delete l_k / l_v — forward() still refers to them,
+        and dropping them would break the very inference path we just
+        optimized. The `folded` flag is what makes the scaling disappear.
         """
+        if self.folded:
+            return
         with torch.no_grad():
             # W_k output dim is d_k; scale each row
             self.W_k.weight.mul_(self.l_k.unsqueeze(1))
             self.W_v.weight.mul_(self.l_v.unsqueeze(1))
-        # Detach scale vectors (they're now baked in)
-        del self.l_k, self.l_v
+        self.folded = True
         print("IA3 weights folded — no runtime overhead.")
 
 
@@ -594,8 +604,9 @@ def magnitude_threshold(delta: torch.Tensor, trim_fraction: float) -> torch.Tens
     Magnitude cutoff below which entries are trimmed.
 
     NOTE: do *not* use torch.quantile here. It has a hard input-size limit
-    (a few tens of millions of elements) and raises a RuntimeError on real
-    LLM tensors — a 4096 x 14336 FFN matrix already has ~59M entries.
+    of 2**24 = 16,777,216 elements and raises
+    RuntimeError("quantile() input tensor is too large") above it — a
+    4096 x 14336 FFN matrix already has ~59M entries.
     torch.kthvalue has no such limit and is exact.
     """
     flat = delta.abs().flatten()
@@ -689,7 +700,7 @@ $$
 \hat{\tau}[j] = \begin{cases} \frac{\tau[j]}{1-p} & \text{with probability } 1-p \\ 0 & \text{with probability } p \end{cases}
 $$
 
-Despite its simplicity, DARE often reduces interference well because the interference signal tends to be distributed among many small parameters, while the task-specific signal is concentrated in fewer large ones. Random dropping disproportionately removes the former.
+Note that the drop is deliberately *magnitude-agnostic*: every entry is zeroed with the same probability $p$, independent of how large it is. DARE nonetheless works because delta weights are enormously redundant — even at $p = 0.9$, the surviving 10 %, rescaled by $1/(1-p)$, leaves the expectation of every entry unchanged and reproduces most of the fine-tune's behavior. And because two task vectors are dropped independently, the fraction of positions where *both* survive falls to $(1-p)^2$, so there is far less left to interfere in the first place.
 
 DARE is frequently combined with TIES (DARE-TIES): apply DARE's stochastic trimming first, then TIES's sign election and disjoint merge. A magnitude-aware successor, DELLA (2024), makes the drop probability depend on each entry's rank by magnitude — dropping low-magnitude deltas more aggressively — and reports gains over both DARE and TIES.
 
@@ -708,9 +719,9 @@ DARE is frequently combined with TIES (DARE-TIES): apply DARE's stochastic trimm
     - Working buffers (stacked deltas, masks): roughly one additional copy = ~14 GB
     - **Total: ~70 GB**
     
-    This fits comfortably on a machine with 128 GB of CPU RAM and can be done entirely in float32 on CPU with no GPUs. Runtime on CPU with PyTorch is typically a few minutes for a 7B model — merging is genuinely cheap.
+    This fits comfortably on a machine with 128 GB of CPU RAM, no GPUs required. Note that the 70 GB budget assumes the checkpoints stay *resident* in bfloat16: do the arithmetic one tensor at a time, upcasting each tensor to float32 as you touch it (a transient buffer of a few hundred MB) and casting the result back. Holding all five copies in float32 at once would double the budget to ~140 GB and no longer fit. Runtime on CPU with PyTorch is typically a few minutes for a 7B model — merging is genuinely cheap.
     
-    For a 70B model at bfloat16, the same calculation gives ~140 GB per checkpoint × 5 tensors ≈ 700 GB — requires a well-equipped CPU server but remains feasible. GPU-resident merging at 70B would require a multi-GPU node.
+    For a 70B model at bfloat16, the same calculation gives ~140 GB per checkpoint × 5 copies ≈ 700 GB — requires a well-equipped CPU server but remains feasible. GPU-resident merging at 70B would require a multi-GPU node.
 
 ---
 
@@ -791,7 +802,9 @@ models:
       weight: 0.5
       density: 0.2
 parameters:
-  normalize: true           # normalize task vectors before merging
+  normalize: true           # rescale the per-model `weight` values so the
+                            # contributions to each tensor sum to 1
+                            # (it does NOT normalize the task vectors themselves)
   int8_mask: true           # use int8 masks to reduce RAM
 dtype: bfloat16
 ```
@@ -866,7 +879,7 @@ See [The Evaluation Problem & Benchmark Landscape](../11-evaluation/01-eval-land
 
 !!! tip "Practitioner Tip: Use float32 for Merge Arithmetic"
 
-    Even if your models are stored in bfloat16, always cast to float32 before computing task vectors and running merge arithmetic. The intermediate differences $\theta_\text{fine-tuned} - \theta_\text{base}$ can be very small, and bfloat16's limited mantissa precision (7 bits) causes significant rounding error when subtracting numbers of similar magnitude. Cast back to bfloat16 only at the end.
+    Even if your models are stored in bfloat16, always cast to float32 before computing task vectors and running merge arithmetic. The subtraction itself is not the culprit — two floats within a factor of two of each other subtract *exactly*, so $\theta_\text{fine-tuned} - \theta_\text{base}$ loses nothing. The damage comes afterwards. The deltas are tiny next to the base weights, so accumulating $\theta_\text{base} + \lambda \sum_i \tau_i$ in bfloat16 — 7 explicit mantissa bits, i.e. only ~$2^{-8}$ relative precision — rounds much of the update straight back into the base value, and summing or averaging several task vectors (TIES's disjoint mean, DARE's $1/(1-p)$ rescale) compounds the error term by term. Cast back to bfloat16 only at the end.
 
 ---
 
@@ -878,7 +891,7 @@ Method           Params trained     Modifies weights?  Inference overhead  Best 
 Prompt tuning    k × d              No                 +k tokens           Low-resource; huge models
 Prefix tuning    2 × L × k × d_kv   No                 +k KV per layer     NLG/seq2seq; all layers
 P-tuning v2      similar            No                 +k KV per layer     NLU (NER, SRL); robust
-IA3              L × (2d_k + d_ff)  No (foldable)      Zero (after fold)   Few-shot; fast deploy
+IA3              L × (2d_kv+d_ff)   No (foldable)      Zero (after fold)   Few-shot; fast deploy
 LoRA             2 × L × r × d      Yes (merge-able)   Zero (after merge)  General purpose
 TIES merge       0 (no training)    Yes                Zero                Multi-task combination
 SLERP            0                  Yes                Zero                Two-model interpolation
@@ -896,7 +909,7 @@ If your use case involves distribution shifts after merging, the evaluation fram
     - **Prompt tuning** learns $k$ soft embedding vectors prepended to the input; it trains fewer than 0.01% of parameters and closes the gap with full fine-tuning only at very large model scales.
     - **Prefix tuning** injects learned key–value pairs at *every* attention layer, giving the model a per-layer task signal; it is more effective than prompt tuning on smaller models and harder tasks. Mechanically it is a **learned KV cache** — seeded `past_key_values` — so it needs no kernel changes but permanently consumes $k$ tokens of context and cache per sequence.
     - **Use `peft` for all three.** Prompt tuning, prefix tuning, P-tuning and IA3 are one config object away (`PromptTuningConfig`, `PrefixTuningConfig`, `IA3Config`) behind the same `get_peft_model` call as LoRA; only weight-space methods (IA3, LoRA) survive `merge_and_unload()`, and only LoRA-shaped adapters get first-class multi-tenant serving.
-    - **IA3** multiplies learned scale vectors into key, value, and FFN activations; its ~0.007% parameter overhead can be *folded into weights* at inference for zero latency cost.
+    - **IA3** multiplies learned scale vectors into key, value, and FFN activations; its ~0.0075% parameter overhead (a few hundred thousand parameters at 7B) can be *folded into weights* at inference for zero latency cost.
     - **Task arithmetic** defines a task vector as $\theta_\text{ft} - \theta_\text{base}$; tasks can be added, subtracted, and composed algebraically — no new training required.
     - **TIES-Merging** reduces inter-task interference by trimming small-magnitude parameters, electing a majority sign per position, and averaging only the agreeing values.
     - **DARE** provides a stochastic alternative to deterministic trimming: random dropout on task-vector entries with rescaling to preserve expectation.
@@ -961,11 +974,11 @@ If your use case involves distribution shifts after merging, the evaluation fram
 
     P-tuning v2 confirmed exactly this: its first contribution was showing that a *deep* prefix across all layers (versus input-only injection) is what matters for complex NLU tasks such as NER and SRL, letting deep prefix tuning match full fine-tuning even for models in the hundreds-of-millions-of-parameters range — the regime where input-only prompt tuning struggles.
 
-**2.** (Quantitative) Consider a 7B-scale model with hidden size $d = 4096$, $L = 32$ layers, per-head key dimension $d_k = 128$, and FFN width $d_{ff} = 14336$.
+**2.** (Quantitative) Consider a 7B-scale model with hidden size $d = 4096$, $L = 32$ layers, GQA with $n_\text{kv} = 8$ key/value heads of head dimension $d_\text{head} = 128$ (so the key and value projections are $d_{kv} = n_\text{kv} \times d_\text{head} = 1024$ wide), and FFN width $d_{ff} = 14336$.
 
    (a) How many trainable parameters does prompt tuning use with $k = 100$ soft tokens?
 
-   (b) How many trainable parameters does IA3 use (the three scale vectors $l_k, l_v \in \mathbb{R}^{d_k}$ and $l_{ff} \in \mathbb{R}^{d_{ff}}$ per layer)?
+   (b) How many trainable parameters does IA3 use (the three scale vectors $l_k, l_v \in \mathbb{R}^{d_{kv}}$ and $l_{ff} \in \mathbb{R}^{d_{ff}}$ per layer)?
 
    (c) Which is smaller, and by roughly what factor? Express each as a fraction of the 7B base.
 
@@ -976,13 +989,13 @@ If your use case involves distribution shifts after merging, the evaluation fram
     $$
     As a fraction of $7 \times 10^9$: $409{,}600 / 7\text{e}9 \approx 5.9 \times 10^{-5} \approx 0.006\%$.
 
-    (b) IA3 has, per layer, $d_k + d_k + d_{ff}$ scale entries:
+    (b) IA3 has, per layer, $d_{kv} + d_{kv} + d_{ff}$ scale entries — note that $l_k$ and $l_v$ span the *whole* K/V projection output (1024 channels), not one head's 128:
     $$
-    L \times (d_k + d_k + d_{ff}) = 32 \times (128 + 128 + 14336) = 32 \times 14592 = 466{,}944 \text{ parameters.}
+    L \times (d_{kv} + d_{kv} + d_{ff}) = 32 \times (1024 + 1024 + 14336) = 32 \times 16384 = 524{,}288 \text{ parameters.}
     $$
-    As a fraction of $7 \times 10^9$: $466{,}944 / 7\text{e}9 \approx 6.7 \times 10^{-5} \approx 0.007\%$ — matching the chapter's IA3 count.
+    As a fraction of $7 \times 10^9$: $524{,}288 / 7\text{e}9 \approx 7.5 \times 10^{-5} \approx 0.0075\%$ — matching the chapter's IA3 count. (Had the model used full multi-head attention, the K/V projections would be 4096 wide and the count would rise to $32 \times (4096 + 4096 + 14336) = 720{,}896$.)
 
-    (c) They are remarkably close in absolute size ($\approx 4.1 \times 10^5$ vs $\approx 4.7 \times 10^5$). Prompt tuning is the smaller of the two, by a factor of only $466{,}944 / 409{,}600 \approx 1.14$ (prompt tuning has about 12% fewer parameters; equivalently IA3 has about 14% more). Both are on the order of a few hundred thousand parameters, roughly $0.006\%$–$0.007\%$ of the base — orders of magnitude below full fine-tuning.
+    (c) They are the same order of magnitude ($\approx 4.1 \times 10^5$ vs $\approx 5.2 \times 10^5$). Prompt tuning is the smaller of the two, by a factor of $524{,}288 / 409{,}600 \approx 1.28$ (prompt tuning has about 22% fewer parameters; equivalently IA3 has about 28% more). Both are on the order of a few hundred thousand parameters, roughly $0.006\%$–$0.0075\%$ of the base — orders of magnitude below full fine-tuning.
 
 **3.** (Quantitative) Linear interpolation can shrink the norm of a merged tensor; SLERP is designed to avoid this. Take two weight vectors that are already unit-norm and *orthogonal*: $\hat{\theta}_A \cdot \hat{\theta}_B = 0$. Using $t = 0.5$:
 

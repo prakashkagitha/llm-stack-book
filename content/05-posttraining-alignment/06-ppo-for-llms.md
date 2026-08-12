@@ -411,14 +411,17 @@ The training loop has a characteristic **two-phase rhythm** — a *rollout phase
 
 {{fig:ppo-iteration-two-phase-loop}}
 
-Here is a compact but complete PPO step that ties the helper functions together. It is written for clarity over speed; a production system (TRL's `PPOTrainer`, OpenRLHF, veRL) disaggregates generation onto an inference engine and shards the four models, but the math is identical. The one helper left to you is `generate_batch`: ordinary batched temperature sampling from the policy ([Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html)) that returns the prompt-plus-response `input_ids` and a mask that is 1 exactly on generated tokens — sample at temperature 1.0 with no top-$k$/top-$p$ truncation, because the importance ratio and the KL are only valid if the tokens really were drawn from $\pi_{\text{old}}$ and not from a truncated version of it.
+Here is a compact but complete PPO step that ties the helper functions together. It is written for clarity over speed; a production system (TRL's `PPOTrainer`, OpenRLHF, veRL) disaggregates generation onto an inference engine and shards the four models, but the math is identical. Two helpers are left to you. The first is `generate_batch`: ordinary batched temperature sampling from the policy ([Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html)) that returns the prompt-plus-response `input_ids` and a mask that is 1 exactly on generated tokens — sample at temperature 1.0 with no top-$k$/top-$p$ truncation, because the importance ratio and the KL are only valid if the tokens really were drawn from $\pi_{\text{old}}$ and not from a truncated version of it. The second is `policy_entropy`, the mask-averaged entropy of the policy's next-token distribution, which is Exercise 6 (with `ENT_COEF = 0.0` below the term contributes nothing, so you can drop the call until you write it).
 
 ```python
 import torch
 import torch.nn.functional as F
 
 # Assume: policy (with value head), ref_model, reward_model, tokenizer, optimizer.
-# policy(input_ids) returns logits AND a per-token scalar value (value head).
+# policy(input_ids) returns .logits (B,T,V) AND .value_preds (B,T) from the value head.
+# Name that field `value_preds`, not `values`: HuggingFace model outputs subclass
+# OrderedDict, so `out.values` silently resolves to the dict *method*, not a tensor.
+# Only the policy has a value head; ref_model and the RM are plain models.
 
 PPO_EPOCHS   = 4
 MINIBATCHES  = 4
@@ -428,13 +431,17 @@ VF_COEF      = 0.5
 ENT_COEF     = 0.0
 TARGET_KL    = 0.02   # early-stop the epoch loop if approx_kl exceeds this
 
-def token_logprobs_and_values(model, input_ids):
-    """Per-token log-prob of the realized next token, plus value-head output."""
-    out = model(input_ids)                                   # logits (B,T,V), values (B,T)
-    logits, values = out.logits[:, :-1], out.values[:, :-1]
+def token_logprobs_and_values(model, input_ids, with_values=True):
+    """Per-token log-prob of the realized next token, plus value-head output.
+
+    with_values=False for models that have no value head (the reference model).
+    """
+    out = model(input_ids)                                   # logits (B,T,V), value_preds (B,T)
+    logits = out.logits[:, :-1]
     logp = F.log_softmax(logits.float(), dim=-1)
     targets = input_ids[:, 1:].unsqueeze(-1)
     token_lp = logp.gather(-1, targets).squeeze(-1)          # (B, T-1)
+    values = out.value_preds[:, :-1] if with_values else None
     return token_lp, values
 
 @torch.no_grad()
@@ -445,7 +452,8 @@ def ppo_rollout(prompts):
     rm_scores = reward_model.score(input_ids, resp_mask)     # (B,)
     # 4: cache behavior log-probs, reference log-probs, and values.
     old_lp,  old_values = token_logprobs_and_values(policy,    input_ids)
-    ref_lp,  _          = token_logprobs_and_values(ref_model, input_ids)
+    ref_lp,  _          = token_logprobs_and_values(ref_model, input_ids,
+                                                    with_values=False)
     mask = resp_mask[:, 1:]                                   # align with shifted targets
     # 5: per-token rewards = KL penalty + terminal RM score.
     token_rewards = make_token_rewards(old_lp, ref_lp, rm_scores, mask, KL_BETA)
@@ -498,7 +506,7 @@ def ppo_update(buf):
     - clipped: $1.20 \times 0.8 = 0.96$
     - $\min(1.12, 0.96) = 0.96$ → **the clip engages**; gradient w.r.t. this token is zeroed.
 
-    Interpretation: the optimizer already moved this token's probability up by $40\%$ since rollout — past the $20\%$ trust region. PPO refuses to reward going further this epoch. The token will get another chance after the *next* rollout, when $\pi_{\text{old}}$ is reset to the current policy and the ratio starts back at $1.0$. This is the trust region in action: bounded, incremental, safe steps. The `clipfrac` diagnostic counts what fraction of tokens hit this clip; a healthy run sits around $0.1$–$0.3$. A `clipfrac` near $0$ means your learning rate or advantages are tiny (no movement); near $1$ means you're taking wild steps and should lower the LR or $\epsilon$.
+    Interpretation: the optimizer already moved this token's probability up by $40\%$ since rollout — past the $20\%$ trust region. PPO refuses to reward going further this epoch. The token will get another chance after the *next* rollout, when $\pi_{\text{old}}$ is reset to the current policy and the ratio starts back at $1.0$. This is the trust region in action: bounded, incremental, safe steps. The `clipfrac` diagnostic counts what fraction of tokens have left the $[1-\epsilon, 1+\epsilon]$ window; it is exactly $0$ on the first minibatch of a rollout (where $r_t \equiv 1$) and grows as the epochs push the data off-policy. Healthy runs stay small — roughly $0.05$–$0.25$ by the last epoch, and legitimately near $0$ for recipes that take one near-on-policy step per rollout. A `clipfrac` near $1$ means you're taking wild steps and should lower the LR or $\epsilon$.
 
 {{tool:rlhf-ppo-pipeline}}
 
@@ -541,8 +549,11 @@ cfg = PPOConfig(
     missing_eos_penalty=1.0,   # penalize samples that never terminated
 )
 
-# The dataset must supply tokenized prompts in an "input_ids" column.
+# The dataset must supply tokenized prompts in an "input_ids" column, and
+# trl-lib/tldr ships raw text ("prompt"/"completion"), so tokenize it first.
 ds = load_dataset("trl-lib/tldr", split="train")
+ds = ds.map(lambda ex: {"input_ids": tok(ex["prompt"])["input_ids"]},
+            remove_columns=ds.column_names)
 
 trainer = PPOTrainer(args=cfg, processing_class=tok, model=policy, ref_model=ref_model,
                      reward_model=reward_model, value_model=value_model,
@@ -575,7 +586,7 @@ This is also the calculus we make explicitly in the capstone: Stack-100M's RL st
 !!! interview "Interview Corner"
     **Q:** Walk me through the PPO clipped objective. Why the `min`, and what specifically does clipping prevent? Why do we even need importance sampling here?
 
-    **A:** We need importance sampling because we generate rollouts once (expensive autoregressive decoding) but want to take several gradient steps on them. After the first update the data is off-policy, so we reweight each token by the ratio $r_t = \pi_\theta/\pi_{\text{old}}$; the surrogate $\mathbb{E}[r_t \hat A_t]$ then has the correct gradient at $\theta = \theta_{\text{old}}$. The danger is that a large ratio times a large advantage can take a catastrophic step and blow up the policy. PPO bounds this by clipping: the objective is $\min(r_t\hat A_t,\ \operatorname{clip}(r_t, 1{-}\epsilon, 1{+}\epsilon)\hat A_t)$. The `min` makes it a **pessimistic lower bound** that creates a one-sided trust region. For a *good* token ($\hat A>0$) it stops rewarding you once $r_t > 1+\epsilon$ — no incentive to over-boost; for a *bad* token ($\hat A<0$) it stops rewarding you once $r_t < 1-\epsilon$ — no incentive to over-suppress. Crucially, because of the `min`, clipping only ever *removes* incentive to move further in the rewarding direction; it never blocks a step that corrects an overshoot back toward $\pi_{\text{old}}$. The net effect is small, stable, incremental policy updates without TRPO's expensive second-order KL constraint. I'd also mention the `clipfrac` diagnostic — fraction of tokens being clipped, healthy around 0.1–0.3 — and that the *separate* KL-to-reference penalty (a different mechanism from the clip) is what prevents reward hacking, while the clip just prevents per-step instability.
+    **A:** We need importance sampling because we generate rollouts once (expensive autoregressive decoding) but want to take several gradient steps on them. After the first update the data is off-policy, so we reweight each token by the ratio $r_t = \pi_\theta/\pi_{\text{old}}$; the surrogate $\mathbb{E}[r_t \hat A_t]$ then has the correct gradient at $\theta = \theta_{\text{old}}$. The danger is that a large ratio times a large advantage can take a catastrophic step and blow up the policy. PPO bounds this by clipping: the objective is $\min(r_t\hat A_t,\ \operatorname{clip}(r_t, 1{-}\epsilon, 1{+}\epsilon)\hat A_t)$. The `min` makes it a **pessimistic lower bound** that creates a one-sided trust region. For a *good* token ($\hat A>0$) it stops rewarding you once $r_t > 1+\epsilon$ — no incentive to over-boost; for a *bad* token ($\hat A<0$) it stops rewarding you once $r_t < 1-\epsilon$ — no incentive to over-suppress. Crucially, because of the `min`, clipping only ever *removes* incentive to move further in the rewarding direction; it never blocks a step that corrects an overshoot back toward $\pi_{\text{old}}$. The net effect is small, stable, incremental policy updates without TRPO's expensive second-order KL constraint. I'd also mention the `clipfrac` diagnostic — the fraction of tokens whose ratio has left the window, which starts at 0 on each fresh rollout and should stay small (roughly 0.05–0.25) as the epochs proceed — and that the *separate* KL-to-reference penalty (a different mechanism from the clip) is what prevents reward hacking, while the clip just prevents per-step instability.
 
 !!! interview "Interview Corner"
     **Q:** In PPO-RLHF there are two different "KL"s and two different "clips." Distinguish them.
@@ -587,7 +598,7 @@ This is also the calculus we make explicitly in the capstone: Stack-100M's RL st
     - **REINFORCE / the score-function estimator** turns "gradient of an expected reward" into "expected reward times $\nabla\log\pi$" using the log-derivative trick — no differentiable reward needed. Unbiased but catastrophically high-variance on its own.
     - **A baseline** $b(s_t)$ that doesn't depend on the action reduces variance without bias; the best one is the **value function** $V^\pi$, giving the **advantage** $A = Q - V$ ("was this token better than average?"). The learned critic $V_\phi$ is the second model PPO carries.
     - **GAE** with parameters $(\gamma, \lambda)$ dials bias vs. variance between one-step TD ($\lambda{=}0$) and Monte Carlo ($\lambda{=}1$), computed by one backward recursion of TD residuals $\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$.
-    - **PPO's clipped surrogate** $\min(r_t\hat A_t,\ \operatorname{clip}(r_t,1{-}\epsilon,1{+}\epsilon)\hat A_t)$ is a first-order trust region: it lets you reuse rollouts for several epochs via importance sampling while preventing any single step from exploiting the ratio too far. `clipfrac` $\approx 0.1$–$0.3$ is healthy.
+    - **PPO's clipped surrogate** $\min(r_t\hat A_t,\ \operatorname{clip}(r_t,1{-}\epsilon,1{+}\epsilon)\hat A_t)$ is a first-order trust region: it lets you reuse rollouts for several epochs via importance sampling while preventing any single step from exploiting the ratio too far. `clipfrac` is $0$ on the first minibatch and should stay small (roughly $0.05$–$0.25$) thereafter; approaching $1$ means the data has gone badly off-policy.
     - **The KL-to-reference penalty** $\beta\,\mathbb{D}_{\text{KL}}[\pi_\theta\|\pi_{\text{ref}}]$ — usually folded into the per-token reward — is the alignment leash against reward hacking. $\beta$ is the most consequential knob; adaptive KL control targets a fixed "distance budget."
     - **The full loop is two-phase:** a rollout phase (generate → score with RM → forward ref/value → KL-reward → GAE) and an optimization phase (several clipped-objective epochs on the frozen buffer), with policy + value + entropy terms.
     - **PPO is finicky** because it juggles four models, a hard-to-train critic, a thicket of coupled hyperparameters, ever-present reward over-optimization, generation–training skew, and high generation cost — which is precisely the motivation for DPO (no RL loop), GRPO/RLOO (no critic), and RLVR (no reward model).

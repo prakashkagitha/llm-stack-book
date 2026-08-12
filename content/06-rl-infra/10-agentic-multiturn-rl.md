@@ -101,11 +101,19 @@ class Environment(Protocol):
         ...
 
 def rollout(policy_engine, tokenizer, env: Environment, task,
-            max_turns: int = 8, max_action_tokens: int = 512) -> Trajectory:
+            max_turns: int = 8, max_action_tokens: int = 512,
+            stop_strings: tuple[str, ...] = ("</tool_call>",)) -> Trajectory:
     """
     Run one agentic episode and record a fully-tagged Trajectory.
     `policy_engine.generate` returns (text, token_ids, logprobs) and STOPS
     at a tool-call boundary (a stop string like '</tool_call>' or an EOS).
+
+    `stop_strings` MUST match the action grammar of `env` -- for the
+    SearchQAEnv below it is ("</search>", "</answer>") -- and the engine
+    must be told to KEEP the stop string in its output
+    (vLLM: SamplingParams(include_stop_str_in_output=True)), otherwise the
+    closing tag is missing from both env.step's parser input and the
+    trained token sequence.
     """
     traj = Trajectory()
     prompt = env.reset(task)
@@ -123,7 +131,8 @@ def rollout(policy_engine, tokenizer, env: Environment, task,
         text, action_ids, logprobs = policy_engine.generate(
             running_text,
             max_tokens=max_action_tokens,
-            stop=["</tool_call>", tokenizer.eos_token],
+            stop=[*stop_strings, tokenizer.eos_token],
+            include_stop_str_in_output=True,   # keep the closing tag!
         )
         traj.segments.append(Segment(Role.ASSISTANT, action_ids, logprobs))
         running_text += text
@@ -155,7 +164,7 @@ def rollout(policy_engine, tokenizer, env: Environment, task,
 
 Four details deserve emphasis.
 
-**Stop strings define turn boundaries.** The policy engine must stop generation exactly when the model emits a complete tool call (`</tool_call>`) or decides to give a final answer (EOS). This is why agentic RL is sensitive to the inference engine's stop-string handling — a missed stop string means the model keeps "generating" what should have been an observation, which poisons the trajectory. In practice you co-design the chat template, the tool-call format, and the stop strings together.
+**Stop strings define turn boundaries.** The policy engine must stop generation exactly when the model emits a complete tool call (`</tool_call>`) or decides to give a final answer (EOS). This is why agentic RL is sensitive to the inference engine's stop-string handling — a missed stop string means the model keeps "generating" what should have been an observation, which poisons the trajectory. Two traps here, both silent. First, the stop list must match the *environment's* action grammar: our `SearchQAEnv` below closes actions with `</search>` and `</answer>`, so a rollout that stops only on a generic `</tool_call>` never halts at an action boundary at all. Second, engines *strip* the stop string by default — vLLM's `SamplingParams(include_stop_str_in_output=False)` is the default, and SGLang trims likewise — so the returned text ends just *before* `</search>`, the environment's regex fails to match, every action is classified malformed, and every trajectory in the group collects the same degenerate reward (zero advantage, no learning). Ask for the stop string to be kept, or re-append it to both `text` and `action_ids` before stepping the environment. In practice you co-design the chat template, the tool-call format, and the stop strings together.
 
 **Observations can themselves be enormous.** A single web-page fetch or a verbose stack trace can be thousands of tokens. Those tokens consume context budget and inference FLOPs on every subsequent turn but never receive a gradient. This is the agentic version of the context-management problem and connects directly to [Context Engineering & Management](../08-agents-harness/04-context-engineering.html); for RL it means trajectories have wildly variable, observation-dominated lengths.
 
@@ -225,7 +234,7 @@ def masked_grpo_loss(logits, token_ids, loss_mask, advantages,
 
 !!! warning "Common pitfall"
 
-    The most insidious masking bug is *off-by-one*. Because of the next-token shift, the loss at position $i$ trains the prediction of token $i{+}1$. If your mask marks "this token is an action," but you apply it *before* the shift, you will (a) compute a loss on the last system/observation token that precedes the first action token's first prediction, and (b) drop a loss on the boundary between the last action token of a turn and the first observation token. Always shift the mask the same way you shift the targets, and unit-test it: feed a trajectory where you *know* exactly which positions should be live, and assert `mask.sum()` equals your hand count.
+    The most insidious masking bug is *off-by-one*. Because of the next-token shift, the loss at position $i$ trains the prediction of token $i{+}1$. If your mask marks "this token is an action," but you apply it *before* the shift (`loss_mask[:, :-1]` instead of `loss_mask[:, 1:]`), every live position slides one step to the right, so you will (a) **drop** the loss on the prediction of the *first* action token of every turn — that prediction is made at the position occupied by the last system/observation token before it, which your mask has zeroed — and (b) **add** a spurious loss on the *first observation token* of every turn, because the position of a turn's last action token stays live while its target is now the environment's text. Always shift the mask the same way you shift the targets, and unit-test it: feed a trajectory where you *know* exactly which positions should be live, and assert `mask.sum()` equals your hand count.
 
 A second, subtler masking issue is the **loss-normalization denominator**. Should you divide by the number of action tokens in the *trajectory*, in the *batch*, or in the *turn*? Dividing by the per-trajectory token count gives every trajectory equal weight regardless of length; dividing by the batch total gives every *token* equal weight, which over-weights long trajectories. This is the exact same length-bias controversy discussed for single-turn GRPO in [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html), but it bites harder here because trajectory lengths vary by an order of magnitude (a 1-turn success versus an 8-turn flailing failure). Practice is genuinely split. Per-trajectory normalization followed by an average over trajectories neutralizes length bias and is the safe default; DAPO-style **token-level** normalization instead sums the surrogate over every action token in the batch and divides by the batch's total action-token count, so each token contributes equally and a long trajectory is not outvoted by a lucky one-turn success; Dr. GRPO divides by a fixed constant instead, removing the length-dependent scaling altogether. Whichever you pick, pick it deliberately and log mean action-tokens-per-trajectory: a denominator that floats with realized episode lengths makes the loss scale — and hence the effective learning rate — drift as the policy's episode length drifts during training, which in agentic RL it always does.
 
@@ -274,17 +283,23 @@ $$
 
 The action at turn $t$ gets advantage based on $G_t$ rather than the full-trajectory $r$. Discounting $\gamma < 1$ means later actions get more credit for the rewards near them. You can run full GAE (Generalized Advantage Estimation) over turns if you have a value head, exactly as in PPO; the difference from token-level GAE is that the "step" is a whole turn, not a token. See [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html) for the GAE machinery.
 
-**Turn-level group baselines.** A nice critic-free variant: define the advantage of a turn as the difference its action made to the *outcome*, estimated by branching. Roll out $G$ continuations *from the same intermediate state* and use their mean outcome as the value of that state. The advantage of an action is then the group baseline of the *next* state minus the baseline of the current state — a Monte-Carlo, critic-free temporal-difference estimate. This is expensive (you branch at every turn) but gives genuinely per-turn credit without a learned value function.
+**Turn-level group baselines.** A nice critic-free variant: define the advantage of a turn as the difference its action made to the *outcome*, estimated by branching. Roll out $G$ continuations *from the same intermediate state* and use their mean outcome as the estimated value $\hat{V}(s)$ of that state. The advantage of an action is then the one-step TD residual
+
+$$
+\hat{A}(s_t, a_t) = r_t + \gamma\,\hat{V}(s_{t+1}) - \hat{V}(s_t)
+$$
+
+— a Monte-Carlo, critic-free temporal-difference estimate. With terminal-only reward the $r_t$ term vanishes on non-terminal turns and this collapses to "the group baseline of the *next* state minus the baseline of the current state." This is expensive (you branch at every turn) but gives genuinely per-turn credit without a learned value function.
 
 !!! example "Worked example: trajectory-level vs turn-level credit"
 
     A code-fixing agent attempts a bug across 3 turns. The terminal reward is the fraction of unit tests passing at the end: $r = 0.75$ (3 of 4 tests pass). The per-turn signals the environment can emit are: tests passing *after each turn* = $[0.25, 0.25, 0.75]$, so the per-turn *deltas* (new tests fixed) are $r_0 = 0.25$, $r_1 = 0.00$, $r_2 = 0.50$.
 
-    **Trajectory-level.** We sampled $G = 4$ trajectories for this bug with terminal rewards $[0.75, 0.50, 0.00, 0.25]$. Mean $\mu = 0.375$, std $\sigma \approx 0.275$. Our trajectory's advantage is
+    **Trajectory-level.** We sampled $G = 4$ trajectories for this bug with terminal rewards $[0.75, 0.50, 0.00, 0.25]$. Mean $\mu = 0.375$, population std $\sigma = \sqrt{0.078125} \approx 0.2795$. Our trajectory's advantage is
 
-    $$\hat{A} = \frac{0.75 - 0.375}{0.275 + 10^{-6}} \approx +1.36$$
+    $$\hat{A} = \frac{0.75 - 0.375}{0.2795 + 10^{-6}} \approx +1.34$$
 
-    Every action token in all 3 turns gets $+1.36$ — including turn 1, which fixed *nothing*. The signal is correct on average (this was a good trajectory) but rewards the wasted middle turn.
+    Every action token in all 3 turns gets $+1.34$ — including turn 1, which fixed *nothing*. The signal is correct on average (this was a good trajectory) but rewards the wasted middle turn.
 
     **Turn-level with $\gamma = 0.9$.** Returns-to-go:
 
@@ -423,7 +438,8 @@ Let us assemble the pieces into one training step that ties rollout, masking, cr
 import torch
 
 def agentic_grpo_step(policy, ref_policy, policy_engine, tokenizer,
-                      env_factory, tasks, G=8, beta=0.02, optimizer=None):
+                      env_factory, tasks, G=8, beta=0.02, optimizer=None,
+                      stop_strings=("</search>", "</answer>")):
     """
     One GRPO step over agentic trajectories.
       policy        : trainable model (FSDP-wrapped); provides logits for loss
@@ -431,6 +447,8 @@ def agentic_grpo_step(policy, ref_policy, policy_engine, tokenizer,
       policy_engine : inference engine that generates actions + logprobs
       env_factory   : callable -> fresh, isolated Environment instance
       tasks         : list of tasks; we sample G rollouts per task
+      stop_strings  : action-boundary tags; MUST match env_factory's grammar
+                      (these are SearchQAEnv's)
     """
     all_trajs: list[Trajectory] = []
 
@@ -439,7 +457,8 @@ def agentic_grpo_step(policy, ref_policy, policy_engine, tokenizer,
         group = []
         for _ in range(G):
             env = env_factory()                  # ISOLATED env per rollout
-            traj = rollout(policy_engine, tokenizer, env, task)
+            traj = rollout(policy_engine, tokenizer, env, task,
+                           stop_strings=stop_strings)
             group.append(traj)
         # ---- 2. CREDIT ASSIGNMENT: group-relative advantage per trajectory ----
         assign_trajectory_advantage(group)       # sets t.metadata['advantage']
@@ -759,7 +778,7 @@ Concretely, as of 2026: **RAGEN** ships ~10 Gym-compatible environments with the
     shifted mask  :  0 0 1 1 0 0 0 0 1 1     ->  shifted sum = 4
     ```
 
-    The count is preserved (still 4) because we dropped a masked (`0`) position at the front. The crucial correctness point: after the shift, the live positions are those whose *predicted* token (index $i{+}1$) is an action token — position 2 predicts token 3 (first action token), position 3 predicts token 4, position 8 predicts token 9, position 9 predicts token 10. If instead you had masked *before* shifting and then sliced the targets, you would leave a stray loss on the last pre-action token and drop the loss at the action-to-observation boundary — the exact off-by-one the admonition describes.
+    The count is preserved (still 4) because we dropped a masked (`0`) position at the front. The crucial correctness point: after the shift, the live positions are those whose *predicted* token (index $i{+}1$) is an action token — position 2 predicts token 3 (first action token), position 3 predicts token 4, position 8 predicts token 9, position 9 predicts token 10. If instead you had masked *before* shifting (`loss_mask[:, :-1]` = `0 0 0 1 1 0 0 0 0 1`, live at 3, 4 and 9), you would **drop** the loss on the prediction of each turn's first action token — positions 2 and 8 go dark — and **add** a stray loss at position 4, whose target is token 5, the first observation token. That is the exact off-by-one the admonition describes.
 
     (c) Runnable unit test:
 

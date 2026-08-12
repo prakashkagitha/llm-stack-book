@@ -27,7 +27,7 @@ This is a downward parabola, maximized at $p = 0.5$ where $\operatorname{Var}(r)
 The practical consequence: **you want to spend rollout compute on prompts whose current pass rate is near 0.5.** A prompt at $p=0.9$ gives variance $0.09$; a prompt at $p=0.5$ gives $0.25$ — roughly $2.8\times$ the signal per rollout. A prompt at $p=0.99$ gives $0.0099$, essentially nothing. This is the quantitative heart of curriculum learning in RL, and it is why "difficulty" is not a soft pedagogical nicety but the master variable controlling your estimator's efficiency.
 
 ??? note "Optional: what dividing by the group std does to this argument"
-    The clean $p(1-p)$ law is exact for the **unnormalized** advantage $A_i = r_i - \bar r$ used by Dr. GRPO and DAPO ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)): with $k$ successes out of $G$ and $\hat p = k/G$, the total advantage mass in the group is
+    The clean $p(1-p)$ law is exact for the **unnormalized** advantage $A_i = r_i - \bar r$ used by Dr. GRPO and RLOO ([GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)) — note that DAPO, despite its other departures from vanilla GRPO, *keeps* the std division ($\hat A_{i,t} = (R_i - \operatorname{mean}\{R_i\})/\operatorname{std}\{R_i\}$ in its Eq. 8), so it lands in the square-root regime below. With $k$ successes out of $G$ and $\hat p = k/G$, the total advantage mass in the unnormalized group is
 
     $$
     \sum_i |A_i| = k(1-\hat p) + (G-k)\hat p = 2G\,\hat p(1-\hat p).
@@ -126,7 +126,7 @@ $$
 \operatorname{SE}(\hat p) = \sqrt{\frac{\hat p(1-\hat p)}{k}} \;\le\; \frac{1}{2\sqrt{k}}.
 $$
 
-For $k=8$ that worst-case SE is $\approx 0.18$ — so a prompt you measured at $\hat p_0 = 0.5$ might truly be anywhere in roughly $[0.32, 0.68]$. Offline difficulty is a *prior*, not a label. Its value is in **bucketing** and in **discarding the unusable tails** (prompts the base model solves $0/k$ — possibly impossible or mis-checkered — and $k/k$ — already mastered). A common offline pipeline:
+For $k=8$ that worst-case SE is $\approx 0.18$ — so a prompt you measured at $\hat p_0 = 0.5$ has a *one-sigma* band of only $[0.32, 0.68]$, and a 95% (Wilson) interval of roughly $[0.22, 0.78]$, i.e. nearly the entire usable band. Offline difficulty is a *prior*, not a label. Its value is in **bucketing** and in **discarding the unusable tails** (prompts the base model solves $0/k$ — possibly impossible or mis-checkered — and $k/k$ — already mastered). A common offline pipeline:
 
 ```python
 import numpy as np
@@ -204,7 +204,7 @@ $$
 
 The benefit is that **every** gradient step now operates on a batch where every prompt contributes signal — no dead weight diluting the update, no wasted optimizer step. The cost is *throughput*: you must oversample. If a fraction $\rho$ of generated groups survive the filter, you must generate $B_{\text{keep}}/\rho$ groups to fill the batch — and $\rho$ shrinks as the policy improves and more prompts saturate to $p=1$. This is the throughput-vs-statistics tension flagged in the scaling chapter ([Scaling RL: Throughput, Load Balancing & The Latest Tricks](../06-rl-infra/11-scaling-rl-tricks.html)): dynamic sampling is *cheap on an async, oversubscribed generation layer* and *brutal on a synchronous one*, where the extra rollouts serialize against training.
 
-It is worth being precise about what dynamic sampling does and does not do to the estimator, because "we filter the batch" sounds like it should bias something. *Dropping* a zero-variance group is exactly gradient-neutral: that group's contribution was already the zero vector, so removing it changes only the denominator you average over — the direction of the update is untouched, and the loss stops being diluted. The bias enters through the **refill**: the prompts you generate to replace the discards are, by construction, drawn conditional on being informative, so you are optimizing a *difficulty-reweighted* objective — expected reward under a prompt distribution tilted toward mid-difficulty — rather than uniform expected reward over the pool. That is almost always what you want, but it means your training reward curve is not comparable across runs with different filters, and it is why you must evaluate on a fixed, unfiltered held-out set ([Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)) rather than reading progress off the training reward.
+It is worth being precise about what dynamic sampling does and does not do to the estimator, because "we filter the batch" sounds like it should bias something. *Dropping* a zero-variance group is exactly gradient-neutral **for a KL-free objective** (DAPO's, Dr. GRPO's): that group's contribution was already the zero vector, so removing it changes only the denominator you average over — the direction of the update is untouched, and the loss stops being diluted. (If you keep vanilla GRPO's separate $\beta\,D_{\mathrm{KL}}(\pi_\theta\,\|\,\pi_{\text{ref}})$ regularizer, which is added independently of the advantage, a zero-advantage group still carried a nonzero KL gradient — so the filter also removes its anchor to the reference policy on exactly the prompts the policy has mastered or cannot touch. Worth knowing, though most RLVR recipes now run $\beta=0$.) The bias enters through the **refill**: the prompts you generate to replace the discards are, by construction, drawn conditional on being informative, so you are optimizing a *difficulty-reweighted* objective — expected reward under a prompt distribution tilted toward mid-difficulty — rather than uniform expected reward over the pool. That is almost always what you want, but it means your training reward curve is not comparable across runs with different filters, and it is why you must evaluate on a fixed, unfiltered held-out set ([Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)) rather than reading progress off the training reward.
 
 Difficulty-targeted selection is the throughput rescue for dynamic sampling: by feeding the generator prompts that are *already likely* to be in-band, you raise the survival fraction $\rho$, so you oversample less to fill the batch. The two are complementary — selection raises $\rho$, dynamic sampling guarantees correctness when $\rho<1$.
 
@@ -219,7 +219,7 @@ Difficulty-targeted selection is the throughput rescue for dynamic sampling: by 
     \rho \approx 0.40(0.34) + 0.25(0.34) + 0.35(0.83) \approx 0.136 + 0.085 + 0.29 \approx 0.51.
     $$
 
-    To fill 256 you must generate $256 / 0.51 \approx 502$ groups — roughly **2× the rollout compute** thrown away as zero-variance, $502 \times 8 \approx 4016$ completions for 2048 kept.
+    To fill 256 you must generate $256 / 0.51 \approx 502$ groups — roughly **2× the rollout compute spent** for one batch's worth of usable signal: $502 \times 8 \approx 4016$ completions generated for 2048 kept, i.e. about *half* your generation thrown away as zero-variance.
 
     **Difficulty-targeted selection.** Now you pre-select prompts whose online EMA sits in $[0.2,0.8]$. Even accounting for estimate noise and policy drift (so realized in-band fraction is, say, 80% rather than 100%), survival climbs to roughly
 
@@ -270,7 +270,7 @@ $$
 L = \min\!\big(\rho_t A_t,\; \operatorname{clip}(\rho_t, 1-\epsilon, 1+\epsilon)A_t\big).
 $$
 
-This is the mechanism behind **asynchronous / off-policy RL** (the generator runs ahead of the trainer; rollouts are 1–4 steps stale by the time they are consumed — [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html)). The replay "buffer" here is shallow — a few steps of staleness, not a DQN-style million-transition reservoir — because the importance weights blow up and the clipped gradient goes to zero once $\pi_\theta$ has drifted too far from $\pi_{\text{old}}$. **Staleness is the half-life of a stored trajectory.** Beyond a few steps the IS weights are so far from 1 that clipping zeroes the contribution, so the trajectory is dead weight. A practical buffer evicts trajectories older than a staleness bound $\tau_{\max}$ (e.g. 2–4 policy versions) and tracks the *fraction of tokens being clipped* as a health metric — if most tokens are clipped, your buffer is too stale and you are training on noise.
+This is the mechanism behind **asynchronous / off-policy RL** (the generator runs ahead of the trainer; rollouts are 1–4 steps stale by the time they are consumed — [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html)). The replay "buffer" here is shallow — a few steps of staleness, not a DQN-style million-transition reservoir — because the importance weights blow up once $\pi_\theta$ has drifted too far from $\pi_{\text{old}}$. **Staleness is the half-life of a stored trajectory.** Beyond a few steps the IS weights are so far from 1 that, for *positive*-advantage tokens, the upper clip binds, the gradient is zeroed, and the trajectory is dead weight. Be careful not to over-generalize that to the whole trajectory: for a token with $A_t<0$ and $\rho_t\gg1$, $\min(\rho_t A_t,\,\operatorname{clip}(\rho_t)A_t)$ selects the **unclipped** branch (with $A_t<0$, $\rho_t A_t$ is the smaller number), so the contribution is not zeroed at all — it grows linearly in $\rho_t$. A stale buffer therefore fails in two ways at once: dead positive tokens and oversized negative ones. That second failure is exactly why dual-clip PPO exists, and why async stacks put a *lower* clip on $\rho_t A_t$ in addition to a staleness bound. A practical buffer evicts trajectories older than a staleness bound $\tau_{\max}$ (e.g. 2–4 policy versions) and tracks the *fraction of tokens being clipped* as a health metric — if most tokens are clipped, your buffer is too stale and you are training on noise.
 
 {{fig:rldata-replay-halflife}}
 
@@ -390,8 +390,10 @@ def rl_step(tasks, engine, B_keep=64, G=8, target_p=0.5,
 
 
 # ---------------------------------------------------------------------------
-# Run it. Watch survival rho recover toward 1 (selection feeds in-band prompts)
-# and the kept-difficulty histogram concentrate near the target band.
+# Run it. Survival rho starts at its steady state (~0.90) and stays there: it is
+# ALREADY well above the ~0.87 a uniform selector scores on this same pruned pool,
+# and above the ~0.81 an unseeded/unpruned run scores. Watch the level, not a
+# trend -- plus the kept-difficulty histogram concentrating near the target band.
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # A pool spanning the full difficulty range, incl. the dead tails we must avoid.
@@ -420,18 +422,23 @@ if __name__ == "__main__":
               f"| buckets[0.0-1.0]={stats['bucket_counts']}")
 ```
 
-Three behaviors to watch when you run this. First, the **survival fraction $\rho$** sits around $0.9$ (oversampling factor $\approx1.1\times$) against a uniform-sampling baseline of $\mathbb{E}[1 - p^8 - (1-p)^8] \approx 0.81$ for this pool — that is the oversampling-tax saving from the worked example, made mechanical. Second, the **kept-difficulty histogram concentrates in the middle buckets** (typically $\approx 80\%$ of kept groups in buckets 1–3): even though the pool spans $[0.02, 0.98]$, the batch you actually train on is the informative middle, by construction. (Read buckets 1–3 *together*: at $G=8$ the middle bucket $[0.4, 0.6)$ contains only the single realizable value $\hat p = 0.5$, so its count is structurally low — a discretization artifact, not a dip in the band.) Third, as `learn_drift` pushes mastered tasks toward $p=1$, the Beta posteriors follow, those tasks stop being selected, and harder tasks rotate into the band — the emergent curriculum, in code.
+Three behaviors to watch when you run this. First, the **survival fraction $\rho$** sits around $0.9$ (oversampling factor $\approx1.1\times$) — but be careful which baseline you credit it against, because two mechanisms are stacked here. A uniform selector on the *raw* pool scores $\mathbb{E}[1 - p^8 - (1-p)^8] \approx 0.81$; a uniform selector on the *pruned* pool that the loop actually sees scores $\approx 0.85$–$0.87$, because dropping the $0/k$ and $k/k$ tails already tilts the surviving density toward the middle: the pruning keeps a task with exactly the survival probability $\sigma(p) = 1-p^8-(1-p)^8$, so the pruned pool's baseline is $\mathbb{E}[\sigma^2]/\mathbb{E}[\sigma] \approx 0.87$ rather than $\mathbb{E}[\sigma] \approx 0.81$. So tail-pruning buys $0.81 \to 0.87$ and Thompson selection buys $0.87 \to 0.90$ on top: both are real, but the selector's own edge here is the smaller half. Second, the **kept-difficulty histogram concentrates in the middle buckets** (typically $\approx 80\%$ of kept groups in buckets 1–3): even though the pool spans $[0.02, 0.98]$, the batch you actually train on is the informative middle, by construction. (Read buckets 1–3 *together*: at $G=8$ the middle bucket $[0.4, 0.6)$ contains only the single realizable value $\hat p = 0.5$, so its count is structurally low — a discretization artifact, not a dip in the band.) Third — and this one you must *make* happen — the emergent curriculum: as `learn_drift` pushes mastered tasks toward $p=1$, the Beta posteriors follow, those tasks stop being selected, and harder tasks rotate into the band. The mechanism is in the code, but it is invisible at the shipped settings: with 3200 surviving tasks, `B_keep=64` and only 8 steps, roughly 500 tasks are ever rolled out, no task is rolled out more than 3 times, and `lr=0.02` moves any `true_p` by at most $0.04$ — the pool simply does not have time to move. To actually watch the band turn over, shrink the pool to `range(400)`, raise the drift to `lr=0.3`, and run ~50 steps: the pool's mean `true_p` climbs from $0.56$ to $0.99$, the in-band fraction falls from $0.70$ to $0.00$, and $\rho$ collapses from $0.91$ to $0.12$ as the band empties out. That collapse *is* the emergent curriculum running to completion — and it is the corpus-exhaustion signal from the Interview Corner, which is what a real run hits when its prompt pool has nothing hard left.
 
 There is an honest caveat worth measuring yourself. Swap the Thompson draw for the deterministic posterior mean (Exercise 5's `select_band_greedy`) and $\rho$ climbs to $\approx 0.97$. Thompson sampling pays an **exploration tax**, and the tax is worse the larger the candidate pool: picking the top 4% of 3200 tasks by a *sampled* pass rate selects partly on posterior noise, so some genuinely-easy tasks ride a lucky draw into the batch. That exploration is not wasted — it is what re-checks stale estimates as the policy drifts, which greedy selection never does — but the trade is real. The practical compromise is to restrict Thompson to a *shortlist* (greedy-filter to a few hundred plausible tasks, then sample within it), or to widen the offline $k$ so the posteriors are sharp enough that the draws are not noise.
 
 ```python
 # Bolt-on: a prioritized PROMPT buffer (PER at the task level). Priority = how
-# close a task is to the target band, with a small age bonus so we revisit
-# under-sampled tasks. This is the on-policy, FREE kind of replay.
-def prompt_priority(t: TaskState, target_p=0.5, age_w=0.05):
-    closeness = 1.0 / (abs(t.posterior_mean() - target_p) + 0.05)  # near band -> high
-    uncertainty = (t.s * t.f) / ((t.s + t.f) ** 2 * (t.s + t.f + 1))  # Beta variance
-    return closeness + age_w * uncertainty  # exploit band + explore uncertain tasks
+# close a task is to the target band, plus a posterior-variance bonus so we
+# revisit under-sampled (wide-posterior) tasks. On-policy, FREE kind of replay.
+def prompt_priority(t: TaskState, target_p=0.5, explore_w=5.0):
+    closeness = 1.0 / (abs(t.posterior_mean() - target_p) + 0.05)  # in [1.8, 20]
+    var = (t.s * t.f) / ((t.s + t.f) ** 2 * (t.s + t.f + 1))       # Beta variance
+    # SCALE MATTERS: the raw Beta variance maxes out at 1/12 (at Beta(1,1)) and is
+    # only ~0.02 once s+f ~ 10, so added raw against a closeness term of up to 20
+    # it can never reorder anything -- the "explore" term would be decorative.
+    # Divide by its 1/12 maximum so it lands in [0, 1] and give it real weight.
+    uncertainty = 12.0 * var
+    return closeness + explore_w * uncertainty  # exploit band + explore uncertain
 
 def sample_from_buffer(tasks, n, target_p=0.5, temperature=1.0):
     pr = np.array([prompt_priority(t, target_p) for t in tasks])
@@ -441,7 +448,7 @@ def sample_from_buffer(tasks, n, target_p=0.5, temperature=1.0):
     return [tasks[i] for i in idx]
 ```
 
-The prioritized prompt buffer is the persistent, sampling-without-replacement-per-step version of the Thompson selector: priority rewards proximity to the band (exploit) plus posterior variance (explore under-sampled tasks). Note this buffer stores *tasks*, never old completions — it is strictly on-policy and therefore free of importance-weighting concerns, unlike the staleness buffer discussed earlier.
+The prioritized prompt buffer is the persistent, sampling-without-replacement-per-step version of the Thompson selector: priority rewards proximity to the band (exploit) plus posterior variance (explore under-sampled tasks). The normalization in that second term is not cosmetic — it is the difference between an exploration bonus that changes about half the selected batch and one that is arithmetically incapable of changing anything. Whenever you add two heuristic terms, check their dynamic ranges before you tune the weight. Note this buffer stores *tasks*, never old completions — it is strictly on-policy and therefore free of importance-weighting concerns, unlike the staleness buffer discussed earlier.
 
 ## Putting it together: the data-side knobs that move sample efficiency
 
@@ -461,14 +468,14 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
 ## Key Takeaways
 
 !!! key "Key Takeaways"
-    - **Difficulty is the master variable.** For a binary verifiable reward, gradient signal per prompt scales as $p(1-p)$ — exactly so for the unnormalized Dr. GRPO/DAPO advantage, as $\sqrt{p(1-p)}$ if you keep GRPO's std division — peaking at pass rate $p=0.5$ and vanishing at both ends, so a prompt's *current* pass rate decides its worth.
+    - **Difficulty is the master variable.** For a binary verifiable reward, gradient signal per prompt scales as $p(1-p)$ — exactly so for the unnormalized Dr. GRPO/RLOO advantage, as $\sqrt{p(1-p)}$ if you keep the std division (as vanilla GRPO and DAPO both do) — peaking at pass rate $p=0.5$ and vanishing at both ends, so a prompt's *current* pass rate decides its worth.
     - **Pass rate is non-stationary.** It's a property of the prompt *and the current policy*; a static difficulty label decays as the policy learns. Estimate difficulty **online** (EMA or a decayed Beta–Bernoulli posterior), never once-and-forever.
     - **Construction and QC dominate validity.** Verifiable checkers, eval decontamination, and near-duplicate removal matter more in RL than SFT because RL adversarially exploits any reward defect; prune the $0/k$ and $k/k$ tails before training to delete prompts that can never contribute.
     - **Difficulty-targeted online selection** (greedy-to-target or Thompson sampling on the Beta posterior) keeps realized groups near a $p\approx0.5$ *band*, raising the dynamic-sampling survival fraction $\rho$ and cutting the oversampling tax — often a ~20–30% end-to-end win, free.
     - **Dynamic sampling** drops zero-variance groups and oversamples to refill, guaranteeing every gradient step trains on signal — cheap on an async/oversubscribed generator, brutal on a synchronous one.
     - **Curriculum is emergent, not authored:** with online targeting, the band's contents drift from easy to hard automatically as the policy masters material; regret/learning-progress weighting pushes compute to the competence frontier.
     - **Three buffers, three jobs:** a prioritized *prompt* buffer (on-policy, free, the curriculum); a *shallow staleness* buffer of completions with stored log-probs for async overlap (off-policy, importance-corrected, half-life of a few steps); and a *success/hard-case* buffer for anti-forgetting on sparse agentic tasks.
-    - **Trajectory replay has a half-life:** stored completions go stale as the policy drifts; importance weights blow up and clipping zeroes their gradient, so evict beyond a staleness bound and monitor the clipped-token fraction.
+    - **Trajectory replay has a half-life:** stored completions go stale as the policy drifts; importance weights blow up, clipping zeroes the *positive*-advantage tokens while leaving *negative*-advantage ones unclipped above $1+\epsilon$ (hence dual-clip), so evict beyond a staleness bound and monitor the clipped-token fraction.
     - **Use the real tools:** `math-verify` for math checking (never a regex), `datatrove`/`datasketch` for pool dedup and decontamination, `verifiers`-style environments as the packaging unit, and veRL's `algorithm.filter_groups` + oversized `data.gen_batch_size` (or OpenRLHF's equivalent) for dynamic sampling — TRL gives you $G$ and the clipping knobs but leaves prompt selection to a custom sampler.
 
 !!! sota "State of the Art & Resources (2026)"

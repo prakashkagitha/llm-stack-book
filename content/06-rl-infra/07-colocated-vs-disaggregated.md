@@ -116,7 +116,7 @@ Time-slicing only works if you can *make room*. The mechanism is offloading: mov
 
 2. **Weight offload / KV-cache release.** The inference engine's KV pool (tens of GB) is released between rollouts. Inference *weights* may be kept resident (they are the same bytes the trainer needs) or, in the most aggressive colocation, the inference engine and trainer literally alias the *same* weight tensors — there is one copy of the parameters and a "view" of them for each role.
 
-The offload transfer is not free. A 7B model's Adam state is $12 \times 7\text{e}9 = 84$ GB. Over a 64 GB/s PCIe 4.0 x16 link that is $84 / 64 \approx 1.3$ s each way, or 2.6 s of pure copy per iteration. Over NVLink-C2C (Grace-Hopper, hundreds of GB/s) it is a fraction of that. This copy time is the hidden tax of colocated time-slicing, and it is why fast host interconnects (NVLink-C2C, large pinned buffers, double-buffered async copies) matter so much.
+The offload transfer is not free. A 7B model's Adam state is $12 \times 7\text{e}9 = 84$ GB. Over a 64 GB/s PCIe 5.0 x16 link (PCIe 4.0 x16 is half that per direction, ~32 GB/s) that is $84 / 64 \approx 1.3$ s each way, or 2.6 s of pure copy per iteration. Over NVLink-C2C (Grace-Hopper, hundreds of GB/s) it is a fraction of that. This copy time is the hidden tax of colocated time-slicing, and it is why fast host interconnects (NVLink-C2C, large pinned buffers, double-buffered async copies) matter so much.
 
 !!! tip "Practitioner tip"
 
@@ -200,16 +200,23 @@ class WeightSyncGroup:
         )
         self.src_rank = 0            # trainer rank 0 is the broadcast root
 
+    # NCCL pairs a sender with its receivers purely by CALL ORDER -- the name is
+    # never on the wire. So BOTH sides must walk the parameters in the SAME order;
+    # we pin that order with sorted(names). Iterating a list on one side and a
+    # dict on the other is how weights get silently written into the wrong buffer.
+
     def push(self, named_params):
         # Called on the TRAINER. Broadcasts each weight to all inference ranks.
-        for name, tensor in named_params:
+        params = dict(named_params)
+        for name in sorted(params):
             # tensor must be a full (gathered) parameter in the layout the
             # inference engine expects. Resharding (§5) happens BEFORE this call.
-            dist.broadcast(tensor, src=self.src_rank)
+            dist.broadcast(params[name], src=self.src_rank)
 
     def pull(self, param_buffers):
         # Called on each INFERENCE rank. Receives into its parameter buffers.
-        for name, buf in param_buffers.items():
+        for name in sorted(param_buffers):
+            buf = param_buffers[name]
             dist.broadcast(buf, src=self.src_rank)     # buf filled in place
 ```
 
@@ -370,11 +377,11 @@ When rollout dominates (long reasoning traces), $U_\text{colo}$ is small — you
 
 !!! example "Worked example: colocated vs disaggregated for a 7B reasoning run"
 
-    Setup: a 7B policy, GRPO with $G=8$ samples per prompt, average completion length 4000 tokens (long chain-of-thought). We have 16 H100-80GB GPUs and an NVLink fabric at ~900 GB/s intra-node. Per RL iteration we process a global batch of 256 prompts (= 2048 rollout sequences). Suppose the measured per-iteration stage times are:
+    Setup: a 7B policy, GRPO with $G=8$ samples per prompt, average completion length 4000 tokens (long chain-of-thought). We have 16 H100-80GB GPUs and an NVLink fabric at ~900 GB/s intra-node. Per RL iteration we process a global batch of 32 prompts (= 256 rollout sequences, so about 1.0M trained tokens — enough that the 6P-FLOPs-per-token gradient step stays comfortably under the 16-GPU roofline). Suppose the measured per-iteration stage times are:
 
     | Stage | Time | Notes |
     |---|---|---|
-    | $T_\text{rollout}$ | 40 s | decode 2048 × 4000 tokens, memory-bound |
+    | $T_\text{rollout}$ | 40 s | decode 256 × 4000 tokens, memory-bound |
     | $T_\text{reward}$ | 3 s | math/code verifiers, partly overlappable |
     | $T_\text{train}$ | 8 s | a few GRPO minibatch fwd+bwd steps |
     | $T_\text{offload}$ | 3 s | Adam state out+in over PCIe per iter |
@@ -388,9 +395,9 @@ When rollout dominates (long reasoning traces), $U_\text{colo}$ is small — you
 
     $$U_\text{colo} = \frac{8}{54} \approx 15\%$$
 
-    For 39 of every 54 seconds, 16 training-capable H100s are doing memory-bound decode — a poor use of tensor cores.
+    For 40 of every 54 seconds, 16 training-capable H100s are doing memory-bound decode — a poor use of tensor cores.
 
-    **Disaggregated async (split 16 GPUs as 4 train + 12 rollout):** With 12 GPUs on rollout instead of 16, raw rollout throughput drops to $16/12$ of before, so $T_\text{rollout}' \approx 40 \times 16/12 \approx 53$ s for the same batch. But rollout now overlaps training, and we can let the rollout pool stay full. With 4 training GPUs, $T_\text{train}' \approx 8 \times 16/4 \approx 32$ s (fewer GPUs, more time) — but training overlaps rollout. The iteration is bounded by the slower stage plus sync:
+    **Disaggregated async (split 16 GPUs as 4 train + 12 rollout):** With 12 GPUs on rollout instead of 16, raw rollout throughput drops to $12/16$ of before (so the time rises by $16/12$), giving $T_\text{rollout}' \approx 40 \times 16/12 \approx 53$ s for the same batch. But rollout now overlaps training, and we can let the rollout pool stay full. With 4 training GPUs, $T_\text{train}' \approx 8 \times 16/4 \approx 32$ s (fewer GPUs, more time) — but training overlaps rollout. The iteration is bounded by the slower stage plus sync:
 
     $$T_\text{iter}^\text{async} \approx \max(53,\ 32) + 0.02 \approx 53\ \text{s}$$
 
@@ -402,7 +409,7 @@ The example also exposes the staleness cost we hid: in the async case, the rollo
 
     **Q:** You are designing an RL system to post-train a 32B model with very long (8k-token) reasoning rollouts. You have a fixed budget of 64 H100s. Walk me through whether you colocate or disaggregate, how you sync weights, and what the resharding problem forces you to handle.
 
-    **A:** With 8k-token rollouts, the run is heavily rollout-bound — decode will dominate wall-clock — so I disaggregate. I split the 64 GPUs into a small training pool and a large rollout pool, e.g. 16 train + 48 rollout, sized so training time hides under rollout time. The trainer runs FSDP or Megatron TP+PP to fit optimizer state for 32B (~512 GB of Adam state alone); the rollout pool runs vLLM/SGLang at a low TP degree (TP=2 or 4) to maximize KV-cache headroom for the long sequences. I run **asynchronous** with staleness 1, relying on the PPO/GRPO importance ratio plus clipping to correct the off-policy lag.
+    **A:** With 8k-token rollouts, the run is heavily rollout-bound — decode will dominate wall-clock — so I disaggregate. I split the 64 GPUs into a small training pool and a large rollout pool, e.g. 16 train + 48 rollout, sized so training time hides under rollout time. The trainer runs FSDP or Megatron TP+PP to fit optimizer state for 32B ($12P \approx 384$ GB of Adam state alone, $16P \approx 512$ GB of total training state); the rollout pool runs vLLM/SGLang at a low TP degree (TP=2 or 4) to maximize KV-cache headroom for the long sequences. I run **asynchronous** with staleness 1, relying on the PPO/GRPO importance ratio plus clipping to correct the off-policy lag.
 
     For weight sync I use **NCCL broadcast** over a process group spanning both pools — 64 GB of bf16 weights at NVLink/IB bandwidth is well under a second, so I can afford to sync every step. The **resharding problem** forces me to (1) gather the FSDP-sharded params into full tensors layer by layer, (2) fuse Q/K/V and gate/up into the engine's fused layout, honoring GQA head grouping, and (3) re-split from the trainer's TP degree to the inference TP degree before broadcasting. I keep an explicit name+shape map between the two layouts and stream one layer at a time to cap transient memory. If the inference engine runs FP8, sync also re-quantizes from the bf16 master on each push. I'd checkpoint to disk periodically as the robust fallback and for fault tolerance, but never use checkpoint-reload on the hot sync path because it is orders of magnitude too slow.
 
@@ -487,14 +494,14 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
 
     Why simultaneous colocation fails: the training state alone (112 GB) already exceeds one 80 GB GPU, so it must be sharded across GPUs *and* you still cannot additionally park 14 GB of inference weights plus a useful (tens-of-GB) KV cache on the same devices at the same instant. The combined footprint does not fit, so the colocated design must **time-slice**: during rollout the trainer's $12P = 84$ GB of optimizer state is offloaded to host RAM to free room for the KV cache, and during training the inference engine sleeps and releases its KV pool. The two roles take turns owning HBM rather than coexisting.
 
-**2.** (Offload cost.) During the rollout phase of the time-sliced colocated loop, the 7B model's Adam state is offloaded to host RAM and later reloaded before the optimizer step. (a) How many bytes is the Adam state ($m$, $v$, fp32 master)? (b) Compute the round-trip (out + in) copy time over a PCIe 4.0 x16 link at 64 GB/s. (c) Recompute the round-trip over an NVLink-C2C link at 450 GB/s, and state the speedup. (d) Why does the chapter insist on *pinned* host memory and a *dedicated CUDA stream* for these copies?
+**2.** (Offload cost.) During the rollout phase of the time-sliced colocated loop, the 7B model's Adam state is offloaded to host RAM and later reloaded before the optimizer step. (a) How many bytes is the Adam state ($m$, $v$, fp32 master)? (b) Compute the round-trip (out + in) copy time over a PCIe 5.0 x16 link at 64 GB/s per direction. (c) Recompute the round-trip over an NVLink-C2C link at 450 GB/s, and state the speedup. (d) Why does the chapter insist on *pinned* host memory and a *dedicated CUDA stream* for these copies?
 
 ??? note "Solution"
     (a) The offloaded Adam state is the $12P$ term (m, v, and the fp32 master copy):
 
     $$12P = 12 \times 7\text{e}9 = 8.4\text{e}10\ \text{bytes} = 84\ \text{GB}.$$
 
-    (b) PCIe 4.0 x16 at 64 GB/s, one way: $84 / 64 \approx 1.31$ s. Round trip (out then back in):
+    (b) PCIe 5.0 x16 at 64 GB/s per direction, one way: $84 / 64 \approx 1.31$ s. Round trip (out then back in):
 
     $$2 \times 1.31 \approx 2.6\ \text{s per iteration}.$$
 
@@ -601,4 +608,4 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
     print("fused:", tuple(full.shape), "| per-rank:", tuple(shards[0].shape))
     ```
 
-    Output: `fused: (6144, 4096) | per-rank: (3072, 4096)`. The full fused tensor is $(32 + 2\cdot 8)\cdot 128 = 6144$ rows, and each of the 2 ranks receives a `[3072, 4096]` block holding 16 Q, 4 K, and 4 V heads in the correct `[Q; K; V]` order. Each shard is what Mechanism 2 broadcasts (or Mechanism 3 aliases) into inference rank $r$'s `qkv_proj` buffer. Note that fusing first and then `torch.chunk(full, 2, dim=0)` would give rank 0 all 32 Q heads plus half the K heads — silent garbage, precisely the pitfall in the "name and shape mismatch" warning.
+    Output: `fused: (6144, 4096) | per-rank: (3072, 4096)`. The full fused tensor is $(32 + 2\cdot 8)\cdot 128 = 6144$ rows, and each of the 2 ranks receives a `[3072, 4096]` block holding 16 Q, 4 K, and 4 V heads in the correct `[Q; K; V]` order. Each shard is what Mechanism 2 broadcasts (or Mechanism 3 aliases) into inference rank $r$'s `qkv_proj` buffer. Note that fusing first and then `torch.chunk(full, 2, dim=0)` would give rank 0 only the first 24 Q heads and no K/V heads at all, while rank 1 would get the last 8 Q heads plus every K and V head — silent garbage, precisely the pitfall in the "name and shape mismatch" warning.

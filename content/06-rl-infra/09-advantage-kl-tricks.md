@@ -91,12 +91,17 @@ def compute_gae(rewards, values, gamma=1.0, lam=0.95, mask=None):
     advantages = torch.zeros_like(rewards)
     last_gae = torch.zeros(B, device=rewards.device)
     # Append a bootstrap value of 0 past the end (terminal state).
+    zeros = torch.zeros(B, device=rewards.device)
     for t in reversed(range(T)):
-        next_value = values[:, t + 1] if t + 1 < T else torch.zeros(B, device=rewards.device)
+        # Whether V(s_{t+1}) and the carried A_{t+1} exist is decided by the
+        # mask at t+1, NOT at t: at the last real token the next slot is
+        # padding, so we must bootstrap from 0 rather than from V(pad).
+        next_mask = mask[:, t + 1] if t + 1 < T else zeros
+        next_value = values[:, t + 1] * next_mask if t + 1 < T else zeros
         # TD residual delta_t = r_t + gamma * V(s_{t+1}) - V(s_t)
-        delta = rewards[:, t] + gamma * next_value * mask[:, t] - values[:, t]
+        delta = rewards[:, t] + gamma * next_value - values[:, t]
         # Recurrence: A_t = delta_t + gamma*lam*A_{t+1}
-        last_gae = delta + gamma * lam * last_gae * mask[:, t]
+        last_gae = delta + gamma * lam * last_gae * next_mask
         advantages[:, t] = last_gae
     returns = advantages + values          # value-function targets
     return advantages * mask, returns * mask
@@ -315,8 +320,13 @@ def ppo_clip_loss(ratio, adv, mask, eps_low=0.2, eps_high=0.28):
     unclipped = ratio * adv
     clipped = torch.clamp(ratio, 1 - eps_low, 1 + eps_high) * adv
     loss = -torch.min(unclipped, clipped)
-    # diagnostic: fraction of tokens where the clip was active
-    clipfrac = ((ratio > 1 + eps_high) | (ratio < 1 - eps_low)).float()
+    # Diagnostic: fraction of tokens where the clip was *active*, i.e. where
+    # `min` actually selected the clipped branch. The bound alone is not
+    # enough -- with adv > 0 and ratio < 1-eps_low the clamp binds but `min`
+    # still picks the unclipped term, so nothing is clipped. This sign
+    # condition is what TRL and verl log.
+    clipfrac = (((ratio > 1 + eps_high) & (adv > 0))
+                | ((ratio < 1 - eps_low) & (adv < 0))).float()
     clipfrac = (clipfrac * mask).sum() / mask.sum()
     return (loss * mask).sum() / mask.sum(), clipfrac
 ```
@@ -333,7 +343,7 @@ $$
 \end{cases}
 $$
 
-The extra $\max(\cdot, c\hat A_t)$ floors how negative the surrogate can get, capping the gradient magnitude from pathological ratios. Dual-clip matters most in long-horizon or off-policy-heavy settings (multiple epochs over the same rollouts, async RL with stale weights). In on-policy single-epoch reasoning runs it rarely fires.
+The extra $\max(\cdot, c\hat A_t)$ floors how negative the surrogate can get; once that floor binds the selected branch $c\hat A_t$ is constant in $\theta$, so the gradient through the ratio is killed rather than merely damped, and a pathological ratio can no longer blow up the update. Dual-clip matters most in long-horizon or off-policy-heavy settings (multiple epochs over the same rollouts, async RL with stale weights). In on-policy single-epoch reasoning runs it rarely fires.
 
 ```python
 def dual_clip_loss(ratio, adv, mask, eps=0.2, c=3.0):
@@ -358,7 +368,7 @@ def dual_clip_loss(ratio, adv, mask, eps=0.2, c=3.0):
 
     - $\rho_t\hat A_t = 4.0\times(-1.0) = -4.0$.
     - Clipped: $\operatorname{clip}(4.0, 0.8, 1.2)\times(-1.0)=1.2\times(-1.0)=-1.2$. Standard PPO $\min(-4.0,-1.2)=-4.0$.
-    - Dual-clip floor: $\max(-4.0,\ c\hat A_t)=\max(-4.0,\ -3.0)=-3.0$. The surrogate is floored at $-3.0$ instead of $-4.0$, shrinking the gradient magnitude by 25% and preventing a single drifted token from dominating the batch update.
+    - Dual-clip floor: $\max(-4.0,\ c\hat A_t)=\max(-4.0,\ -3.0)=-3.0$. The surrogate is floored at $-3.0$ instead of $-4.0$, and — as in the positive-advantage case above — the selected branch $c\hat A_t$ is a *constant* w.r.t. $\theta$, so the gradient *through the ratio* is **zero** rather than proportional to $\hat A_t$. Without the floor this one drifted token would have contributed a $-4.0$ surrogate with a live $\hat A_t=-1.0$ gradient and could dominate the batch update.
 
     A healthy run keeps the **clip fraction** (tokens where the clip is active) in the rough range of 5–20%. A clip fraction climbing past ~40% means the policy is moving faster than PPO's trust region allows — lower the LR, lower the number of inner epochs, or refresh $\pi_{\theta_{\text{old}}}$ more often.
 
@@ -369,10 +379,10 @@ def dual_clip_loss(ratio, adv, mask, eps=0.2, c=3.0):
 To prevent premature collapse onto a single high-probability continuation (which kills exploration and tanks reasoning diversity), PPO adds an **entropy bonus**: maximize the policy's per-token entropy $H(\pi_\theta(\cdot\mid s_t))$ with a small coefficient $\alpha$:
 
 $$
-\mathcal{L} = \mathcal{L}^{\text{clip}} - \alpha\, H(\pi_\theta) + \beta\,\text{KL}.
+\mathcal{L} = -\mathcal{L}^{\text{clip}} - \alpha\, H(\pi_\theta) + \beta\,\text{KL}.
 $$
 
-Note the sign: we *subtract* entropy from the (minimized) loss, i.e. we reward high entropy. The full-distribution entropy $H = -\sum_v p_v\log p_v$ is computed from the *logits over the whole vocabulary*, not from the sampled token, so it needs the logits tensor — a non-trivial memory cost at vocab sizes of 128k+.
+Note the signs: $\mathcal{L}^{\text{clip}}$ was defined above as a surrogate to be *maximized*, so it enters the minimized loss negated; and we *subtract* entropy from that loss, i.e. we reward high entropy. The full-distribution entropy $H = -\sum_v p_v\log p_v$ is computed from the *logits over the whole vocabulary*, not from the sampled token, so it needs the logits tensor — a non-trivial memory cost at vocab sizes of 128k+.
 
 ```python
 def entropy_from_logits(logits, mask):
@@ -409,9 +419,10 @@ Dr. GRPO attacks the same knob from the opposite side, and the two critiques are
 A parallel 2025–2026 development, **GSPO** (Group Sequence Policy Optimization, Zheng et al., 2025), pushes this token-vs-sequence granularity debate into the *importance ratio* itself: it replaces GRPO's per-token ratio with a single sequence-level ratio (the length-normalized geometric mean of per-token ratios) and clips at the sequence level, which sharply reduces the length-accumulated variance of token-level importance sampling and stabilizes long-response and Mixture-of-Experts RL — it was used to train the Qwen3 models.
 
 ```python
-def aggregate_loss(per_token_loss, mask, mode="token_mean"):
+def aggregate_loss(per_token_loss, mask, mode="token_mean", max_len=None):
     """Reduce (B, T) per-token loss to a scalar. The mode silently changes
-    the objective — choose deliberately."""
+    the objective — choose deliberately. `max_len` is the fixed generation
+    cap used by the `token_mean_fixed` mode."""
     if mode == "token_mean":
         # every token equal -> long sequences contribute proportionally more
         return (per_token_loss * mask).sum() / mask.sum().clamp_min(1.0)
@@ -421,9 +432,13 @@ def aggregate_loss(per_token_loss, mask, mode="token_mean"):
         seq_loss = (per_token_loss * mask).sum(dim=1) / seq_len
         return seq_loss.mean()
     elif mode == "token_mean_fixed":
-        # DAPO-style: divide by a fixed constant (e.g. max_len) so the
-        # denominator does not depend on batch composition
-        return (per_token_loss * mask).sum() / per_token_loss.shape[1]
+        # Dr. GRPO / DAPO-style: divide by B * max_len, a constant that depends
+        # neither on the sequences' lengths nor on how much padding this batch
+        # happens to carry. NOTE: per_token_loss.shape[1] is the *padded* width
+        # of this batch, so it would NOT be a fixed constant.
+        if max_len is None:
+            raise ValueError("token_mean_fixed requires max_len")
+        return (per_token_loss * mask).sum() / (per_token_loss.shape[0] * max_len)
     else:
         raise ValueError(mode)
 ```
@@ -480,8 +495,9 @@ def grpo_train_step(policy_logp, old_logp, ref_logp, full_logits,
     loss = (per_tok * mask).sum() / mask.sum().clamp_min(1.0) - ent_coef * ent
     # 6) Diagnostics — log these every step.
     with torch.no_grad():
-        clipfrac = (((ratio > 1 + eps_high) | (ratio < 1 - eps_low)).float()
-                    * mask).sum() / mask.sum()
+        clipped_sel = (((ratio > 1 + eps_high) & (adv > 0))
+                       | ((ratio < 1 - eps_low) & (adv < 0))).float()
+        clipfrac = (clipped_sel * mask).sum() / mask.sum()
         approx_kl = (kl * mask).sum() / mask.sum()
     return loss, {"clipfrac": clipfrac.item(), "kl": approx_kl.item(),
                   "entropy": ent.item(), "ratio_mean": ratio.mean().item()}
@@ -648,7 +664,7 @@ Read the logged metrics with the same decoder ring: TRL's `clip_ratio` and verl'
 
     **KL-in-reward.** The KL is subtracted from the scalar reward *before* advantages are computed: $\tilde r_t = r\cdot\mathbb{1}[t{=}T] - \beta\,k_{\text{KL}}(s_t)$. Advantages are then computed from $\tilde r_t$ and enter the loss only *multiplied against* $\log\pi_\theta$ (the policy-gradient term). The KL contributes to the loss purely as a numeric constant folded into $\hat A_t$; the gradient w.r.t. $\theta$ flows through the $\log\pi_\theta(a_t)$ factor, **not** through the KL value. So the KL only needs to be a number — it is treated as part of the (constant, detached) return/advantage. This is why in the classic formulation the KL is computed under `no_grad` and just added to the reward.
 
-    **KL-in-loss.** The KL is an explicit additive term: $\mathcal{L} = \mathcal{L}^{\text{clip}} + \beta\,\mathbb{E}[k_{\text{KL}}]$. Here we *want* $\nabla_\theta$ of the KL term itself to push the policy back toward the reference. That requires $k_3 = e^{\text{logr}} - \text{logr} - 1$ with $\text{logr} = \log\pi_{\text{ref}} - \log\pi_\theta$ to remain connected to $\theta$ through $\log\pi_\theta$.
+    **KL-in-loss.** The KL is an explicit additive term: $\mathcal{L} = -\mathcal{L}^{\text{clip}} + \beta\,\mathbb{E}[k_{\text{KL}}]$ (recall $\mathcal{L}^{\text{clip}}$ is the *maximized* surrogate, so it enters the minimized loss negated). Here we *want* $\nabla_\theta$ of the KL term itself to push the policy back toward the reference. That requires $k_3 = e^{\text{logr}} - \text{logr} - 1$ with $\text{logr} = \log\pi_{\text{ref}} - \log\pi_\theta$ to remain connected to $\theta$ through $\log\pi_\theta$.
 
     **If you `.detach()` $k_3$ here:** the KL term becomes a constant w.r.t. $\theta$, so $\nabla_\theta(\beta\,k_3) = 0$. The regularizer would contribute nothing to the gradient — the policy would receive *no* pull back toward the reference from the KL term, and $\beta$ would effectively be zero for optimization purposes (it would still change the reported loss value, misleadingly). The policy would be free to drift exactly as if there were no KL penalty.
 
@@ -718,4 +734,4 @@ Read the logged metrics with the same decoder ring: TRL's `clip_ratio` and verl'
     - $\rho\hat A = 4.0\times(-1.0) = -4.0$.
     - $\operatorname{clip}(4.0,\,0.8,\,1.2) = 1.2 \Rightarrow$ clipped $= 1.2\times(-1.0) = -1.2$.
     - `standard` $= \min(-4.0, -1.2) = -4.0$.
-    - Since $\hat A < 0$: `neg` $= \max(-4.0,\ c\hat A) = \max(-4.0,\ 3\times(-1.0)) = \max(-4.0, -3.0) = -3.0$. **Surrogate $= -3.0$**, exactly the dual-clip floor from the chapter — the surrogate is capped at $-3.0$ instead of $-4.0$, shrinking the gradient magnitude by 25% and preventing one drifted token from dominating the update.
+    - Since $\hat A < 0$: `neg` $= \max(-4.0,\ c\hat A) = \max(-4.0,\ 3\times(-1.0)) = \max(-4.0, -3.0) = -3.0$. **Surrogate $= -3.0$**, exactly the dual-clip floor from the chapter — capped at $-3.0$ instead of $-4.0$, and because the selected branch $c\hat A$ is constant in $\theta$ the gradient through $\rho$ is zero, so one drifted token can no longer dominate the update.

@@ -161,7 +161,7 @@ def sync_weights_to_engine(engine, state_dict):
     # After this, the next engine.generate() samples from the NEW policy.
 ```
 
-In a **colocated** setup (engine and trainer on the same GPUs) there is one more move that matters as much as the transfer itself: the engine's KV cache is a large, statically reserved pool, and it is dead weight while the trainer runs. vLLM's sleep mode releases it — `engine.sleep(level=1)` before Phase 3/4 frees the KV blocks (level 2 also offloads the weights) and `engine.wake_up()` re-allocates before the next rollout — which is what lets a single 80 GB GPU host both an inference engine and an FSDP trainer without either being memory-starved.
+In a **colocated** setup (engine and trainer on the same GPUs) there is one more move that matters as much as the transfer itself: the engine's KV cache is a large, statically reserved pool, and it is dead weight while the trainer runs. vLLM's sleep mode releases it — `engine.sleep(level=1)` before Phase 3/4 discards the KV blocks *and* offloads the engine's weights to host RAM, and `engine.wake_up()` restores both before the next rollout. (`level=2` discards the weights instead of offloading them, which is cheaper and usually the right choice in RL, since Phase 5 is about to overwrite them anyway.) This is what lets a single 80 GB GPU host both an inference engine and an FSDP trainer without either being memory-starved.
 
 The details (NCCL broadcast for multi-GPU engines, parameter name remapping, handling tensor-parallel sharding) are exactly what libraries like veRL ([veRL: HybridFlow & The Single-Controller Architecture](../06-rl-infra/04-verl.html)) and OpenRLHF ([OpenRLHF, NeMo-Aligner & Ray-Based Systems](../06-rl-infra/05-openrlhf-nemo-ray.html)) exist to handle robustly. The conceptual point is unchanged: **one persistent inference engine, weights hot-swapped each step.** Tearing down and rebuilding the engine per step would cost more than the rollout itself.
 
@@ -202,10 +202,10 @@ This is the central quantitative fact of RL infra. Let us derive *why* generatio
 
 Consider one outer step with $B = P \cdot G$ sequences, prompt length $L_p$, mean generation length $L_g$, a model with $N$ parameters, and `ppo_epochs = E` with the whole batch reused.
 
-**Training compute (Phase 4).** A forward+backward pass costs about $6N$ FLOPs per token (the classic $2N$ forward, $4N$ backward; see [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)). We train on the response tokens of all $B$ sequences, $E$ times:
+**Training compute (Phase 4).** A forward+backward pass costs about $6N$ FLOPs per token (the classic $2N$ forward, $4N$ backward; see [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)). Careful: the *loss* is masked to the $L_g$ response tokens, but the *FLOPs* are paid on every token the pass sees — the $L_p$ prompt tokens included, and unlike the engine's prefill they are not deduplicated across the group. So over all $B$ sequences, $E$ times:
 
 $$
-C_{\text{train}} \approx 6N \cdot B \cdot L_g \cdot E.
+C_{\text{train}} \approx 6N \cdot B \cdot (L_p + L_g) \cdot E.
 $$
 
 **Generation compute (Phase 1).** Decoding is $2N$ FLOPs per generated token (forward only), and we generate $B \cdot L_g$ tokens:
@@ -217,7 +217,7 @@ $$
 By raw FLOPs, generation looks *cheaper* than training ($2N$ vs $6NE$). So why does it dominate the clock? Because **the two phases run in completely different efficiency regimes**:
 
 - Training is **compute-bound** and runs at high Model FLOPs Utilization (MFU), often 40–55% of peak on a good FSDP/Megatron setup.
-- Decode generation is **memory-bandwidth-bound**: each decode step must stream all $N$ parameters (and the growing KV cache) from HBM to produce a *single* token per sequence. Arithmetic intensity is tiny, so MFU collapses to low single-digit percent. The wall-clock per token is set not by FLOPs but by how fast you can read the weights from memory.
+- Decode generation is **memory-bandwidth-bound**: each decode step must stream all $N$ parameters (and the growing KV cache) from HBM to produce a *single* token per sequence. Counting weights alone, the arithmetic intensity of a decode step is $2NB / (N\cdot b_{\text{param}}) = B$ FLOP/byte, against an H100 ridge point of $990/3.35 \approx 300$ FLOP/byte — so at the small batches of interactive serving MFU collapses to low single-digit percent, and even at the large batches RL rollouts use (where the weight read amortizes) the un-amortized KV read keeps you below the roofline knee and far under the trainer's MFU. The wall-clock per token is set not by FLOPs but by how many bytes you must move.
 
 The decode time is better modeled by bandwidth. Per decode step across a batch of $B$ sequences, you read the weights once (amortized over the batch) plus each sequence's KV:
 
@@ -225,18 +225,18 @@ $$
 T_{\text{decode-step}} \approx \frac{N \cdot b_{\text{param}} + B \cdot \text{KV}_{\text{per-seq-step}}}{\text{HBM bandwidth}},
 $$
 
-and total decode time is roughly $L_g$ times that. The key term is the weight read: even with a large batch, you pay $\sim N \cdot b_{\text{param}}$ bytes of weight traffic *per decode step*, and there are $L_g$ steps. That is the tax that makes generation slow.
+and total decode time is roughly $L_g$ times that. Both terms hurt, in different ways. The weight read $N \cdot b_{\text{param}}$ is paid once per decode step no matter how large the batch, so it *amortizes* — it is the term that punishes small batches. The KV read scales with $B$ **and** with the current context length, so it does *not* amortize, and at RL batch sizes with long contexts it typically dominates the weight read outright. Either way you pay the whole thing $L_g$ times. That is the tax that makes generation slow.
 
 {{fig:gtloop-decode-memory-bound}}
 
 !!! example "Worked example: where does an RL step's time go?"
     Take a 7B model in bf16 ($N=7\times10^9$, $b_{\text{param}}=2$ bytes) on a single H100 (peak bf16 ≈ 990 TFLOP/s dense; HBM bandwidth ≈ 3.35 TB/s). Batch: $P=64$ prompts, $G=8$ → $B=512$ sequences. Lengths: $L_p=512$, $L_g=1024$. PPO epochs $E=2$.
 
-    **Generation time (Phase 1), bandwidth-bound.** Weight traffic per decode step ≈ $N\cdot b_{\text{param}} = 7\text{e}9\cdot2 = 1.4\times10^{10}$ bytes = 14 GB. Time to read that once: $14\text{ GB} / 3.35\text{ TB/s} \approx 4.2$ ms per decode step (ignoring KV traffic, which adds more). Over $L_g=1024$ steps: $\approx 4.3$ s of weight-read-bound decode — *and this is amortized across the whole batch*, because all 512 sequences decode their next token together. With realistic KV traffic and imperfect batching, call it **~6–10 s per outer step for generation.** Prefill of the 512 prompts (×512 tokens) is compute-bound and comparatively quick, a second or two.
+    **Generation time (Phase 1), bandwidth-bound.** Weight traffic per decode step ≈ $N\cdot b_{\text{param}} = 7\text{e}9\cdot2 = 1.4\times10^{10}$ bytes = 14 GB → $14\text{ GB} / 3.35\text{ TB/s} \approx 4.2$ ms — *and that read is amortized across the whole batch*, because all 512 sequences decode their next token together. Now the term that is *not* amortized: a Qwen2.5-7B-shaped model (28 layers, 4 KV heads × 128 head dim, bf16) holds $2\cdot4\cdot128\cdot2\cdot28 \approx 57$ KB of KV **per token**, so at $B=512$ with a mean context of $L_p + L_g/2 = 1024$ tokens the KV read is $512\cdot1024\cdot57\text{ KB} \approx 30$ GB per step — over twice the weight traffic. Total ≈ 44 GB/step ≈ 13 ms, and over $L_g=1024$ steps, $\approx 13$ s of bandwidth-bound decode. With imperfect batching and scheduler overhead, call it **~15–20 s per outer step for generation.** Prefill is compute-bound and comparatively quick: prefix caching computes each prompt's KV once and shares it across its group of 8, so it is only $64$ unique prompts $\times\,512$ tokens $= 32{,}768$ tokens $\times\,2N \approx 4.6\times10^{14}$ FLOPs — about a second.
 
-    **Training time (Phase 4), compute-bound.** $C_{\text{train}} = 6N\cdot B\cdot L_g\cdot E = 6\cdot7\text{e}9\cdot512\cdot1024\cdot2 \approx 4.4\times10^{16}$ FLOPs. At 45% MFU on an H100: effective throughput $\approx 0.45\cdot 990\text{e}12 = 4.5\times10^{14}$ FLOP/s. Time $\approx 4.4\text{e}16 / 4.5\text{e}14 \approx$ **~98 s**... but wait — that is on *one* GPU. The point of FSDP is to spread this across, say, 8 GPUs, giving **~12 s**. Meanwhile the *generation* above was also on the available GPUs.
+    **Training time (Phase 4), compute-bound.** $C_{\text{train}} = 6N\cdot B\cdot (L_p + L_g)\cdot E = 6\cdot7\text{e}9\cdot512\cdot1536\cdot2 \approx 6.6\times10^{16}$ FLOPs (the prompt tokens ride along in the forward+backward even though the loss ignores them). At 45% MFU on an H100: effective throughput $\approx 0.45\cdot 990\text{e}12 = 4.5\times10^{14}$ FLOP/s. Time $\approx 6.6\text{e}16 / 4.5\text{e}14 \approx$ **~147 s**... but wait — that is on *one* GPU. The point of FSDP is to spread this across, say, 8 GPUs, giving **~18 s**. Meanwhile the *generation* above was also on the available GPUs.
 
-    The honest takeaway from real runs (not this back-of-envelope, which is sensitive to batch and parallelism): with a single shared GPU pool, **generation is typically 60–80% of the step** because of its terrible MFU, the long $L_g$, and the fact that you regenerate every outer step but only train a couple of epochs. The experience-prep forward passes (Phase 3 — old-logprob + ref-logprob over all $B\cdot L_g$ tokens) add another meaningful chunk, often 10–20%. Reward (Phase 2) and weight sync (Phase 5) are usually a few percent each, unless the sandbox or the cross-node transfer is slow.
+    The honest takeaway from real runs (not this back-of-envelope, which is sensitive to batch and parallelism): with a single shared GPU pool, **generation is typically 60–80% of the step** because of its terrible MFU, the long $L_g$, and the fact that you regenerate every outer step but only train a couple of epochs. The experience-prep forward passes (Phase 3 — old-logprob + ref-logprob over all $B\cdot(L_p+L_g)$ tokens) add another meaningful chunk, often 10–20%. Reward (Phase 2) and weight sync (Phase 5) are usually a few percent each, unless the sandbox or the cross-node transfer is slow.
 
 The qualitative ranking is robust across model sizes and clusters:
 
@@ -295,7 +295,7 @@ def build_experience_batch(rollouts, pad_id, device):
 
 ### Recomputing log-probs (the "old" forward) and the reference
 
-As warned above, we recompute the behavior/old log-probs on the trainer so the importance ratio is numerically consistent. We also run the frozen reference for the KL term. Both are `no_grad` forwards over the *entire* batch — this is Phase 3, and it costs roughly one (or two, with the reference) generation-length forward pass over all $B$ sequences. That is why experience-prep is the second-biggest time sink.
+As warned above, we recompute the behavior/old log-probs on the trainer so the importance ratio is numerically consistent. We also run the frozen reference for the KL term. Both are `no_grad` forwards over the *entire* batch — this is Phase 3, and it costs roughly one (or two, with the reference) full-sequence forward pass over all $B$ sequences. That is why experience-prep is the second-biggest time sink.
 
 ```python
 @torch.no_grad()
@@ -385,12 +385,14 @@ def minibatch_update_loop(input_ids, resp_mask, old_lp, ref_lp, advantages,
                 approx_kl = (old_lp[mb] - new_lp).mul(mask).sum() / mask.sum()
             # if clip_frac is huge or approx_kl spikes -> you're too off-policy.
 
-            # Step every `grad_accum` minibatches. NOTE the placement: the optimizer
-            # must step INSIDE the minibatch loop, not once per epoch. That is what
-            # makes the *later* minibatches genuinely off-policy w.r.t. `old_lp` --
-            # i.e. what gives the clip something to do. Stepping once per epoch would
-            # turn `n_minibatches` into plain gradient accumulation over one big
-            # on-policy batch, which is a different (and much weaker) algorithm.
+            # Step every `grad_accum` minibatches. NOTE the placement: stepping
+            # INSIDE the minibatch loop is what makes the *later* minibatches
+            # genuinely off-policy w.r.t. `old_lp` -- i.e. what gives the clip
+            # something to do, and what buys several updates out of one expensive
+            # rollout. Stepping once per epoch instead makes the whole batch a
+            # single on-policy update (ratio stays 1, the clip never engages):
+            # a different algorithm, not a broken one -- it is exactly the
+            # `num_iterations=1` recipe shown earlier.
             micro += 1
             if micro % grad_accum == 0:
                 torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
@@ -443,28 +445,37 @@ rollout_q = queue.Queue(maxsize=256)     # bounded: backpressure if trainer lags
 weight_version = {"v": 0}
 shared_weights = {"sd": None, "lock": threading.Lock()}
 
-def generator_worker(engine, prompt_stream):
+def generator_worker(engine, prompt_stream, group_size=8):
     while True:
         # 1) refresh local weights if the trainer pushed a newer version
         with shared_weights["lock"]:
             local_v = weight_version["v"]
             if shared_weights["sd"] is not None:
                 sync_weights_to_engine(engine, shared_weights["sd"])
-        # 2) generate a group, tag it with the weight version that produced it
+        # 2) generate, then enqueue WHOLE GROUPS tagged with the weight version.
+        #    Group granularity is not cosmetic: the group-relative baseline needs
+        #    all G completions of one prompt together, and several workers are
+        #    interleaving their puts. Enqueue single rollouts and the trainer's
+        #    rewards.view(-1, G) will silently reshape unrelated completions
+        #    into fake "groups" and subtract a meaningless baseline.
         prompts = next(prompt_stream)
-        for r in rollout(prompts):           # uses the engine (continuous-batched)
-            r["gen_version"] = local_v
-            rollout_q.put(r)                 # blocks if queue full -> backpressure
+        rollouts = rollout(prompts)          # uses the engine (continuous-batched)
+        for i in range(0, len(rollouts), group_size):
+            group = rollouts[i:i + group_size]        # the G completions of ONE prompt
+            for r in group:
+                r["gen_version"] = local_v
+            rollout_q.put(group)             # blocks if queue full -> backpressure
 
-def trainer_loop(policy, opt, ref, max_staleness=4, batch_size=512):
+def trainer_loop(policy, opt, ref, max_staleness=4, batch_size=512, group_size=8):
     step = 0
     while True:
-        # pull a batch of FRESH-ENOUGH rollouts
+        # pull a batch of FRESH-ENOUGH rollouts, accepting/dropping WHOLE groups
+        # so the batch stays laid out as contiguous, complete groups of G.
         batch = []
         while len(batch) < batch_size:
-            r = rollout_q.get()
-            if step - r["gen_version"] <= max_staleness:   # drop stale rollouts
-                batch.append(r)
+            group = rollout_q.get()
+            if step - group[0]["gen_version"] <= max_staleness:   # drop stale groups
+                batch.extend(group)
         # standard experience-prep + minibatch update (Phases 3-4)
         input_ids, resp_mask, beh_lp, rewards = build_experience_batch(batch, ...)
         # ... recompute old_lp/ref_lp, compute advantages, minibatch_update_loop ...
@@ -607,19 +618,19 @@ Every other chapter in this Part is an elaboration of one of these five lines: w
 
     Over $L_g = 512$ decode steps: $512 \times 7.76\ \text{ms} \approx 3.97$ s of weight-read-bound decode (ignoring the KV-cache traffic, which only adds more, and prefill of the prompts).
 
-    **(b) Training (Phase 4), compute-bound.** Train on response tokens of all $B$ sequences, $E$ times, at $6N$ FLOPs/token:
+    **(b) Training (Phase 4), compute-bound.** The forward+backward pass costs $6N$ FLOPs on *every* token it sees — prompt tokens included, even though the loss is masked to the response — so use $L_p + L_g = 256 + 512 = 768$ tokens per sequence, over all $B$ sequences, $E$ times:
 
     $$
-    C_{\text{train}} = 6N \cdot B \cdot L_g \cdot E = 6 \times 13\text{e}9 \times 512 \times 512 \times 2 \approx 4.09\times10^{16}\ \text{FLOPs}.
+    C_{\text{train}} = 6N \cdot B \cdot (L_p + L_g) \cdot E = 6 \times 13\text{e}9 \times 512 \times 768 \times 2 \approx 6.13\times10^{16}\ \text{FLOPs}.
     $$
 
     Effective throughput at 45% MFU: $0.45 \times 990\text{e}12 = 4.455\times10^{14}$ FLOP/s. Time on one H100:
 
     $$
-    T_{\text{train}} \approx \frac{4.09\times10^{16}}{4.455\times10^{14}} \approx 91.8\ \text{s}.
+    T_{\text{train}} \approx \frac{6.13\times10^{16}}{4.455\times10^{14}} \approx 138\ \text{s}.
     $$
 
-    **(c) Comment.** On a *single* GPU the training pass ($\approx 92$ s) looks far larger than the decode weight-read floor ($\approx 4$ s) — but this is exactly the trap the chapter warns about: training is compute-bound and *parallelizes*, whereas decode runs at terrible MFU. Shard the training pass across 8 GPUs and it drops to $\approx 92/8 \approx 11.5$ s, while decode does not shrink the same way (it stays memory-bandwidth-bound and, with realistic KV traffic and imperfect batching, is more like 6-10 s scaled to this size, and it gates a fresh rollout *every* outer step while training runs only $E=2$ epochs). Once training is spread across the pool, generation reclaims its usual 60-80% share of wall-clock. The headline stands: doubling backward-pass speed barely moves the step; doubling generation throughput nearly halves it.
+    **(c) Comment.** On a *single* GPU the training pass ($\approx 138$ s) looks far larger than the decode weight-read floor ($\approx 4$ s) — but this is exactly the trap the chapter warns about: training is compute-bound and *parallelizes*, whereas decode runs at terrible MFU. Shard the training pass across 8 GPUs and it drops to $\approx 138/8 \approx 17$ s, while decode does not shrink the same way (it stays memory-bandwidth-bound, and the 4 s figure is only the *weight* floor — the un-amortized KV read at $B=512$ pushes the real number to a multiple of it, and it gates a fresh rollout *every* outer step while training runs only $E=2$ epochs). Once training is spread across the pool, generation reclaims its usual 60-80% share of wall-clock. The headline stands: doubling backward-pass speed barely moves the step; doubling generation throughput nearly halves it.
 
 **4.** (Quantitative) A GRPO group has $G = 4$ completions for one prompt, with rewards $\mathbf{r} = [1, 0, 1, 0]$ (verifiable pass/fail). (a) Compute the group-relative advantage for each completion **without** std normalization (Dr.GRPO style, `normalize_std=False`). (b) Recompute **with** std normalization (`normalize_std=True`, `eps = 1e-4`), using the population std that `torch.std(..., unbiased=False)` would give. (c) A second prompt's group returns $\mathbf{r} = [1, 1, 1, 1]$ (all correct). What advantage does *each* member get, with and without std normalization, and why does this case motivate the `eps` term and the "contested std norm" comment in the code?
 

@@ -83,7 +83,7 @@ $$
 \hat{a} = \operatorname*{arg\,max}_{a} \sum_{i=1}^{N} \mathbf{1}[a_i = a]
 $$
 
-This is equivalent to **best-of-N** or **majority voting** at the output level.
+This is **majority voting** at the output level. Note that it is *not* the same as **best-of-N**: best-of-N ranks the $N$ samples with a reward model and can return an answer that appeared exactly once, whereas majority voting counts answers and can never prefer a singleton over a duplicated one. The two are compared side by side in the taxonomy table at the end of the chapter.
 
 ```python
 from collections import Counter
@@ -208,18 +208,18 @@ Brown et al. (*Large Language Monkeys: Scaling Inference Compute with Repeated S
     P(\hat{a} = \text{correct}) = \sum_{k=9}^{16} \binom{16}{k} (0.6)^k (0.4)^{16-k}
     $$
 
-    Computing: $\approx 0.825$.
+    Computing: $\approx 0.716$.
 
     With 64 samples ($N=64$, $k > 32$ needed):
 
     $$
-    P \approx 0.955
+    P \approx 0.933
     $$
 
     For a harder problem where single-shot accuracy is $p = 0.30$, even 64 samples gives:
 
     $$
-    P(\text{majority correct}) = \sum_{k=33}^{64} \binom{64}{k} (0.3)^k (0.7)^{64-k} \approx 0.047
+    P(\text{majority correct}) = \sum_{k=33}^{64} \binom{64}{k} (0.3)^k (0.7)^{64-k} \approx 0.00025
     $$
 
     Majority vote amplifies a *strong* signal but cannot rescue a *weak* one. This motivates better search — weighted by quality, not just count.
@@ -397,7 +397,7 @@ class ProcessRewardModel(nn.Module):
     Lightweight PRM: finetune a language model backbone to predict
     per-step correctness. At inference, we score each step independently.
     """
-    def __init__(self, backbone_name: str = "meta-llama/Llama-3-8B"):
+    def __init__(self, backbone_name: str = "meta-llama/Meta-Llama-3-8B"):
         super().__init__()
         self.backbone = AutoModel.from_pretrained(backbone_name)
         hidden_dim = self.backbone.config.hidden_size
@@ -417,7 +417,8 @@ class ProcessRewardModel(nn.Module):
         hidden = outputs.last_hidden_state  # [B, T, H]
         # Extract hidden state at the step boundary token
         step_hidden = hidden[
-            torch.arange(hidden.size(0)), step_boundary_positions
+            torch.arange(hidden.size(0), device=hidden.device),
+            step_boundary_positions.to(hidden.device),
         ]  # [B, H]
         return self.head(step_hidden).squeeze(-1)  # [B]
 
@@ -432,6 +433,7 @@ class ProcessRewardModel(nn.Module):
         """
         Score each prefix (problem + steps[:k]) and return per-step probabilities.
         """
+        self.to(device)   # backbone + head start on CPU; move them before indexing
         scores = []
         context = f"Problem: {problem}\n"
         for step in steps:
@@ -605,14 +607,16 @@ The key findings:
 {{fig:test-time-scaling-curves}}
 
 !!! example "Worked example: test-time compute budget"
-    Suppose we have a 7B-parameter model that generates reasoning tokens at 5,000 tokens/second on a single A100 (batch=1). A typical math solution is 200 tokens, so one sample costs $200 / 5000 = 40\text{ ms}$.
+    Start from the hardware, not from a guessed token rate. Single-stream decode is *memory-bandwidth* bound: every token streams the whole weight matrix out of HBM once (see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html)). A 7B model in bf16 is ~14 GB and an A100-80GB has ~2.0 TB/s of HBM bandwidth, so the ceiling is $2000/14 \approx 145$ tok/s and a real engine lands near **130 tok/s at batch=1**. A typical math solution is 200 tokens, so one sample costs $200 / 130 \approx 1.5\text{ s}$.
 
-    - **N=1 (greedy):** 40 ms, assume 55 % accuracy.
-    - **N=16 (parallel best-of-N):** on 16 parallel requests on 1 GPU (approximately 16× throughput hit at batch=1, but batch=16 uses full GPU bandwidth) ≈ 200 ms wall-clock, assume 78 % accuracy.
-    - **N=64 with PRM:** ≈ 600 ms, assume 88 % accuracy.
-    - **MCTS 100 iterations, expansion=3:** ≈ 2 s, assume 91 % accuracy.
+    The saving grace is that batching is nearly free in this regime: one weight-streaming pass per step serves the whole batch, so $N$ samples cost roughly the same wall-clock as one until the batch is large enough to become compute-bound.
 
-    Compared to a 70B model at greedy (≈ 350 ms, 82 % accuracy), the 7B + best-of-64 configuration achieves similar accuracy at roughly 2× the cost, while the 7B model alone costs 8.75× *less* in memory.
+    - **N=1 (greedy):** ≈ 1.5 s, assume 55 % accuracy.
+    - **N=16 (parallel best-of-N, one batched request):** ≈ 1.6 s wall-clock — 16× the tokens for ~1.05× the latency, assume 78 % accuracy.
+    - **N=64 with PRM:** ≈ 2 s (decode plus a scoring pass over the 64 traces), assume 88 % accuracy.
+    - **MCTS 100 iterations, expansion=3:** ≈ 30 s — the iterations are *sequential*, so none of the batching discount applies; assume 91 % accuracy.
+
+    Compare with a 70B model at greedy. In bf16 it is ~140 GB, so it needs at least 2×A100 with tensor parallelism; each GPU still streams ~70 GB per token, giving ~35 ms/token ≈ 29 tok/s, i.e. **≈ 7 s** for the same 200 tokens at 82 % accuracy. So 7B + best-of-64 beats it on both accuracy and latency — but the honest accounting is in *compute*, not wall-clock: 64 samples from a 7B model burn $(64 \times 7\text{B}) / 70\text{B} = 6.4\times$ the parameter-FLOPs of one 70B pass. What the small model does buy unambiguously is **memory**: 14 GB of weights instead of 140 GB, a clean 10× (and it fits on one GPU instead of two).
 
     The crossover point is task-dependent: for tasks with reliable verifiers (math, code), test-time scaling is very effective. For open-ended tasks without a verifier, ORM quality becomes the bottleneck.
 
@@ -734,7 +738,7 @@ def adaptive_budget_routing(
 
 ### The Scaling Picture
 
-Test-time compute as a scaling axis has now been confirmed empirically: holding model parameters fixed, reasoning accuracy can be improved by increasing the number of tokens spent thinking. The shape of this scaling curve differs from the training-time curve (loss ∝ $C^{-0.07}$ in Chinchilla). Test-time scaling is typically steeper initially (large gains from 1→16 samples) but saturates more quickly at the extreme (diminishing returns after thousands of tokens).
+Test-time compute as a scaling axis has now been confirmed empirically: holding model parameters fixed, reasoning accuracy can be improved by increasing the number of tokens spent thinking. The shape of this scaling curve differs from the training-time curve (along the Chinchilla compute-optimal path, where $N \propto C^{1/2}$ and $D \propto C^{1/2}$, the reducible loss falls roughly as $C^{-0.15}$). Test-time scaling is typically steeper initially (large gains from 1→16 samples) but saturates more quickly at the extreme (diminishing returns after thousands of tokens).
 
 Critically, training-time and test-time scaling **compose**: a model trained with more compute also benefits more from test-time search, so the frontier model uses *both* axes.
 
@@ -789,7 +793,7 @@ Key practical points:
     - Production deployment of reasoning models requires careful KV-cache memory management and disaggregated infrastructure due to the large token footprints of thinking traces.
 
 !!! sota "State of the Art & Resources (2026)"
-    Test-time compute has become a first-class scaling axis, and by 2026 extended "thinking" is a standard, built-in capability rather than a special model class: OpenAI's o3 (April 2025) and unified GPT-5 (August 2025), Anthropic's Claude extended-thinking models, Google's Gemini thinking models, and open-weights DeepSeek-R1 (and its May 2025 R1-0528 update) all spend more tokens thinking — guided by process reward models and tree search — to reliably improve accuracy on hard reasoning tasks, composing with (not replacing) training-time scale.
+    Test-time compute has become a first-class scaling axis, and by 2026 extended "thinking" is a standard, built-in capability rather than a special model class: OpenAI's o3 (April 2025) and unified GPT-5 (August 2025), Anthropic's Claude extended-thinking models, Google's Gemini thinking models, and open-weights DeepSeek-R1 (and its May 2025 R1-0528 update) all spend more tokens thinking — a single long linear trace produced by outcome-reward RL, not an explicit PRM/tree-search scaffold — to reliably improve accuracy on hard reasoning tasks, composing with (not replacing) training-time scale.
 
     **Foundational work**
 
