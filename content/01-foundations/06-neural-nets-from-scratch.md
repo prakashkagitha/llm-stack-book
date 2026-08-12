@@ -214,7 +214,7 @@ class Value:
     def __sub__(self, o):     return self + (-o)
     def __radd__(self, o):    return self + o
     def __rmul__(self, o):    return self * o
-    def __truediv__(self, o): return self * (o ** -1 if isinstance(o, Value) else o ** -1)
+    def __truediv__(self, o): return self * (o ** -1)
     def __repr__(self):       return f"Value(data={self.data:.4f}, grad={self.grad:.4f})"
 ```
 
@@ -402,12 +402,15 @@ def gradient_check(net, X, y, eps=1e-5):
 rng = np.random.default_rng(42)
 N, D, C = 512, 2, 3
 X = rng.normal(size=(N, D))
-# label by angle to make 3 non-linearly-separable blobs
+# label by angle AND radius: three spiral arms, genuinely not linearly separable.
+# (Angle alone would give three wedges radiating from the origin -- which a single
+#  linear layer separates perfectly, so it would prove nothing about depth.)
 theta = np.arctan2(X[:, 1], X[:, 0])
-y = ((theta + np.pi) / (2 * np.pi) * C).astype(int) % C
+r = np.linalg.norm(X, axis=1)
+y = (((theta + np.pi) / (2 * np.pi) * C + r).astype(int)) % C
 
 net = MLP([D, 64, 64, C], seed=0)
-print("gradient check (relative error):", gradient_check(net, X, y))  # ~1e-7
+print("gradient check (relative error):", gradient_check(net, X, y))  # ~3e-9
 
 for epoch in range(2000):
     loss, dW, db = net.loss_and_grads(X, y)
@@ -417,7 +420,7 @@ for epoch in range(2000):
         print(f"epoch {epoch:4d}  loss {loss:.4f}  acc {acc:.3f}")
 ```
 
-Running this, the gradient check prints a relative error on the order of $10^{-7}$ — the gap between analytic and numerical gradients is pure floating-point noise, confirming the backward pass is exact. The loss falls and accuracy climbs toward 1.0 as the two hidden ReLU layers carve the angular decision boundary that no single linear layer could. You have now trained a neural network with code you could write on a whiteboard.
+Running this, the gradient check prints a relative error on the order of $10^{-9}$ — far below the $10^{-6}$ threshold you would demand, so the gap between analytic and numerical gradients is pure floating-point noise and the backward pass is exact. The loss falls and accuracy climbs past 0.97 as the two hidden ReLU layers carve the curved, spiralling decision boundary that no single linear layer could (a softmax regression — the same code with no hidden layers — converges to about 44% on this same data, against a 34% majority-class floor). You have now trained a neural network with code you could write on a whiteboard.
 
 ### What backprop costs: the 2/4 FLOP split and the activation bill
 
@@ -429,7 +432,7 @@ $$
 C \;\approx\; 6\,N_{\text{params}}\,D_{\text{tokens}},
 $$
 
-which is the budgeting equation behind Chinchilla-style compute allocation in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html). Two footnotes fall straight out of the derivation. First, the *last* layer needs only $\bar W$, not $\bar X$ (our loop's `if i > 0:` guard skips it), and the *first* layer's $\bar X$ is likewise wasted unless you need input gradients — a small constant saving. Second, inference is forward-only, so it is $\approx 2 N_{\text{params}}$ FLOPs per token, one third of training.
+which is the budgeting equation behind Chinchilla-style compute allocation in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html). Two footnotes fall straight out of the derivation. First, the *first* layer needs only $\bar W$ and $\bar{\mathbf b}$, never $\bar X$ — nothing upstream of the input wants a gradient (unless you are doing adversarial examples or input optimization), so our loop's `if i > 0:` guard skips that one matmul — a small constant saving. Every *other* layer must compute $\bar X$, since that is exactly how gradient reaches the layers before it. Second, inference is forward-only, so it is $\approx 2 N_{\text{params}}$ FLOPs per token, one third of training.
 
 The memory bill is the other half of the story, and it is the reason backprop is expensive on real hardware. To compute $\bar W^{(\ell)} = (A^{(\ell-1)})^\top \bar Z^{(\ell)}$ you must still have $A^{(\ell-1)}$ when the backward sweep reaches layer $\ell$ — so *every* forward activation stays resident from the moment it is produced until its layer's backward runs. That is the `cache` dict in our `MLP.forward`, and it scales with batch size, not just with parameters.
 
@@ -536,7 +539,7 @@ That factor of 2 is exactly the `np.sqrt(2.0 / d_in)` in our `MLP.__init__`. It 
 
 !!! example "Worked example: signal scale across 50 layers"
 
-    Take a 50-layer deep linear-plus-ReLU stack with width $d=256$ and a unit-variance input. With **bad init** ($\operatorname{Var}(W)=1/d^2$, i.e. weights too small), each layer multiplies the activation standard deviation by roughly $\sqrt{d\cdot\operatorname{Var}(W)\cdot\tfrac12}=\sqrt{256\cdot(1/256^2)\cdot 0.5}\approx 0.044$. After 50 layers the signal scale is $0.044^{50}\approx 10^{-69}$ — total collapse; gradients vanish to zero and nothing learns.
+    Take a 50-layer deep linear-plus-ReLU stack with width $d=256$ and a unit-variance input. With **bad init** ($\operatorname{Var}(W)=1/d^2$, i.e. weights too small), each layer multiplies the activation standard deviation by roughly $\sqrt{d\cdot\operatorname{Var}(W)\cdot\tfrac12}=\sqrt{256\cdot(1/256^2)\cdot 0.5}\approx 0.044$. After 50 layers the signal scale is $0.044^{50}\approx 1.5\times 10^{-68}$ — total collapse; gradients vanish to zero and nothing learns.
 
     With **Kaiming init** ($\operatorname{Var}(W)=2/d$), each ReLU layer multiplies the std by $\sqrt{d\cdot(2/d)\cdot\tfrac12}=\sqrt{1}=1$. After 50 layers the signal scale is still $\approx 1.0$. The forward activations and backward gradients stay $O(1)$ all the way down. This is the entire point of principled initialization: it makes deep networks *trainable at all*.
 
@@ -942,7 +945,7 @@ A second favorite: *why does backprop cost about the same as the forward pass ra
     = \frac{N-1}{N+1}.
     $$
 
-    For the chapter's demo batch $N = 512$ this is $511/513 \approx 0.996$ — a relative error near $1.0$, glaringly far from the $\sim 10^{-7}$ a correct backward pass produces. That huge relative error is exactly the signal that the analytic gradient is off by a constant factor. The fix restores the mean's $1/N$:
+    For the chapter's demo batch $N = 512$ this is $511/513 \approx 0.996$ — a relative error near $1.0$, glaringly far from the $\sim 10^{-9}$ a correct backward pass produces. That huge relative error is exactly the signal that the analytic gradient is off by a constant factor. The fix restores the mean's $1/N$:
 
     ```python
     dZ = P.copy()

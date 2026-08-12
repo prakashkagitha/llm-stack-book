@@ -2,7 +2,7 @@
 
 Modern large language models require compute that no single GPU can provide. Training a 70-billion-parameter model in a reasonable amount of time requires hundreds — sometimes thousands — of GPUs working in tight coordination. This chapter explains the substrate that makes that coordination possible: the programming model for parallel computation and the collective communication operations that keep thousands of accelerators synchronized. Everything in [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html) builds on the foundations developed here.
 
-We start from first principles — processes, threads, and how GPUs expose parallelism — and build up to the exact cost models engineers use to reason about whether a training job will be network-bound or compute-bound. Even at the small end this matters: the ~100M-parameter model we build in [The Pretraining Run](../14-capstone/07-pretraining-run.html) has a bf16 gradient buffer of only ~0.24 GB, so a single-node 4-GPU DDP all-reduce over NVLink costs a couple of milliseconds per step — which is exactly why data parallelism alone is the right (and only) parallelism the capstone needs.
+We start from first principles — processes, threads, and how GPUs expose parallelism — and build up to the exact cost models engineers use to reason about whether a training job will be network-bound or compute-bound. Even at the small end this matters: the ~100M-parameter model we build in [The Pretraining Run](../14-capstone/07-pretraining-run.html) has a bf16 gradient buffer of only ~0.2 GB, so a single-node 4-GPU DDP all-reduce over NVLink costs a couple of milliseconds per step — which is exactly why data parallelism alone is the right (and only) parallelism the capstone needs.
 
 ## Processes, Threads, and the SPMD Model
 
@@ -290,17 +290,17 @@ The bandwidth term is constant in $n$ — adding more GPUs doesn't change the ba
     **Gradient buffer size:**
     $$M = 1.3 \times 10^9 \times 2 \text{ bytes} = 2.6 \text{ GB}$$
 
-    **NVLink bandwidth** (H100 SXM): on the order of 900 GB/s aggregate bidirectional, or roughly $\beta \approx 450$ GB/s per direction for a single link. With 8 GPUs in a ring, effective bandwidth is approximately $\beta_{\text{eff}} \approx 300$ GB/s (after ring inefficiency and protocol overhead — use this as an engineering estimate, not a specification).
+    **NVLink bandwidth** (H100 SXM): on the order of 900 GB/s aggregate bidirectional *per GPU*, or roughly $\beta \approx 450$ GB/s per direction per GPU (18 NVLink 4.0 links × 25 GB/s each per direction — a *single* link is only 25 GB/s). With 8 GPUs in a ring, effective bandwidth is approximately $\beta_{\text{eff}} \approx 300$ GB/s (after ring inefficiency and protocol overhead — use this as an engineering estimate, not a specification).
 
     **Communication time:**
     $$T_{\text{comm}} \approx \frac{2M}{\beta_{\text{eff}}} = \frac{2 \times 2.6 \text{ GB}}{300 \text{ GB/s}} \approx 17 \text{ ms}$$
 
-    **Compute time (forward + backward):** For a 1.3B model on a batch of 32 tokens × 2048 context on H100, a rough estimate is on the order of 200–400 ms total. Communication is therefore on the order of 5–10% of step time — manageable, and further reducible by overlapping all-reduce with backward pass.
+    **Compute time (forward + backward):** take a *global* batch of 32 sequences × 2048 tokens split across the 8 GPUs, i.e. 8,192 tokens per GPU. Forward + backward costs about $6ND = 6 \times 1.3\times10^9 \times 8192 \approx 6.4\times10^{13}$ FLOPs per GPU; at a realistic 30–40% MFU on an H100 (≈300–400 TFLOP/s out of its ~990 TFLOP/s dense bf16 peak) that is roughly 160–210 ms. Communication is therefore on the order of 10% of step time — manageable, and further reducible by overlapping all-reduce with the backward pass. (Note how sensitive this is to the batch: quadruple the per-GPU token count and compute grows 4× while the all-reduce stays 17 ms.)
 
     **Cross-node scenario:** If instead the 8 GPUs span 2 nodes connected by 200 Gb/s InfiniBand ($\beta \approx 25$ GB/s):
     $$T_{\text{comm}} \approx \frac{2 \times 2.6}{25} \approx 208 \text{ ms}$$
 
-    Now communication *exceeds* compute time. The only remedies are gradient compression, ZeRO with reduce-scatter/all-gather split, or tensor/pipeline parallelism to reduce the communicated volume.
+    Now communication *matches or exceeds* the entire compute time (208 ms vs ~160–210 ms) — the step roughly doubles, and communication goes from ~10% of compute to ~100% of it. The only remedies are gradient compression, ZeRO with reduce-scatter/all-gather split, or tensor/pipeline parallelism to reduce the communicated volume.
 
 ## Network Topology: NVLink, NVSwitch, and InfiniBand
 
@@ -562,9 +562,9 @@ def benchmark_all_reduce(message_bytes: int, n_iters: int = 50):
 
 
 # Example results on an 8-GPU DGX H100 (NVLink):
-# Message:   1.0 MB | Latency:  0.15 ms | Bus BW:  52.3 GB/s
-# Message:  64.0 MB | Latency:  1.23 ms | Bus BW: 413.8 GB/s
-# Message: 512.0 MB | Latency:  7.84 ms | Bus BW: 521.0 GB/s
+# Message:   1.0 MB | Latency:  0.03 ms | Bus BW:  52.3 GB/s
+# Message:  64.0 MB | Latency:  0.27 ms | Bus BW: 413.8 GB/s
+# Message: 512.0 MB | Latency:  1.91 ms | Bus BW: 470.0 GB/s
 # (Illustrative figures; actual results depend on driver version and cluster state)
 ```
 
@@ -612,12 +612,13 @@ The flight recorder is the single highest-value debugging tool for a hung multi-
 For production profiling, use PyTorch Profiler with NCCL tracing enabled:
 
 ```python
-from torch.profiler import profile, ProfilerActivity, schedule
+import torch  # needed: `from torch.profiler import ...` does NOT bind the name `torch`
+from torch.profiler import profile, ProfilerActivity, schedule, tensorboard_trace_handler
 
 with profile(
     activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
     schedule=schedule(wait=1, warmup=1, active=5),
-    on_trace_ready=torch.profiler.tensorboard_trace_handler("./logs/profiler"),
+    on_trace_ready=tensorboard_trace_handler("./logs/profiler"),
     record_shapes=True,
     with_stack=True,
 ) as prof:
@@ -860,6 +861,7 @@ The chapter's key identity is **All-Reduce = Reduce-Scatter followed by All-Gath
     Split `x` into `world_size` equal chunks. Reduce-scatter sums the chunks across ranks and gives rank $i$ the fully-summed chunk $i$ (output size $M/n$). All-gather then concatenates every rank's reduced chunk back into the full summed vector on every rank (output size $M$). The concatenation reconstructs exactly what `all_reduce(SUM)` produces.
 
     ```python
+    import os
     import torch
     import torch.distributed as dist
 
@@ -887,7 +889,7 @@ The chapter's key identity is **All-Reduce = Reduce-Scatter followed by All-Gath
     # ---- Verification (run under torchrun --nproc_per_node=N) ----
     def check():
         rank = dist.get_rank()
-        device = torch.device(f"cuda:{rank}")
+        device = torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}")  # LOCAL_RANK, never RANK
         x = torch.arange(8, dtype=torch.float32, device=device) + rank
 
         mine = manual_all_reduce_sum(x.clone())
@@ -944,4 +946,4 @@ Using `dist.new_group`, sketch a two-level all-reduce for 8 GPUs on 2 nodes (ran
         return x
     ```
 
-    **Why less inter-node traffic:** in a flat 8-way ring all-reduce, the ring is threaded through *both* nodes, so chunks repeatedly cross the InfiniBand link; each of the 8 ranks pushes roughly $2\frac{n-1}{n}M \approx 2M$ bytes through the fabric, and a large share of that traverses the slow hop. In the hierarchical scheme only the *leaders* (one per node) exchange data over InfiniBand, and they exchange a single already-reduced buffer of size $M$ — so the slow link carries $O(M)$ per node instead of $O(M)$ per GPU. Because the chapter notes intra-node NVLink bandwidth is ~10-50x higher than inter-node IB, pushing the heavy per-GPU traffic onto NVLink and sending only one reduced buffer per node over IB is the whole point of hierarchical collectives. (One correctness note: every rank, leader or not, must execute the `dist.new_group(ranks=leader_ranks)` call, because `new_group` runs a barrier across all ranks — guarding it with `if is_leader` would deadlock.)
+    **Why less inter-node traffic:** be careful to count links, not ranks. NCCL lays a flat 8-way ring out so that exactly two links cross the node boundary (here $3\!\to\!4$ and $7\!\to\!0$). Every link carries $M/n$ bytes per step for $2(n-1)$ steps, so each boundary link pushes $2\frac{n-1}{n}M = 1.75M$ over InfiniBand — and since a pipelined ring advances at the rate of its slowest link, *every one* of the 14 steps is paced by that IB hop. In the hierarchical scheme the whole 4-way reduction inside each node runs on NVLink, and only the *leaders* touch InfiniBand, exchanging a single already-reduced buffer: for $k=2$ nodes that is $2\frac{k-1}{k}M = M$ per leader, in one exchange rather than 14 pipelined steps. So the volume on the slow link drops modestly ($1.75M \to M$), but the bigger win is structural — the slow hop leaves the critical path of every ring step, and the intra-node phase runs at NVLink speed, which the chapter notes is ~10-50x faster than IB. Do not oversell the volume argument: with $k$ nodes the flat ring's boundary traffic $2\frac{n-1}{n}M$ and the hierarchical leaders' $2\frac{k-1}{k}M$ both approach $2M$, so what hierarchical collectives really buy is latency and link *placement*, not an asymptotic volume reduction. (One correctness note: every rank, leader or not, must execute the `dist.new_group(ranks=leader_ranks)` call, because `new_group` runs a barrier across all ranks — guarding it with `if is_leader` would deadlock.)

@@ -193,12 +193,17 @@ import numpy as np
 
 
 def fit_bradley_terry(battles, models, scale=400.0, base=10.0,
-                      n_iter=200, lr=0.05, anchor=1000.0):
+                      n_iter=1000, lr=200.0, anchor=1000.0):
     """Fit BT/Elo ratings by gradient ascent on the log-likelihood.
 
     battles : list of (winner_idx, loser_idx). Ties can be split into two
               half-weight battles or dropped; we drop them here for clarity.
     Returns a rating per model, mean-anchored to `anchor`.
+
+    Note the learning rate: the gradient below is expressed in *rating* units
+    and carries a factor c = ln(10)/400 = 0.0058, so a step size that looks
+    sane for logits (0.05) moves ratings by hundredths of a point and the fit
+    never leaves the anchor. lr must be on the rating scale (hundreds).
     """
     m = len(models)
     R = np.zeros(m)
@@ -251,7 +256,7 @@ if __name__ == "__main__":
         print(f"{name}: {pt}  95% CI [{lo}, {hi}]  width={hi - lo}")
 ```
 
-With only 300 battles split across three pairings, the per-model Elo CIs span roughly $\pm 40$–$60$ points. That is why real leaderboards report rating *intervals* and explicitly group models into tiers: if A's interval and B's interval overlap, the leaderboard rank between them is not statistically meaningful, no matter what the ordering of the point estimates says.
+Running this on the 300 synthetic battles recovers roughly A = 1164, B = 1015, C = 820 against the true 1150/1000/880 — and the per-model Elo CIs span roughly $\pm 40$ points. That is why real leaderboards report rating *intervals* and explicitly group models into tiers: if A's interval and B's interval overlap, the leaderboard rank between them is not statistically meaningful, no matter what the ordering of the point estimates says.
 
 ---
 
@@ -402,13 +407,13 @@ if __name__ == "__main__":
 
     **Naive unpaired check.** Each model's Wald SE is about $\sqrt{0.8\times0.2/500}\approx 0.0179$. The SE of the *difference* (treating them as independent) is $\sqrt{0.0179^2 + 0.0179^2}\approx 0.0253$, so the unpaired 95 % CI on the gap is $0.036 \pm 0.050 = [-0.014,\ 0.086]$. **It crosses zero** — by this analysis you cannot claim A is better.
 
-    **Paired analysis on the same 500 items.** Cross-tabulating: 372 items both got right, 38 both got wrong, $b = 51$ items where only A was right, $c = 33$ where only B was right. There are only $b+c = 84$ discordant items. McNemar's chi-square is
+    **Paired analysis on the same 500 items.** Cross-tabulating: 362 items both got right, 54 both got wrong, $b = 51$ items where only A was right, $c = 33$ where only B was right. (Check the margins: A is right on $362 + 51 = 413$ of 500 = 82.6 %, B on $362 + 33 = 395$ = 79.0 %, and the four cells sum to 500.) There are only $b+c = 84$ discordant items. McNemar's chi-square is
 
     $$
     \chi^2 = \frac{(|51-33|-1)^2}{84} = \frac{17^2}{84} = \frac{289}{84} \approx 3.44,
     $$
 
-    giving $p \approx 0.064$. The paired bootstrap CI on the accuracy difference is roughly $[+0.004,\ +0.069]$ — it *barely* excludes zero. Pairing shrank the interval from $\pm 0.050$ to about $\pm 0.033$ because the two models agreed on 410 of 500 items, and those agreements carried no comparative signal but did inflate the unpaired variance. The honest verdict: **suggestive ($p\approx 0.06$) but not conclusive at $\alpha=0.05$** — you would want more items or more discriminating items before shipping a "beats baseline" claim. This is exactly the kind of nuance a single accuracy number hides.
+    giving $p \approx 0.064$. The paired bootstrap CI on the accuracy difference is roughly $[0.000,\ +0.072]$ — it only just grazes zero, agreeing with the borderline p-value. Pairing shrank the half-width from $\pm 0.050$ to about $\pm 0.036$ because the two models agreed on 416 of 500 items, and those agreements carried no comparative signal but did inflate the unpaired variance. The honest verdict: **suggestive ($p\approx 0.06$) but not conclusive at $\alpha=0.05$** — you would want more items or more discriminating items before shipping a "beats baseline" claim. This is exactly the kind of nuance a single accuracy number hides.
 
 ### Multiple comparisons: the leaderboard trap
 
@@ -496,7 +501,7 @@ def load_per_item(samples_glob, metric="acc"):
     `acc_norm`, ...). Always compare runs produced by the SAME harness commit.
     """
     out = {}
-    for path in glob.glob(samples_glob):
+    for path in glob.glob(samples_glob, recursive=True):   # recursive=True: `**`
         with open(path) as f:
             for line in f:
                 rec = json.loads(line)
@@ -527,13 +532,13 @@ A benchmark score is buffeted by several noise sources at once. Knowing which on
 Model the score of model $m$ on item $i$, under prompt template $t$, seed $s$, judged by judge $j$ as
 
 $$
-y_{mitsj} = \mu + \alpha_m + \beta_i + \gamma_t + \delta_s + \zeta_j + \varepsilon_{mitsj},
+y_{mitsj} = \mu + \alpha_m + \beta_i + \gamma_t + \delta_{is} + \zeta_j + \varepsilon_{mitsj},
 $$
 
-where each term is a zero-mean random effect with its own variance: $\sigma^2_{\text{item}}$ (item difficulty), $\sigma^2_{\text{prompt}}$ (prompt-template sensitivity), $\sigma^2_{\text{seed}}$ (generation noise), $\sigma^2_{\text{judge}}$ (judge disagreement), and residual $\sigma^2_{\varepsilon}$. The variance of your *reported mean* over $n_i$ items, $n_t$ prompts, $n_s$ seeds, and $n_j$ judges is approximately
+where each term is a zero-mean random effect with its own variance: $\sigma^2_{\text{item}}$ (item difficulty), $\sigma^2_{\text{prompt}}$ (prompt-template sensitivity), $\sigma^2_{\text{seed}}$ (generation noise, *nested within item* — re-rolling a seed perturbs one item's generation, it does not shift the whole benchmark), $\sigma^2_{\text{judge}}$ (judge disagreement), and residual $\sigma^2_{\varepsilon}$. Averaging a crossed grid of $n_i$ items, $n_t$ prompts, $n_s$ seeds, and $n_j$ judges, each effect is divided by the number of levels it actually varies over, so the variance of your *reported mean* is approximately
 
 $$
-\text{Var}(\bar y) \approx \frac{\sigma^2_{\text{item}}}{n_i} + \frac{\sigma^2_{\text{prompt}}}{n_t} + \frac{\sigma^2_{\text{seed}}}{n_i n_s} + \frac{\sigma^2_{\text{judge}}}{n_j} + \frac{\sigma^2_{\varepsilon}}{n_i n_s n_j}.
+\text{Var}(\bar y) \approx \frac{\sigma^2_{\text{item}}}{n_i} + \frac{\sigma^2_{\text{prompt}}}{n_t} + \frac{\sigma^2_{\text{seed}}}{n_i n_s} + \frac{\sigma^2_{\text{judge}}}{n_j} + \frac{\sigma^2_{\varepsilon}}{n_i n_t n_s n_j}.
 $$
 
 The practical lesson is in the denominators. If $\sigma^2_{\text{prompt}}$ is large and you used **one** prompt template, that term is divided by $n_t = 1$ — no amount of extra items reduces it. This is why "we changed the system prompt and the score moved 4 points" is so common: prompt variance is frequently the *dominant* term, and it is invisible to an item-bootstrap CI. The robustness chapter [Red-Teaming, Safety & Robustness Evaluation](../11-evaluation/05-redteaming-safety-eval.html) treats prompt sensitivity as a first-class failure mode.
@@ -562,14 +567,17 @@ def variance_components(scores):
     # Marginal means along each axis.
     item_means   = s.mean(axis=(1, 2))   # average over prompts & seeds
     prompt_means = s.mean(axis=(0, 2))   # average over items & seeds
-    # Variance of marginal means, de-biased by the within noise they still carry
-    # (Method-of-moments; fine for a diagnostic, use REML for a paper.)
-    var_item   = max(item_means.var(ddof=1)   - 0.0, 0.0)
-    var_prompt = max(prompt_means.var(ddof=1) - 0.0, 0.0)
     # Seed/residual: variance within an (item,prompt) cell, averaged.
     within = s.var(axis=2, ddof=1).mean() if n_k > 1 else 0.0
+    # Variance of marginal means, de-biased by the within noise they still carry:
+    # Var(item_means) = var_item + within/(n_t*n_k), and symmetrically for prompts.
+    # (Method-of-moments; fine for a diagnostic, use REML for a paper.)
+    var_item   = max(item_means.var(ddof=1)   - within / (n_t * n_k), 0.0)
+    var_prompt = max(prompt_means.var(ddof=1) - within / (n_i * n_k), 0.0)
 
-    se_mean = np.sqrt(var_item / n_i + var_prompt / n_t + within / (n_i * n_k))
+    # The residual averages over every cell of the grid, hence n_i * n_t * n_k.
+    se_mean = np.sqrt(var_item / n_i + var_prompt / n_t
+                      + within / (n_i * n_t * n_k))
     return {
         "grand_mean": grand,
         "var_item": var_item,
@@ -707,7 +715,7 @@ if __name__ == "__main__":
     = \frac{7.84 \times 0.3140}{0.0001} \approx 24{,}600 \text{ per arm}.
     $$
 
-    Roughly **25,000 items per model** — which is why no 500-item benchmark can adjudicate a one-point claim, and why frontier leaderboards still cannot cleanly separate the top few models. Now switch to a *paired* design: if the models agree on 85 % of items, the effective discordant sample is far richer, and `n_for_mcnemar` returns on the order of a **few thousand** items for the same 1-point effect — an order-of-magnitude saving from pairing alone. The takeaway: choose your MDE honestly, then either accept that small gaps need huge test sets, or pair aggressively, or stop reporting differences you cannot resolve.
+    Roughly **25,000 items per model** — which is why no 500-item benchmark can adjudicate a one-point claim, and why frontier leaderboards still cannot cleanly separate the top few models. Now switch to a *paired* design, where the saving depends entirely on how much the two models agree. At 85 % agreement ($p_b = 0.080$, $p_c = 0.070$) `n_for_mcnemar` returns about **11,800** items — only a $2\times$ saving. At 95 % agreement ($p_b = 0.030$, $p_c = 0.020$), typical of two checkpoints of the *same* model, it returns about **3,900** items — a $6\times$ saving from pairing alone. Pairing pays in proportion to how much of the item-difficulty variance it cancels. The takeaway: choose your MDE honestly, then either accept that small gaps need huge test sets, or pair aggressively, or stop reporting differences you cannot resolve.
 
 ---
 
@@ -877,7 +885,7 @@ print(stats.binomtest(k, n, p0, alternative="greater").pvalue)   # ~0.014
 print((k / n - p0) / (1 - p0))    # ~0.041 -> 4.1% of available headroom
 ```
 
-Report the chance-corrected accuracy $(\hat p - p_0)/(1 - p_0)$ alongside the raw number whenever a model sits near the floor; it makes "28 % vs 26 %" legible as "captured 4 % of the headroom vs 1.3 %," which is the honest framing. Note also that the log-likelihood scoring used by lm-evaluation-harness has *no* random-guessing behaviour — a small model always picks the highest-scoring option — so a below-chance score is a real (and informative) signal of a systematic bias toward, say, the longest option, not just noise.
+Report the chance-corrected accuracy $(\hat p - p_0)/(1 - p_0)$ alongside the raw number whenever a model sits near the floor; it makes "28 % vs 26 %" legible as "captured 4 % of the headroom vs 1.3 %," which is the honest framing. Note also that the log-likelihood scoring used by lm-evaluation-harness has *no* random-guessing behaviour — a small model always picks the highest-scoring option — so a *significantly* below-chance score (test it with the same one-sided binomial run in the other direction) is a real and informative signal of a systematic bias toward, say, the longest option. A small below-chance gap is still just item-sampling noise: at $p_0 = 0.25$ and $n = 1{,}000$ the SE is 1.4 points, so 23 % is entirely consistent with chance.
 
 ### At small scale, validation loss is the sensitive instrument
 
@@ -1059,7 +1067,7 @@ Bring it together with the skill this chapter exists to instill. When you look a
 
     Item Z: $P = \sigma(2(0 - 2)) = \sigma(-4) = 0.018$, so $I_Z = 2^2 \times 0.018 \times 0.982 = 4 \times 0.0177 = 0.071$.
 
-    (b) Ask item X. It wins on both levers of Fisher information: (1) its difficulty matches the model's ability ($b = \hat\theta$, so $P = 0.5$, which maximizes $P(1-P)$), and (2) it has high discrimination ($a = 2$). Item Y sits at the same difficulty but has half the discrimination ($a^2$ enters quadratically, so it carries a quarter of the information). Item Z is highly discriminating but far too easy for this model ($b = 2 \gg \hat\theta$); the model almost always passes it, so it reveals almost nothing about $\hat\theta$.
+    (b) Ask item X. It wins on both levers of Fisher information: (1) its difficulty matches the model's ability ($b = \hat\theta$, so $P = 0.5$, which maximizes $P(1-P)$), and (2) it has high discrimination ($a = 2$). Item Y sits at the same difficulty but has half the discrimination ($a^2$ enters quadratically, so it carries a quarter of the information). Item Z is highly discriminating but far too *hard* for this model ($b = 2 \gg \hat\theta$, and $b$ is difficulty); the model passes it only 1.8 % of the time, so its answer is a foregone conclusion and reveals almost nothing about $\hat\theta$.
 
     ```python
     import numpy as np
@@ -1085,7 +1093,7 @@ Bring it together with the skill this chapter exists to instill. When you look a
     $$
     So about 7,350 items on each model -- roughly 15,000 evaluations total -- just to resolve a 2-point gap.
 
-    (b) Pair the design: run both models on the *same* items and test the per-item difference with McNemar. Because competent models agree on most easy/hard items, the discordant sample is far richer per item and the paired variance is much smaller -- the chapter notes pairing is worth a $4$--$10\times$ larger unpaired test set, dropping the requirement from thousands to a few hundred or low thousands of items for the same effect. Alternatively, if a 2-point gap genuinely is your minimum-detectable-effect and pairing is unavailable, accept that no 500-item benchmark can adjudicate it and report the MDE honestly rather than a bare point difference.
+    (b) Pair the design: run both models on the *same* items and test the per-item difference with McNemar. Because competent models agree on most easy/hard items, the discordant sample is far richer per item and the paired variance is much smaller. How much smaller depends on the agreement rate: `n_for_mcnemar` needs about 3,900 items at 80 % agreement, 1,960 at 90 %, and 980 at 95 % for this same 2-point gap -- a $1.9\times$ to $7.5\times$ saving over the 7,350 per arm above, with the large end reserved for models that agree on nearly everything. Alternatively, if a 2-point gap genuinely is your minimum-detectable-effect and pairing is unavailable, accept that no 500-item benchmark can adjudicate it and report the MDE honestly rather than a bare point difference.
 
 **6.** (Implement a cluster bootstrap) The chapter warns that resampling individual items underestimates variance when items are grouped (e.g. multiple questions per document), and prescribes a **cluster (block) bootstrap** that resamples whole groups. Implement `cluster_bootstrap_ci(scores, groups, statistic, ...)` in the style of the chapter's `bootstrap_ci`, and write a short demo showing that when items within a group are correlated, the cluster CI is wider than the naive item-level CI.
 

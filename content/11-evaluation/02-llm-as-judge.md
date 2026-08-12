@@ -12,7 +12,7 @@ This chapter is a rigorous treatment of the machinery: how to prompt a judge, wh
 
 Before diving into the mechanics, it is worth being precise about why we need automation at all.
 
-**Throughput.** A single annotator, given a pair of model responses, might take 2–3 minutes to read, compare, and label. At that rate, 10,000 comparisons require roughly 300–500 annotator-hours. With a team of 10, that is multiple weeks. Modern development cycles need daily evaluation loops.
+**Throughput.** A single annotator, given a pair of model responses, might take 2–3 minutes to read, compare, and label. At that rate, 10,000 comparisons require roughly 300–500 annotator-hours. With a team of 10, that is 30–50 hours each — about a full work week of dedicated effort per annotator, for *one* comparison round. Modern development cycles need daily evaluation loops.
 
 **Consistency.** Even trained annotators disagree. Inter-annotator agreement on open-ended quality often sits at Cohen's κ in the range of 0.4–0.6 — barely moderate. Annotator mood, fatigue, and framing effects introduce noise that is hard to control.
 
@@ -244,13 +244,13 @@ For a three-way (A wins / B wins / tie) pairwise task, if the judge labels A=60%
 
 ### Spearman's Rank Correlation
 
-For pointwise scores, compare judge scores to human quality ratings using Spearman's $\rho$ (rank correlation, preferred to Pearson because scores are ordinal):
+For pointwise scores, compare judge scores to human quality ratings using Spearman's $\rho$ (rank correlation, preferred to Pearson because scores are ordinal). In general, $\rho$ is the Pearson correlation of the *ranks*:
 
 $$
-\rho = 1 - \frac{6 \sum d_i^2}{n(n^2-1)}
+\rho = \frac{\operatorname{cov}(\operatorname{rk}(x), \operatorname{rk}(y))}{\sigma_{\operatorname{rk}(x)} \, \sigma_{\operatorname{rk}(y)}}
 $$
 
-where $d_i$ is the rank difference for the $i$-th example. A good LLM judge achieves $\rho$ in the range of 0.7–0.9 on well-defined criteria.
+Textbooks often quote the shortcut $\rho = 1 - \frac{6 \sum d_i^2}{n(n^2-1)}$, where $d_i$ is the rank difference for the $i$-th example — but that closed form is only valid when **no ranks are tied**. Judge scores on a 1–5 integer scale tie constantly (hundreds of examples across five distinct values), so the shortcut is the wrong estimator here; use the tie-corrected general definition, which is exactly what `scipy.stats.spearmanr` computes with midranks. A good LLM judge achieves $\rho$ in the range of 0.7–0.9 on well-defined criteria.
 
 ### Practical Calibration Pipeline
 
@@ -422,6 +422,7 @@ vllm serve prometheus-eval/prometheus-7b-v2.0 --port 8000 --max-model-len 4096
 The second win is **structured decoding**. Rather than sampling freely and retrying on `JSONDecodeError`, we constrain the decode to a JSON schema, so a syntactically valid object is guaranteed by construction. vLLM implements this with a grammar backend (`xgrammar` by default; `outlines` and `lm-format-enforcer` are also selectable) that masks the logits of any token which cannot continue a legal parse — see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html) for the mechanism.
 
 ```python
+import json
 from openai import OpenAI
 
 # Same client class, different base_url. Nothing else in the judge changes.
@@ -693,7 +694,7 @@ The LLMaaJ setup using a chat model as judge has a sibling: the dedicated **rewa
 |---|---|---|
 | Latency | 1–5 s / query (full generation) | 10–50 ms / query (single forward pass) |
 | Throughput | Low (API rate limits) | High (can run at training throughput) |
-| Calibration | Strong out-of-the-box | Requires careful training data curation |
+| Calibration | Usable zero-shot, but poorly calibrated on absolute scales (needs a gold-set pass) | Requires careful training data curation |
 | Interpretability | Returns rationale text | Returns a scalar |
 | Customizability | Prompt engineering | Requires re-training |
 | Self-preference risk | High (same family) | Low (separate model) |
@@ -743,6 +744,10 @@ class RewardModelJudge:
             return_tensors="pt",
             truncation=True,
             max_length=4096,
+            # The template string ALREADY contains its special tokens (Llama-3
+            # templates open with <|begin_of_text|>). Without this flag the
+            # tokenizer prepends a second BOS the RM never saw in training.
+            add_special_tokens=False,
         ).to(self.device)
         logits = self.model(**tokens).logits  # shape: (1, 1) for scalar head
         return logits[0][0].item()
@@ -804,8 +809,9 @@ Deploying a judge in production without calibration is the most common mistake. 
 A single Elo rating is not a stable estimate — it has uncertainty depending on the number of games played. Use bootstrap resampling to get confidence intervals:
 
 ```python
+import random
 import numpy as np
-from copy import deepcopy
+from collections import defaultdict
 
 def bootstrap_elo_ci(battle_log: list[dict], n_bootstrap: int = 200, k: float = 32.0):
     """
@@ -1077,7 +1083,7 @@ Compute the `overall` score for each. Does the aggregation reward the concise an
     $$
     \theta_B' = 1000 + 32(0 - 0.5) = 1000 - 16 = 984
     $$
-    A rises to **1016**, B falls to **984**. With a completely uninformative prior (equal ratings), the update is the maximum symmetric $\pm K/2 = \pm 16$.
+    A rises to **1016**, B falls to **984**. Equal ratings give $E_A = E_B = 0.5$, so a decisive result moves each rating by exactly $K/2 = \pm 16$ — and because $|K(s_A - E_A)|$ shrinks as the expected score approaches the realized one, this is the *smallest* decisive update, not the largest. Upsets move ratings further (the worked example above gives 19.2 for an unexpected win), approaching the ceiling of $K = 32$ as the winner's expected score goes to 0.
 
     **(b)** Gap $= \theta_A - \theta_B = 200$:
     $$

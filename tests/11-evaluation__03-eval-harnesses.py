@@ -56,14 +56,19 @@ def doc_to_text(doc):
 def process_results(doc, results):
     """Extract the numeric answer from a chain-of-thought generation."""
     import re
-    # results[0] is the generated string
-    gen = results[0]
+    # results[0] is the generated string. Strip thousands separators first,
+    # or "the answer is 1,200" tokenizes as ["1", "200"] and the last-number
+    # rule silently extracts 200 -- a common failure on money answers.
+    gen = results[0].replace(",", "")
     # Look for the last number in the generation
     matches = re.findall(r"[-+]?\d*\.?\d+", gen)
     if matches:
         predicted = float(matches[-1])
-        gold = float(doc["answer"])
-        return {"exact_match": predicted == gold}
+        # GSM8K's "answer" field is the full solution ending in "#### 72",
+        # so take the text after the delimiter. (A bare numeric field is
+        # unaffected: "72".split("####")[-1] == "72".)
+        gold = float(doc["answer"].split("####")[-1].strip().replace(",", ""))
+        return {"exact_match": float(predicted == gold)}
     return {"exact_match": 0.0}
 
 
@@ -88,7 +93,16 @@ def _test_block1():
     r_empty = process_results(doc, ["I don't know."])
     assert r_empty == {"exact_match": 0.0}
 
-    print("block #1 OK:", r, r_wrong, r_empty)
+    # GSM8K-shaped doc: gold lives after the "####" delimiter, and thousands
+    # separators must not split the predicted number.
+    gsm_doc = {
+        "question": "How much did she earn?",
+        "answer": "She sold 60 clips at $20 each.\n#### 1,200",
+    }
+    r_comma = process_results(gsm_doc, ["... so the answer is 1,200."])
+    assert r_comma == {"exact_match": 1.0}
+
+    print("block #1 OK:", r, r_wrong, r_empty, r_comma)
 
 
 # ============================================================================
@@ -187,8 +201,11 @@ def extract_mc_answer(generation: str, choices: list[str]) -> str | None:
     """
     gen = generation.strip()
 
-    # Try to match a leading letter like "A" or "A."
-    letter_match = re.match(r"^([A-Da-d])[\.\):\s]?", gen)
+    # Try to match a leading letter like "A" or "A." -- the delimiter is
+    # mandatory (punctuation, whitespace, or end of string). Making it
+    # optional would match the first character of *any* word starting with
+    # a-d, so "Denmark is not a city" would silently be extracted as choice D.
+    letter_match = re.match(r"^([A-Da-d])(?:[\.\):]|\s|$)", gen)
     if letter_match:
         idx = ord(letter_match.group(1).upper()) - ord("A")
         if 0 <= idx < len(choices):
@@ -215,6 +232,11 @@ def _test_block5():
     assert extract_mc_answer("I think the answer is Paris.", choices) == "Paris"
     # No match
     assert extract_mc_answer("I have no idea.", choices) is None
+    # A free-form answer that merely *starts* with A-D must NOT be read as a
+    # letter answer; it has to fall through to the text-matching branch.
+    assert extract_mc_answer("Denmark is not a city", choices) is None
+    assert extract_mc_answer("Amsterdam", choices) is None
+    assert extract_mc_answer("Berlin is in Germany", choices) == "Berlin"
 
     print("block #5 OK")
 
@@ -226,11 +248,10 @@ def _test_block5():
 # ============================================================================
 
 try:
-    from lm_eval.api.task import ConfigurableTask
-    from lm_eval.api.metrics import mean
+    from lm_eval.api.task import ConfigurableTask, TaskConfig
 except Exception:
     ConfigurableTask = None
-    mean = None
+    TaskConfig = None
 
 
 def entity_f1(items):
@@ -264,11 +285,31 @@ def entity_f1(items):
 
 if ConfigurableTask is not None:
     class MedNERTask(ConfigurableTask):
-        """Medical NER task with entity-level F1 metric."""
+        """Medical NER task with entity-level F1 metric.
 
-        VERSION = 1
-        DATASET_PATH = "json"
-        DATASET_NAME = None
+        `ConfigurableTask` is the lm_eval 0.4.x base class, and it *must* be
+        handed a config -- either `cls.CONFIG` (below) or a `config=` kwarg --
+        or `__init__` raises immediately. The dataset/version fields that the
+        legacy `Task` API declared as `DATASET_PATH` / `DATASET_NAME` /
+        `VERSION` class attributes are set from that config instead.
+        """
+
+        CONFIG = TaskConfig(
+            task="medner",
+            dataset_path="json",                      # HuggingFace datasets loader
+            dataset_kwargs={"data_files": {"test": "data/medner_test.jsonl"}},
+            test_split="test",
+            output_type="generate_until",             # free-form entity extraction
+            generation_kwargs={"until": ["\n"]},
+            # A callable is accepted directly for both `metric` and `aggregation`;
+            # from YAML the same thing is written `metric: !function task.entity_f1`.
+            metric_list=[{
+                "metric": entity_f1,
+                "aggregation": entity_f1,
+                "higher_is_better": True,
+            }],
+            metadata={"version": 1},
+        )
 
         def doc_to_text(self, doc):
             return f"Extract all medical entities from this text:\n{doc['text']}\nEntities:"
@@ -290,11 +331,9 @@ if ConfigurableTask is not None:
                 "entity_f1": (pred_entities, gold_entities)
             }
 
-        def aggregation(self):
-            return {"entity_f1": entity_f1}
-
-        def higher_is_better(self):
-            return {"entity_f1": True}
+        # No aggregation()/higher_is_better() overrides needed:
+        # ConfigurableTask builds both from `metric_list` above. (Overriding
+        # them by hand is the legacy `Task` API idiom.)
 else:
     MedNERTask = None  # SKIP(optional-dep): lm_eval not installed in CI
 
@@ -451,7 +490,7 @@ def _test_block17():
     pt, lo, hi = bootstrap_ci(scores, n_bootstrap=2000, seed=42)
     assert abs(pt - 0.740) < 1e-9
     assert lo < pt < hi
-    # Book's reported 95% CI is roughly [0.703, 0.776]; allow slack since we
+    # Book's reported 95% CI is [0.702, 0.778] at 10_000 resamples; allow slack since we
     # use fewer bootstrap resamples for speed.
     assert 0.65 < lo < 0.75
     assert 0.72 < hi < 0.82

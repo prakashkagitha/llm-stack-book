@@ -194,9 +194,9 @@ Chameleon's paper is remarkably candid about training instability. The joint voc
 
 **Query-key normalisation (QK-Norm).** Apply RMS normalisation to queries and keys before computing attention logits. This prevents attention logit explosion when the model encounters unusual token combinations at modality boundaries. Without QK-Norm, training diverges within the first few thousand steps on interleaved data.
 
-**Dropout at modality boundaries.** A small amount of dropout on image token embeddings acts as regularisation, preventing the model from overrelying on memorised image codebook assignments.
+**Dropout — and its limits at scale.** Chameleon-7B additionally used *ordinary* dropout after the attention and feed-forward sub-layers. It is worth knowing that this was not a general fix: the same recipe failed to stabilise the 34B model, which needed a reordering of the layer norms instead. Stabilisers found at one scale do not automatically transfer to the next.
 
-**Modality-aware z-loss.** An auxiliary loss that penalises the logit magnitudes per modality separately, ensuring neither text nor image vocabulary dominates the softmax.
+**Z-loss.** An auxiliary loss $\log^2 Z$ on the softmax partition function $Z = \sum_j e^{z_j}$, which keeps the output logits from drifting to magnitudes that saturate the 65K-way softmax (the same trick large-vocabulary text LMs use). Chameleon applies it globally over the joint vocabulary; in a mixed-modal batch it is worth *accumulating it separately at text-output and image-output positions*, since the two position types have very different logit scales and a single average hides one behind the other. That per-position-type variant is what the code below implements.
 
 ```python
 import torch
@@ -205,16 +205,23 @@ import torch.nn.functional as F
 def qk_norm(q: torch.Tensor, k: torch.Tensor, eps: float = 1e-6):
     """
     Query-key normalisation as used in Chameleon.
-    Normalises each query and key vector independently before dot-product attention.
-    
+    RMS-normalises each query and key vector independently before dot-product
+    attention, so their norms are pinned at sqrt(head_dim) and the logit
+    q·k = ||q|| ||k|| cos(theta) can no longer explode from norm growth.
+
+    Note it must be RMS (or layer) norm, not unit L2 norm: attention already
+    divides by sqrt(head_dim), so unit-norm queries and keys would leave every
+    logit inside [-1/sqrt(head_dim), +1/sqrt(head_dim)] and the softmax nearly
+    uniform at initialisation.
+
     Args:
         q: (batch, heads, seq_len, head_dim)
         k: (batch, heads, seq_len, head_dim)
     Returns:
-        q_norm, k_norm: same shape as inputs, unit-norm along head_dim
+        q_norm, k_norm: same shape as inputs, constant norm sqrt(head_dim)
     """
-    q_norm = q / (q.norm(dim=-1, keepdim=True) + eps)
-    k_norm = k / (k.norm(dim=-1, keepdim=True) + eps)
+    q_norm = q * torch.rsqrt(q.pow(2).mean(dim=-1, keepdim=True) + eps)
+    k_norm = k * torch.rsqrt(k.pow(2).mean(dim=-1, keepdim=True) + eps)
     return q_norm, k_norm
 
 
@@ -239,7 +246,11 @@ def modality_z_loss(logits: torch.Tensor,
         # log-sum-exp of logits; penalise if large
         lse = torch.logsumexp(logits, dim=-1)          # (batch, seq_len)
         masked_lse = lse[mask]
-        return (masked_lse ** 2).mean()
+        # Divide by a clamped count instead of calling .mean(): a text-only batch
+        # has zero image positions, and mean() of an empty tensor is NaN — which
+        # would poison the whole backward pass on the very batches this loss is
+        # meant to stabilise.
+        return masked_lse.pow(2).sum() / mask.sum().clamp(min=1)
 
     z_text  = z_loss_for_mask(text_mask)
     z_image = z_loss_for_mask(image_mask)
@@ -282,9 +293,12 @@ class ChameleonBlock(torch.nn.Module):
         k = self.k_proj(h).view(B, T, H, Dh).transpose(1, 2)
         v = self.v_proj(h).view(B, T, H, Dh).transpose(1, 2)
 
-        # QK-Norm: normalise then rescale with learned per-head scale
-        q = F.normalize(q, dim=-1) * self.q_scale.unsqueeze(0).unsqueeze(2)
-        k = F.normalize(k, dim=-1) * self.k_scale.unsqueeze(0).unsqueeze(2)
+        # QK-Norm: RMS-normalise then rescale with a learned per-head gain.
+        # RMSNorm keeps ||q|| = ||k|| = sqrt(Dh), so SDPA's built-in 1/sqrt(Dh)
+        # still leaves O(1) logits. (F.normalize would give unit norm and shrink
+        # every logit by sqrt(Dh) — a near-uniform softmax at initialisation.)
+        q = F.rms_norm(q, (Dh,)) * self.q_scale.unsqueeze(0).unsqueeze(2)
+        k = F.rms_norm(k, (Dh,)) * self.k_scale.unsqueeze(0).unsqueeze(2)
 
         # Standard scaled dot-product attention
         attn_out = F.scaled_dot_product_attention(q, k, v,
@@ -339,7 +353,7 @@ Discrete tokenisation loses information, and it is worth being precise about how
 
 {{fig:unified-transfusion-arch}}
 
-**Text positions** use standard AR cross-entropy loss. **Image positions** receive continuous patch embeddings (linear projection of raw pixels, no quantisation) and are trained with a denoising diffusion / flow-matching objective. Specifically, Transfusion uses **flow matching** (Lipman et al., 2022): given a clean image patch $x_0$ and a noise sample $\epsilon \sim \mathcal{N}(0, I)$, define
+**Text positions** use standard AR cross-entropy loss. **Image positions** receive continuous patch embeddings — the image is first encoded by a *pretrained VAE* into a small latent tensor (a 256×256 image becomes 32×32×8), and that latent is patchified and linearly projected, with no quantisation anywhere — and are trained with a denoising diffusion / flow-matching objective. The diffusion therefore runs in latent space, exactly as in latent diffusion models, not on raw pixels. Specifically, Transfusion uses **flow matching** (Lipman et al., 2022): given a clean image patch $x_0$ and a noise sample $\epsilon \sim \mathcal{N}(0, I)$, define
 
 $$
 x_t = (1 - t) x_0 + t \epsilon, \quad t \in [0, 1]
@@ -478,7 +492,7 @@ except Exception as exc:                       # older PyTorch, or no flex_atten
 
 ### Why Transfusion Outperforms Pure Discrete Tokenisation
 
-For image generation benchmarks (FID scores, recall), Transfusion trades slightly lower text quality for significantly better image quality compared to Chameleon-style discrete image tokens, at the same model and compute scale. The intuition is that continuous representations preserve the full information content of the image; the diffusion head is trained to reconstruct it directly rather than through a bottleneck codebook.
+At matched model and compute scale, Transfusion dominates Chameleon-style discrete image tokens on image generation benchmarks (FID, recall) by a wide margin — and, perhaps surprisingly, it does *not* pay for that with text quality: the paper reports it matching or beating Chameleon on text-only evaluation too. The intuition for the image gain is that continuous representations preserve the full information content of the image, and the diffusion head reconstructs it directly rather than through a bottleneck codebook. The intuition for the text gain is capacity: quantised image tokens have to be memorised inside the same softmax and the same weights as language, so removing them frees model capacity for text.
 
 ## Mixed-Modal Pretraining: Data and Training Recipes
 
@@ -508,7 +522,7 @@ Starting joint training from scratch on all modalities simultaneously can cause 
 
 1. **Stage 1: Text-only pretraining.** Initialise the language backbone on a large text corpus. This follows standard scaling-law-optimal data and compute (see [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)).
 2. **Stage 2: Multi-modal warmup.** Introduce image tokens at a low mixing ratio (5–10%), train with a lower learning rate, and freeze the image tokeniser.
-3. **Stage 3: Full joint training.** Scale to the full multi-modal data mixture; unfreeze all components.
+3. **Stage 3: Full joint training.** Scale to the full multi-modal data mixture and unfreeze every *transformer* component (raise the learning rate back to the text-pretraining schedule). The image tokeniser stays frozen for the entire run: the corpus was pre-tokenised offline, so moving the codebook would silently change the meaning of every integer already on disk and leave the decoder unable to render the ids the model emits.
 
 ### Loss Weighting Across Modalities
 
@@ -705,7 +719,8 @@ from typing import Optional
 class Batch:
     """A mixed-modal training batch."""
     input_ids:        torch.Tensor   # (B, T_total) — text ids; any filler id at image slots
-    text_labels:      torch.Tensor   # (B, T_total) — same, with -100 at image/masked slots
+    text_labels:      torch.Tensor   # (B, T_total) — same, UNshifted, with -100 at
+                                     #               image/masked slots (forward() shifts)
     image_patches:    torch.Tensor   # (B, T_img, D_patch)  — continuous patch embeddings
     image_labels:     torch.Tensor   # (B, T_img, D_patch)  — clean patch targets
     noise:            torch.Tensor   # (B, T_img, D_patch)  — sampled ε
@@ -753,10 +768,17 @@ class UnifiedModel(nn.Module):
         # 3. Transformer forward pass with block-causal mask
         h = self.transformer(x, attention_mask=batch.attention_mask)  # (B, T_total, d_model)
 
-        # 4. Text loss — cross-entropy on text positions
-        text_logits  = self.text_head(h[~batch.is_image])              # (N_text, vocab)
-        text_labels  = batch.text_labels[batch.text_labels != -100]
-        lm_loss      = F.cross_entropy(text_logits, text_labels)
+        # 4. Text loss — cross-entropy on text positions, shifted by one so that
+        #    position i predicts token i+1 (the standard AR objective). Without the
+        #    shift this would ask the model to output the token it was just fed.
+        #    One predicate selects both hidden states and labels, so the two can
+        #    never disagree in length (image slots and masked prompt/pad positions
+        #    are both -100 and are dropped from both sides).
+        shift_h      = h[:, :-1]                                       # (B, T-1, d_model)
+        shift_labels = batch.text_labels[:, 1:]                        # (B, T-1)
+        text_sel     = shift_labels != -100
+        text_logits  = self.text_head(shift_h[text_sel])               # (N_text, vocab)
+        lm_loss      = F.cross_entropy(text_logits, shift_labels[text_sel])
 
         # 5. Diffusion loss — flow-matching velocity on image positions
         h_img        = h[batch.is_image]                               # (N_img, d_model)
@@ -805,8 +827,10 @@ At 100M parameters this produces recognisably-prompted but blurry 256×256 thumb
     - Transfusion's hybrid approach — AR cross-entropy for text, flow-matching diffusion for
       continuous image patches — achieves better generation fidelity at the expense of
       training and inference complexity.
-    - Chameleon-style training requires QK-Norm and modality-aware z-loss to stabilise the
-      joint vocabulary softmax over 65K tokens from two very different distributions.
+    - Chameleon-style training requires QK-Norm and a z-loss on the softmax partition
+      function to stabilise the joint vocabulary softmax over 65K tokens from two very
+      different distributions; tracking the z-loss separately at text- and image-output
+      positions tells you which modality is drifting.
     - Prompted image generation needs classifier-free guidance: drop the caption on ~10% of
       training examples, then sample with $\ell_\text{uncond} + w(\ell_\text{cond} -
       \ell_\text{uncond})$, $w \approx 3$–$7$. Skip the training-time dropout and there is no
@@ -992,11 +1016,13 @@ Suppose the average per-token loss is 3 nats for text and 6 nats for image.
     contributions at $3:3$. Normalisation decouples the loss balance from the accident of how
     many tokens each modality happens to occupy.
 
-**4.** Chameleon stabilises training with QK-Norm and a modality-aware z-loss. (a) Explain
-mechanistically why applying RMS/unit normalisation to queries and keys before the attention
-dot product prevents "attention logit explosion" at modality boundaries. (b) The z-loss
-penalises $(\log\sum_j e^{z_j})^2$ per modality. Explain what pathology it targets and why
-computing it *separately* per modality matters given a 65,536-token joint vocabulary.
+**4.** Chameleon stabilises training with QK-Norm and a z-loss on the softmax partition
+function. (a) Explain mechanistically why normalising queries and keys before the attention
+dot product prevents "attention logit explosion" at modality boundaries — and why the
+normalisation must preserve a norm of $\sqrt{d_h}$ rather than produce unit vectors. (b) The
+z-loss penalises $(\log\sum_j e^{z_j})^2$. Explain what pathology it targets and why the
+chapter's variant accumulates it *separately* for text- and image-output positions given a
+65,536-token joint vocabulary.
 
 ??? note "Solution"
 
@@ -1007,21 +1033,28 @@ computing it *separately* per modality matters given a 65,536-token joint vocabu
     projections can produce unusually large $\lVert q\rVert$ or $\lVert k\rVert$; the logit
     then blows up, softmax saturates to a near one-hot distribution, and the gradient through
     that step becomes tiny or explosive — training diverges within a few thousand steps (as
-    the chapter reports). QK-Norm forces $\lVert q\rVert=\lVert k\rVert=1$ (times a *learned,
-    bounded* per-head scale), so the logit reduces to $\propto\cos\theta\in[-1,1]$ scaled by a
-    controlled factor. The dot product can no longer explode from raw norm growth; only the
-    learned scale, which optimisation keeps in a sane range, sets the temperature.
+    the chapter reports). QK-Norm pins $\lVert q\rVert=\lVert k\rVert=\sqrt{d_h}$ (times a
+    *learned, bounded* per-head gain), so the logit reduces to
+    $\propto\cos\theta\in[-1,1]$ scaled by a controlled factor. The dot product can no longer
+    explode from raw norm growth; only the learned gain, which optimisation keeps in a sane
+    range, sets the temperature. Note that the normalisation must be RMS/layer norm rather
+    than unit L2 norm: the $1/\sqrt{d_h}$ already inside attention assumes norms of order
+    $\sqrt{d_h}$, so unit-normalising would clamp every logit into
+    $[-1/\sqrt{d_h}, 1/\sqrt{d_h}]$ and flatten the softmax at initialisation.
 
     (b) The z-loss targets the softmax *partition function* $Z=\sum_j e^{z_j}$: penalising
     $(\log Z)^2$ pushes the overall logit magnitudes down, preventing the output softmax from
     saturating and keeping logits numerically well-conditioned (this is the same z-loss used
-    to stabilise large-vocabulary LMs). Computing it *per modality* matters because the joint
-    65,536-token softmax mixes two populations with very different frequencies: text tokens
-    are common, the 8,192 image tokens comparatively rare. A single global penalty would be
-    dominated by whichever modality has the larger logits, letting the other drift. Splitting
-    it ensures the text vocabulary and the image vocabulary are each held in check
-    independently, so "neither text nor image vocabulary dominates the softmax," which is
-    exactly the balance the chapter says the modality-aware z-loss is designed to enforce.
+    to stabilise large-vocabulary LMs). Computing it *per modality* means splitting the
+    average by the **position** the logits are produced at — text-output positions versus
+    image-output positions — not by slicing the vocabulary axis, since every position still
+    emits one softmax over all 65,536 entries. It matters because the two position types have
+    very different logit scales: text targets are drawn from a common, high-frequency
+    population, image targets from the 8,192 comparatively rare codebook entries. A single
+    batch-wide average is dominated by whichever position type is more numerous and has the
+    larger logits, letting the other drift unpenalised until it saturates. Splitting the
+    accumulator keeps both in check and, just as usefully, tells you *which* modality is
+    drifting when the loss curve misbehaves.
 
 **5.** The chapter's `ModalityAwareMoE` warns that a router can collapse — sending all image
 tokens to a few experts that then never see text, so cross-modal reasoning fails. The

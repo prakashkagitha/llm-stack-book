@@ -37,10 +37,10 @@ Let $f : \mathbb{R}^n \to \mathbb{R}^m$ be a differentiable function. Its deriva
 Reverse-mode autodiff computes the **vector-Jacobian product (VJP)**:
 
 $$
-\bar{x} = \bar{y}^\top J
+\bar{x}^\top = \bar{y}^\top J \qquad \text{equivalently} \qquad \bar{x} = J^\top \bar{y}
 $$
 
-where $\bar{y}$ is the upstream gradient (a $1 \times m$ row vector) and $\bar{x}$ is the resulting gradient with respect to $x$. When $m = 1$ and $\bar{y} = 1$, this recovers the ordinary gradient $\nabla_x f$.
+where $\bar{y} \in \mathbb{R}^m$ is the upstream gradient (written as a column vector, so that $\bar{y}^\top$ is the $1 \times m$ row vector that multiplies $J$ from the left) and $\bar{x} \in \mathbb{R}^n$ is the resulting gradient with respect to $x$. When $m = 1$ and $\bar{y} = 1$, this recovers the ordinary gradient $\nabla_x f$.
 
 The key insight is that we never materialize $J$ itself — we only ever compute VJPs. This makes reverse-mode autodiff efficient when the output dimension $m$ is small (e.g., $m = 1$ for scalar losses) regardless of how large $n$ is.
 
@@ -50,7 +50,7 @@ During the **forward pass**, autograd records every operation applied to tensors
 
 During the **backward pass**, we traverse the tape in reverse topological order. At each node, we:
 1. Receive the upstream gradient $\bar{y}$ from the node above.
-2. Call the node's `backward` function to compute the VJP: $\bar{x} = \bar{y}^\top J$.
+2. Call the node's `backward` function to compute the VJP: $\bar{x} = J^\top \bar{y}$.
 3. Accumulate $\bar{x}$ into the gradient of the input tensor and pass it downstream.
 
 After `loss.backward()` returns, every leaf tensor with `requires_grad=True` has its `.grad` field populated with the accumulated gradient.
@@ -114,9 +114,12 @@ Notice that `a` appears twice in the graph (once as an input to `c = a*b` and on
 By default, `.grad` accumulates (adds) across multiple `.backward()` calls. This is intentional and exploited by gradient accumulation in training:
 
 ```python
+accumulation_steps = 8         # number of micro-batches per optimizer step
+
 optimizer.zero_grad()          # clear accumulated grads
-for mini_batch in accumulation_steps:
-    loss = model(mini_batch) / accumulation_steps
+for _ in range(accumulation_steps):
+    inputs, targets = next(loader)
+    loss = loss_fn(model(inputs), targets) / accumulation_steps
     loss.backward()            # accumulates into .grad
 optimizer.step()               # update once with the full-batch gradient
 ```
@@ -151,7 +154,7 @@ Two design rules fall out of this. First, **prefer backward formulas that read t
 
     One tensor of shape (tokens, `d_model`) is $65{,}536 \times 512 \times 2 = 67{,}108{,}864$ bytes — exactly **64 MiB**. One tensor at the SwiGLU width is $65{,}536 \times 1408 \times 2 =$ **176 MiB**.
 
-    A single block's MLP saves the block input (64 MiB, pinned once and shared by the gate and up projections), the gate and up pre-activations (176 MiB each, needed by the SiLU and the elementwise product), and the product that feeds the down projection (176 MiB): $64 + 3\times176 \approx$ **0.6 GiB per block, from the MLP alone**, before attention or the norms contribute anything. Thirty blocks of that is on the order of 17 GiB — which is why activation checkpointing (later in this chapter) becomes the deciding factor in how large a micro-batch fits, even though the *parameters* are only ~0.2 GiB in bf16.
+    A single block's MLP saves the block input (64 MiB, pinned once and shared by the gate and up projections) and four tensors at the SwiGLU width (176 MiB each): the gate and up pre-activations $g$ and $u$, the SiLU output $\text{silu}(g)$, and the product $y = \text{silu}(g)\odot u$ that feeds the down projection. The elementwise multiply is what forces the extra one — `MulBackward0` needs *both* operands ($\bar g$ needs $u$, $\bar u$ needs $\text{silu}(g)$) while `SiluBackward` separately holds $g$. That is $64 + 4\times176 = 768$ MiB $=$ **0.75 GiB per block, from the MLP alone**, before attention or the norms contribute anything. Thirty blocks of that is on the order of 22 GiB — which is why activation checkpointing (later in this chapter) becomes the deciding factor in how large a micro-batch fits, even though the *parameters* are only ~0.2 GiB in bf16.
 
 Because saved tensors are just Python-visible objects flowing through the engine, you can intercept them. `torch.autograd.graph.saved_tensors_hooks(pack, unpack)` installs a pair of callbacks: `pack` runs when a tensor is saved (return anything you like — a CPU copy, a quantized blob, a filename), and `unpack` runs when backward needs it back. This one mechanism is the substrate under CPU activation offloading and quantized-activation training:
 
@@ -330,8 +333,8 @@ print("x      :", x.detach().numpy().round(4))
 print("sigma  :", y.detach().numpy().round(4))
 print("grad   :", x.grad.numpy().round(4))
 # x      : [ 1.5410 -0.2934 -2.1788  0.5684]
-# sigma  : [0.8238 0.4271 0.1017 0.6387]
-# grad   : [0.1449 0.2446 0.0912 0.2307]  -- sigma*(1-sigma)
+# sigma  : [0.8236 0.4272 0.1017 0.6384]
+# grad   : [0.1453 0.2447 0.0913 0.2308]  -- sigma*(1-sigma)
 ```
 
 ### Example: Straight-Through Estimator (STE)
@@ -472,10 +475,10 @@ Understanding what happens *below* `autograd` helps when you need to write custo
 The **dispatcher** is a routing table. Every operation is registered under one or more "dispatch keys" (tags attached to tensors based on device/dtype/layout). When you call `torch.mm(a, b)`, the dispatcher inspects the keys of `a` and `b` and calls the appropriate backend implementation. This architecture enables:
 
 - **Backend extensibility**: XLA, MPS, custom hardware backends plug in without touching existing code.
-- **Transforms**: `torch.compile`, `vmap`, `grad` (functorch) all work by inserting themselves at a dispatch key layer, intercepting operations.
+- **Transforms**: `vmap` and `grad` (`torch.func`) work by inserting themselves at a dispatch key layer, intercepting operations; `torch.compile`'s tracing layer rides the same mechanism via `__torch_dispatch__` modes (its frontend, TorchDynamo, is a bytecode hook rather than a key — see below).
 - **Operator overriding**: You can register a custom kernel for a specific (op, backend) pair.
 
-The crucial thing to internalize is that **autograd is itself a dispatch key, not a special case**. Keys are ordered, and a call falls through them from highest to lowest priority. `Autograd` sits *above* the backend keys: its kernel for `mm` allocates the `MmBackward0` node, wires up `next_functions`, and then **redispatches** the same call to the next key down (`CUDA`, `CPU`, …) to actually compute the numbers. That is why `no_grad` is cheap — it simply excludes the `Autograd` key from the dispatch set, so the call lands straight on the backend kernel with no node allocated.
+The crucial thing to internalize is that **autograd is itself a dispatch key, not a special case**. Keys are ordered, and a call falls through them from highest to lowest priority. `Autograd` sits *above* the backend keys: its kernel for `mm` allocates the `MmBackward0` node, wires up `next_functions`, and then **redispatches** the same call to the next key down (`CUDA`, `CPU`, …) to actually compute the numbers. This is also the precise difference between the two inference contexts. `no_grad` flips a thread-local `GradMode` flag: the `Autograd` kernel still runs, but it skips allocating a node and immediately redispatches. `inference_mode` goes further and actually **excludes the autograd keys from the thread-local dispatch set** (you can see this with `torch._C._dispatch_tls_local_exclude_set()`), so the call lands straight on the backend kernel — which is where its extra speed over `no_grad` comes from.
 
 The same layering explains mixed precision. `torch.autocast` inserts an **`Autocast` key above `Autograd`**, whose kernel for each listed op casts the operands to bf16/fp16 before redispatching. Because the cast happens *above* autograd, the tensors the graph saves are the **cast** (bf16) ones — which is exactly why autocast reduces activation memory, and also why an unsafe op left on autocast's fp32 list still saves fp32 activations. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html).
 
@@ -605,7 +608,7 @@ def block_forward(x, layer):
 x_out = checkpoint(block_forward, x_in, layer, use_reentrant=False)
 ```
 
-Mechanically, `checkpoint` runs the segment's forward under `no_grad` (so no tape is built inside it) and installs a single `Function` node that, when backward reaches it, re-runs the forward *with* grad enabled to rebuild exactly the saved tensors it needs. The tape therefore keeps only the segment **boundaries** instead of every intermediate — for a transformer block that turns the ~0.6 GiB of MLP activations counted earlier into a single block-input tensor — at the cost of roughly one extra forward pass of compute per checkpointed segment (on the order of 30% added step time when every block is checkpointed). It is standard practice in LLM pretraining. See [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html) for the full analysis, including per-operator *selective* checkpointing, and [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) for the capstone's decision about when a 100M model actually needs it.
+Mechanically, the modern `use_reentrant=False` path runs the segment's forward with grad **enabled**, but wraps it in a `saved_tensors_hooks` pair whose `pack` returns an empty placeholder instead of the tensor. So the graph nodes inside the segment are built exactly as usual (`out.grad_fn` really is a `ReluBackward0`, and its `next_functions` really do point at the matmul below it) — they simply hold no activations. When backward reaches one of them, `unpack` re-runs the segment's forward to regenerate the tensor it asked for. (The older, deprecated `use_reentrant=True` path is the one that runs the segment under `no_grad` and installs a single opaque `Function` node.) Either way the tape keeps only the segment **boundaries** worth of *data* instead of every intermediate — for a transformer block that turns the ~0.75 GiB of MLP activations counted earlier into a single block-input tensor — at the cost of roughly one extra forward pass of compute per checkpointed segment (on the order of 30% added step time when every block is checkpointed). It is standard practice in LLM pretraining. See [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html) for the full analysis, including per-operator *selective* checkpointing, and [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) for the capstone's decision about when a 100M model actually needs it.
 
 ### Second-Order Gradients and `create_graph`
 
@@ -665,7 +668,7 @@ These are themselves `mm` calls, so they go through the same dispatcher path and
 
 ### `torch.compile` and the Dispatcher
 
-`torch.compile` (based on TorchDynamo + TorchInductor) traces the Python bytecode, extracts a subgraph as a `torch.fx.Graph`, applies fusion passes, and emits an optimized kernel. It interacts with the dispatcher by inserting a `CompiledFunctionBackend` dispatch key. Because the dispatcher is a clean abstraction boundary, `torch.compile` can replace and fuse sequences of ATen ops without touching user code. See [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html) for details.
+`torch.compile` (based on TorchDynamo + TorchInductor) traces the Python bytecode, extracts a subgraph as a `torch.fx.Graph`, applies fusion passes, and emits an optimized kernel. Note that TorchDynamo itself is *not* a dispatch key: it hooks CPython's frame evaluation to capture bytecode. The dispatcher-level machinery sits downstream — AOTAutograd lowers the captured graph to ATen using `__torch_dispatch__` modes (riding the `Python` and `Functionalize` keys), and the compiled forward/backward pair is installed into the tape as an ordinary `autograd.Function` node. Because the dispatcher is a clean abstraction boundary, `torch.compile` can replace and fuse sequences of ATen ops without touching user code. See [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html) for details.
 
 ---
 
@@ -727,7 +730,7 @@ In a large pretraining run, reach for this at STEP 3 ("isolate the step") of the
     - After `loss.backward()`, only **leaf** tensors (those created directly with `requires_grad=True`, typically `nn.Parameter`) accumulate gradients in `.grad`; intermediate tensors' gradients are discarded unless `retain_grad()` is called. `tensor.register_hook` intercepts (and can replace) a gradient mid-flight, and `register_post_accumulate_grad_hook` fires once a leaf's `.grad` is final — the hook DDP and FSDP use to overlap gradient communication with the rest of the backward pass.
     - `torch.no_grad()` and `torch.inference_mode()` suppress graph construction for inference; `inference_mode` is stricter and slightly faster. Always use one or the other during eval.
     - Custom `autograd.Function` subclasses let you inject arbitrary forward/backward logic into the autograd graph; use `ctx.save_for_backward` for tensors, `gradcheck` to verify correctness.
-    - PyTorch's **dispatcher** routes each operation through an ordered set of dispatch keys; `Autocast` and `Autograd` are keys layered *above* the backend key (CPU, CUDA, XLA), each doing its work and redispatching downward — which is why `no_grad` is free and why autocast makes the graph save bf16 activations. `torch.compile`, `vmap`, and `grad` (torch.func) are dispatcher-level transforms that compose the same way.
+    - PyTorch's **dispatcher** routes each operation through an ordered set of dispatch keys; `Autocast` and `Autograd` are keys layered *above* the backend key (CPU, CUDA, XLA), each doing its work and redispatching downward — which is why `no_grad` (a `GradMode` flag that skips node allocation) is cheap, why `inference_mode` (which excludes the autograd keys outright) is cheaper still, and why autocast makes the graph save bf16 activations. `vmap` and `grad` (torch.func) are dispatcher-level transforms that compose the same way, and `torch.compile`'s ATen-lowering stage rides the dispatcher too (though its Dynamo frontend is a CPython bytecode hook, not a key).
     - **Views** share storage with the original tensor (zero copy); **contiguity** determines whether kernels can operate without an implicit copy. Non-contiguous tensors frequently cause silent performance regressions.
     - Broadcasting is implemented via stride-0 dimensions; the backward pass of a broadcast automatically sums gradients over the expanded dimensions.
     - The graph's memory cost is its **saved tensors** — inspect them via `grad_fn._saved_*`, prefer backward formulas that read the output rather than the input, and remember that a single micro-batch of a 100M model parks tens of GiB there. Gradient checkpointing (recompute the segment, keep only its boundaries) and `saved_tensors_hooks` (offload or compress what is saved) are the two levers for shrinking it.
@@ -830,7 +833,7 @@ In a large pretraining run, reach for this at STEP 3 ("isolate the step") of the
 ??? note "Solution"
     The backward of sigmoid needs its local derivative $d\sigma/dx = \sigma(x)(1-\sigma(x))$. Since $\sigma(x)$ *is* the forward output $y$, that derivative is $y(1-y)$ — it can be computed entirely from `y` without ever referencing `x`. So stashing `y` is enough, and we avoid keeping a second tensor of the same size around; for large activation maps this halves the memory that op contributes to the graph. The VJP is then the element-wise `grad_output * y * (1 - y)`.
 
-    An activation whose backward needs the **input** is ReLU: $d\,\text{ReLU}/dx = \mathbb{1}[x>0]$. From the output alone you cannot recover the mask for the boundary — an output of $0$ is ambiguous (it could come from any $x\le 0$), and more generally the gate depends on the sign of the *input*, not the value of the output. (Tanh, by contrast, is like sigmoid: $d\tanh/dx = 1 - \tanh^2(x) = 1 - y^2$, computable from the output.)
+    An activation whose backward genuinely needs the **input** is SiLU (swish), $y = x\,\sigma(x)$, whose derivative $\sigma(x)\,(1 + x(1-\sigma(x)))$ is written in terms of $x$ and cannot be recovered from $y$ alone — $y$ is not injective (it dips below zero for $x<0$, so a given negative $y$ has two preimages). PyTorch's `SiluBackward0` accordingly exposes `_saved_self`, and GELU is the same story. Note that ReLU is *not* an example of this: even though $d\,\text{ReLU}/dx = \mathbb{1}[x>0]$ is written in terms of $x$, the mask is exactly `y > 0` (every $x \le 0$ maps to $y = 0$ and to gradient $0$, taking the conventional subgradient $0$ at the kink), which is why `ReluBackward0` saves only `_saved_result`. Tanh is likewise output-saving: $d\tanh/dx = 1 - \tanh^2(x) = 1 - y^2$.
 
 **4.** (Conceptual — broadcasting backward.) In the broadcasting example, `a` has shape `(3, 1)`, `b` has shape `(3, 4)`, `c = a + b`, and `a.grad` comes out as `[[4.], [4.], [4.]]` after `c.sum().backward()`. Explain where the `4` comes from, and predict `a.grad` if instead `a` had shape `(1, 4)` (with `b` still `(3, 4)`).
 
@@ -908,4 +911,4 @@ In a large pretraining run, reach for this at STEP 3 ("isolate the step") of the
 
     The activation dominates by ~46x, which is the general rule at LLM scale: what the tape holds is proportional to *tokens*, not to parameters.
 
-    **(b)** `checkpoint` runs the wrapped forward under `no_grad`, so no `MmBackward0` node — and hence no saved tensors — is created at all during the first forward. Only the checkpoint segment's **input** is retained. During backward the segment is re-run with grad enabled, the 64 MiB input activation and the 1.4 MiB weight cast are recreated, the local backward runs, and they are freed again immediately. Peak activation memory drops to one boundary tensor per segment in exchange for one extra forward pass of compute.
+    **(b)** With `use_reentrant=False` the wrapped forward still runs with grad enabled, so the `MmBackward0` node *is* created — but it is created inside a `saved_tensors_hooks` region whose `pack` substitutes a placeholder for each tensor, so the node holds **no** activation bytes: neither the 64 MiB input nor the 1.4 MiB weight cast is retained. Only the checkpoint segment's **input** is kept alive. During backward the segment is re-run, `unpack` regenerates the 64 MiB activation and the 1.4 MiB weight cast, the local backward runs, and they are freed again immediately. Peak activation memory drops to one boundary tensor per segment in exchange for one extra forward pass of compute.

@@ -22,7 +22,7 @@ $$
 
 This avoids the naive estimator $1 - (1 - c/n)^k$, which is biased when $c/n$ is estimated from finite samples. The combinatorial form is mathematically exact: it computes the probability that a random draw of $k$ samples from the $n$ generated contains zero passing samples, then subtracts from one.
 
-It is worth being precise about *what* is unbiased and *under what assumption*. Model the $n$ samples as i.i.d. draws that each pass with unknown probability $p$, so $c \sim \text{Binomial}(n, p)$ and the estimand is $\text{Pass@}k = 1 - (1-p)^k$. The ratio $\binom{n-c}{k}/\binom{n}{k}$ satisfies $\mathbb{E}\!\left[\binom{n-c}{k}/\binom{n}{k}\right] = (1-p)^k$ exactly, so the combinatorial form is an unbiased estimator of $\text{Pass@}k$ for every finite $n \geq k$. The plug-in form is not: because $x \mapsto (1-x)^k$ is convex, Jensen's inequality gives $\mathbb{E}[(1-\hat{p})^k] \geq (1-p)^k$, so $1 - (1-\hat{p})^k$ is biased *downward* — it systematically understates Pass@k, exactly the direction you see in the worked example below. The i.i.d. assumption is not free: it holds when you sample independently at a fixed temperature, and breaks if you use beam search, diverse-decoding heuristics, or a rejection loop that conditions later samples on earlier failures. Unbiasedness also says nothing about *variance*: a Pass@k estimate from $n=20$ samples on 164 problems still carries a standard error of a few percentage points, which is why comparisons need the interval machinery of [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html).
+It is worth being precise about *what* is unbiased and *under what assumption*. Model the $n$ samples as i.i.d. draws that each pass with unknown probability $p$, so $c \sim \text{Binomial}(n, p)$ and the estimand is $\text{Pass@}k = 1 - (1-p)^k$. The ratio $\binom{n-c}{k}/\binom{n}{k}$ satisfies $\mathbb{E}\!\left[\binom{n-c}{k}/\binom{n}{k}\right] = (1-p)^k$ exactly, so the combinatorial form is an unbiased estimator of $\text{Pass@}k$ for every finite $n \geq k$. The plug-in form is not: because $x \mapsto (1-x)^k$ is convex, Jensen's inequality gives $\mathbb{E}[(1-\hat{p})^k] \geq (1-p)^k$, so $1 - (1-\hat{p})^k$ is biased *downward* — it systematically understates Pass@k. Separately (and this is what the worked example below actually shows), for any *fixed* $(n, c)$ the plug-in value sits pointwise below the combinatorial one, because $\frac{n-c-i}{n-i} \leq \frac{n-c}{n}$ for every $i \geq 0$. That deterministic per-draw gap points in the same direction as the bias, but it is a different statement: bias is a property of an expectation over $c$, not of a single realization. The i.i.d. assumption is not free: it holds when you sample independently at a fixed temperature, and breaks if you use beam search, diverse-decoding heuristics, or a rejection loop that conditions later samples on earlier failures. Unbiasedness also says nothing about *variance*: a Pass@k estimate from $n=20$ samples on 164 problems still carries a standard error of a few percentage points, which is why comparisons need the interval machinery of [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html).
 
 !!! example "Worked Example: Pass@k Numerics"
     Suppose you generate $n = 20$ samples for a problem and $c = 6$ pass all tests.
@@ -256,9 +256,9 @@ print(f"Passed: {result.passed}, exit={result.exit_code}")
 
 ### HumanEval, MBPP, and LiveCodeBench
 
-The seminal **HumanEval** benchmark (Chen et al., 2021) contains 164 Python programming problems with unit tests, designed so solutions cannot be looked up from training data. **MBPP** (Mostly Basic Python Problems, Austin et al., 2021) covers 374 crowd-sourced problems. Both are now considered partially contaminated — frontier models were trained on code from the web that likely contains solutions.
+The seminal **HumanEval** benchmark (Chen et al., 2021) contains 164 Python programming problems with unit tests, designed so solutions cannot be looked up from training data. **MBPP** (Mostly Basic Programming Problems, Austin et al., 2021) contains 974 crowd-sourced Python problems, of which the 500-problem test split is the usual eval set (the hand-verified "sanitized" subset has 427). Both are now considered partially contaminated — frontier models were trained on code from the web that likely contains solutions.
 
-Contamination is not their only weakness. **EvalPlus** (Liu et al., 2023) showed that HumanEval's hand-written test suites are so thin that many "passing" solutions are simply wrong on untested inputs; it augments each problem with automatically generated inputs (roughly two orders of magnitude more tests) to produce **HumanEval+** and **MBPP+**, on which reported pass rates typically drop by several points. If you report HumanEval at all in 2026, report the plus variants — they are the same problems with an honest oracle.
+Contamination is not their only weakness. **EvalPlus** (Liu et al., 2023) showed that HumanEval's hand-written test suites are so thin that many "passing" solutions are simply wrong on untested inputs; it augments each problem with automatically generated inputs (~80× more tests for HumanEval+, ~35× for MBPP+) to produce **HumanEval+** and **MBPP+**, on which reported pass rates typically drop by several points. If you report HumanEval at all in 2026, report the plus variants — they are the same problems with an honest oracle.
 
 You should not hand-roll the runner for any of these. The standard open-source tooling:
 
@@ -276,11 +276,11 @@ accelerate launch bigcode-evaluation-harness/main.py \
   --n_samples 20 --temperature 0.2 --allow_code_execution
 ```
 
-EleutherAI's `lm-evaluation-harness` also carries code tasks and is the right choice when you want code numbers in the same run as everything else (see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)); note that all of these require an explicit opt-in flag before they will execute model output, which is the correct default.
+EleutherAI's `lm-evaluation-harness` also carries code tasks and is the right choice when you want code numbers in the same run as everything else (see [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html)); note that it and BigCode's harness both gate execution behind an explicit opt-in flag (`--confirm_run_unsafe_code` and `--allow_code_execution` respectively), which is the correct default.
 
 **LiveCodeBench** (Jain et al., 2024) addresses contamination by continuously adding new problems from competitive programming platforms (Leetcode, Codeforces, AtCoder) *after* each model's training cutoff. This makes it a living benchmark where contamination is structurally impossible for recent additions.
 
-**SWE-bench** (Jimenez et al., 2023) is qualitatively different: it presents real GitHub issues from open-source Python repositories and asks the model to produce a patch that makes the failing CI tests pass. The sandbox here is the project's own test suite, and success is measured by the fraction of tests that flip from red to green. This is far harder than HumanEval and requires navigating real codebases, reading documentation, and multi-file edits.
+**SWE-bench** (Jimenez et al., 2023) is qualitatively different: it presents real GitHub issues from open-source Python repositories and asks the model to produce a patch that makes the failing CI tests pass. The sandbox here is the project's own test suite, and scoring is binary per instance: a patch counts as *resolved* only if every designated FAIL_TO_PASS test now passes *and* every PASS_TO_PASS test still passes (no regressions). There is no partial credit at the test level; the reported metric is the fraction of *instances* resolved. This is far harder than HumanEval and requires navigating real codebases, reading documentation, and multi-file edits.
 
 ## Math Verification and Reasoning-Trace Evaluation
 
@@ -504,8 +504,16 @@ class AgentEnvironment(ABC):
 
 class AgentModel(ABC):
     @abstractmethod
-    async def act(self, task: str, history: list[TrajectoryStep]) -> str:
-        """Given task description and history, return next action string."""
+    async def act(
+        self,
+        task: str,
+        history: list[TrajectoryStep],
+        observation: str,
+    ) -> str:
+        """Given the task, the history so far, and the *current* observation,
+        return the next action string. Passing `observation` explicitly is what
+        lets the agent see the environment's reset state on step 0, when the
+        history is still empty."""
 
 
 async def collect_trajectory(
@@ -520,10 +528,14 @@ async def collect_trajectory(
 
     for step_idx in range(task.max_steps):
         try:
-            # Model chooses next action
-            action = await agent.act(task.description, history)
+            # Model chooses next action, conditioned on the current observation
+            action = await agent.act(task.description, history, obs)
             # Environment executes it
             obs, done, final_state = await env.step(action)
+            # Record the state after *every* step, not only on `done` — an
+            # episode that exhausts max_steps still has a final state, and
+            # scoring `{}` would silently mark completed tasks as failures.
+            traj.final_state = final_state
 
             step = TrajectoryStep(
                 step_idx=step_idx,
@@ -535,14 +547,14 @@ async def collect_trajectory(
             traj.steps.append(step)
 
             if done:
-                traj.final_state = final_state
                 break
         except Exception as e:
             traj.error = str(e)
             break
 
-    # Score the trajectory
-    traj.completed = task.success_fn(traj.final_state)
+    # Score the trajectory. A crashed episode is a failure by definition, and
+    # short-circuiting also keeps a half-built state out of success_fn.
+    traj.completed = (not traj.error) and task.success_fn(traj.final_state)
     return traj
 
 
@@ -712,11 +724,25 @@ import re
 from typing import Optional
 
 
+def _is_pure_literal(node: ast.AST) -> bool:
+    """True if an expression is built only from literal constants — this
+    covers list/tuple/dict/set displays, not just `ast.Constant` scalars."""
+    return all(
+        not isinstance(
+            sub,
+            (ast.Name, ast.Call, ast.Attribute, ast.Subscript,
+             ast.BinOp, ast.Compare),
+        )
+        for sub in ast.walk(node)
+    )
+
+
 def detects_hardcoded_solution(code: str, test_inputs: list[str]) -> bool:
     """
     Heuristic check for hardcoded solutions.
     Flags:
-      1. If return statements contain only literals (no computation).
+      1. A function whose return statements are *all* bare literals
+         (i.e. it computes nothing).
       2. If test input values appear as literals in if-conditions.
     """
     try:
@@ -724,12 +750,17 @@ def detects_hardcoded_solution(code: str, test_inputs: list[str]) -> bool:
     except SyntaxError:
         return False  # Can't parse, not our problem here
 
-    # Check 1: only-literal returns (no variable references)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Return):
-            if node.value and isinstance(node.value, ast.Constant):
-                # A single constant return in a function is suspicious
-                return True
+    # Check 1: every return in the function is a literal — no computation.
+    # Requiring *all* returns matters: a single `return 0` base case is
+    # normal in recursive code and must not be flagged on its own.
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        returns = [n for n in ast.walk(fn) if isinstance(n, ast.Return)]
+        if returns and all(
+            r.value is not None and _is_pure_literal(r.value) for r in returns
+        ):
+            return True
 
     # Check 2: test input values hardcoded in conditions
     for test_input in test_inputs:
@@ -864,7 +895,7 @@ The data flywheel for reasoning models is: hard evals reveal failure modes → n
 ## Further Reading
 
 - **Chen et al., "Evaluating Large Language Models Trained on Code" (HumanEval), 2021** — introduced Pass@k with the unbiased estimator and the HumanEval benchmark.
-- **Austin et al., "Program Synthesis with Large Language Models" (MBPP), 2021** — the Mostly Basic Python Problems benchmark and few-shot synthesis evaluation.
+- **Austin et al., "Program Synthesis with Large Language Models" (MBPP), 2021** — the Mostly Basic Programming Problems benchmark and few-shot synthesis evaluation.
 - **Liu et al., "Is Your Code Generated by ChatGPT Really Correct?" (EvalPlus), 2023** — test-suite augmentation exposing false positives in HumanEval/MBPP; source of HumanEval+ and MBPP+.
 - **Yao et al., "τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains", 2024** — multi-turn tool-agent evaluation and the pass^k reliability metric.
 - **Hendrycks et al., "Measuring Mathematical Problem Solving with the MATH Dataset", 2021** — the MATH benchmark and analysis of difficulty tiers.

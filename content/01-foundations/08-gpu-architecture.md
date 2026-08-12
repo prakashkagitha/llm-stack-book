@@ -40,7 +40,7 @@ NVIDIA's programming model (CUDA — Compute Unified Device Architecture) expose
 
 The smallest unit is a **thread**. A thread runs the kernel body once, with its own registers and its own index, and typically computes one element (or a few) of the output. You launch many thousands of them.
 
-Threads are grouped into **warps** of exactly **32 threads**. This number is a hardware constant on every NVIDIA GPU to date and it dominates everything. The 32 threads in a warp execute **in lockstep**: they share one instruction fetch/decode unit and one program counter, and on each cycle all 32 lanes execute the *same* instruction on *different* data. NVIDIA calls this **SIMT** — Single Instruction, Multiple Threads. It is SIMD (Single Instruction, Multiple Data) with a thread-shaped programming abstraction layered on top.
+Threads are grouped into **warps** of exactly **32 threads**. This number is a hardware constant on every NVIDIA GPU to date and it dominates everything. The 32 threads in a warp execute **in lockstep**: they share one instruction fetch/decode unit and one warp scheduler, and on each cycle the scheduler issues the *same* instruction to the warp's active lanes, which apply it to *different* data. (Since Volta, each thread additionally keeps its own program counter and call stack — NVIDIA calls this **independent thread scheduling** — so diverged lanes can make forward progress independently rather than strictly running one path to completion. That is why warp-synchronous code must use the explicit `__syncwarp()` and `*_sync()` intrinsics instead of assuming implicit lockstep.) NVIDIA calls this execution model **SIMT** — Single Instruction, Multiple Threads. It is SIMD (Single Instruction, Multiple Data) with a thread-shaped programming abstraction layered on top.
 
 Two consequences of the warp being the real unit of execution:
 
@@ -56,7 +56,7 @@ Each block is assigned to exactly one **streaming multiprocessor (SM)** for its 
 - A register file (e.g. 65,536 32-bit registers — 256 KB — per SM), partitioned among all resident threads.
 - A pool of **CUDA cores**: scalar ALUs for FP32/INT32 arithmetic.
 - **Tensor Cores**: dedicated matrix-multiply-accumulate units (more below).
-- A block of on-chip SRAM split between **shared memory** and **L1 cache** (configurable, e.g. up to 228 KB total per SM on H100).
+- A block of on-chip SRAM split between **shared memory** and **L1 cache** (on H100, 256 KB combined per SM, with the shared-memory carve-out configurable up to ~228 KB per SM / 227 KB per thread block).
 - **Warp schedulers** (typically 4 per SM) that pick a ready warp each cycle and issue its next instruction.
 
 ```text
@@ -202,14 +202,14 @@ Compute is cheap; moving data is expensive. The GPU memory hierarchy is a series
 
 | Tier | Scope | Approx. size (H100-class) | Approx. bandwidth | Approx. latency |
 |------|-------|---------------------------|-------------------|-----------------|
-| Registers | per-thread | 256 KB / SM (65,536 × 32-bit) | ~tens of TB/s (per SM) | ~1 cycle |
-| Shared memory / L1 | per-block (per-SM SRAM) | up to ~228 KB / SM | ~tens of TB/s (per SM) | ~20–30 cycles |
-| L2 cache | whole GPU | ~50 MB | ~tens of TB/s aggregate | ~200 cycles |
+| Registers | per-thread | 256 KB / SM (65,536 × 32-bit) | ~hundreds of TB/s aggregate (~3 TB/s per SM) | ~1 cycle |
+| Shared memory / L1 | per-block (per-SM SRAM) | 256 KB / SM combined (SMEM carve-out ≤ ~228 KB) | ~tens of TB/s aggregate (~0.2 TB/s per SM) | ~20–30 cycles |
+| L2 cache | whole GPU | ~50 MB | ~5–10 TB/s aggregate | ~200 cycles |
 | HBM (global/DRAM) | whole GPU | 80 GB | ~3.35 TB/s | ~400–800 cycles |
 | NVLink (to peer GPU) | node | — | ~450–900 GB/s/dir | microseconds |
 | PCIe (to host) | node | — | ~32–64 GB/s/dir (Gen4–Gen5 x16; ~128 GB/s bidir on Gen5) | microseconds |
 
-The numbers are illustrative and vary by exact SKU and clock, but the *ratios* are the point: SMEM is roughly an order of magnitude faster than L2, which is faster than HBM, which dwarfs PCIe. Each step down is a cliff.
+The numbers are illustrative and vary by exact SKU and clock (and note that all bandwidths are quoted on the same whole-GPU aggregate basis, so they are comparable), but the *ratios* are the point: the register file is roughly an order of magnitude faster than SMEM, SMEM several times faster than L2, L2 faster than HBM, and HBM dwarfs PCIe — while latency grows by a similar staircase. Each step down is a cliff.
 
 ### Registers
 
@@ -223,7 +223,7 @@ This staged reuse is the entire mechanism behind FlashAttention: keep the attent
 
 ### L2 cache
 
-The **L2 cache** is shared by all SMs and caches HBM transparently. You do not manage it directly, but you exploit it by structuring access patterns so that data fetched by one SM is reused by another while still resident. On Hopper, the **L2 cache residency controls** and the new **thread block clusters / distributed shared memory** let blocks on nearby SMs share SMEM, effectively a programmable extension of the SMEM tier.
+The **L2 cache** is shared by all SMs and caches HBM transparently. You do not manage it directly, but you exploit it by structuring access patterns so that data fetched by one SM is reused by another while still resident. Since Ampere you also get **L2 cache residency controls** (`cudaAccessPolicyWindow`) to mark a hot address window as persisting in L2. Hopper adds **thread block clusters** and **distributed shared memory**, which let blocks on nearby SMs read each other's SMEM — effectively a programmable extension of the SMEM tier.
 
 ### HBM: the headline "GPU memory"
 
@@ -233,7 +233,7 @@ When someone says "an 80 GB H100," they mean its **HBM** — High Bandwidth Memo
    fast & tiny  ----------------------------------------->  slow & huge
    +-----------+   +------------+   +--------+   +-----------------+
    | registers | < | SMEM / L1  | < |   L2   | < |   HBM (DRAM)    |
-   | 256 KB/SM |   | ~228 KB/SM |   | ~50 MB |   |     80 GB       |
+   | 256 KB/SM |   | 256 KB/SM  |   | ~50 MB |   |     80 GB       |
    |  ~1 cyc   |   |  ~30 cyc   |   |~200 cyc|   |   ~500 cyc      |
    +-----------+   +------------+   +--------+   +-----------------+
         ^                ^                            |
@@ -526,7 +526,7 @@ def classify_op(flops, hbm_bytes, peak_flops=990e12, peak_bw=3.35e12):
                         else "cut bytes: fuse, recompute, lower precision, reuse"))
 
 # Example: a fused LayerNorm over a (batch*seq, hidden) tensor, bf16.
-rows, hidden = 4096 * 2048, 8192       # tokens x hidden
+rows, hidden = 8 * 4096, 8192          # (batch 8 x seq 4096) tokens x hidden
 elems = rows * hidden
 # LayerNorm: ~a handful of FLOPs/elem; reads + writes the tensor once each.
 ln = classify_op(flops=8 * elems, hbm_bytes=2 * elems * 2)   # read+write, 2B/elem
@@ -609,7 +609,7 @@ print("LayerNorm:", ln)   # -> memory-bound: the reason norms get fused into mat
 **1.** A kernel contains the branch `if (x[i] > 0) { y[i] = expensive_A(x[i]); } else { y[i] = expensive_B(x[i]); }`, where `expensive_A` and `expensive_B` each take about the same time $t$ and neither is trivial. For a warp in which 16 lanes take the `if` side and 16 take the `else` side, how long does the warp take relative to the best case where all 32 lanes take the same side? Explain the mechanism, and describe one way to restructure the data so the warp stops paying this cost.
 
 ??? note "Solution"
-    Recall that the 32 lanes of a warp share one instruction fetch/decode unit and one program counter and execute **in lockstep** (SIMT). When lanes disagree on a data-dependent branch, the warp cannot run the two sides simultaneously — it **serializes** them: it executes the `if` path with the 16 `else`-lanes masked off (idle), then executes the `else` path with the 16 `if`-lanes masked off. This is **warp divergence**.
+    Recall that the 32 lanes of a warp share one instruction fetch/decode unit and one warp scheduler, which issues a single instruction per cycle to the lanes that are active under the current mask (SIMT). When lanes disagree on a data-dependent branch, the warp cannot run the two sides simultaneously — it **serializes** them: it executes the `if` path with the 16 `else`-lanes masked off (idle), then executes the `else` path with the 16 `if`-lanes masked off. This is **warp divergence**.
 
     So the divergent warp takes $t_A + t_B \approx 2t$: the full cost of both paths, back to back. The convergent best case (all 32 lanes on one side) takes only $t$, with all lanes doing useful work. The divergent warp is therefore about **2x slower**, and during each path only 16 of 32 lanes are active, so hardware utilization on each path is 50%. A branch that splits a warp $k$ ways in general costs the sum of all taken paths' times.
 

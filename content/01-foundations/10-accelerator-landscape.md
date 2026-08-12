@@ -54,12 +54,13 @@ A single TPU chip is unremarkable; the **pod** is the point. TPUs are wired toge
 
 ### The programming model: XLA, JAX, and "the compiler is the API"
 
-You do not write TPU kernels by hand in the CUDA sense. You write high-level array code — almost always **JAX**, sometimes TensorFlow or PyTorch/XLA — and the **XLA** (Accelerated Linear Algebra) compiler lowers your whole-program computation graph onto the MXU/VPU/ICI. XLA does the heavy lifting that a CUDA programmer does manually: operator fusion, memory layout assignment, tiling for the systolic array, and — through **GSPMD/`shard_map`** — inserting the cross-chip collectives implied by your sharding annotations.
+You do not write TPU kernels by hand in the CUDA sense. You write high-level array code — almost always **JAX**, sometimes TensorFlow or PyTorch/XLA — and the **XLA** (Accelerated Linear Algebra) compiler lowers your whole-program computation graph onto the MXU/VPU/ICI. XLA does the heavy lifting that a CUDA programmer does manually: operator fusion, memory layout assignment, tiling for the systolic array, and — through **GSPMD** (automatic, driven by `jit` plus your `NamedSharding` annotations) — inserting exactly the cross-chip collectives your sharding implies, and no more. When you want explicit control instead, **`shard_map`** is the escape hatch: it drops you to per-device local shapes and you write the `jax.lax.psum` / `all_gather` / `ppermute` calls yourself.
 
 ```python
 # JAX on TPU: data-parallel + tensor-parallel matmul across a pod slice.
 # The KEY idea: you annotate HOW arrays are sharded across the physical
-# chip mesh; XLA inserts every all-gather / reduce-scatter for you.
+# chip mesh; XLA works out which all-gather / reduce-scatter (if any) is
+# required and inserts it for you.
 import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
@@ -80,13 +81,17 @@ x = shard(jnp.ones((1024, 8192)),  P("data", None))    # [batch/DP, in]
 
 @jax.jit                      # <-- this single decorator invokes XLA.
 def layer(x, W):
-    # You write a plain matmul. XLA sees the shardings on x and W and
-    # automatically emits the all-gather over "model" needed to form the
-    # full output, fused with the matmul, tiled for the 128x128 MXU.
+    # You write a plain matmul. XLA reads the shardings on x and W and
+    # picks the collectives. Here W is split on its OUTPUT dim and the
+    # contracted dim (8192) is replicated on both operands, so this is
+    # classic column-parallel: each chip does a purely LOCAL
+    # [256, 8192] @ [8192, 4096] GEMM -- zero collectives -- tiled for the
+    # 128x128 MXU. Shard W on its INPUT dim instead (P("model", None)) and
+    # the contraction becomes split, forcing an all-reduce/reduce-scatter.
     return jnp.tanh(x @ W)
 
-y = layer(x, W)               # runs across all 8 chips, collectives inserted.
-print(y.shape, y.sharding)    # (1024, 8192), sharded as XLA decided.
+y = layer(x, W)               # runs across all 8 chips.
+print(y.shape, y.sharding)    # (1024, 8192), sharded P("data", "model").
 ```
 
 The mental shift for a GPU person: there is no kernel to profile in the Nsight sense, no occupancy to tune, no shared-memory bank conflict to chase. Your performance levers are (a) the **sharding annotations** — get the parallelism wrong and XLA inserts catastrophic collectives — (b) keeping shapes **static** so XLA can compile once, and (c) avoiding ops XLA cannot fuse well. When you *do* need a custom kernel — a fused FlashAttention variant, a block-sparse MoE op — you reach for **Pallas**, JAX's kernel language (spiritually a Triton for TPU/GPU) that lets you write tiled programs against the MXU/VPU directly. This is the TPU answer to [Writing GPU Kernels with Triton](../04-kernels-efficiency/04-triton-kernels.html).
@@ -293,7 +298,7 @@ CHIPS = [
     Chip("MI300X",    192,  5.3,   2615,  448),   # Infinity Fabric; FP8 dense
     Chip("TPU v5p",    95,  2.76,   918,  600),   # ICI; v5p has no FP8 -- 918 is
                                                   # its int8 TOP/s (bf16 ~459)
-    Chip("Gaudi3",    128,  3.7,   1835,  300),   # RoCE/Ethernet (aggregate)
+    Chip("Gaudi3",    128,  3.7,   1835,  600),   # 24x200GbE RoCE, per direction
 ]
 
 def kv_bytes_per_token(L, H_kv, d_h, bytes_per_elt=2):
@@ -311,9 +316,15 @@ def pick(workload, params_b, dtype_bytes, L, H_kv, d_h,
         n_dev = -(-need_total // c.hbm_gb)              # ceil-divide to fit
         # decode is bandwidth-bound -> rank by aggregate HBM TB/s;
         # prefill/training is compute-bound -> rank by aggregate FP8 TFLOPS.
+        # CAVEAT: n_dev here is the *minimum to fit*, a capacity artifact --
+        # so the prefill score secretly rewards SMALL memory (a chip with
+        # half the HBM needs 2x the devices and doubles its aggregate).
+        # An aggregate-compute ranking is only meaningful at a FIXED device
+        # budget; compare per-device (or per-dollar-hour) TFLOPS instead,
+        # using n_dev purely as the feasibility gate.
         score = (c.hbm_tbs if target == "decode" else c.fp8_tflops) * n_dev
         print(f"  {c.name:10s}: fits on {int(n_dev)} dev, "
-              f"score={score:.0f} ({'TB/s' if target=='decode' else 'TFLOPS'} agg)")
+              f"score={score:.4g} ({'TB/s' if target=='decode' else 'TFLOPS'} agg)")
 
 # Llama-70B-ish: 70B params, fp8 weights, 80 layers, 8 KV heads (GQA),
 # head_dim 128, 8k context, batch 32, decode-bound serving.
@@ -483,7 +494,7 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
 
     Reduction factor $= 96 / 8 = 12\times$ (KV cache scales linearly in $H_{kv}$). GQA cuts the per-token KV from 4.72 MB to 0.39 MB and the total from ~2474 GB to ~206 GB — the same 12x — which is exactly why frontier serving models use GQA: it is what makes the KV cache fit in HBM.
 
-**4.** (Quantitative) Using the chapter's illustrative specs — H100 at 1979 FP8 TFLOP/s over 3.35 TB/s HBM, and MI300X at 2615 FP8 TFLOP/s over 5.3 TB/s HBM — compute each chip's roofline ridge point $I^{*}$ in FLOP/byte (treat the FP8 TFLOPS as the peak compute number). A decode step for one token in an FP8-weight linear layer of a 70B model does roughly $2 \times 70\times10^{9} = 1.4\times10^{11}$ FLOPs while streaming $70\times10^{9}$ bytes of weights, giving an arithmetic intensity of $\approx 2$ FLOP/byte. Confirm decode is memory-bound on both chips, and explain in one sentence why the MI300X's *higher* ridge point does not make it worse for decode.
+**4.** (Quantitative) Using the chapter's illustrative specs — H100 at 1979 FP8 TFLOP/s over 3.35 TB/s HBM, and MI300X at 2615 FP8 TFLOP/s over 5.3 TB/s HBM — compute each chip's roofline ridge point $I^{*}$ in FLOP/byte (treat the FP8 TFLOPS as the peak compute number). A decode step for one token in an FP8-weight linear layer of a 70B model does roughly $2 \times 70\times10^{9} = 1.4\times10^{11}$ FLOPs while streaming $70\times10^{9}$ bytes of weights, giving an arithmetic intensity of $\approx 2$ FLOP/byte. Confirm decode is memory-bound on both chips, note which chip has the *lower* ridge point, and explain in one sentence why the ridge points themselves are not what decides the decode winner.
 
 ??? note "Solution"
     Ridge point $I^{*} = \dfrac{\text{peak compute (FLOP/s)}}{\text{peak bandwidth (byte/s)}}$. Convert TFLOP/s to FLOP/s ($\times 10^{12}$) and TB/s to byte/s ($\times 10^{12}$), so the $10^{12}$ factors cancel and $I^{*} = \text{TFLOPS} / \text{TB/s}$:
@@ -495,12 +506,12 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
 
     Decode arithmetic intensity $\approx 2$ FLOP/byte is *vastly* below both ridge points ($2 \ll 493 < 591$), so decode is firmly **memory-bound on both chips** — it cannot come anywhere near peak FLOPS and its speed is set by HBM bandwidth.
 
-    The MI300X's higher ridge point does not hurt decode because a higher $I^{*}$ just means the chip needs more arithmetic intensity to *become* compute-bound; for a bandwidth-bound op the only thing that matters is the denominator — HBM bandwidth — and the MI300X's 5.3 TB/s vs the H100's 3.35 TB/s means it streams weights (and thus generates tokens) faster.
+    Note the ordering: the MI300X's ridge point is the **lower** of the two (493 < 591), precisely because its bandwidth grew more than its FLOPS did relative to the H100. But the ridge points are not what decides the decode winner in either direction — at $I \approx 2$ FLOP/byte both chips are so far to the left of their ridge that throughput is set purely by the roofline's *denominator*, HBM bandwidth (5.3 vs 3.35 TB/s), which is why the MI300X streams weights — and therefore generates tokens — roughly $1.6\times$ faster.
 
 **5.** (Implementation) The chapter's `pick()` function only *prints* a score and never returns a winner, and its `score = per_device_figure * n_dev` rewards using *more* devices — which is backwards for **decode**, where splitting a model across devices adds the per-layer all-reduce the chapter tells you to avoid. Rewrite the picker so it *returns* the winning `Chip` and its device count, using a **target-aware** rule: for **decode**, pick the chip that fits on the **fewest devices** (minimizing cross-device collectives), breaking ties by higher aggregate HBM bandwidth; for **prefill/training**, pick the chip with the highest **aggregate FP8 TFLOPS** across the minimum devices that fit (more devices are welcome when you are compute-bound). Raise if `need_total` is non-positive. Keep the `Chip` dataclass and style, and confirm that decode returns the MI300X and prefill returns the H100 for the chapter's 70B footprint.
 
 ??? note "Solution"
-    The subtlety is that `score = per_device * n_dev` is **aggregate** bandwidth, and aggregate bandwidth *grows with device count* — so for the 70B decode footprint (~156 GB) it would actually rank Gaudi3 (2 devices $\times$ 3.7 = **7.4** TB/s aggregate) *above* the single MI300X (1 device $\times$ 5.3 = **5.3** TB/s). But that number silently ignores the per-layer all-reduce every 2-device config pays over its interconnect — exactly the cost the chapter says to avoid. The chapter's decode doctrine is therefore not "maximize aggregate bandwidth" but "**fit on the fewest devices**, then look at bandwidth." So we sort by device count first for decode, and only fall back to aggregate bandwidth to break ties. (For **prefill/training** you *are* compute-bound and happy to scale out, so there the right key is genuinely aggregate FP8 TFLOPS.)
+    The subtlety is that `score = per_device * n_dev` is **aggregate** bandwidth, and aggregate bandwidth *grows with device count* — so for the 70B decode footprint (~156 GB) it would actually rank Gaudi3 (2 devices $\times$ 3.7 = **7.4** TB/s aggregate) *above* the single MI300X (1 device $\times$ 5.3 = **5.3** TB/s). But that number silently ignores the per-layer all-reduce every 2-device config pays over its interconnect — exactly the cost the chapter says to avoid. The chapter's decode doctrine is therefore not "maximize aggregate bandwidth" but "**fit on the fewest devices**, then look at bandwidth." So we sort by device count first for decode, and only fall back to aggregate bandwidth to break ties. (For **prefill/training** you *are* compute-bound and happy to scale out, so there the right key is aggregate FP8 TFLOPS — but only at a *fixed device budget*. Read the caveat at the end of this solution before you trust the prefill ranking below.)
 
     ```python
     from dataclasses import dataclass
@@ -518,7 +529,7 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
         Chip("H100-SXM",   80,  3.35,  1979,  450),
         Chip("MI300X",    192,  5.3,   2615,  448),
         Chip("TPU v5p",    95,  2.76,   918,  600),
-        Chip("Gaudi3",    128,  3.7,   1835,  300),
+        Chip("Gaudi3",    128,  3.7,   1835,  600),
     ]
 
     def kv_bytes_per_token(L, H_kv, d_h, bytes_per_elt=2):
@@ -541,7 +552,7 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
             per_dev = c.hbm_tbs if target == "decode" else c.fp8_tflops
             agg     = per_dev * n_dev                       # aggregate over the fit
             unit    = "TB/s" if target == "decode" else "TFLOPS"
-            print(f"  {c.name:10s}: fits on {n_dev} dev, agg={agg:.0f} {unit}")
+            print(f"  {c.name:10s}: fits on {n_dev} dev, agg={agg:.4g} {unit}")
             # Tuples compare left-to-right; SMALLER is better.
             # decode  -> (fewest devices, then most aggregate BW)
             # prefill -> (most aggregate TFLOPS); more devices welcome
@@ -558,3 +569,5 @@ When someone hands you a non-NVIDIA fleet, the work is predictable. The order be
     ```
 
     On the chapter's 70B footprint (~156 GB), the **MI300X is the only chip that fits on 1 device** (192 GB); every other chip needs 2. For `target="decode"` the fewest-devices key makes the single MI300X win outright — no per-layer collective — which is precisely the chapter's worked-example conclusion. Note the behavioral change from the original: the function now *returns a decision* (`best`, `best_ndev`) instead of only printing, so it can drive downstream provisioning. Flip to `target="prefill"` and the key switches to aggregate FP8 TFLOPS: now the **H100** wins (2 devices $\times$ 1979 = 3958 TFLOPS aggregate, beating the single MI300X's 2615), because prefill/training is compute-bound and rewards scaling out — exactly the compute-vs-bandwidth flip the chapter's doctrine predicts.
+
+    **Read that prefill result skeptically, though**, because it exposes a real flaw in the rule: `n_dev` is the *minimum count that fits*, a capacity artifact, not a scale you chose. The H100 only "wins" because its 80 GB forces two devices; per device the MI300X actually has *more* FP8 compute (2615 > 1979). Push the logic and it gets absurd — a hypothetical 40 GB chip with the H100's per-device TFLOPS would need 4 devices and score 7916, while a 1 TB chip would be penalized for fitting on one. An aggregate-compute ranking only means something at a **fixed device budget**: take `n_dev_budget` as an input, gate on feasibility with `n_dev_budget >= ceil(need_total / c.hbm_gb)`, and score `c.fp8_tflops * n_dev_budget` (or, for procurement, TFLOPS per dollar-hour). The decode branch does not have this problem, since minimizing devices is genuinely the objective there.

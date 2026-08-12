@@ -88,7 +88,7 @@ $$
 
 The harness exposes `acc` (raw argmax) and `acc_norm` (length-normalized) as separate metrics, and you need to know which one is being reported before comparing to a third-party result.
 
-Mind the denominator. Our from-scratch harness below divides by the **token** count, which is the intuitive choice but is a property of *your* tokenizer: the same answer string may be 2 tokens under one BPE and 5 under another, so token-normalized scores are not comparable across models. lm-evaluation-harness therefore normalizes by the **byte length of the choice string** (`len(choice)` over the raw text), which is tokenizer-independent — the same reasoning that makes bits-per-byte the portable version of perplexity (see [Pretraining Objectives](../03-pretraining/03-pretraining-objective.html)). The two denominators usually agree on the winner, but not always, and a third option exists: normalizing by the *unconditional* likelihood of the choice, $\log p(c_i \mid \text{context}) - \log p(c_i \mid \text{“Answer:”})$, a pointwise-mutual-information score that cancels out choices which are simply common strings. lm-eval exposes this as the `acc_mutual_info` metric. Whichever you use, name it next to the number.
+Mind the denominator. Our from-scratch harness below divides by the **token** count, which is the intuitive choice but is a property of *your* tokenizer: the same answer string may be 2 tokens under one BPE and 5 under another, so token-normalized scores are not comparable across models. lm-evaluation-harness therefore normalizes by the **character length of the choice string** — `acc_norm` divides by `len(choice)` over the raw text, which is tokenizer-independent. (A separate metric, `acc_bytes`, divides by `len(choice.encode("utf-8"))` instead; the two coincide for ASCII choices and diverge on any non-Latin script.) This is the same reasoning that makes bits-per-byte the portable version of perplexity (see [Pretraining Objectives](../03-pretraining/03-pretraining-objective.html)). The two denominators usually agree on the winner, but not always, and a third option exists: normalizing by the *unconditional* likelihood of the choice, $\log p(c_i \mid \text{context}) - \log p(c_i \mid \text{“Answer:”})$, a pointwise-mutual-information score that cancels out choices which are simply common strings. lm-eval exposes this as the `acc_mutual_info` metric. Whichever you use, name it next to the number.
 
 !!! example "Worked example: MMLU scoring"
 
@@ -114,7 +114,7 @@ Mind the denominator. Our from-scratch harness below divides by the **token** co
 
 ### MCQ Scoring vs. Cloze Scoring
 
-There is a second, deeper formulation choice hiding inside "multiple choice," and it is a frequent source of irreproducible MMLU numbers. In the **MCQ (symbol) formulation**, all four options are printed in the prompt and the continuations being scored are just the letters `" A"`, `" B"`, `" C"`, `" D"` — the model must map its knowledge onto a symbol. This is what lm-eval's default MMLU config does, and it is what the from-scratch harness later in this chapter implements. In the **cloze formulation**, the options are *not* printed; each full answer string is appended to the question in turn and scored as a continuation. This is how HellaSwag, PIQA, ARC and LAMBADA are scored in the harness.
+There is a second, deeper formulation choice hiding inside "multiple choice," and it is a frequent source of irreproducible MMLU numbers. In the **MCQ (symbol) formulation**, all four options are printed in the prompt and the continuations being scored are just the letters `" A"`, `" B"`, `" C"`, `" D"` — the model must map its knowledge onto a symbol. This is what lm-eval's default MMLU config does, and it is what the from-scratch harness later in this chapter implements. In the **cloze formulation**, the options are *not* printed; each full answer string is appended to the question in turn and scored as a continuation. This is how HellaSwag, PIQA and ARC are scored in the harness. (LAMBADA is a third thing again: `lambada_openai` is a plain `loglikelihood` task with a *single* gold continuation — the sentence's final word — so there is no choice set to rank and no length normalization; its `acc` is the `is_greedy` flag, i.e. "was the gold word the model's argmax next token?", reported alongside `perplexity`.)
 
 The two measure different things. MCQ scoring requires the model to have learned that a lettered list implies "emit the letter" — a formatting competence that base models acquire late, which is why a weak base model can sit at exactly chance under MCQ scoring while showing real signal under cloze scoring on the same questions. Cloze scoring, on the other hand, is the one that needs length normalization, because the choices are strings of different lengths (under MCQ scoring every continuation is one token, so `acc` and `acc_norm` coincide). A third variant asks the model to *generate* the letter and extracts it with a regex, which additionally measures instruction-following and answer-extraction robustness. Three protocols, three different numbers, one dataset name. For a small model — including the ~100M capstone model — prefer cloze scoring; see [Evaluation & Serving](../14-capstone/11-evaluation-and-serving.html).
 
@@ -138,14 +138,19 @@ def doc_to_text(doc):
 def process_results(doc, results):
     """Extract the numeric answer from a chain-of-thought generation."""
     import re
-    # results[0] is the generated string
-    gen = results[0]
+    # results[0] is the generated string. Strip thousands separators first,
+    # or "the answer is 1,200" tokenizes as ["1", "200"] and the last-number
+    # rule silently extracts 200 -- a common failure on money answers.
+    gen = results[0].replace(",", "")
     # Look for the last number in the generation
     matches = re.findall(r"[-+]?\d*\.?\d+", gen)
     if matches:
         predicted = float(matches[-1])
-        gold = float(doc["answer"])
-        return {"exact_match": predicted == gold}
+        # GSM8K's "answer" field is the full solution ending in "#### 72",
+        # so take the text after the delimiter. (A bare numeric field is
+        # unaffected: "72".split("####")[-1] == "72".)
+        gold = float(doc["answer"].split("####")[-1].strip().replace(",", ""))
+        return {"exact_match": float(predicted == gold)}
     return {"exact_match": 0.0}
 ```
 
@@ -309,8 +314,11 @@ def extract_mc_answer(generation: str, choices: list[str]) -> str | None:
     """
     gen = generation.strip()
     
-    # Try to match a leading letter like "A" or "A."
-    letter_match = re.match(r"^([A-Da-d])[\.\):\s]?", gen)
+    # Try to match a leading letter like "A" or "A." — the delimiter is
+    # mandatory (punctuation, whitespace, or end of string). Making it
+    # optional would match the first character of *any* word starting with
+    # a-d, so "Denmark is not a city" would silently be extracted as choice D.
+    letter_match = re.match(r"^([A-Da-d])(?:[\.\):]|\s|$)", gen)
     if letter_match:
         idx = ord(letter_match.group(1).upper()) - ord("A")
         if 0 <= idx < len(choices):
@@ -378,16 +386,15 @@ lm_eval \
 
 ### Custom Metric: Clinical Entity F1
 
-For tasks requiring structured extraction, you need to register a custom aggregation function.
+For tasks requiring structured extraction, you supply a custom metric and its aggregation function through the task config.
 
 ```python
 # custom_tasks/medner/task.py
-"""Custom NER task for the lm-evaluation-harness.
+"""Custom NER task for the lm-evaluation-harness (lm_eval 0.4.x).
 
 Evaluates medical named entity recognition as exact-match entity-level F1.
 """
-from lm_eval.api.task import ConfigurableTask
-from lm_eval.api.metrics import mean
+from lm_eval.api.task import ConfigurableTask, TaskConfig
 
 
 def entity_f1(items):
@@ -420,11 +427,31 @@ def entity_f1(items):
 
 
 class MedNERTask(ConfigurableTask):
-    """Medical NER task with entity-level F1 metric."""
+    """Medical NER task with entity-level F1 metric.
 
-    VERSION = 1
-    DATASET_PATH = "json"
-    DATASET_NAME = None
+    `ConfigurableTask` is the lm_eval 0.4.x base class, and it *must* be
+    handed a config -- either `cls.CONFIG` (below) or a `config=` kwarg --
+    or `__init__` raises immediately. The dataset/version fields that the
+    legacy `Task` API declared as `DATASET_PATH` / `DATASET_NAME` /
+    `VERSION` class attributes are set from that config instead.
+    """
+
+    CONFIG = TaskConfig(
+        task="medner",
+        dataset_path="json",                      # HuggingFace datasets loader
+        dataset_kwargs={"data_files": {"test": "data/medner_test.jsonl"}},
+        test_split="test",
+        output_type="generate_until",             # free-form entity extraction
+        generation_kwargs={"until": ["\n"]},
+        # A callable is accepted directly for both `metric` and `aggregation`;
+        # from YAML the same thing is written `metric: !function task.entity_f1`.
+        metric_list=[{
+            "metric": entity_f1,
+            "aggregation": entity_f1,
+            "higher_is_better": True,
+        }],
+        metadata={"version": 1},
+    )
 
     def doc_to_text(self, doc):
         return f"Extract all medical entities from this text:\n{doc['text']}\nEntities:"
@@ -446,11 +473,9 @@ class MedNERTask(ConfigurableTask):
             "entity_f1": (pred_entities, gold_entities)
         }
 
-    def aggregation(self):
-        return {"entity_f1": entity_f1}
-
-    def higher_is_better(self):
-        return {"entity_f1": True}
+    # No aggregation()/higher_is_better() overrides needed: ConfigurableTask
+    # builds both from `metric_list` above. (Overriding them by hand is the
+    # legacy `Task` API idiom.)
 ```
 
 ### Evaluating a Checkpoint You Trained Yourself
@@ -497,22 +522,27 @@ Subclass `lm_eval.api.model.LM` and implement those three (the `TemplateLM` base
 
 ### Rolling Your Own Lightweight Harness
 
-Sometimes you need maximum control. Here is a minimal but production-grade harness that handles batching, log-likelihood scoring, and result serialization without any framework dependency.
+Sometimes you need maximum control. Here is a minimal harness that does log-likelihood scoring, few-shot assembly, and result serialization without any framework dependency.
 
 ```python
 """
 minimal_harness.py
 
 A self-contained eval harness for multiple-choice tasks.
-Handles: batching, log-likelihood scoring (raw + normalized),
-few-shot assembly, deterministic seeds, and JSON result output.
+Handles: log-likelihood scoring (raw + normalized), few-shot assembly,
+deterministic seeds, and JSON result output.
+
+Deliberately *unbatched*: one forward pass per (context, choice) pair, so
+the context/continuation alignment stays readable. That is ~4x more passes
+than necessary on a 4-choice task; batching (left-padding a chunk of
+sequences and masking the pad positions when gathering token log-probs) is
+the first optimization to add before running this at leaderboard scale.
 
 Usage:
     python minimal_harness.py \
         --model meta-llama/Llama-3.1-8B \
         --task_file data/task.jsonl \
         --num_fewshot 5 \
-        --batch_size 8 \
         --output results.json
 """
 
@@ -594,7 +624,7 @@ def score_choices(
     tokenizer: AutoTokenizer,
     context: str,
     choices: list[str],
-    device: str = "cuda"
+    device: str | torch.device = "cuda"
 ) -> tuple[list[float], list[float]]:
     """Compute raw and length-normalized log-likelihoods for each choice.
     
@@ -685,7 +715,6 @@ def evaluate(
     model_name: str,
     task_file: str,
     num_fewshot: int = 0,
-    batch_size: int = 1,
     seed: int = 42,
     output_path: Optional[str] = None,
     device: str = "cuda",
@@ -723,12 +752,21 @@ def evaluate(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Honour the requested device: device_map=device puts the whole model on
+    # it ("cpu", "cuda", "cuda:1"); pass device="auto" to shard across GPUs.
+    # Hardcoding device_map="auto" here would silently move the model to a GPU
+    # while score_choices still sent its input ids to `device` -- a
+    # "Expected all tensors to be on the same device" crash.
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
         torch_dtype=torch.bfloat16,  # BF16 is the safe default for LLMs
-        device_map="auto",
+        device_map=device,
     )
     model.eval()
+
+    # Inputs must land where the embedding layer lives (under a sharded
+    # "auto" map that is wherever accelerate put the first block).
+    input_device = next(model.parameters()).device
 
     # Evaluate each document
     results = []
@@ -737,7 +775,9 @@ def evaluate(
             print(f"  [{i}/{len(eval_docs)}] …")
 
         context = build_fewshot_prompt(doc, fewshot_docs, num_fewshot)
-        ll, ll_norm = score_choices(model, tokenizer, context, doc.choices, device)
+        ll, ll_norm = score_choices(
+            model, tokenizer, context, doc.choices, input_device
+        )
 
         pred_raw = int(np.argmax(ll))
         pred_norm = int(np.argmax(ll_norm))
@@ -789,8 +829,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", required=True)
     parser.add_argument("--task_file", required=True)
     parser.add_argument("--num_fewshot", type=int, default=0)
-    parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default="cuda")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
@@ -798,15 +838,15 @@ if __name__ == "__main__":
         model_name=args.model,
         task_file=args.task_file,
         num_fewshot=args.num_fewshot,
-        batch_size=args.batch_size,
         seed=args.seed,
         output_path=args.output,
+        device=args.device,
     )
 ```
 
 ### Verifying the Harness: A Smoke Test
 
-The most dangerous failure mode in log-likelihood scoring is a misaligned context/continuation split — exactly the BOS double-count fixed above. It does not crash. It silently returns identical or zero per-choice log-likelihoods, argmax always picks choice 0, and accuracy collapses to the chance floor (~25% for 4 choices) while everything looks like a normal run. Never trust a harness you have not smoke-tested. Two invariants catch this class of bug directly: (a) within one question, the four raw log-likelihoods must be **distinct and strictly negative** — if they are all equal, or any of them is exactly 0.0, the split is broken; (b) because " A".." D" are each a single token for common tokenizers (gpt2, Llama-3, Mistral), `acc` must equal `acc_norm` **exactly**. There is also a token-boundary hazard worth naming: computing `ctx_len` from a separately-encoded context string is only safe because the continuation begins with a leading space, so it cannot merge with the last context token during re-tokenization — the `len(cont_ids) >= 1` assertion added to `score_choices` is the guardrail against that boundary shifting silently.
+The most dangerous failure mode in log-likelihood scoring is a misaligned context/continuation split — exactly the BOS double-count fixed above. It does not crash. It silently returns identical or zero per-choice log-likelihoods, argmax always picks choice 0, and accuracy collapses to the chance floor (~25% for 4 choices) while everything looks like a normal run. Never trust a harness you have not smoke-tested. One invariant catches this class of bug directly: (a) within one question, the four raw log-likelihoods must be **distinct and strictly negative** — if they are all equal, or any of them is exactly 0.0, the split is broken. A second invariant is worth asserting alongside it but detects something else: (b) because " A".." D" are each a single token for common tokenizers (gpt2, Llama-3, Mistral), `acc` must equal `acc_norm` **exactly** — that checks the single-token assumption still holds under whatever tokenizer you plugged in, and it would *not* flag the BOS bug (with an empty continuation, raw and normalized scores are both 0.0 and therefore trivially agree). There is also a token-boundary hazard worth naming: computing `ctx_len` from a separately-encoded context string is only safe because the continuation begins with a leading space, so it cannot merge with the last context token during re-tokenization — the `len(cont_ids) >= 1` assertion added to `score_choices` is the guardrail against that boundary shifting silently.
 
 {{fig:evalharness-continuation-split-bos-bug}}
 
@@ -843,9 +883,10 @@ def smoke_test():
             f.write(json.dumps(d) + "\n")
         task_file = f.name
 
-    # gpt2 (124M) runs in seconds on CPU. evaluate() hardcodes bf16 +
-    # device_map="auto"; on a pure-CPU machine also switch torch_dtype to
-    # float32 in evaluate() (bf16 matmuls are slow/unsupported on many CPUs).
+    # gpt2 (124M) runs in seconds on CPU. device="cpu" is honoured by
+    # evaluate() (it becomes device_map="cpu"), but the dtype is hardcoded:
+    # on a pure-CPU machine also switch torch_dtype to float32 in evaluate()
+    # (bf16 matmuls are slow or unsupported on many CPUs).
     summary = evaluate(
         model_name="gpt2", task_file=task_file, num_fewshot=0, device="cpu"
     )
@@ -897,8 +938,11 @@ assert len(letter_ids) == 1            # ' A'..' D' are single gpt2 tokens
 with torch.no_grad():
     logits = m(torch.tensor([ids])).logits
 ref_ll = torch.log_softmax(logits[0, -1], dim=-1)[letter_ids[0]].item()
-# Must match the harness-recorded log-likelihood for the chosen letter:
-assert abs(ref_ll - summary['samples'][0]['log_likelihoods'][pred]) < 1e-4
+# Must match the harness-recorded log-likelihood for the chosen letter. The
+# tolerance is loose because this reference pass is FP32 while evaluate()
+# runs in BF16 (~8 mantissa bits => ~1e-2 absolute error on a log-prob); the
+# bug being ruled out shifts log-likelihoods by whole nats, not by 1e-2.
+assert abs(ref_ll - summary['samples'][0]['log_likelihoods'][pred]) < 5e-2
 ```
 
 One caveat on interpreting the result: this scheme scores the answer **letter** (" A".." D"), not the answer text, so a base model like gpt2 evaluated zero-shot sits near the 0.25 chance floor on letter selection — the smoke test verifies mechanics, not model quality. Give gpt2 `num_fewshot=2` and it picks up the letter-answer format and rises above chance. The diagnostic signal is not the accuracy number in isolation but its relationship to the invariants: an accuracy of exactly 0.25 **accompanied by identical per-choice log-likelihoods** is the signature of the BOS split bug; genuinely distinct log-likelihoods that still average near chance just mean the base model is weak at this format, which is a legitimate result.
@@ -918,7 +962,7 @@ MUST record for every eval run:
   ✓ Prompt template (or YAML hash)
   ✓ Whether apply_chat_template / fewshot_as_multiturn were used
   ✓ Scoring mode: MCQ-loglikelihood vs cloze-loglikelihood vs generation
-  ✓ Length normalization: none / bytes / tokens
+  ✓ Length normalization: none / characters / bytes / tokens
   ✓ Random seed for sampling (--gen_kwargs seed=X)
   ✓ Hardware (GPU model, driver, CUDA version)
   ✓ Floating-point format (BF16 vs FP16 vs FP32)
@@ -1100,7 +1144,7 @@ def bootstrap_ci(
 scores = [1] * 370 + [0] * 130  # 74% accuracy
 pt, lo, hi = bootstrap_ci(scores, n_bootstrap=10_000, seed=42)
 print(f"acc = {pt:.3f}  95% CI: [{lo:.3f}, {hi:.3f}]")
-# acc = 0.740  95% CI: [0.703, 0.776]
+# acc = 0.740  95% CI: [0.702, 0.778]
 ```
 
 ### Multiple Comparison Corrections
@@ -1115,7 +1159,7 @@ When running a model on 50+ benchmarks and cherry-picking the best ones, you inf
 
     **Q:** You have a new model that scores 75.2% on MMLU and a baseline that scores 74.8%. How do you decide whether this is a real improvement?
 
-    **A:** First, I compute the standard error for each score: $\text{SE} = \sqrt{p(1-p)/n}$. MMLU has about 14,000 questions, so the SE for both models is roughly 0.37%. The observed difference (0.4%) is barely more than one SE, giving a z-score around 1.1, which is not statistically significant (p ≈ 0.27). I would not claim this as a real improvement without either (1) a larger eval set, (2) a paired test like McNemar's on the same examples, or (3) consistent gains across several benchmarks. I would also check that both scores were produced by the same harness version, prompt format, and scoring mode — a 0.4-point gap can easily be a formatting artifact rather than a model difference.
+    **A:** First, I compute the standard error for each score: $\text{SE} = \sqrt{p(1-p)/n}$. MMLU has about 14,000 questions, so the SE for both models is roughly 0.37%. What matters is the SE of the *difference*, not of either score: $\text{SE}_{A-B} = \sqrt{\text{SE}_A^2 + \text{SE}_B^2} \approx 0.37\% \times \sqrt{2} \approx 0.52\%$. The observed difference (0.4%) is smaller than that, giving a z-score around 0.77, which is not statistically significant (p ≈ 0.44). I would not claim this as a real improvement without either (1) a larger eval set, (2) a paired test like McNemar's on the same examples, or (3) consistent gains across several benchmarks. I would also check that both scores were produced by the same harness version, prompt format, and scoring mode — a 0.4-point gap can easily be a formatting artifact rather than a model difference.
 
 ## Comparing Harnesses: lm-evaluation-harness vs HELM
 
@@ -1197,7 +1241,7 @@ This connects to broader MLOps concerns covered in [Observability, Logging & LLM
 
 !!! key "Key Takeaways"
     - Eval harnesses standardize prompt formatting, scoring mode, few-shot sampling, and normalization — without them, cross-model comparisons are meaningless.
-    - lm-evaluation-harness uses log-likelihood scoring for multiple-choice tasks (computing $\sum \log p(\text{choice} \mid \text{context})$); length normalization changes which answer wins and must be reported explicitly — and note the denominator, since lm-eval's `acc_norm` divides by the choice's **byte** length, not its token count.
+    - lm-evaluation-harness uses log-likelihood scoring for multiple-choice tasks (computing $\sum \log p(\text{choice} \mid \text{context})$); length normalization changes which answer wins and must be reported explicitly — and note the denominator, since lm-eval's `acc_norm` divides by the choice's **character** length (`acc_bytes` is the separate UTF-8-byte variant), not its token count.
     - MCQ (score the letters " A".." D") and cloze (score the full answer strings) scoring of the same dataset produce different numbers; small or base models often sit at chance under MCQ while showing real signal under cloze.
     - Evaluate your own checkpoint by wrapping it in `HFLM` and calling `lm_eval.simple_evaluate`, or by implementing `loglikelihood` / `loglikelihood_rolling` / `generate_until` on an `LM` subclass — those three primitives span nearly all static evaluation.
     - HELM adds multi-dimensional scoring (accuracy + calibration + fairness + efficiency) and structured reproducibility artifacts; lm-eval is faster and has broader task coverage.
@@ -1304,7 +1348,7 @@ This connects to broader MLOps concerns covered in [Observability, Logging & LLM
     $$
     Since $1.83 < 2$, the gap does **not** clear the usual significance bar; it corresponds to a two-sided $p \approx 0.067$. The chapter's guidance applies: a ~2-point gap on only 2500 examples is not convincing on its own. Note also that these runs are on the *same* documents, so the independence assumption is conservative — a paired McNemar's test would use the discordant pairs directly and is more powerful, and might or might not reach significance depending on how correlated the two models' errors are.
 
-**4.** The chapter's `score_choices` includes a long comment about a BOS double-count bug. Explain (a) what the bug is, (b) why it silently produces ~25% accuracy on a 4-choice task rather than crashing, and (c) the two invariants the smoke test checks to catch it. Why is `acc == acc_norm` a valid check *specifically* for this single-letter scoring scheme?
+**4.** The chapter's `score_choices` includes a long comment about a BOS double-count bug. Explain (a) what the bug is, (b) why it silently produces ~25% accuracy on a 4-choice task rather than crashing, and (c) the two invariants the smoke test checks — and which of the two actually detects this bug. Why is `acc == acc_norm` a valid check *specifically* for this single-letter scoring scheme?
 
 ??? note "Solution"
     **(a) The bug.** `score_choices` encodes the context separately to find where the continuation begins (`context_len`). If the context is encoded with `add_special_tokens=True`, the tokenizer prepends a BOS token, so `context_len` already counts that BOS. The code then also does `ctx_len = context_ids.shape[1] + 1` to account for the BOS it manually prepends to `full_ids` — double-counting the BOS. The context/continuation split `ctx_len` is therefore one position too far to the right. The fix in the chapter is to encode the context with `add_special_tokens=False` so its ids are exactly a prefix of the full encoding.
@@ -1313,7 +1357,7 @@ This connects to broader MLOps concerns covered in [Observability, Logging & LLM
 
     **(c) The two invariants.**
     - *(a)* Within one question the four raw log-likelihoods must be **distinct and strictly negative**. If they are all equal, or any is exactly $0.0$, the split is broken (the empty-continuation signature).
-    - *(b)* Because `" A"`.." D"` are each a single token for common tokenizers (gpt2, Llama-3, Mistral), each choice's continuation is exactly one token, so dividing by token count ($=1$) leaves the score unchanged. Therefore `acc` must equal `acc_norm` **exactly**. If they differ, the continuations are being tokenized into more than one token (or the split is wrong), which would violate the single-token assumption the scheme relies on. The check is valid *only* for this single-letter scheme; it would not hold if you scored multi-token answer *text*, where length normalization genuinely changes the winner (see Exercise 2).
+    - *(b)* Because `" A"`.." D"` are each a single token for common tokenizers (gpt2, Llama-3, Mistral), each choice's continuation is exactly one token, so dividing by token count ($=1$) leaves the score unchanged. Therefore `acc` must equal `acc_norm` **exactly**. If they differ, the continuations are being tokenized into more than one token, violating the single-token assumption the scheme relies on. Note that *(a)* is the one that actually detects the BOS bug: with an empty continuation both the raw and the normalized score are $0.0$ for every choice, so *(b)* passes trivially on a fully broken harness. The check is valid *only* for this single-letter scheme; it would not hold if you scored multi-token answer *text*, where length normalization genuinely changes the winner (see Exercise 2).
 
 **5.** The CI/CD workflow calls `scripts/check_regression.py --baseline results/baseline.json --current .../results.json --threshold 0.005`, but the script itself is not shown. Implement it. It should load two lm-eval-style results files, compare every task/metric present in *both*, and exit with a non-zero status (failing the pipeline) if any current metric drops below its baseline by more than the threshold. Print a per-task report. Assume each results file has the shape `{"results": {"mmlu": {"acc": 0.741, "acc_norm": 0.75}, "hellaswag": {...}}}`.
 

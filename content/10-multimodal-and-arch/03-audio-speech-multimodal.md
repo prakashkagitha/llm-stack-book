@@ -31,7 +31,7 @@ $$
 m = 2595 \log_{10}\!\left(1 + \frac{f}{700}\right)
 $$
 
-The output is an $M \times T$ matrix — typically $M=80$ or $M=128$ Mel bins and $T$ frames at roughly 10 ms per frame. A 10-second clip at 16 kHz with 25 ms windows, 10 ms hop, and 80 Mel bins yields an $80 \times 1000$ matrix: 200$\times$ shorter than the raw waveform while retaining virtually all speech-discriminative information.
+The output is an $M \times T$ matrix — typically $M=80$ or $M=128$ Mel bins and $T$ frames at roughly 10 ms per frame. A 10-second clip at 16 kHz with 25 ms windows, 10 ms hop, and 80 Mel bins yields an $80 \times 1000$ matrix: the time axis is 160$\times$ shorter than the raw waveform (one frame per 160-sample hop), though only about 2$\times$ fewer numbers in total since each frame carries 80 Mel bins — and it retains virtually all speech-discriminative information.
 
 ```python
 import numpy as np
@@ -117,7 +117,12 @@ class VectorQuantizer(nn.Module):
         )
         indices = dist.argmin(dim=1)            # (B*T,)
         quantized = self.codebook(indices).reshape(B, T, D)
-        # Straight-through estimator: gradients flow through z unchanged
+        # Straight-through estimator: gradients flow through z unchanged.
+        # NOTE: this path alone gives the *codebook* zero gradient — the
+        # embedding lookup sits inside the .detach(). A real trainer must also
+        # add a codebook loss ||sg[z] - e||^2 and a commitment loss
+        # beta * ||z - sg[e]||^2 (or update the codebook by EMA), otherwise the
+        # entries never move from their initialization.
         quantized_st = z + (quantized - z).detach()
         return quantized_st, indices.reshape(B, T)
 
@@ -209,7 +214,7 @@ Whisper (Radford et al., OpenAI, 2022) remains the de facto open ASR baseline �
 
 {{fig:whisper-encoder-decoder-pipeline}}
 
-The convolutional front-end halves the temporal resolution from 3000 to 1500 frames. Each encoder block applies self-attention over these 1500 positions — note that this is always a fixed-length context regardless of actual utterance duration (silence is padded/masked). The decoder autoregressively generates transcript tokens with cross-attention back to encoder states.
+The convolutional front-end halves the temporal resolution from 3000 to 1500 frames. Each encoder block applies self-attention over these 1500 positions — note that this is always a fixed-length context regardless of actual utterance duration. Short clips are zero-padded to 30 s and the padding is *not* masked — `AudioEncoder.forward` takes no attention mask, so self-attention genuinely runs over the silence, which is one source of Whisper's hallucinated transcripts. The decoder autoregressively generates transcript tokens with cross-attention back to encoder states.
 
 ```python
 # Using OpenAI's whisper library for transcription
@@ -235,8 +240,10 @@ def transcribe_with_whisper(audio_path: str, model_size: str = "large-v3"):
     n_mels = model.dims.n_mels
     mel = whisper.log_mel_spectrogram(audio, n_mels).to(model.device)  # (n_mels, 3000)
 
-    # Detect language (optional)
-    _, probs = model.detect_language(mel.unsqueeze(0))
+    # Detect language (optional). Pass the 2-D (n_mels, 3000) tensor directly:
+    # detect_language adds the batch dim itself and only then returns a single
+    # dict. Hand it a 3-D tensor and you get a *list* of dicts back instead.
+    _, probs = model.detect_language(mel)
     lang = max(probs, key=probs.get)
     print(f"Detected language: {lang}")
 
@@ -270,7 +277,7 @@ out = asr("interview.wav", return_timestamps=True, batch_size=8)
 
 ### CTC: The Encoder-Only Alternative
 
-Whisper is a sequence-to-sequence model, but the other major ASR family — wav2vec 2.0, HuBERT fine-tuned for recognition, and most streaming production recognizers — uses **Connectionist Temporal Classification (CTC)**. CTC keeps only the encoder: it emits one distribution over characters (plus a special blank symbol $\varnothing$) per acoustic frame, and defines the probability of a transcript $y$ as the sum over every frame-level alignment $a$ that collapses to it:
+Whisper is a sequence-to-sequence model, but the other major ASR family — wav2vec 2.0 and HuBERT fine-tuned for recognition, and frame-synchronous streaming recognizers generally — is rooted in **Connectionist Temporal Classification (CTC)**. (Most *deployed* streaming systems actually use CTC's close relative, the RNN-Transducer, which keeps the same frame-synchronous encoder but adds a small prediction network — an internal LM — on top; the discussion below is about plain CTC.) CTC keeps only the encoder: it emits one distribution over characters (plus a special blank symbol $\varnothing$) per acoustic frame, and defines the probability of a transcript $y$ as the sum over every frame-level alignment $a$ that collapses to it:
 
 $$
 p(y \mid x) = \sum_{a \in \mathcal{B}^{-1}(y)} \prod_{t=1}^{T} p(a_t \mid x)
@@ -345,7 +352,7 @@ This paradigm is far from obsolete, and it is the one to reach for on a small bu
 VALL-E (Wang et al., Microsoft, 2023) reframes TTS as a language modeling problem over codec tokens. Given a 3-second acoustic prompt and a text transcript, VALL-E:
 
 1. **Predicts coarse tokens (AR stage):** Autoregressively models EnCodec level-1 tokens conditioned on text BPE tokens and the acoustic prompt. This captures prosody and speaker identity.
-2. **Predicts fine tokens (NAR stage):** Non-autoregressively predicts RVQ levels 2–8 conditioned on level 1 and all other context. This fills in acoustic detail in $O(1)$ parallel steps.
+2. **Predicts fine tokens (NAR stage):** Non-autoregressively predicts RVQ levels 2–8, level $j$ conditioned on the summed embeddings of levels $1{:}j-1$ plus the rest of the context. That is $K-1 = 7$ sequential passes of one shared network — $O(K)$ model calls, not $O(1)$ — but each pass emits *every* time step at once, so the cost is $O(1)$ in sequence length.
 
 The conceptual architecture:
 
@@ -408,7 +415,7 @@ VAD + LLM audio-token TTFT + codec decode ≈ 150–300 ms
 
 ### Streaming Architectures
 
-The standard approach to low-latency TTS uses chunk-by-chunk generation: the LM produces audio codec tokens in small batches (e.g., 25 tokens = ~333 ms of audio at 75 fps), which are decoded and streamed to the audio output device while generation continues.
+The standard approach to low-latency TTS uses chunk-by-chunk generation: the LM produces audio codec tokens in small batches (e.g., 25 codec *frames* = 200 tokens at $K=8$, which is ~333 ms of audio at 75 fps), which are decoded and streamed to the audio output device while generation continues.
 
 ```python
 import asyncio
@@ -442,7 +449,9 @@ class StreamingTTSPipeline:
             yield frame_tokens  # list of K ints, one per RVQ level
 
     async def run(self, text: str):
-        audio_queue = asyncio.Queue()
+        # Bound the queue: back-pressure stops the LM from running arbitrarily
+        # far ahead of playback.
+        audio_queue = asyncio.Queue(maxsize=2)
         text_tokens = self.lm.tokenize(text)
 
         async def producer():
@@ -453,6 +462,13 @@ class StreamingTTSPipeline:
                     # Decode chunk_size codec frames to waveform
                     waveform = self.codec_decoder.decode(buffer)
                     await audio_queue.put(waveform)
+                    # `generate_tokens` is a *synchronous* generator and
+                    # `Queue.put` on a non-full queue never suspends, so
+                    # without an explicit yield point the producer would run to
+                    # completion before the consumer ever plays a chunk — no
+                    # overlap at all. In production, run the blocking generate/
+                    # decode work off the loop with `asyncio.to_thread`.
+                    await asyncio.sleep(0)
                     buffer = []
             # Flush remainder
             if buffer:
@@ -662,10 +678,10 @@ def generate_music(
 
 AudioLM (Borsos et al., Google, 2022) pioneered the hierarchical two-stage approach specifically for long-form audio generation:
 
-1. **Semantic modeling:** An autoregressive LM over k-means clusters of w2v-BERT features (semantic tokens). This captures long-range structure — melody, prosody, content — with a compact ~50 token/s rate.
+1. **Semantic modeling:** An autoregressive LM over k-means clusters of w2v-BERT features (semantic tokens). w2v-BERT emits one embedding every 40 ms, so this captures long-range structure — melody, prosody, content — at a compact ~25 token/s rate (half the 50 Hz frame rate of the SoundStream acoustic side).
 2. **Acoustic modeling:** Two coarse-to-fine codec LMs that condition on semantic tokens and progressively generate EnCodec tokens at increasing bitrate.
 
-The key insight: semantic tokens are far more compressible than acoustic tokens. A 30-second clip requires only ~1,500 semantic tokens but ~18,000 EnCodec tokens. By modeling semantics first, the LM can plan global structure before committing to acoustic details.
+The key insight: semantic tokens are far more compressible than acoustic tokens. A 30-second clip requires only ~750 semantic tokens but ~18,000 EnCodec tokens. By modeling semantics first, the LM can plan global structure before committing to acoustic details.
 
 !!! note "Connection to language modeling"
 
@@ -707,7 +723,7 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
     - Real-time full-duplex dialogue (Moshi-style) requires a hierarchical temporal architecture: a slow inner LM operating on coarse semantic tokens, and fast depth transformers producing fine acoustic tokens per step.
     - The multimodal token-stream view — each modality contributing tokens to a shared sequence — is the dominant abstraction, requiring only modality-specific encoders and projection adapters on top of a frozen or lightly fine-tuned LLM.
     - Audio token sequences are 200× longer than equivalent text, necessitating weighted loss, hierarchical generation, or compressed representations (Q-Former) to prevent the LLM from being overwhelmed by acoustic detail.
-    - For production voice systems, the latency budget is roughly VAD (50 ms) + audio encoder (50 ms) + LLM TTFT (200 ms) + first-chunk decode (30 ms) ≈ 330 ms — achievable on a single modern GPU with optimized inference.
+    - For production voice systems, the latency budget is roughly VAD (10 ms) + audio encoder (50 ms) + LLM TTFT (200 ms) + first-chunk decode (30 ms) ≈ 290 ms — achievable on a single modern GPU with optimized inference.
     - Transfer learning and semi-supervised pretraining (HuBERT, wav2vec 2.0, pseudo-labeling) are essential because high-quality paired audio-text data is scarce relative to the scale of text-only corpora.
 
 !!! sota "State of the Art & Resources (2026)"
@@ -804,14 +820,14 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
 ??? note "Solution"
     (a) At 16 kHz with a 10 ms hop, each frame covers $160$ samples, so a 30-second clip yields $30 \text{ s} \times 100 \text{ frames/s} = 3000$ log-Mel frames (the `(n_mels, 3000)` tensor in the transcription code — $n_{\text{mels}} = 80$ for `base`, $128$ for `large-v3`). The convolutional front-end halves the temporal resolution, $3000 \to 1500$, which is the fixed number of positions each self-attention block attends over.
 
-    (b) `whisper.pad_or_trim` pads the 5-second clip with silence up to the full 30-second window before feature extraction, so it still becomes a `(n_mels, 3000)` input and 1500 encoder positions. The padded/silent region is masked, but the encoder self-attention still runs over all 1500 positions — so a 5-second utterance costs the same encoder compute as a 30-second one. Short utterances waste compute, exactly the downside the chapter lists for the fixed-length-window strategy.
+    (b) `whisper.pad_or_trim` pads the 5-second clip with silence up to the full 30-second window before feature extraction, so it still becomes a `(n_mels, 3000)` input and 1500 encoder positions. Nothing masks the padded/silent region — the encoder self-attention runs over all 1500 positions regardless — so a 5-second utterance costs the same encoder compute as a 30-second one (and the model is free to hallucinate text for the silence). Short utterances waste compute, exactly the downside the chapter lists for the fixed-length-window strategy.
 
     (c) A 40-second clip is *trimmed* to the first 30 seconds. The final 10 seconds are simply discarded, so any speech there is never transcribed. Because the API returns a fluent transcript for the portion it did see, the truncation is silent — there is no error, just missing words. The chapter's remedy is dynamic chunking: split long audio into overlapping 30-second windows, encode each, and concatenate.
 
 **4.** AudioLM and SpeechTokenizer both hinge on separating *semantic* from *acoustic* information. (a) Using the chapter's figures, contrast the token rate of semantic tokens versus EnCodec acoustic tokens for a 30-second clip. (b) Explain why AudioLM models semantic tokens *first* and only then generates acoustic tokens. (c) SpeechTokenizer reaches a similar goal differently — how, and what practical property does that give its level-1 tokens?
 
 ??? note "Solution"
-    (a) The chapter states a 30-second clip needs only about $1{,}500$ semantic tokens (roughly $50$ tokens/s) but about $18{,}000$ EnCodec acoustic tokens ($600$ tokens/s across 8 RVQ levels). Semantic tokens are therefore about $12\times$ more compact.
+    (a) The chapter states a 30-second clip needs only about $750$ semantic tokens (roughly $25$ tokens/s, one w2v-BERT unit per 40 ms) but about $18{,}000$ EnCodec acoustic tokens ($600$ tokens/s across 8 RVQ levels). Semantic tokens are therefore about $24\times$ more compact.
 
     (b) Semantic tokens capture long-range structure — content, melody, prosody — in a compact stream, so an autoregressive LM can plan the *global* shape of the audio over a short, tractable sequence before committing to detail. Acoustic tokens are far denser and mostly encode surface fidelity; generating them first would force the model to decide fine acoustic detail before it has settled what is even being said. Modeling semantics first, then conditioning acoustic generation on those tokens, mirrors the coarse-to-fine intuition the chapter draws to BPE merges and RVQ levels.
 

@@ -53,7 +53,14 @@ rng = np.random.default_rng(42)
 def true_fn(x):
     return np.sin(x)
 
-N_train = 15
+# Raw powers of x on [0, 2*pi] make the degree-10 design matrix hopelessly
+# ill-conditioned (x**10 is ~9e7 at the right edge), so the numbers below would
+# measure LAPACK's rank cutoff rather than statistics. Map x to [-1, 1] first —
+# this is exactly what numpy.polynomial.Polynomial.fit does internally.
+def to_unit(x):
+    return x / np.pi - 1.0
+
+N_train = 50
 N_repeats = 200  # number of training-set draws to empirically estimate variance
 
 x_test = np.linspace(0, 2 * np.pi, 100).reshape(-1, 1)
@@ -72,8 +79,8 @@ for degree in [1, 3, 10]:
             PolynomialFeatures(degree, include_bias=False),
             LinearRegression()
         )
-        model.fit(x_train, y_train.ravel())
-        preds_matrix.append(model.predict(x_test))
+        model.fit(to_unit(x_train), y_train.ravel())
+        preds_matrix.append(model.predict(to_unit(x_test)))
 
     preds_matrix = np.array(preds_matrix)        # (N_repeats, N_test)
     mean_pred = preds_matrix.mean(axis=0)        # average prediction across draws
@@ -87,15 +94,17 @@ for degree in [1, 3, 10]:
           f"MSE≈{avg_mse:.4f}  (Bias²+Var={bias_sq+variance:.4f})")
 ```
 
-Running this typically produces something like (magnitudes depend on the RNG seed):
+The seed is fixed, so this run is reproducible:
 
 ```text
-Degree  1:  Bias²=0.4810  Var=0.0062  MSE≈0.5783  (Bias²+Var=0.4872)
-Degree  3:  Bias²=0.0041  Var=0.0101  MSE≈0.1041  (Bias²+Var=0.0142)
-Degree 10:  Bias²=0.0015  Var=0.2341  MSE≈0.3256  (Bias²+Var=0.2356)
+Degree  1:  Bias²=0.2037  Var=0.0146  MSE≈0.2183  (Bias²+Var=0.2183)
+Degree  3:  Bias²=0.0051  Var=0.0091  MSE≈0.0142  (Bias²+Var=0.0142)
+Degree 10:  Bias²=0.0040  Var=0.4787  MSE≈0.4827  (Bias²+Var=0.4827)
 ```
 
-Degree-3 wins: low enough bias to capture the sinusoid, low enough variance because 15 training points constrain the fit well.
+Degree-3 wins: low enough bias to capture the sinusoid, low enough variance because 50 training points constrain a four-coefficient cubic well. Degree 10 has driven bias essentially to zero, but its variance is ~50x larger and that is what dominates its total error — the tradeoff in one table.
+
+Two details worth reading off the numbers. First, the measured MSE equals $\text{Bias}^2 + \text{Var}$ *exactly*, with no $\sigma^2$ term, because `avg_mse` is measured against the **noiseless** `y_test_true`: the irreducible-noise term only appears when you score against noisy test labels, in which case every row would shift up by $\sigma^2 = 0.3^2 = 0.09$. Second, the degree-1 bias² is checkable in closed form: the population-optimal linear fit to $\sin$ on $[0, 2\pi]$ leaves residual variance $\tfrac{1}{2} - 3/\pi^2 \approx 0.196$, which is what the empirical $0.2037$ is converging to (the small excess is the estimator's own variance).
 
 !!! note "The modern twist: double descent"
     In deep learning, the bias-variance tradeoff's U-shaped test-error curve turns into a *double-descent* curve. After the classical interpolation threshold (where the model perfectly memorizes training data), test error *decreases again* as model size grows further. This is an active research area — see Belkin et al., "Reconciling modern machine-learning practice and the classical bias–variance trade-off," PNAS 2019.
@@ -531,7 +540,7 @@ $$
 
 where $B_m$ is the $m$-th bin of predictions, $\text{acc}(B_m)$ is the fraction of positives in that bin, and $\text{conf}(B_m)$ is the mean predicted probability.
 
-Neural networks are often *overconfident* — their raw softmax scores are not well-calibrated. **Temperature scaling** is a simple post-hoc fix: divide logits by a learned scalar $T > 1$ before softmax, which smooths the output distribution. In `scikit-learn`, `calibration_curve` plots the reliability diagram and `CalibratedClassifierCV` wraps a fitted estimator with Platt scaling (`method="sigmoid"`) or isotonic regression; you implement ECE and temperature scaling yourself in Exercises 5 and 6.
+Neural networks are often *overconfident* — their raw softmax scores are not well-calibrated. **Temperature scaling** is a simple post-hoc fix: divide logits by a learned scalar $T > 1$ before softmax, which smooths the output distribution. In `scikit-learn`, `calibration_curve` *returns* the (empirical frequency, mean confidence) pairs that a reliability diagram plots — `CalibrationDisplay.from_predictions` is what actually draws it — and `CalibratedClassifierCV` wraps a fitted estimator with Platt scaling (`method="sigmoid"`) or isotonic regression; you implement ECE and temperature scaling yourself in Exercises 5 and 6.
 
 Calibration is not just a classical-ML concern. The same sampling temperature that controls generation diversity at inference (see [Sampling Strategies & Decoding Algorithms](../07-inference-serving/09-sampling-decoding.html)) is literally this $T$, and an LLM's calibration is routinely measured on multiple-choice benchmarks by comparing its normalized answer log-probabilities against empirical accuracy — the standard `lm-evaluation-harness` reports exactly these log-likelihoods.
 

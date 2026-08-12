@@ -70,7 +70,7 @@ $$
 
 which in matrix form is the VJP $\frac{\partial z}{\partial \mathbf{x}} = J_g^\top \frac{\partial z}{\partial \mathbf{y}}$.
 
-For a deep network, the loss $\mathcal{L}$ is a composition of $L$ layer functions. Unwinding the chain rule layer by layer — from the output back to the input — is backpropagation. The key efficiency insight is that each intermediate Jacobian never needs to be materialized; we only need the VJP, which costs $O(n)$ time per layer rather than $O(n^2)$.
+For a deep network, the loss $\mathcal{L}$ is a composition of $L$ layer functions. Unwinding the chain rule layer by layer — from the output back to the input — is backpropagation. The key efficiency insight is that each intermediate Jacobian never needs to be materialized; we only need the VJP, a matrix–*vector* product costing $O(n^2)$ per layer of width $n$ — the same order as the forward pass — rather than the $O(n^3)$ of explicitly forming $n \times n$ Jacobians and chaining them with matrix–*matrix* products.
 
 ### A Three-Layer Chain Rule Worked Out
 
@@ -201,7 +201,7 @@ $$
 \theta_{t+1} = \theta_t + v_{t+1}
 $$
 
-This provides a corrective anticipation and achieves the optimal $O(1/t^2)$ convergence rate for convex functions (versus $O(1/t)$ for GD) — the first-order oracle lower bound.
+This provides a corrective anticipation. The rate depends on how $\beta$ is set. With Nesterov's *time-varying* schedule $\beta_t = (t-1)/(t+2)$, the method attains the optimal $O(1/t^2)$ rate for smooth convex functions (versus $O(1/t)$ for GD) — the first-order oracle lower bound. With a *fixed* $\beta$ — the form written above, used everywhere in practice and in the code below — you do not get that accelerated rate on general convex problems; what the look-ahead buys you there is the improved $(1 - 1/\sqrt{\kappa})^t$ rate in the *strongly* convex case, discussed under the condition number below.
 
 ### Adaptive Learning Rate Methods
 
@@ -401,7 +401,7 @@ print(f"lambda_max(H) ~= {lam:.4f}")
 print(f"stability ceiling 2/lambda_max = {2.0 / lam:.4f}  (max usable GD lr)")
 ```
 
-On this toy network it prints $\lambda_{\max} \approx 4.09$ and a stability ceiling of $2/\lambda_{\max} \approx 0.49$ — a learning rate above that will diverge, which you can verify by running the chapter's `run_gd` on it. Two practical notes: power iteration finds the eigenvalue of largest *magnitude*, so a negative result is informative rather than a bug (it means negative curvature dominates); and for a real LLM you would estimate this on a fixed batch, since $H$ depends on the data you evaluate it on.
+On this toy network it prints $\lambda_{\max} \approx 4.09$ and a stability ceiling of $2/\lambda_{\max} \approx 0.49$ — a learning rate well above that will diverge, which you can verify directly with plain `torch.optim.SGD` on this model: `lr=0.4` trains stably, while `lr=0.8` sends the loss to NaN within about twenty steps. (The chapter's `run_gd` below is a pure-NumPy loop over a flat parameter vector, so it is not the tool to use on a `nn.Module`.) Two practical notes: power iteration finds the eigenvalue of largest *magnitude*, so a negative result is informative rather than a bug (it means negative curvature dominates); and for a real LLM you would estimate this on a fixed batch, since $H$ depends on the data you evaluate it on.
 
 PyTorch ships higher-level wrappers for the same primitives — `torch.autograd.functional.hvp`/`vhp`, and `torch.func.jacrev`/`torch.func.hessian` for functions small enough to materialize — and the [PyHessian](https://github.com/amirgholami/PyHessian) library builds on HVPs to estimate the top-$k$ eigenvalues, the Hessian trace (via Hutchinson's estimator), and the full eigenvalue density of a trained network.
 
@@ -417,7 +417,7 @@ $$
 \|\nabla f(x) - \nabla f(y)\| \leq L \|x - y\| \quad \forall x, y
 $$
 
-Equivalently, $\lambda_{\max}(H) \leq L$ everywhere. The gradient doesn't change "too fast." This is the condition required for gradient descent to make guaranteed progress: with $\eta \leq 1/L$, each step decreases the loss by at least $\|\nabla f\|^2 / (2L)$.
+Equivalently, $\lambda_{\max}(H) \leq L$ everywhere. The gradient doesn't change "too fast." This is the condition required for gradient descent to make guaranteed progress. The descent lemma gives $f(x - \eta \nabla f) \leq f(x) - \eta\big(1 - \tfrac{L\eta}{2}\big)\|\nabla f\|^2$, so any $\eta \leq 1/L$ decreases the loss by at least $\tfrac{\eta}{2}\|\nabla f\|^2$ — and that guaranteed decrease is maximized at exactly $\eta = 1/L$, where it equals $\|\nabla f\|^2 / (2L)$.
 
 If $\eta > 1/L$, GD can overshoot and diverge. A common rule of thumb: start with $\eta = 1/L$ and use a learning rate finder or warmup (see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html)) to tune from there.
 
@@ -725,7 +725,7 @@ These numbers are worth sitting with, because they cut against the "Adam always 
 
     3. **Regularization via path length.** Noisier optimization paths tend to explore a wider region of parameter space before converging, effectively averaging over many candidate solutions. This is related to ensemble methods, where averaging improves generalization.
 
-    4. **Empirical confirmation.** Keskar et al. (2017) directly demonstrated that increasing batch size degrades test accuracy on CIFAR and ImageNet (up to $\sim$1-2% on the setups tested) without changing train accuracy, attributing the gap to sharper minima found by large-batch SGD. Techniques like learning rate warmup and linear learning rate scaling recover some of this gap but not all.
+    4. **Empirical confirmation.** Keskar et al. (2017) directly demonstrated that increasing batch size degrades test accuracy across their six networks — fully-connected MNIST and TIMIT models plus shallow and deep convnets on CIFAR-10 and CIFAR-100 — by several percentage points on the harder setups (the largest gaps are on TIMIT and the deep CIFAR-100 network), without changing train accuracy, attributing the gap to sharper minima found by large-batch SGD. Techniques like learning rate warmup and linear learning rate scaling recover some of this gap but not all.
 
     5. **PAC-Bayes framing.** The generalization gap can be bounded in terms of the "volume" of good parameters consistent with the training data. Wide minima correspond to larger volumes, giving tighter PAC-Bayes bounds.
 
@@ -957,7 +957,7 @@ The full probabilistic picture of why the loss landscape is navigable — the st
 
     But we assumed the left side is $> m$, a direct contradiction. Hence such a loss cannot be convex. (Equivalently: the set of minimizers of a convex function is itself convex, so it cannot consist of two isolated points with a gap between them.) Permutation symmetry guarantees exactly this configuration of many separated equivalent minima, which is why network losses are non-convex by construction.
 
-**6.** (Implementation) The chapter's runnable code implements GD, SGD, momentum, and Adam but not Nesterov Accelerated Gradient (NAG), even though NAG achieves the optimal $O(1/t^2)$ convex rate discussed in the text. Implement `run_nesterov` in the same style as `run_momentum`, using the chapter's NAG update $v_{t+1} = \beta v_t - \eta\nabla\mathcal{L}(\theta_t + \beta v_t)$, $\theta_{t+1} = \theta_t + v_{t+1}$. Then explain, in one or two sentences, the single line that differs from heavy-ball momentum and why it matters.
+**6.** (Implementation) The chapter's runnable code implements GD, SGD, momentum, and Adam but not Nesterov Accelerated Gradient (NAG), the look-ahead variant discussed in the text. Implement `run_nesterov` in the same style as `run_momentum`, using the chapter's NAG update $v_{t+1} = \beta v_t - \eta\nabla\mathcal{L}(\theta_t + \beta v_t)$, $\theta_{t+1} = \theta_t + v_{t+1}$. Then explain, in one or two sentences, the single line that differs from heavy-ball momentum and why it matters.
 
 ??? note "Solution"
     The only structural change from `run_momentum` is *where* the gradient is evaluated: at the look-ahead point $\theta + \beta v$ rather than at $\theta$.
@@ -974,7 +974,8 @@ The full probabilistic picture of why the loss landscape is navigable — the st
 
         Differs from heavy-ball momentum only in evaluating the gradient at the
         look-ahead position theta + beta*velocity, giving a corrective
-        anticipation and the optimal O(1/t^2) convex convergence rate.
+        anticipation. (The optimal O(1/t^2) convex rate needs Nesterov's
+        time-varying beta_t = (t-1)/(t+2), not the fixed beta used here.)
         """
         theta = theta0.copy()
         velocity = np.zeros_like(theta)
@@ -990,4 +991,4 @@ The full probabilistic picture of why the loss landscape is navigable — the st
 
     You can drop it straight into the chapter's script, e.g. add `"Nesterov": run_nesterov(theta0, rosenbrock_grad, lr=0.001, beta=0.9, n_steps=2000)` to the `runs` dict.
 
-    **The one changed line:** heavy-ball momentum computes `g = grad_fn(theta)`, whereas NAG computes `g = grad_fn(theta + beta * velocity)`. Because the parameters are about to move by (approximately) $\beta v$ regardless, evaluating the gradient *after* that anticipated move lets NAG "correct" an overshoot before committing to it — this look-ahead is what upgrades the convex convergence rate from $O(1/t)$ to the optimal $O(1/t^2)$.
+    **The one changed line:** heavy-ball momentum computes `g = grad_fn(theta)`, whereas NAG computes `g = grad_fn(theta + beta * velocity)`. Because the parameters are about to move by (approximately) $\beta v$ regardless, evaluating the gradient *after* that anticipated move lets NAG "correct" an overshoot before committing to it. Note the rate caveat from the text: with the fixed $\beta = 0.9$ used here you get the stability and the $(1 - 1/\sqrt{\kappa})^t$ strongly convex speedup, not the $O(1/t^2)$ accelerated rate — that requires the time-varying schedule $\beta_t = (t-1)/(t+2)$, a one-line change you can also try.

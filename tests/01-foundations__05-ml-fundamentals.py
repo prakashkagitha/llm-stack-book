@@ -64,7 +64,13 @@ def true_fn(x):
     return np.sin(x)
 
 
-N_train = 15
+# Map x to [-1, 1] before building polynomial features (degree-10 powers of raw
+# x on [0, 2*pi] are catastrophically ill-conditioned).
+def to_unit(x):
+    return x / np.pi - 1.0
+
+
+N_train = 50
 N_repeats = 200  # number of training-set draws to empirically estimate variance
 
 x_test = np.linspace(0, 2 * np.pi, 100).reshape(-1, 1)
@@ -83,8 +89,8 @@ for degree in [1, 3, 10]:
             PolynomialFeatures(degree, include_bias=False),
             LinearRegression()
         )
-        model.fit(x_train, y_train.ravel())
-        preds_matrix.append(model.predict(x_test))
+        model.fit(to_unit(x_train), y_train.ravel())
+        preds_matrix.append(model.predict(to_unit(x_test)))
 
     preds_matrix = np.array(preds_matrix)        # (N_repeats, N_test)
     mean_pred = preds_matrix.mean(axis=0)        # average prediction across draws
@@ -105,6 +111,13 @@ assert sum_bv[3] < sum_bv[10], "degree-3 should beat degree-10 (too much varianc
 assert results[1][0] > results[3][0]
 # degree-10 (overfit) should have much higher variance than degree-3
 assert results[10][1] > results[3][1]
+# the test target is NOISELESS, so the decomposition is exact: MSE == bias^2 + variance
+# (the sigma^2 term appears only when scoring against noisy test labels)
+for _d, (_b, _v, _m) in results.items():
+    assert abs(_m - (_b + _v)) < 1e-9, (_d, _b, _v, _m)
+# degree-1 bias^2 must converge to the analytic residual variance of the population
+# linear fit to sin on [0, 2*pi]:  1/2 - 3/pi**2 = 0.19604
+assert abs(results[1][0] - (0.5 - 3 / np.pi ** 2)) < 0.02, results[1][0]
 
 
 # ============================================================================

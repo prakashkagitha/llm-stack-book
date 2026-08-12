@@ -20,7 +20,7 @@ $$
 \text{SE}(p) = \sqrt{\frac{p(1-p)}{n}}
 $$
 
-For $p = 0.80$ and $n = 500$, that is $\sqrt{0.80 \times 0.20 / 500} \approx 0.018$, meaning the 95 % confidence interval is roughly $\pm 3.6$ percentage points. Two models differing by 1 % on MMLU are likely within noise.
+For $p = 0.80$ and $n = 500$, that is $\sqrt{0.80 \times 0.20 / 500} \approx 0.018$, meaning the 95 % confidence interval is roughly $\pm 3.5$ percentage points. Two models differing by 1 % on MMLU are likely within noise.
 
 **Sensitivity failures.** Benchmarks saturate: once frontier models exceed 90 %, the remaining 10 % is dominated by ambiguous or poorly-worded questions, not model capability. New benchmarks replace old ones, breaking longitudinal comparisons.
 
@@ -56,17 +56,19 @@ The field has produced dozens of benchmarks. We organize them by the capability 
 
 The appeal is breadth: a single number summarizes performance across many domains. The weakness is the same breadth: average accuracy conflates wildly different skills, and a model that is superb at general knowledge but weak at formal mathematics and strong on medicine can land at the same number as one with a different profile.
 
-**Scoring.** Most harnesses report normalized accuracy (fraction correct). Log-likelihood scoring — choosing the answer whose completion has highest $\log p$ under the model — is common and more reproducible than generation-based scoring.
+**Scoring.** Most harnesses report plain accuracy (fraction correct) — in `lm-evaluation-harness` this is the `acc` metric. Do not confuse it with `acc_norm`, which is a *different* metric: accuracy under log-likelihoods normalized by the byte length of each continuation (see "Log-likelihood versus generation scoring" below). Log-likelihood scoring — choosing the answer whose completion has highest $\log p$ under the model — is common and more reproducible than generation-based scoring.
 
 $$
-\hat{y} = \arg\max_{c \in \{A,B,C,D\}} \log p_\theta(\text{answer text of } c \mid \text{question})
+\hat{y} = \arg\max_{c \in \{A,B,C,D\}} \log p_\theta(\text{completion for } c \mid \text{question})
 $$
+
+For MMLU specifically, both Hendrycks' original code and `lm-eval` render the options in the prompt and score the single answer *letter* as the completion (" A", " B", " C", " D") rather than the answer text — which is why length normalization is a no-op on MMLU but matters for the answer-text tasks discussed below.
 
 **MMLU-Pro** (Wang et al., 2024) adds harder, ten-choice questions with more complex reasoning requirements, reducing the chance of guessing correctly to 10 % versus 25 %. This makes it more discriminative at the frontier but harder to interpret for smaller models.
 
 ### Mathematical Reasoning: GSM8K and MATH
 
-**GSM8K** (Grade School Math 8K, Cobbe et al., 2021) is a dataset of roughly 8,500 school-level word problems. A correct answer requires multi-step arithmetic (integer or simple decimal, no calculus). The canonical evaluation uses a model's generated chain-of-thought followed by a numerical extraction regex, and accuracy is the fraction of problems where the extracted number matches the reference answer.
+**GSM8K** (Grade School Math 8K, Cobbe et al., 2021) is a dataset of roughly 8,500 school-level word problems, split into 7,473 train and **1,319 test** — published GSM8K accuracies are on those 1,319 problems, which is the $n$ to use in any significance calculation. A correct answer requires multi-step arithmetic (integer or simple decimal, no calculus). The canonical evaluation uses a model's generated chain-of-thought followed by a numerical extraction regex, and accuracy is the fraction of problems where the extracted number matches the reference answer.
 
 **MATH** (Hendrycks et al., 2021) covers competition mathematics in seven subject categories — Prealgebra, Algebra, Intermediate Algebra, Counting & Probability, Geometry, Number Theory, and Precalculus — at five difficulty levels. Problems require symbolic manipulation, not just numerical calculation, which makes automated verification harder.
 
@@ -126,7 +128,7 @@ $$
 
 which equals $\frac{N_{\text{tokens}}}{N_{\text{bytes}}} \cdot \frac{\text{mean NLL per token}}{\ln 2}$. BPB is the honest cross-model, cross-tokenizer comparison metric and is what serious small-scale leaderboards report; `lm_eval` computes it for the `wikitext` and Pile-style perplexity tasks, and AI2's Paloma suite exists specifically to report held-out fit across many domains rather than one. See [Probability, Statistics & Information Theory](../01-foundations/02-probability-information.html) for the bits/nats conversion and [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) for the loss itself.
 
-**The zero-shot multiple-choice suite.** The second family is the set of small, pre-instruction-tuning benchmarks that the EleutherAI/Pythia and OLMo model suites report: HellaSwag (commonsense sentence completion), PIQA (physical commonsense), WinoGrande (pronoun coreference), ARC-Easy and ARC-Challenge (grade-school science), OpenBookQA, BoolQ, SciQ, and LAMBADA (last-word prediction). These are scored by **length-normalized log-likelihood over the answer options**, not by generation, so a base model that cannot follow an instruction or emit "Answer: C" still produces a usable number. In published small-model sweeps the easier members (SciQ, PIQA, ARC-Easy, LAMBADA, then HellaSwag) typically lift above chance first, while ARC-Challenge and WinoGrande hug chance until roughly the 1B-parameter scale — so at 100M, expect a handful of moving needles and several flat ones, and choose your tracking set accordingly.
+**The zero-shot multiple-choice suite.** The second family is the set of small, pre-instruction-tuning benchmarks that the EleutherAI/Pythia and OLMo model suites report: HellaSwag (commonsense sentence completion), PIQA (physical commonsense), WinoGrande (pronoun coreference), ARC-Easy and ARC-Challenge (grade-school science), OpenBookQA, BoolQ, and SciQ, plus LAMBADA (last-word prediction). All but the last are scored by **length-normalized log-likelihood over the answer options**, not by generation; LAMBADA has no answer options, so it is scored by whether the gold final word is the model's greedy continuation (`lm-eval`'s `lambada_openai` reads that off the `is_greedy` flag of a single log-likelihood request, and reports perplexity on the same word). Either way no generation, instruction-following, or "Answer: C" emission is required, so a base model still produces a usable number. In published small-model sweeps the easier members (SciQ, PIQA, ARC-Easy, LAMBADA, then HellaSwag) typically lift above chance first, while ARC-Challenge and WinoGrande hug chance until roughly the 1B-parameter scale — so at 100M, expect a handful of moving needles and several flat ones, and choose your tracking set accordingly.
 
 You do not re-implement any of this. The reference implementation is EleutherAI's `lm-evaluation-harness`:
 
@@ -184,6 +186,14 @@ def flag_contaminated(
     Returns True for each test question that has >= threshold fraction of
     its n-grams appearing in any training document.
 
+    Items shorter than n tokens have NO n-grams at all -- and short items are
+    the common case (most MMLU stems and essentially all answer options are
+    under 13 words). Calling them clean by default would silently report
+    0 % contamination on a large slice of the benchmark, so they fall back to
+    an exact (whitespace-normalized) substring check instead. Note you cannot
+    fix this by shortening n for those items alone: the training set below
+    holds only n-grams of length n, so shorter query grams could never match.
+
     NOTE: This is O(|train| * |test|) in the worst case; in practice you
     build a Bloom filter or inverted index over training n-grams.
     """
@@ -191,16 +201,24 @@ def flag_contaminated(
     train_ngrams: set = set()
     for doc in training_docs:
         train_ngrams |= build_ngram_set(doc, n)
+    train_norm = [" ".join(doc.lower().split()) for doc in training_docs]
 
     contaminated = []
     for q in test_questions:
         q_ngrams = build_ngram_set(q, n)
         if len(q_ngrams) == 0:
-            contaminated.append(False)
+            q_norm = " ".join(q.lower().split())  # fewer than n tokens
+            contaminated.append(bool(q_norm) and any(q_norm in d for d in train_norm))
             continue
         overlap = len(q_ngrams & train_ngrams) / len(q_ngrams)
         contaminated.append(overlap >= threshold)
     return contaminated
+
+
+# Sanity check: the short item is checked verbatim, not waved through.
+# short = "what is the capital of france?"
+# assert flag_contaminated([short], ["... trivia: What is the capital of France? ..."]) == [True]
+# assert flag_contaminated([short], ["unrelated text"]) == [False]
 ```
 
 In practice you do not run that quadratic loop. `lm-evaluation-harness` ships a decontamination module implementing the 13-gram overlap protocol, and at corpus scale the job is folded into the deduplication pass you already run over pretraining data: Bloom-filter deduplicators such as the one in AI2's **Dolma** toolkit, or the dedup stages in HuggingFace **`datatrove`**, will drop any training document that overlaps a "seen" set — so you seed that set with your evaluation suites *before* the pass rather than trying to detect contamination afterwards. This is a step you own when you build your own model: see [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html) for the machinery and [Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) for where it lands in the Stack-100M pipeline.
@@ -439,6 +457,8 @@ Measuring position bias itself is a separate experiment from scoring existing pr
 
 ```python
 import itertools
+import random
+from collections import defaultdict
 from typing import List, Optional, Tuple
 
 
@@ -447,6 +467,7 @@ def make_position_bias_variants(
     choices: List[str],          # option TEXTS in original order: choices[0] == "A"
     gold_index: int,             # index into choices of the correct option
     max_variants: Optional[int] = None,
+    seed: int = 0,
 ) -> List[Tuple[str, str]]:
     """
     Build re-rendered prompts with the answer options permuted, so a caller
@@ -464,11 +485,28 @@ def make_position_bias_variants(
     gold_letter. A model with no position bias scores the same for every
     gold_letter; a large spread (e.g. much higher when the answer is 'A')
     is position bias.
+
+    max_variants subsamples for cost (10 options = 3.6M permutations). It
+    must NOT be a plain slice of the lexicographic enumeration: the first
+    permutations all share a leading index, so with gold_index=0 and
+    max_variants=6 the gold option would land on 'A' in all 6 variants and
+    never on B/C/D. We therefore stratify by gold position and draw an
+    equal number from each, so every letter keeps the same trial count
+    (the returned length is rounded down to a multiple of len(choices)).
     """
     letters = "ABCDEFGHIJ"
     perms = list(itertools.permutations(range(len(choices))))
-    if max_variants is not None:
-        perms = perms[:max_variants]
+    if max_variants is not None and max_variants < len(perms):
+        by_gold_pos = defaultdict(list)
+        for p in perms:
+            by_gold_pos[p.index(gold_index)].append(p)
+        per_pos = max(1, max_variants // len(choices))
+        rng = random.Random(seed)
+        perms = [
+            p
+            for pos in range(len(choices))
+            for p in rng.sample(by_gold_pos[pos], min(per_pos, len(by_gold_pos[pos])))
+        ]
     variants: List[Tuple[str, str]] = []
     for perm in perms:
         lines = [question, ""]
@@ -487,6 +525,10 @@ def make_position_bias_variants(
 # assert len(vs) == 24
 # from collections import Counter
 # assert Counter(g for _, g in vs) == {"A": 6, "B": 6, "C": 6, "D": 6}
+#
+# Subsampling stays balanced too (this is what a lexicographic slice breaks):
+# vs8 = make_position_bias_variants("Q?", ["w", "x", "y", "z"], 0, max_variants=8)
+# assert Counter(g for _, g in vs8) == {"A": 2, "B": 2, "C": 2, "D": 2}
 ```
 
 **Log-likelihood versus generation scoring.** Log-likelihood scoring (ranking answers by $\log p$ of their text given the question) does not require a well-calibrated answer extractor, but it has its own artifacts: the probability of a completion depends on its *length*, so a short correct answer ("Yes") and a long incorrect answer ("No, because of the following reasons...") are not comparable without length normalization.
@@ -527,7 +569,7 @@ Different harnesses make different choices here, making cross-harness comparison
 
     The observed difference of 0.7 % falls *within* the 95 % CI, meaning we cannot reject the null hypothesis that the models are equally capable on MMLU.
 
-    Moral: **a difference smaller than about 1 % on the full MMLU set is not statistically significant without multiple runs or a stricter significance test.** On smaller subsets (e.g., a 500-question domain slice), the CI is roughly $\pm 3.5$ points, so differences below 7 % are noise.
+    Moral: **a difference smaller than about 1 % on the full MMLU set is not statistically significant without multiple runs or a stricter significance test.** On smaller subsets (e.g., a 500-question domain slice at $p \approx 0.8$), each model's own CI is roughly $\pm 3.5$ points and the CI of the *difference* is $\pm 1.96\sqrt{2}\,\text{SE} \approx \pm 5$ points, so gaps below about 5 points are noise. (Do not instead double the single-model interval: that "do the error bars overlap?" heuristic is the more conservative $\pm 7$ points and would discard real 6-point differences.)
 
 Note that this calculation is deliberately conservative. Treating the two scores as independent throws away the fact that both models answered the *same* questions: the per-item outcomes are correlated (both models get the easy items right and the hard items wrong), and the correct test conditions on that pairing. McNemar's test looks only at the discordant items — those one model gets right and the other wrong — and typically detects differences two to three times smaller than the unpaired interval above suggests. Always evaluate both models on the identical item set and use a paired test; [Statistical Rigor in Evaluation: Confidence Intervals & Significance](../11-evaluation/06-statistical-rigor-eval.html) derives it, along with bootstrap intervals and power analysis for sizing a test set in advance.
 
@@ -610,8 +652,8 @@ Reproducibility is a live problem. The same model evaluated with different harne
 |---|---|---|---|---|---|
 | MMLU | Knowledge (57 domains) | 4-choice | ~14,000 | Accuracy | Yes (by 2025–26) |
 | MMLU-Pro | Knowledge (harder) | 10-choice | ~12,000 | Accuracy | No |
-| GSM8K | Grade-school math | Open answer | 8,500 | Exact match | Yes |
-| MATH | Competition math | Open answer | 12,500 | Exact match | Partial |
+| GSM8K | Grade-school math | Open answer | 8,500 (1,319 test) | Exact match | Yes |
+| MATH | Competition math | Open answer | 12,500 (5,000 test; MATH-500 subset common) | Exact match | Partial |
 | AIME | Hard competition math | Integer answer | 15/yr | Exact match | No |
 | HumanEval | Python coding | Code gen + unit tests | 164 | pass@1 | Yes |
 | MBPP | Python coding | Code gen + unit tests | 974 (500 test) | pass@1 | Yes |
@@ -732,7 +774,7 @@ Reproducibility is a live problem. The same model evaluated with different harne
 
     The 95 % CI of the difference is $\pm 1.96 \times 0.0478 \approx \pm 0.0938$, i.e. about $\pm 9.4$ percentage points.
 
-    The observed gap is $68\% - 60\% = 8$ points, which falls *inside* the $\pm 9.4$-point interval. So the difference is **not statistically significant** — on a 200-question slice you cannot distinguish these models from a single run. This matches the chapter's rule of thumb that on a ~500-question slice the CI is roughly $\pm 3.5$ points (differences below ~7 points are noise), and shrinking to 200 questions widens it further.
+    The observed gap is $68\% - 60\% = 8$ points, which falls *inside* the $\pm 9.4$-point interval. So the difference is **not statistically significant** — on a 200-question slice you cannot distinguish these models from a single run. This is the same computation as the chapter's worked example, where a ~500-question slice gives a difference CI of about $\pm 5$ points; shrinking to 200 questions widens it to $\pm 9.4$.
 
 **3.** A four-choice benchmark ($k = 4$) has 100 questions. A model produces a parseable answer to every question, getting **40 correct** and **60 wrong**. Compute its raw accuracy and its guessing-corrected score using the chapter's correction-for-guessing formula. Then verify that a pure random guesser (25 correct, 75 wrong) gets a corrected score of 0.
 

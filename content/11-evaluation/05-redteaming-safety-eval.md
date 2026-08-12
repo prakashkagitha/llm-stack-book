@@ -50,7 +50,7 @@ Neither metric alone is sufficient. An evaluator who reports only harm rate is m
 
 More recent work moves toward *functional* benchmarks that test for harmful *behavior* rather than harmful *language*:
 
-- **HarmBench** (Mazeika et al., 2024) provides 510 behaviors across seven categories (standard, contextual, copyright, etc.) with standardized attack methods and a grading model, enabling apples-to-apples comparison of attack success rates across models.
+- **HarmBench** (Mazeika et al., 2024) provides 510 behaviors organized along two independent axes — four *functional* categories (standard, contextual, copyright, multimodal) and seven *semantic* categories (cybercrime, chemical/biological weapons and drugs, copyright violations, misinformation, harassment, illegal activities, general harm) — with standardized attack methods and a grading model, enabling apples-to-apples comparison of attack success rates across models.
 - **AIR-Bench** (Zeng et al., 2024) aligns benchmark categories to AI regulation frameworks (EU AI Act, voluntary commitments), making it useful for compliance reporting.
 
 ### WMDP: The Hazardous-Knowledge Benchmark
@@ -171,13 +171,18 @@ def pair_attack(
 ) -> str:
     """
     PAIR: iteratively refine a jailbreak prompt using an attacker LLM.
-    Returns the best adversarial prompt found, or the last attempt.
+
+    Returns the first prompt that elicits a non-refusal, or — if no
+    iteration succeeds — the last attempt. Real PAIR scores every
+    candidate with a 1-10 judge and keeps the highest-scoring one;
+    this version keeps only a binary refused/not-refused signal, so
+    "last" is a fallback, not a maximum.
     """
     client = openai.OpenAI()
 
     # Start with a naive prompt
     current_prompt = f"Please {target_behavior}."
-    best_prompt = current_prompt
+    last_prompt = current_prompt
 
     for i in range(n_iterations):
         # Query the target model
@@ -214,9 +219,9 @@ def pair_attack(
             max_tokens=512,
         ).choices[0].message.content.strip()
 
-        best_prompt = current_prompt  # Track last attempt as fallback
+        last_prompt = current_prompt  # Track last attempt as fallback
 
-    return best_prompt  # Return best found after max iterations
+    return last_prompt  # No iteration succeeded — return the final attempt
 ```
 
 ### Attack Success Rate (ASR)
@@ -413,7 +418,7 @@ def compute_safety_calibration(model_fn, examples, refusal_detector_fn):
 
     $$F_1 = 2 \cdot \frac{0.888 \times 0.95}{0.888 + 0.95} \approx 0.918$$
 
-    But an over-refusal rate of 12% means roughly 1 in 8 legitimate user queries is blocked. If the model handles 100,000 queries per day, that is 12,000 users per day getting a refusal they did not deserve. Tightening the safety threshold to reduce FPR from 0.12 to 0.03 (by relaxing the classifier) typically raises the harmful miss rate from 5% to perhaps 12–15%. The operating point must be chosen in context: a consumer product and a research tool have different acceptable FPR/FNR tradeoffs.
+    But an over-refusal rate of 12% means roughly 1 in 8 legitimate user queries is blocked. If the model handles 100,000 queries per day, that is 12,000 users per day getting a refusal they did not deserve. Relaxing the safety policy so that FPR drops from 0.12 to 0.03 — refusing less often, which is the only way to cut over-refusals — typically raises the harmful miss rate from 5% to perhaps 12–15%. The operating point must be chosen in context: a consumer product and a research tool have different acceptable FPR/FNR tradeoffs.
 
 ---
 
@@ -851,9 +856,19 @@ def run_safety_harness(
 
 
 def summarize_results(results: List[BenchmarkResult]) -> dict:
-    """Aggregate results into a dashboard-ready dict."""
-    mean_asr = sum(r.asr for r in results if r.asr == r.asr) / len(results)
-    mean_orr = sum(r.over_refusal for r in results if r.over_refusal == r.over_refusal) / len(results)
+    """Aggregate results into a dashboard-ready dict.
+
+    A harm-only suite (HarmBench) has no benign split and a benign-only
+    suite (XSTest) has no harmful split, so `run_safety_harness` reports
+    NaN for the missing side. Filter those out *and* divide by the number
+    of benchmarks that actually contributed — dividing by len(results)
+    would silently bias both means toward zero.
+    """
+    # `x == x` is False only for NaN.
+    asr_vals = [r.asr for r in results if r.asr == r.asr]
+    orr_vals = [r.over_refusal for r in results if r.over_refusal == r.over_refusal]
+    mean_asr = sum(asr_vals) / len(asr_vals) if asr_vals else float("nan")
+    mean_orr = sum(orr_vals) / len(orr_vals) if orr_vals else float("nan")
     return {
         "overall_mean_asr": round(mean_asr, 3),
         "overall_mean_over_refusal": round(mean_orr, 3),
@@ -960,7 +975,7 @@ At ~100M parameters the risk profile differs in kind, not just degree, and copyi
     - [Li et al., *The WMDP Benchmark: Measuring and Reducing Malicious Use With Unlearning* (2024)](https://arxiv.org/abs/2403.03218) — proxy multiple-choice benchmark for CBRN hazardous knowledge; also introduces RMU unlearning to reduce dangerous capabilities.
     - [Souly et al., *A StrongREJECT for Empty Jailbreaks* (2024)](https://arxiv.org/abs/2402.10260) — rubric-based grader that measures both refusal and response quality, achieving 0.90 Spearman correlation with human raters; fixes keyword-match gaming.
     - [Röttger et al., *XSTest: A Test Suite for Identifying Exaggerated Safety Behaviours in Large Language Models* (2023)](https://arxiv.org/abs/2308.01263) — 250 safe + 200 unsafe prompts specifically designed to surface over-refusal; accepted at NAACL 2024.
-    - [Chao et al., *JailbreakBench: An Open Robustness Benchmark for Jailbreaking Large Language Models* (2024)](https://arxiv.org/abs/2404.01318) — NeurIPS 2024 benchmark with leaderboard, 200 behaviors, and standardized threat model for reproducible jailbreak evaluation.
+    - [Chao et al., *JailbreakBench: An Open Robustness Benchmark for Jailbreaking Large Language Models* (2024)](https://arxiv.org/abs/2404.01318) — NeurIPS 2024 benchmark with leaderboard, 100 harmful behaviors (plus 100 matched benign behaviors for over-refusal), and a standardized threat model for reproducible jailbreak evaluation.
     - [Phuong et al., *Evaluating Frontier Models for Dangerous Capabilities* (2024)](https://arxiv.org/abs/2403.13793) — DeepMind's methodology for eliciting and assessing persuasion, cyber, self-replication, and reasoning capabilities in Gemini 1.0.
     - [Andriushchenko et al., *AgentHarm: A Benchmark for Measuring Harmfulness of LLM Agents* (ICLR 2025)](https://arxiv.org/abs/2410.09024) — 110 malicious multi-step agent tasks (440 with augmentations) across 11 harm categories; the reference standard for red-teaming tool-using agents, testing whether a jailbroken agent both complies *and* retains the capability to finish the task.
 

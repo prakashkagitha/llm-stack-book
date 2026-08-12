@@ -50,7 +50,7 @@ Three common schedules:
 |---|---|---|
 | Linear | Linear from 1 to $\approx 0$ | DDPM default; can be too aggressive for high-res |
 | Cosine (Nichol & Dhariwal) | $\cos^2\!\left(\frac{t/T + s}{1+s}\cdot\frac{\pi}{2}\right)$ | Smoother; stays noisy less at end |
-| Flow matching (linear interpolant) | $1 - t/T$ | Used in rectified flow; simpler |
+| Flow matching (linear interpolant) | Not variance-preserving, so there is no $\bar\alpha_t$: the path is $\mathbf{x}_t=(1-t/T)\,\mathbf{x}_0 + (t/T)\,\boldsymbol\epsilon$, i.e. the *signal coefficient itself* is $1-t/T$ | Used in rectified flow; simpler |
 
 !!! example "Worked Example: Noise Levels"
     Suppose $T = 1000$ and we use a linear schedule with $\beta_1 = 10^{-4}$ and $\beta_{1000} = 0.02$. At step $t=500$:
@@ -61,7 +61,9 @@ Three common schedules:
 
     So at $t=500$ we have: $\mathbf{x}_{500} = \sqrt{0.08}\,\mathbf{x}_0 + \sqrt{0.92}\,\boldsymbol{\epsilon} \approx 0.283\,\mathbf{x}_0 + 0.959\,\boldsymbol{\epsilon}$.
 
-    The signal-to-noise ratio (SNR) is $\text{SNR}(500) = \bar{\alpha}_t/(1-\bar{\alpha}_t) \approx 0.08/0.92 \approx 0.087$ — the sample is dominated by noise. At $t=100$, $\bar{\alpha}_{100} \approx e^{-0.505} \approx 0.60$, SNR $\approx 1.5$ — still mostly signal. This asymmetry is why the cosine schedule was proposed: the linear schedule destroys structure too quickly at early steps.
+    The signal-to-noise ratio (SNR) is $\text{SNR}(500) = \bar{\alpha}_t/(1-\bar{\alpha}_t) \approx 0.08/0.92 \approx 0.087$ — the sample is dominated by noise. At $t=100$ the same estimate gives $\sum_{s=1}^{100}\beta_s \approx \frac{100}{2}(10^{-4}+0.00207) \approx 0.109$, so $\bar{\alpha}_{100} \approx e^{-0.109} \approx 0.90$ and SNR $\approx 8.7$ — still dominated by signal.
+
+    Note how *uneven* that decay is: nothing much happens for the first tenth of the chain, then $\bar\alpha_t$ falls off a cliff — $\bar\alpha_{700}\approx 0.007$ and $\bar\alpha_{900}\approx 3\times10^{-4}$, both already indistinguishable from pure noise. The last third of the linear chain therefore does almost no useful work (Nichol & Dhariwal found you can drop ~20% of the reverse steps with barely any FID change). The cosine schedule was proposed to spread the destruction out: it keeps $\bar\alpha_t$ meaningfully above zero much later ($\approx 0.20$ at $t=700$), so every timestep the sampler spends actually buys signal.
 
 ## The Reverse Process and Training Objective (DDPM)
 
@@ -327,7 +329,7 @@ Running diffusion in pixel space for high-resolution images is computationally p
 
 {{fig:diffgen-latent-diffusion-pipeline}}
 
-The key insight is that the *perceptual* information in an image lives in a much lower-dimensional space. The VAE compresses 512×512×3 = 786,432 values to 64×64×4 = 16,384 values — a 48× reduction. Diffusion then runs on this compact latent space, reducing compute by roughly $8^2 = 64\times$ per forward pass (since attention scales quadratically with spatial resolution).
+The key insight is that the *perceptual* information in an image lives in a much lower-dimensional space. The VAE compresses 512×512×3 = 786,432 values to 64×64×4 = 16,384 values — a 48× reduction. Diffusion then runs on this compact latent space, reducing compute by roughly $8^2 = 64\times$ per forward pass: the number of spatial positions drops $64\times$, and the convolutions and per-position MLPs that dominate the U-Net cost are *linear* in that count. The attention blocks, being quadratic in it, save even more.
 
 ### U-Net Denoiser Architecture
 
@@ -482,7 +484,7 @@ This is *Rectified Flow* (Liu et al.) in discrete language: training pairs are $
 
 ### Why Flow Matching Wins in Practice
 
-1. **Fewer steps**: Straight-line paths need fewer integration steps. Diffusion paths are curved (the noise-added marginals trace complex curves), requiring many small steps. Flow matching paths are linear, so a 4-step Euler solver often suffices.
+1. **Fewer steps**: Straight-line paths need fewer integration steps. Diffusion paths are curved (the noise-added marginals trace complex curves), requiring many small steps. Be precise about what flow matching straightens, though: each *conditional* path $\mathbf{x}_t=(1-t)\mathbf{x}_0+t\,\mathbf{x}_1$ is exactly a straight line, but the *marginal* field the network actually learns, $\mathbf{v}_t(\mathbf{x})=\mathbb{E}[\mathbf{x}_1-\mathbf{x}_0\mid\mathbf{x}_t=\mathbf{x}]$, still generates curved trajectories — markedly less curved than a VP-diffusion one, which is why SD3 and Flux run well at 20–30 Euler steps versus DDPM's hundreds, but not straight. Genuinely straight trajectories (and a 4-step solver) require *reflow* iterations or distillation on top.
 2. **Simpler math**: No SDE formalism, no noise schedule, no $\bar{\alpha}_t$ product.
 3. **Exact likelihood**: Since the velocity field defines an ODE, the change-of-variables formula gives an exact log-likelihood (though it requires ODE integration).
 4. **Flexible couplings**: You are not restricted to $\mathcal{N}(\mathbf{0},\mathbf{I})$ as $p_0$; you can use a learned prior or a distribution related to the task.
@@ -518,7 +520,8 @@ def flow_matching_sample(model: nn.Module, shape: tuple,
                          num_steps: int = 8, device: str = "cpu"):
     """
     Euler ODE integration from t=0 (noise) to t=1 (data).
-    With straight-line paths, even 4-8 steps is often enough.
+    Real rectified-flow models need ~20-50 steps here unless they have been
+    reflowed/distilled; 8 is fine for a toy target.
     """
     x = torch.randn(shape, device=device)
     dt = 1.0 / num_steps
@@ -551,14 +554,14 @@ $$
 q(\mathbf{x}_t \mid \mathbf{x}_0) : \text{independently mask each token with probability } \gamma(t)
 $$
 
-The neural network (typically a Transformer) predicts all unmasked tokens simultaneously given context, similar to BERT's masked language modeling but repeated iteratively. During generation:
+The neural network (typically a Transformer) predicts all *masked* tokens simultaneously, conditioned on the unmasked ones, similar to BERT's masked language modeling but repeated iteratively. During generation:
 
 1. Start with all tokens masked.
 2. Predict token probabilities for all positions.
 3. Unmask the most confident subset.
 4. Repeat until all tokens are unmasked.
 
-This gives parallel generation, a key advantage over autoregressive models which generate strictly left-to-right. Models like MDLM and Plaid operate this way and can generate text of length $L$ in $O(K)$ passes for a fixed $K$ (e.g., 10) rather than $O(L)$ autoregressive steps.
+This gives parallel generation, a key advantage over autoregressive models which generate strictly left-to-right. Models like MDLM and LLaDA operate this way and can generate text of length $L$ in $O(K)$ passes for a fixed $K$ (e.g., 10) rather than $O(L)$ autoregressive steps.
 
 Structurally the recipe is tiny: take the Transformer of [The Transformer Block: Norms, Residuals, MLPs & Activations](../02-transformer/06-transformer-block.html), drop the causal mask so attention is bidirectional, add one vocabulary row for a reserved `[MASK]` id, and train with masked cross-entropy reweighted by $1/t$ where $t$ is the mask rate — that weight is exactly what turns "BERT with a random mask rate" into a genuine likelihood bound (the NELBO of absorbing-state diffusion), which is why MDLM perplexities are comparable to autoregressive ones rather than incomparable pseudo-likelihoods. Two caveats the throughput headline hides: bidirectional attention means there is **no KV cache**, so $K$ diffusion passes cost $K$ full prefills rather than $K$ cheap decode steps (semi-autoregressive *block* diffusion, which diffuses one block at a time and caches the settled prefix, recovers much of this); and the generation *length* must be fixed up front, so EOS and padding need explicit conventions.
 
@@ -586,7 +589,7 @@ Why should an engineer focused on language models care about diffusion?
 
 **1. Vision-language architectures.** Multimodal LLMs increasingly pair a language model with a diffusion decoder for image generation (e.g., Gemini's image output, or LLaVA-style models with SDXL as a decoder). Understanding the conditioning interface — how CLIP or T5 text embeddings are fed as cross-attention keys/values into the denoiser — is necessary to build and debug these systems (see [Vision-Language Models](../10-multimodal-and-arch/02-vision-language-models.html)).
 
-**2. Reward models and RLHF for diffusion.** Just as LLMs are fine-tuned with RLHF (see [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)), diffusion models are fine-tuned with reinforcement learning from human feedback using reward gradients backpropagated through the sampling chain (DDPO, ReFL). The policy gradient machinery is the same; the action space is the denoised image.
+**2. Reward models and RLHF for diffusion.** Just as LLMs are fine-tuned with RLHF (see [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html)), diffusion models are fine-tuned against reward models in two distinct ways. **DDPO** (Black et al.) treats the denoising chain as a multi-step MDP — each reverse step is an action, the final image is the terminal state — and applies ordinary policy gradients (REINFORCE with a PPO-style importance-sampled update), so the reward stays a *black box* and may be non-differentiable (a human preference model, a VLM judge). **ReFL / DRaFT / AlignProp** instead require a *differentiable* reward and backpropagate its gradient through the last few sampling steps, which is cheaper but restricts what you can optimize. The first family reuses exactly the policy-gradient machinery you already know from text RLHF; the second has no analogue there, because a token sampler is not differentiable.
 
 **3. Diffusion as a generative backend.** Systems like Stable Diffusion serve as compute-heavy generation backends; LLM engineers writing serving stacks need to reason about the inference throughput of iterative samplers, batch sizing across steps, and caching of the text encoder (which runs once per prompt rather than once per step). Note that none of the LLM serving engines apply here — vLLM/SGLang exist to manage a KV cache and variable-length autoregressive decoding, neither of which a denoiser has. Image serving instead means `diffusers` plus `torch.compile`, fused attention kernels, batching the CFG pair into one forward pass, and optionally TensorRT/ONNX export; the workload is compute-bound and fixed-shape, which is the *opposite* of the memory-bound, ragged-shape LLM decode regime analysed in [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).
 
@@ -614,12 +617,12 @@ Why should an engineer focused on language models care about diffusion?
     - VAE compresses to latent $128\times128\times4$ (8× downsampling). Latent has $128\times128\times4=65{,}536$ values.
     - The U-Net denoiser has roughly 2.6B parameters (SDXL). Each step requires two forward passes with CFG.
     - At 20 DDIM steps: $20 \times 2 = 40$ U-Net forward passes total.
-    - At float16, a single U-Net pass on a 1024×1024 latent requires on the order of 1.5–2 TFLOPs. Total for 40 passes: $\sim60$–80 TFLOPs.
-    - On an A100 (312 TFLOPS fp16): $\approx 0.2$–$0.25$ seconds compute; actual wall time with memory I/O is roughly 1–3 seconds on a single A100.
+    - At float16, a single U-Net pass on the $128\times128$ latent (for a 1024×1024 image) costs on the order of 6 TFLOPs — counting the convolutions plus the 60-odd transformer blocks at the $32\times32$ level, which dominate. Total for 40 passes: $\sim$250 TFLOPs.
+    - On an A100 (312 TFLOPS fp16): $\approx 0.8$ seconds of compute *at peak*, so $\approx 2$ seconds at a realistic 40–50% MFU — consistent with the roughly 1–3 second wall times people actually measure on a single A100.
     - Compare to pixel-space diffusion at the same resolution: the U-Net would operate on $1024\times1024\times3$ activations, roughly 64× larger spatial volume, making each step $\sim$64× more expensive — latent diffusion's entire raison d'être.
 
 !!! sota "State of the Art & Resources (2026)"
-    Diffusion and flow-matching models are the dominant paradigm for image and video generation: the field has moved from DDPM's 1000-step pixel-space sampling to rectified-flow transformers (SD3, Flux.1) that produce state-of-the-art images in fewer than 10 steps, while diffusion language models have scaled to the 8B range (LLaDA) and reached commercial deployment (Inception Labs' Mercury, Google's experimental Gemini Diffusion), offering a genuinely parallel alternative to autoregressive text generation.
+    Diffusion and flow-matching models are the dominant paradigm for image and video generation: the field has moved from DDPM's 1000-step pixel-space sampling to rectified-flow transformers (SD3, Flux.1) that produce state-of-the-art images in 20–50 steps — and, once distilled, in as few as 4 (FLUX.1 [schnell]) — while diffusion language models have scaled to the 8B range (LLaDA) and reached commercial deployment (Inception Labs' Mercury, Google's experimental Gemini Diffusion), offering a genuinely parallel alternative to autoregressive text generation.
 
     **Foundational work**
 
@@ -696,7 +699,7 @@ Why should an engineer focused on language models care about diffusion?
     $$\mathbf{x}_{69}=\sqrt{0.5}\,\mathbf{x}_0+\sqrt{0.5}\,\boldsymbol\epsilon\approx 0.707\,\mathbf{x}_0+0.707\,\boldsymbol\epsilon.$$
     Signal and noise contribute equally.
 
-    (c) $\mathrm{SNR}(69)=\dfrac{0.5}{1-0.5}=1.0$ (equivalently $0\,$dB). The chapter's linear schedule gives $\bar\alpha_{500}\approx0.08$ and $\mathrm{SNR}(500)\approx0.087$ — more than $10\times$ noisier. So the halfway point of *this* gentle constant schedule ($t\approx69$) is far less corrupted than the linear DDPM schedule is at its own midpoint $t=500$, illustrating how aggressively the standard linear schedule destroys structure early on.
+    (c) $\mathrm{SNR}(69)=\dfrac{0.5}{1-0.5}=1.0$ (equivalently $0\,$dB). The chapter's linear schedule gives $\bar\alpha_{500}\approx0.08$ and $\mathrm{SNR}(500)\approx0.087$ — more than $10\times$ noisier. So the halfway point of *this* gentle constant schedule ($t\approx69$) is far less corrupted than the linear DDPM schedule is at its own midpoint $t=500$, illustrating how aggressively the standard linear schedule has already destroyed structure by its own midpoint.
 
 **3.** (Quantitative) At one denoising step a text-to-image model produces an unconditional noise prediction $\boldsymbol\epsilon_\emptyset=(0.20,\,-0.10)$ and a conditional one $\boldsymbol\epsilon_\mathbf{c}=(0.50,\,0.30)$ for a two-pixel toy latent. Using classifier-free guidance $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\emptyset+w(\boldsymbol\epsilon_\mathbf{c}-\boldsymbol\epsilon_\emptyset)$: (a) compute $\tilde{\boldsymbol\epsilon}$ for $w=7.5$; (b) give $\tilde{\boldsymbol\epsilon}$ for $w=0$ and $w=1$ and say what each corresponds to; (c) comparing the norm of $\tilde{\boldsymbol\epsilon}$ at $w=7.5$ to that of $\boldsymbol\epsilon_\mathbf{c}$, explain in one sentence why large $w$ is described as "extrapolation beyond the conditional distribution."
 
@@ -777,7 +780,9 @@ Why should an engineer focused on language models care about diffusion?
 
         x0_hat = model(x_t, t)                        # network predicts x0
 
-        ab  = alphas_bar[t].view(-1, 1, 1, 1)
+        # .to(x0.device) for the same reason as in q_sample: the schedule is
+        # CPU-built, but t lives on x0's device
+        ab  = alphas_bar.to(x0.device)[t].view(-1, 1, 1, 1)
         snr = ab / (1.0 - ab)                         # SNR(t), broadcast
         return (snr * (x0 - x0_hat).pow(2)).mean()
     ```

@@ -95,7 +95,7 @@ bf16 keeps fp32's 8-bit exponent (max value ~$3.4 \times 10^{38}$) but sacrifice
 
 **Overflow** occurs when a computed value exceeds the format's maximum. In IEEE 754, the result is `+inf` or `-inf`. Arithmetic involving `inf` often produces NaN, which then propagates and kills training.
 
-**Underflow** occurs when a value is too small to represent as a normal number. IEEE 754 defines **subnormal** (denormal) numbers that fill the gap between zero and the minimum normal value by using a leading `0.` instead of `1.`. Subnormals sacrifice range for a graceful flush to zero, but on hardware they are typically much slower to process — or flushed to zero (FTZ mode) entirely. On most GPU training setups, FTZ is enabled, so very small activations silently become zero.
+**Underflow** occurs when a value is too small to represent as a normal number. IEEE 754 defines **subnormal** (denormal) numbers that fill the gap between zero and the minimum normal value by using a leading `0.` instead of `1.`. Subnormals sacrifice precision (they give up the implicit leading 1, so significant bits are lost as the value shrinks) in exchange for extending the range downward, giving a *gradual* underflow instead of an abrupt drop to zero. The catch is that on hardware they are typically much slower to process — or disabled entirely (FTZ mode). On most GPU training setups, FTZ is enabled, so very small activations silently become zero.
 
 !!! warning "fp16 overflow in practice"
     During early LLM training, gradient norms can spike to values well above 65504. With fp16 these spikes produce `inf` gradients, which then corrupt the parameter update. The standard remedy is **loss scaling** (multiply the loss by a large scalar before backward, divide gradients after) — but the approach is fragile. bf16 makes the problem largely disappear because the dynamic range matches fp32.
@@ -115,7 +115,7 @@ Consider computing $a - b$ where $a = 1.0000001$ and $b = 1.0000000$ in fp32. Th
 
     Step 1 — compute $e^{z_i}$:
 
-    $$e^{1000} \approx 5.07 \times 10^{434}, \quad e^{1001} \approx 1.38 \times 10^{435}$$
+    $$e^{1000} \approx 1.97 \times 10^{434}, \quad e^{1001} \approx 5.36 \times 10^{434}$$
 
     Both values overflow fp32 (max ~$3.4 \times 10^{38}$) and fp16 long before this. We get `inf / inf = NaN`.
 
@@ -233,10 +233,10 @@ if __name__ == "__main__":
     print(f"  Result: {result_stable}")         # [0.2447, 0.6652, 0.0900] — correct
 
     # Show fp16 overflow with much smaller values
-    print("\n=== fp16 naive softmax (overflow at ~88) ===")
+    print("\n=== fp16 naive softmax (exp overflows above ~11) ===")
     z_fp16 = torch.tensor([100.0, 101.0, 99.0], dtype=torch.float16)
     result_fp16_naive = naive_softmax(z_fp16)
-    print(f"  Result: {result_fp16_naive}")     # [nan, nan, nan] — fp16 overflows at exp(88)
+    print(f"  Result: {result_fp16_naive}")     # [nan, nan, nan] — exp overflows fp16 past ln(65504) ≈ 11.09
 
     print("\n=== fp16 stable softmax ===")
     result_fp16_stable = stable_softmax(z_fp16)
@@ -259,7 +259,7 @@ if __name__ == "__main__":
 === fp32 stable softmax (large logits) ===
   Result: tensor([0.244728, 0.665241, 0.090031])
 
-=== fp16 naive softmax (overflow at ~88) ===
+=== fp16 naive softmax (exp overflows above ~11) ===
   Result: tensor([nan, nan, nan], dtype=torch.float16)
 
 === fp16 stable softmax ===
@@ -282,22 +282,28 @@ Summing $N$ floating-point numbers naively accumulates $O(N)$ rounding errors. F
 **Kahan summation** (Kahan, 1965) maintains a running "compensation" variable that tracks the error lost to rounding at each step, restoring it to the next addition:
 
 $$
-\text{sum} \leftarrow \text{sum} + y,\quad \text{but tracking } c = (y - \text{sum}_{\text{prev}}) - \text{sum}
+y = v - c_{\text{prev}}, \quad \text{sum}_{\text{new}} = \text{sum}_{\text{prev}} + y, \quad c \leftarrow (\text{sum}_{\text{new}} - \text{sum}_{\text{prev}}) - y
 $$
+
+The compensation $c$ is the part of $y$ that the addition threw away: $(\text{sum}_{\text{new}} - \text{sum}_{\text{prev}})$ recovers what *actually* landed in the accumulator, and subtracting $y$ leaves the rounding error, which is fed back into the next term.
 
 Formally:
 
 ```python
-def kahan_sum(values):
+def kahan_sum(values, zero=0.0):
     """
     Kahan compensated summation — reduces floating-point error from O(N*eps)
-    to O(eps) regardless of N, at the cost of ~2x FLOPs per element.
+    to O(eps) regardless of N, at the cost of ~4x FLOPs per element
+    (4 floating-point operations in the loop body instead of 1).
+
+    Pass `zero` in the working dtype (e.g. np.float32(0.0)) to pin the
+    accumulator and the compensation to that precision.
 
     Reference: Kahan, W. (1965). "Further remarks on reducing truncation errors."
     Communications of the ACM, 8(1), 40.
     """
-    total = 0.0
-    compensation = 0.0   # tracks the "lost" low-order bits
+    total = zero
+    compensation = zero   # tracks the "lost" low-order bits
 
     for v in values:
         # The compensation corrects for the rounding error from the previous step.
@@ -319,33 +325,51 @@ def kahan_sum(values):
 import numpy as np
 
 N = 1_000_000
-# Create values that sum to exactly N (each value is 1.0)
-# Then add a tiny perturbation to expose rounding errors
-values_f32 = np.ones(N, dtype=np.float32)
-values_f32[0] = 1.0 + 1e-7   # tiny perturbation
+# One million copies of the same fp32 value. Each addition is individually
+# tiny relative to the running total, so sequential fp32 accumulation drifts.
+values_f32 = np.full(N, 0.1, dtype=np.float32)
 
-true_sum = float(N) + 1e-7    # exact answer
+# The exact sum of the *stored* values (0.1 is not exactly representable,
+# but all N elements hold the identical fp32 value, so N * that value is exact).
+true_sum = N * float(values_f32[0])
 
-# Naive float32 accumulation
-naive_result = float(np.sum(values_f32))
+# Naive float32 accumulation, one element at a time.
+# (np.sum is deliberately NOT used here: it applies pairwise summation,
+#  which is already far more accurate than a plain sequential loop.)
+naive_result = np.float32(0.0)
+for v in values_f32:
+    naive_result = naive_result + v
+naive_result = float(naive_result)
 
-# Kahan in Python (pedagogical — slow)
-kahan_result = kahan_sum(values_f32.tolist())
+# Kahan in Python (pedagogical — slow). Iterating the fp32 array yields
+# np.float32 scalars, and `zero` pins the accumulators to fp32, so the whole
+# computation stays in single precision. (values_f32.tolist() would widen
+# every element to a Python double and silently make this an fp64 sum.)
+kahan_result = float(kahan_sum(values_f32, zero=np.float32(0.0)))
 
 # float64 reference
 ref_result = float(np.sum(values_f32.astype(np.float64)))
 
-print(f"True sum:          {true_sum:.10f}")
-print(f"Naive float32:     {naive_result:.10f}  error={abs(naive_result - true_sum):.2e}")
-print(f"Kahan float32:     {kahan_result:.10f}  error={abs(kahan_result - true_sum):.2e}")
-print(f"Float64 reference: {ref_result:.10f}  error={abs(ref_result - true_sum):.2e}")
+print(f"True sum:          {true_sum:.6f}")
+print(f"Naive float32:     {naive_result:.6f}  error={abs(naive_result - true_sum):.2e}")
+print(f"Kahan float32:     {kahan_result:.6f}  error={abs(kahan_result - true_sum):.2e}")
+print(f"Float64 reference: {ref_result:.6f}  error={abs(ref_result - true_sum):.2e}")
 ```
 
-Kahan summation matters most in **gradient accumulation** (summing many micro-batch gradients before an optimizer step) and in **weight update** computations. PyTorch's optimizer implementations typically accumulate in fp32 even when parameters are stored in fp16/bf16; this is the "master weights" pattern described in the mixed-precision training chapter.
+```text
+True sum:          100000.001490
+Naive float32:     100958.343750  error=9.58e+02
+Kahan float32:     100000.000000  error=1.49e-03
+Float64 reference: 100000.001490  error=0.00e+00
+```
+
+The naive fp32 loop is off by nearly 1%. The reason is ULP growth: by the time the running total reaches $10^{5}$, one fp32 ULP is $2^{-7} \approx 7.8 \times 10^{-3}$ — almost a tenth of each 0.1 increment — so every addition discards a sliver, one million times over. Kahan, running in exactly the same fp32 precision, tracks the fp64 reference to within a single fp32 ULP.
+
+Kahan summation matters most in **gradient accumulation** (summing many micro-batch gradients before an optimizer step) and in **weight update** computations. Note that `torch.optim` does *not* rescue you here on its own: an optimizer allocates its state in the parameter's own dtype, so a bf16 parameter gets bf16 Adam moments and a bf16 update. What makes mixed-precision training safe is that the parameters themselves stay fp32 — the "master weights" pattern described in the mixed-precision training chapter — which is why the update, the moments, and the accumulation are all fp32.
 
 ### Stochastic rounding: the other way to beat accumulated bias
 
-Kahan's insight is to *remember* the discarded bits. The alternative is to *randomize* them. Default IEEE rounding is round-to-nearest-even, which is deterministic and therefore **biased** in a repeated accumulation: if every increment is smaller than half a ULP of the running total, every single one rounds to zero and the sum freezes forever. That is precisely the fp16/bf16 "stagnant update" failure from earlier in this chapter.
+Kahan's insight is to *remember* the discarded bits. The alternative is to *randomize* them. Default IEEE rounding is round-to-nearest-even, which is deterministic and therefore **biased** in a repeated accumulation: if every increment is smaller than half a ULP of the running total, every single one rounds to zero and the sum freezes forever. That is precisely the fp16/bf16 "stagnant update" failure analyzed in *Why bf16 Won Training* below.
 
 **Stochastic rounding** rounds $x$ down to the representable value $x_{\text{lo}}$ with probability $(x_{\text{hi}} - x)/(x_{\text{hi}} - x_{\text{lo}})$ and up otherwise, so that
 
@@ -375,8 +399,9 @@ def stochastic_round_to_bf16(x: torch.Tensor) -> torch.Tensor:
 
 
 # Accumulate 0.01 one thousand times in a bf16 accumulator.
-# Once the total passes ~8, one ULP is 0.0625 and 0.01 is below half
-# a ULP -- round-to-nearest sends every further increment to zero.
+# Once the total reaches 4, one ULP is 2^2 * 2^-7 = 0.03125 and 0.01 falls
+# below half a ULP (0.015625) -- round-to-nearest sends every further
+# increment to zero, so the accumulator freezes at 4.0.
 torch.manual_seed(0)
 N, step = 1000, 0.01
 
@@ -443,6 +468,9 @@ This is exactly the taxonomy the rest of this chapter argues for: matmuls are er
 ```python
 import torch
 
+# NOTE: the fp32 op list below is the *CUDA* autocast policy. CPU autocast
+# has its own, shorter list and leaves softmax/layer_norm in bf16, so on CPU
+# the second print says bfloat16 rather than float32.
 dev = "cuda" if torch.cuda.is_available() else "cpu"   # autocast supports both
 model = torch.nn.Linear(512, 512).to(dev)           # params stay fp32
 x = torch.randn(8, 512, device=dev)                 # input fp32
@@ -451,8 +479,8 @@ opt = torch.optim.AdamW(model.parameters(), lr=1e-3)  # states fp32
 with torch.autocast(device_type=dev, dtype=torch.bfloat16):
     h = model(x)                    # matmul -> runs in bf16
     print(h.dtype)                  # torch.bfloat16
-    p = torch.softmax(h, dim=-1)    # softmax -> forced back to fp32
-    print(p.dtype)                  # torch.float32
+    p = torch.softmax(h, dim=-1)    # softmax -> forced back to fp32 (CUDA policy)
+    print(p.dtype)                  # torch.float32 on CUDA; torch.bfloat16 on CPU
     loss = p.mean()                 # fp32 loss
 
 # Backward and the optimizer step run OUTSIDE the autocast context.
@@ -716,7 +744,7 @@ $$
 g = \left\| \nabla_\theta \mathcal{L} \right\|_2
 $$
 
-is computed as a sum of squares across all layers, then square-rooted. Both operations are numerically sensitive: accumulating squares of large values can overflow, and taking the square root of a very large or very small value loses precision. Gradient clipping, `torch.nn.utils.clip_grad_norm_`, computes this norm in fp32 regardless of parameter dtype.
+is computed as a sum of squares across all layers, then square-rooted. Both operations are numerically sensitive: accumulating squares of large values can overflow, and taking the square root of a very large or very small value loses precision. A common misconception is that `torch.nn.utils.clip_grad_norm_` protects you here — it does not upcast: it norms the gradients in their own dtype, so bf16 gradients give you a bf16 total norm (the kernel widens its internal reduction accumulator, but the returned value is bf16). Casting each gradient to fp32 before the reduction, as below, is the safer pattern.
 
 ```python
 import torch
@@ -726,7 +754,9 @@ def stable_gradient_norm_clip(parameters, max_norm: float, norm_type: float = 2.
     Numerically stable gradient norm clipping.
     Always computes in fp32, avoids overflow during squared sum accumulation.
 
-    This is what torch.nn.utils.clip_grad_norm_ does internally.
+    Same contract as torch.nn.utils.clip_grad_norm_, but with the explicit
+    .float() upcast that the PyTorch version does not do (it returns a norm
+    in the gradients' own dtype).
     """
     params_with_grad = [p for p in parameters if p.grad is not None]
     if not params_with_grad:

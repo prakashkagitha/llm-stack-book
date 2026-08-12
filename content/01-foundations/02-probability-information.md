@@ -97,7 +97,7 @@ $$
 \hat{\theta}_{\text{MAP}} = \arg\max_\theta \left[\log P(\mathcal{D} \mid \theta) + \log P(\theta)\right]
 $$
 
-A Gaussian prior $P(\theta) \propto \exp(-\lambda\|\theta\|^2)$ corresponds to $\ell_2$ (weight decay) regularization. A Laplace prior corresponds to $\ell_1$ (sparsity-inducing) regularization. When practitioners add `weight_decay=0.1` to AdamW, they are performing MAP estimation with a Gaussian prior — this is discussed further in [Calculus, Optimization & Convexity](../01-foundations/03-calculus-optimization.html) and [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html).
+A Gaussian prior $P(\theta) \propto \exp(-\lambda\|\theta\|^2)$ corresponds to $\ell_2$ regularization. A Laplace prior corresponds to $\ell_1$ (sparsity-inducing) regularization. Adding an $\ell_2$ penalty to the loss and training with plain SGD *is* MAP estimation under a Gaussian prior. The `weight_decay=0.1` practitioners pass to AdamW is motivated by the same shrinkage intuition but is deliberately not the same object: AdamW's decay is *decoupled*, applied outside the adaptive preconditioner, precisely because an $\ell_2$ gradient term routed through Adam's $\sqrt{\hat v_t}$ denominator no longer implements the prior (Loshchilov & Hutter, *Decoupled Weight Decay Regularization*). This is discussed further in [Calculus, Optimization & Convexity](../01-foundations/03-calculus-optimization.html) and [Optimizers: SGD, Adam, Adafactor, Lion, Muon & Shampoo](../03-pretraining/09-optimizers.html).
 
 ---
 
@@ -242,7 +242,7 @@ Where does MI appear in LLMs? Several places:
 - **InfoNCE loss** (used in contrastive pretraining like SimCLR, and in some embedding models) is a lower bound on MI.
 - **Probing classifiers** measure MI between internal representations and linguistic features to understand what a model has learned.
 - **Feature selection** in attention analysis: the attention pattern can be viewed as routing information; MI-based measures quantify how much information flows through a head.
-- **Tokenization**: BPE merge criteria approximate minimizing description length, which is related to maximizing MI between pairs of adjacent subwords — see [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html).
+- **Tokenization**: WordPiece's merge score $\operatorname{count}(ab)/(\operatorname{count}(a)\operatorname{count}(b))$ is a pointwise-mutual-information criterion, and Unigram LM's EM objective is a description-length/corpus-likelihood criterion; BPE itself merges on raw pair frequency, not on any information-theoretic score — see [Tokenization: BPE, WordPiece, Unigram & Byte-Level](../02-transformer/01-tokenization.html).
 
 ---
 
@@ -278,7 +278,7 @@ Intuition: a perplexity of $K$ means the model is "as confused as if it had to c
 
 ### Perplexity Pitfalls
 
-Perplexity depends strongly on tokenization. A model using a byte-level tokenizer will report higher perplexity than one using a word-level tokenizer because more decisions are made per word. Always compare perplexity numbers computed with the same tokenizer on the same test set.
+Perplexity depends strongly on tokenization. Because perplexity is a *per-token* average, a model using a byte-level tokenizer will report a much *lower* per-token perplexity than one using a word-level tokenizer on the same text: the roughly fixed uncertainty of a word is amortized over many individually easy per-byte decisions, so the averaging denominator $T$ grows faster than the total negative log-likelihood. This is why `lm-evaluation-harness` reports a `word_perplexity` in the tens alongside a `byte_perplexity` near 1.5 for the *same* model on the same passage. Always compare perplexity numbers computed with the same tokenizer on the same test set.
 
 The fix, when tokenizers differ, is to normalize by a unit the tokenizer cannot change: the raw bytes of the text. **Bits per byte (BPB)** divides the *total* negative log-likelihood of the passage, converted to bits, by the number of UTF-8 bytes in the original string:
 
@@ -309,10 +309,10 @@ $$
 Why does this help? Three reasons:
 
 1. **Calibration**: pure cross-entropy with hard targets can push logits for the correct class to $+\infty$, producing overconfident models. Smoothing prevents this.
-2. **KL guard**: when $p(x) = 0$ and $q(x) = 0$, the KL term $0 \cdot \log 0 / 0$ is undefined; smoothing ensures $p(x) > 0$ everywhere, making KL well-defined.
-3. **Regularization**: the smoothed objective implicitly penalizes the entropy of the output distribution, preventing the model from assigning zero probability to any class and encouraging more distributed predictions.
+2. **KL guard**: a hard one-hot target has $p(x) = 0$ on every incorrect class, so any divergence that *divides by the target* — the reverse direction $D_{\text{KL}}(q\|p)$ used in distillation-style and variational objectives — is $+\infty$ for any $q$ with mass elsewhere. Smoothing floors $p(x) \ge \varepsilon/V > 0$ on every class, keeping those divergences finite. (In the forward training direction $D_{\text{KL}}(p\|q)$ nothing is ill-defined even without smoothing: the convention $0\log 0 = 0$ handles the zeros of $p$, and a softmax $q$ is strictly positive.)
+3. **Regularization**: the smoothed objective adds $\varepsilon \cdot \frac{1}{V}\sum_k -\log q(k)$, which is minimized by a uniform $q$ — it therefore *rewards* entropy in the output distribution (equivalently, penalizes low-entropy overconfidence), encouraging more distributed predictions. It is the same shape of term as Pereyra et al.'s confidence penalty.
 
-In the original Transformer paper (Vaswani et al., "Attention Is All You Need", 2017), label smoothing of $\varepsilon = 0.1$ was used and attributed a significant improvement in BLEU score. LLM pretraining today typically does not use label smoothing (the model scale provides sufficient implicit regularization), but it remains common in fine-tuning and machine translation.
+Label smoothing was introduced by Szegedy et al. ("Rethinking the Inception Architecture for Computer Vision", 2016); the original Transformer paper (Vaswani et al., "Attention Is All You Need", 2017) *adopted* it at $\varepsilon = 0.1$, citing Szegedy et al., and reported that it hurts perplexity — the model is deliberately made less sure — while improving accuracy and BLEU. LLM pretraining today typically does not use label smoothing (the model scale provides sufficient implicit regularization), but it remains common in fine-tuning and machine translation.
 
 !!! interview "Interview Corner"
 
@@ -453,7 +453,9 @@ def sliding_window_perplexity(
         # We count only tokens that were *not* already counted in the previous window.
         target_ids = token_ids[begin + 1 : end + 1]
         # Use only new positions (stride steps from the right of the window)
-        count_from = max(prev_end - begin, 1)  # at least predict 1 token
+        # prev_end is the id of the last token already scored, so the first
+        # *new* target is prev_end + 1, i.e. window offset prev_end - begin + 1.
+        count_from = max(prev_end - begin + 1, 1)  # at least predict 1 token
 
         logits_new = logits[count_from - 1 : len(target_ids)]
         targets_new = target_ids[count_from - 1 :]
@@ -722,7 +724,7 @@ This picture has three take-aways:
 
     **A:** Without smoothing, the cross-entropy gradient pushes the logit for the correct class toward $+\infty$ without bound. The resulting model becomes overconfident — it assigns near-zero probability to tokens it has never seen in a given context, leading to poor calibration (predicted probabilities don't match empirical frequencies). Label smoothing puts a floor of $\varepsilon/V$ on every class, explicitly penalizing overconfidence.
 
-    It can hurt in two ways: (1) In knowledge distillation, where the teacher produces genuinely soft, informative probability vectors, using hard label smoothing discards that information. (2) When $V$ is very large (e.g., 128,000 tokens), the uniform smoothing component $\varepsilon/V$ is tiny and effectively imposes a negligible penalty, making label smoothing nearly irrelevant. In those regimes, controlling logit scale via techniques like weight tying, temperature scaling, or logit softcapping (used in Gemma) is more effective.
+    It can hurt in two ways: (1) In knowledge distillation, where the teacher produces genuinely soft, informative probability vectors, using hard label smoothing discards that information. (2) When $V$ is very large (e.g., 128,000 tokens), the per-class floor $\varepsilon/V$ is vanishingly small, so the smoothing carries no information about *which* wrong tokens are plausible — note that the total mass moved off the correct class is still $\varepsilon$, so the target for $k^*$ stays pinned near $(1-\varepsilon) + \varepsilon/V \approx 0.9$ regardless of $V$. Smoothing therefore acts as a blunt, $V$-invariant cap on correct-class confidence rather than as useful soft supervision, and it flattens genuine long-tail structure in the next-token distribution. In those regimes, controlling logit scale via techniques like weight tying, temperature scaling, or logit softcapping (used in Gemma) is more effective.
 
 ---
 
@@ -733,7 +735,7 @@ This picture has three take-aways:
     - **Cross-entropy decomposes** as $H(p,q) = H(p) + D_{\text{KL}}(p\|q)$; since $H(p)$ is constant w.r.t. model parameters, training minimizes KL divergence from data to model.
     - **KL divergence is asymmetric**: forward KL (MLE) forces the model to cover all data modes; reverse KL (used in RLHF/DPO as a penalty) encourages the policy to stay near the reference model.
     - **Perplexity** = $\exp(\text{avg cross-entropy loss})$; a perplexity of $K$ means the model is as uncertain as a uniform distribution over $K$ options. It is only comparable within a fixed tokenizer — across tokenizers use **bits per byte**, which is literally a compression rate.
-    - **Label smoothing** prevents overconfidence by replacing one-hot targets with a mixture; it implicitly keeps $D_{\text{KL}}(p\|q)$ well-defined and acts as calibration regularization.
+    - **Label smoothing** prevents overconfidence by replacing one-hot targets with a mixture; it floors the target away from zero (keeping divergences that divide by the target finite) and acts as calibration regularization by rewarding output entropy.
     - **Mutual information** $I(X;Y) = H(X) - H(X|Y)$ quantifies dependence; it appears in contrastive objectives (InfoNCE), probing studies, and tokenization design.
     - **Entropy is maximized by the uniform distribution** and zero for degenerate distributions; understanding entropy lets you reason about what the model is "uncertain" about.
     - Everything in this chapter reappears upstream: in attention mechanisms, in RLHF KL penalties, in distillation losses, in evaluation metrics — get these right once and the rest of the stack clicks into place.
@@ -751,7 +753,8 @@ This picture has three take-aways:
 
     **Seminal papers**
 
-    - [Vaswani et al., *Attention Is All You Need* (2017)](https://arxiv.org/abs/1706.03762) — introduced label smoothing (ε = 0.1) as a cross-entropy regularizer; directly relevant to this chapter's label-smoothing section.
+    - [Szegedy et al., *Rethinking the Inception Architecture for Computer Vision* (2016)](https://arxiv.org/abs/1512.00567) — Section 7 introduces label smoothing as a cross-entropy regularizer; the origin of the ε-smoothed target used in this chapter.
+    - [Vaswani et al., *Attention Is All You Need* (2017)](https://arxiv.org/abs/1706.03762) — *applied* label smoothing (ε = 0.1, citing Szegedy et al.) in machine translation; directly relevant to this chapter's label-smoothing section.
     - [Müller, Kornblith & Hinton, *When Does Label Smoothing Help?* (2019)](https://arxiv.org/abs/1906.02629) — empirical analysis showing smoothing improves calibration but hurts knowledge distillation.
     - [Hoffmann et al., *Training Compute-Optimal Large Language Models* (Chinchilla, 2022)](https://arxiv.org/abs/2203.15556) — scaling-law paper whose loss curves are cross-entropy perplexity; shows how information-theoretic metrics govern optimal data/parameter allocation.
 
@@ -771,7 +774,8 @@ This picture has three take-aways:
 - Cover, T. M., and Thomas, J. A. *Elements of Information Theory*, 2nd ed. Wiley, 2006. The definitive graduate textbook.
 - Goodfellow, I., Bengio, Y., and Courville, A. *Deep Learning*. MIT Press, 2016. Chapter 3 (Probability and Information Theory) and Chapter 5 (Machine Learning Basics).
 - Bishop, C. M. *Pattern Recognition and Machine Learning*. Springer, 2006. Chapters 1–2 for distributions and Bayesian estimation.
-- Vaswani, A. et al. "Attention Is All You Need." *NeurIPS*, 2017. The Transformer paper; introduces label smoothing in the context of machine translation.
+- Szegedy, C., Vanhoucke, V., Ioffe, S., Shlens, J., and Wojna, Z. "Rethinking the Inception Architecture for Computer Vision." *CVPR*, 2016. Section 7 introduces label smoothing.
+- Vaswani, A. et al. "Attention Is All You Need." *NeurIPS*, 2017. The Transformer paper; applies Szegedy et al.'s label smoothing (ε = 0.1) in the context of machine translation.
 - Müller, R., Kornblith, S., and Hinton, G. "When Does Label Smoothing Help?" *NeurIPS*, 2019. Empirical analysis of label smoothing's effects on calibration and distillation.
 - Radford, A. et al. "Language Models are Unsupervised Multitask Learners." OpenAI, 2019. (GPT-2 paper) — describes the sliding-window perplexity evaluation methodology.
 - lm-evaluation-harness (EleutherAI): open-source framework for evaluating language models, including perplexity across many benchmarks. Available at github.com/EleutherAI/lm-evaluation-harness.
@@ -923,7 +927,7 @@ This picture has three take-aways:
 
   (a) Write a small function `smoothed_target(k_star, V, eps)` returning the smoothed target distribution $p_{\text{smooth}}$ as a length-$V$ list, per the chapter's formula $p_{\text{smooth}}(k) = (1-\varepsilon)\mathbf{1}[k=k^*] + \varepsilon/V$.
   (b) By hand, for $V = 4$, $k^* = 0$, $\varepsilon = 0.1$: write out $p_{\text{smooth}}$ and verify it sums to 1.
-  (c) Explain, using the chapter's "KL guard" reasoning, why $p_{\text{smooth}}(k) > 0$ for every $k$ matters for keeping $D_{\text{KL}}(p\|q)$ well-defined.
+  (c) Explain, using the chapter's "KL guard" reasoning, why $p_{\text{smooth}}(k) > 0$ for every $k$ matters — and be precise about *which* direction of the KL it rescues, since the forward $D_{\text{KL}}(p\|q)$ used for training is already finite with a one-hot $p$.
 
 ??? note "Solution"
 
@@ -948,4 +952,4 @@ This picture has three take-aways:
 
     Sum: $0.925 + 0.025 + 0.025 + 0.025 = 1.000$. Valid distribution. (`smoothed_target(0, 4, 0.1)` returns exactly this list.)
 
-    (c) The chapter notes that $D_{\text{KL}}(p\|q) = \sum_x p(x)\log\frac{p(x)}{q(x)}$ is "infinite if $q(x)=0$ where $p(x)>0$", and that with a raw one-hot target the term $0\cdot\log(0/0)$ is undefined when both $p(x)=0$ and $q(x)=0$. Label smoothing sets $p_{\text{smooth}}(k) = \varepsilon/V > 0$ for *every* class, so there is never a class with $p(x)>0$ contributing an undefined or ill-behaved term against $q$: every $\log\frac{p(x)}{q(x)}$ is a ratio of two positive numbers. This keeps the divergence finite and well-defined, and it also floors the target away from the degenerate one-hot corner that pushes the correct-class logit toward $+\infty$ and produces overconfident, poorly calibrated models — the calibration benefit discussed in the chapter.
+    (c) First, the honest caveat the chapter makes: in the *forward* training direction $D_{\text{KL}}(p\|q) = \sum_x p(x)\log\frac{p(x)}{q(x)}$ nothing is broken even with a raw one-hot $p$ — the zeros of $p$ vanish under the convention $0\log 0 = 0$, and a softmax $q$ is strictly positive, so the divergence is finite and equals $-\log q(k^*)$ (that is exactly Exercise 1). Smoothing matters for the *other* direction. The chapter notes KL is "infinite if $q(x)=0$ where $p(x)>0$"; put the target in the second slot, as $D_{\text{KL}}(q\|p_{\text{target}})$ — the form that shows up in distillation-style and variational objectives — and a one-hot target has $p_{\text{target}}(x) = 0$ on every incorrect class, so any $q$ with mass there gives $+\infty$. Setting $p_{\text{smooth}}(k) \ge \varepsilon/V > 0$ for *every* class removes those zeros, so every $\log\frac{q(x)}{p_{\text{smooth}}(x)}$ is a ratio of two positive numbers and the divergence stays finite. The same floor also keeps the target away from the degenerate one-hot corner, whose minimizer requires driving the correct-class logit toward $+\infty$ and produces overconfident, poorly calibrated models — the calibration benefit discussed in the chapter.

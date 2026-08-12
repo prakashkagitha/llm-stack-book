@@ -80,7 +80,7 @@ $$
 
 **View 1 — Dot products.** Entry $C_{ij}$ is the dot product of the $i$-th row of $A$ and $j$-th column of $B$.
 
-**View 2 — Column combinations.** The $j$-th column of $C$ is $A$ times the $j$-th column of $B$: $C_{:,j} = A \cdot B_{:,j}$. So $C$ expresses each column of $B$ as a linear combination of $A$'s columns.
+**View 2 — Column combinations.** The $j$-th column of $C$ is $A$ times the $j$-th column of $B$: $C_{:,j} = A \cdot B_{:,j}$. So each column of $C$ is a linear combination of $A$'s columns, with the mixing coefficients given by the corresponding column of $B$.
 
 **View 3 — Outer products (rank-1 decomposition).** $C = \sum_{p=1}^k A_{:,p} \cdot B_{p,:}^\top$. Each term is a rank-1 matrix (column times row). This view is surprisingly important: low-rank approximations are truncated versions of this sum.
 
@@ -282,7 +282,8 @@ U, S, Vh = torch.linalg.svd(W, full_matrices=False)
 
 print("Singular values (first 12):")
 print(S[:12].numpy().round(2))
-# Expected: 8 large values, then a cliff down to ~0.1 (noise floor)
+# Expected: 8 large values, then a cliff down to ~3.1
+# (noise floor ~ 0.1 * 2*sqrt(256) = 3.2, the Marchenko-Pastur edge)
 
 # Low-rank approximation at rank r
 def low_rank_approx(U, S, Vh, r):
@@ -326,9 +327,9 @@ The three most important instances:
 
 | Norm | Formula | Geometry | Use in ML |
 |------|---------|----------|-----------|
-| $\ell_1$ | $\sum_i |v_i|$ | Sum of absolute values | Sparsity-inducing regularization (Lasso) |
+| $\ell_1$ | $\sum_i \lvert v_i \rvert$ | Sum of absolute values | Sparsity-inducing regularization (Lasso) |
 | $\ell_2$ | $\sqrt{\sum_i v_i^2}$ | Euclidean length | Weight decay, gradient clipping |
-| $\ell_\infty$ | $\max_i |v_i|$ | Maximum absolute entry | Adversarial robustness |
+| $\ell_\infty$ | $\max_i \lvert v_i \rvert$ | Maximum absolute entry | Adversarial robustness |
 
 **Gradient clipping** in transformer training (used universally) clips $\mathbf{g} \leftarrow \mathbf{g} \cdot \min(1, \theta / \|\mathbf{g}\|_2)$ where $\theta$ is typically $1.0$. See [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
 
@@ -360,7 +361,9 @@ nuclear = S.sum()
 
 print(f"Frobenius: {frob:.2f}, Spectral: {spectral:.2f}, Nuclear: {nuclear:.2f}")
 
-# Weight decay uses Frobenius; AdamW adds lambda * W to the gradient
+# Weight decay penalizes the squared Frobenius norm. Adam(weight_decay=...) adds
+# lambda * W to the gradient (coupled L2); AdamW *decouples* it and applies
+# theta <- theta - lr * lambda * theta directly to the weights.
 # Spectral norm: PyTorch has torch.nn.utils.spectral_norm for Conv/Linear
 ```
 
@@ -536,7 +539,7 @@ Several lines of evidence suggest that pretrained language model weights and the
 
 1. **Intrinsic dimensionality** (Aghajanyan et al., 2021): fine-tuning can be reformulated as optimization in a very low-dimensional space with minimal loss in performance.
 2. **Spectral analysis of weight matrices**: plotting the singular value spectrum of pretrained transformer weight matrices reveals a rapid drop — a handful of large singular values capturing most of the "signal," followed by a long tail.
-3. **Linear mode connectivity**: different fine-tuned models share much of their weight structure in the dominant singular directions.
+3. **Task-vector arithmetic and model merging** (Ilharco et al., 2023): task vectors $\tau = W_{\text{finetuned}} - W_{\text{pretrained}}$ from independently fine-tuned models can be added and subtracted in weight space and still compose, which indicates each update occupies a small, largely non-interfering subspace.
 
 ### LoRA in matrix algebra terms
 
@@ -798,7 +801,7 @@ This book uses einops for Vision Transformer patchification (see [Vision Transfo
 
 ### Memory layout: contiguous tensors
 
-PyTorch stores tensors in row-major (C-contiguous) order by default. After a `.transpose()` or `.permute()`, the tensor may become non-contiguous, causing performance regressions in subsequent operations. Call `.contiguous()` before passing to `@` or `F.linear` when in doubt.
+PyTorch stores tensors in row-major (C-contiguous) order by default. After a `.transpose()` or `.permute()`, the tensor may become non-contiguous, which can cause performance regressions in subsequent operations. Matmul is the exception: BLAS GEMM takes transpose flags, so a single transposed operand is consumed at zero cost — inserting `.contiguous()` before `@` or `F.linear` just buys you a full $O(mn)$ copy and is a pessimization. You *do* need it before `.view()` (which requires compatible strides), and it is often worth paying for before a chain of elementwise/reduction kernels or a custom kernel that assumes contiguity — for example after the permute in multi-head attention.
 
 ```python
 import torch
@@ -812,11 +815,14 @@ print(B.is_contiguous())   # False
 B_c = B.contiguous()
 print(B_c.is_contiguous()) # True
 
-# torch.linalg.svd and matmul accept non-contiguous but may be slower
-# In practice, after a permute in multi-head attention, call .contiguous():
+# Do NOT do `A @ B.contiguous()`: the copy costs more than the transposed
+# GEMM saves. Time it -- `A @ B` and `A @ B.contiguous()` on 2048x2048 differ
+# by ~4x in favour of leaving it non-contiguous.
+# Where it does pay off: before .view(), or ahead of a chain of elementwise
+# kernels -- e.g. after a permute in multi-head attention:
 x = torch.randn(2, 8, 32, 64)          # (batch, heads, seq, dim)
 x_perm = x.permute(0, 2, 1, 3)         # (batch, seq, heads, dim)
-x_cont = x_perm.contiguous()           # ensures efficient downstream matmul
+x_cont = x_perm.contiguous()           # required before .view(B, S, H*D)
 ```
 
 !!! warning "Common pitfall: implicit broadcasting with matmul"

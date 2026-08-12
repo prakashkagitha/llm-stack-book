@@ -92,8 +92,10 @@ class PatchEmbed(nn.Module):
     Mathematically the same operation as a Conv2d with kernel_size=stride=
     patch_size, but implemented as a matrix multiply for clarity. Real
     implementations (timm, HF `transformers`, open_clip) all use
-    `nn.Conv2d(in_chans, embed_dim, kernel_size=P, stride=P)` because cuDNN
-    fuses the gather-and-project into one pass.
+    `nn.Conv2d(in_chans, embed_dim, kernel_size=P, stride=P)` — that is the
+    layout the original JAX/Flax ViT reference used, and it avoids writing an
+    explicit rearrange. Because the patches do not overlap, the arithmetic is
+    identical to the matmul below; there is no kernel-level advantage either way.
 
     Caveat if you ever port weights: Conv2d flattens each patch in (C, P, P)
     order, whereas the einops pattern below flattens in (P, P, C) order, so the
@@ -640,19 +642,19 @@ CLIP's softmax-based InfoNCE loss has a subtle problem: computing $\log \sum_j e
 Instead of a softmax over $N$ negatives, SigLIP applies a **sigmoid** binary cross-entropy to each pair independently:
 
 $$
-\mathcal{L}_\text{SigLIP} = -\frac{1}{N^2} \sum_{i=1}^N \sum_{j=1}^N
+\mathcal{L}_\text{SigLIP} = -\frac{1}{N} \sum_{i=1}^N \sum_{j=1}^N
 \left[ y_{ij} \log \sigma(\tau \cdot \mathbf{i}_i \cdot \mathbf{t}_j + b)
 + (1 - y_{ij}) \log \sigma(-\tau \cdot \mathbf{i}_i \cdot \mathbf{t}_j - b) \right]
 $$
 
-where $y_{ij} = 1$ if $i = j$ (positive pair) and $0$ otherwise, and $b$ is a learnable bias initialized to a negative value (around $-10$) to counteract the class-imbalance of having many more negatives than positives in the full $N^2$ grid.
+where $y_{ij} = 1$ if $i = j$ (positive pair) and $0$ otherwise, and $b$ is a learnable bias initialized to a negative value (around $-10$) to counteract the class-imbalance of having many more negatives than positives in the full $N^2$ grid. Note the prefactor: following the paper, the $N^2$ pair terms are normalized by $N$, not $N^2$ — a mean over rows and a *sum* over each row's $N$ pairs — so the loss (and its gradient) does not shrink as the batch grows.
 
 **Key advantages of SigLIP over CLIP:**
 - No global normalization (softmax denominator), so loss computation shards trivially across devices.
 - Better accuracy with smaller batch sizes, because sigmoid loss does not need large $N$ to have a meaningful denominator.
 - A learnable bias $b$ lets the model calibrate the raw similarity threshold.
 
-SigLIP forms the image encoder backbone in several vision-language models (for example, the Gemini/PaliGemma family uses SigLIP-So400M-14). Its 2025 successor, **SigLIP 2** (Tschannen et al., Google), folds captioning and self-supervised objectives into the recipe and adds multilingual training, yielding stronger dense/localization features and beating the original SigLIP at every model scale — it is now the default open contrastive backbone for new multimodal pipelines.
+SigLIP forms the image encoder backbone in several vision-language models: Google's PaliGemma documents a SigLIP-So400M/14 image tower, and many open VLMs (LLaVA-NeXT variants, Idefics3, Qwen-VL-style pipelines) build on SigLIP towers too. (Closed models are a different matter — Google's Gemini reports do not disclose which vision encoder Gemini uses, so treat any such attribution as speculation.) Its 2025 successor, **SigLIP 2** (Tschannen et al., Google), folds captioning and self-supervised objectives into the recipe and adds multilingual training, yielding stronger dense/localization features and beating the original SigLIP at every model scale — it is now the default open contrastive backbone for new multimodal pipelines.
 
 ---
 
@@ -665,7 +667,7 @@ While CLIP and SigLIP rely on paired image-text data, DINOv2 (Oquab et al., Meta
 3. **DINO + iBOT objectives**: DINO aligns the CLS tokens (global features); iBOT (image BERT) masks random patches and predicts the teacher's patch representations, learning local spatial features. Both are added on top of a **Sinkhorn-Knopp centering / sharpening** step that prevents the classic self-distillation failure mode — collapse to a constant output — by keeping the teacher's assignment distribution near-uniform across the batch.
 4. **Register tokens**: added in a follow-up release of the DINOv2 checkpoints (`*_reg4` weights) after Darcet et al. identified the artifact-token problem — see below.
 
-DINOv2 models (ViT-S, ViT-B, ViT-L, ViT-G/14) produce exceptionally clean spatial features: patch attention maps reveal semantic regions without any dense annotation. In 2025 Meta released **DINOv3** (Siméoni et al.), which scales this self-supervised recipe to a 7B-parameter ViT trained on 1.7B images and adds a *Gram anchoring* technique to keep dense feature maps sharp over long training; it matches or beats specialized supervised systems on segmentation and depth *without fine-tuning*, and ships distilled ViT-B/L and ConvNeXt variants for deployment.
+DINOv2 models (ViT-S, ViT-B, ViT-L, and the largest ViT-g/14 at ~1.1B parameters) produce exceptionally clean spatial features: patch attention maps reveal semantic regions without any dense annotation. In 2025 Meta released **DINOv3** (Siméoni et al.), which scales this self-supervised recipe to a 7B-parameter ViT trained on 1.7B images and adds a *Gram anchoring* technique to keep dense feature maps sharp over long training; it matches or beats specialized supervised systems on segmentation and depth *without fine-tuning*, and ships distilled ViT-B/L and ConvNeXt variants for deployment.
 
 ### Register Tokens
 
@@ -692,8 +694,9 @@ class VisionTransformerWithRegisters(nn.Module):
         img_size=224, patch_size=14, in_chans=3, embed_dim=1024,
         depth=24, num_heads=16, mlp_ratio=4.0,
         num_registers=4,    # key new parameter
-        num_classes=0,      # 0 = return features, not logits
     ):
+        # Note: this is a pure feature extractor — it returns (CLS, patch)
+        # features, never logits, so there is deliberately no classifier head.
         super().__init__()
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim)
         num_patches = self.patch_embed.num_patches
@@ -735,9 +738,11 @@ class VisionTransformerWithRegisters(nn.Module):
 
         x = self.norm(x)
 
-        # Discard register tokens; return CLS and patch tokens
-        # Register tokens occupy the last R positions
-        x = x[:, :-self.num_registers]                    # (B, N+1, D)
+        # Discard register tokens; return CLS and patch tokens.
+        # Register tokens occupy the last R positions. Guard the slice: with
+        # R == 0, `x[:, :-0]` is `x[:, :0]` — an empty tensor, not a no-op.
+        if self.num_registers > 0:
+            x = x[:, :-self.num_registers]                # (B, N+1, D)
         cls_out = x[:, 0]                                 # (B, D)
         patch_out = x[:, 1:]                              # (B, N, D)
 
@@ -800,7 +805,10 @@ if __name__ == "__main__":
     img = Image.new("RGB", (640, 480), color=(128, 64, 32))
     tensor = transform(img)               # (3, 224, 224)
     print(f"Preprocessed tensor shape: {tensor.shape}")    # torch.Size([3, 224, 224])
-    print(f"Value range: [{tensor.min():.2f}, {tensor.max():.2f}]")  # ~[-2, 2]
+    # This test image is a single solid color, so after normalization the tensor
+    # holds exactly three values, one per channel: [-1.25, 0.07]. A real photo
+    # spans roughly [-2.1, 2.6] with ImageNet mean/std.
+    print(f"Value range: [{tensor.min():.2f}, {tensor.max():.2f}]")  # [-1.25, 0.07]
 
     # Batch and feed to model
     batch = tensor.unsqueeze(0)           # (1, 3, 224, 224)
@@ -812,7 +820,7 @@ if __name__ == "__main__":
 ```
 
 !!! warning "Common pitfall: wrong normalization statistics"
-    Using ImageNet statistics for a CLIP model (or vice versa) is a frequent source of bugs that can silently degrade downstream performance by several percent. Always check which normalization constants a checkpoint was trained with. Some models (e.g., SigLIP) use image-specific mean/std; others use a simple $[-1, 1]$ rescaling with mean=0.5, std=0.5. Store preprocessing alongside the model checkpoint. The robust fix is never to hand-write the transform: `timm` and HF `transformers` both ship the exact preprocessing config *with* the weights, as shown next.
+    Using ImageNet statistics for a CLIP model (or vice versa) is a frequent source of bugs that can silently degrade downstream performance by several percent. Always check which normalization constants a checkpoint was trained with. Some models use dataset-specific mean/std (ImageNet, CLIP); others — SigLIP and SigLIP 2, for instance — use a simple $[-1, 1]$ rescaling with mean=0.5, std=0.5. Store preprocessing alongside the model checkpoint. The robust fix is never to hand-write the transform: `timm` and HF `transformers` both ship the exact preprocessing config *with* the weights, as shown next.
 
 ---
 
@@ -894,7 +902,7 @@ with torch.no_grad():
 print(text_features.shape)                        # (3, 512)
 ```
 
-To train rather than load, `open_clip` exposes a distributed training entrypoint (invoked as a module, e.g. `python -m open_clip_train.main` in recent versions; older releases use `src/training/main.py`) taking WebDataset shards of image–caption pairs, `--model`, `--batch-size`, and `--siglip` to switch the loss. Reproducing CLIP ViT-B/32 on LAION-400M is a multi-GPU-days job — but fine-tuning an existing checkpoint on a domain corpus of a few hundred thousand pairs is an afternoon on a single node, and is the usual way teams adapt an encoder to medical images, satellite imagery, or product photos.
+To train rather than load, `open_clip` exposes a distributed training entrypoint (invoked as a module, e.g. `python -m open_clip_train.main` in recent versions; older releases use `src/training/main.py`) taking WebDataset shards of image–caption pairs, `--model`, `--batch-size`, and `--siglip` to switch the loss. Budget realistically before you try: reproducing CLIP ViT-B/32 on LAION-400M means ~12.8B samples seen (32 epochs) and costs on the order of 100–200 A100-GPU-days — roughly a day and a half on a 128-GPU cluster, not an overnight run on one node. But fine-tuning an existing checkpoint on a domain corpus of a few hundred thousand pairs is an afternoon on a single node, and is the usual way teams adapt an encoder to medical images, satellite imagery, or product photos.
 
 ---
 
@@ -905,9 +913,9 @@ To train rather than load, `open_clip` exposes a distributed training entrypoint
 | ViT-B/16 | Supervised (ImageNet) | ViT | Patches as tokens | Classification baseline |
 | ViT-L/14 | Supervised (JFT-300M) | ViT | Scale | High-accuracy backbone |
 | CLIP ViT-L/14 | Image-text contrastive | ViT + text Transformer | Zero-shot, joint embedding | VLMs, zero-shot retrieval |
-| SigLIP-So400M/14 | Image-text sigmoid loss | ViT-So400M | No global softmax, small batches | Gemini/PaliGemma backbone |
+| SigLIP-So400M/14 | Image-text sigmoid loss | ViT-So400M | No global softmax, small batches | PaliGemma & open-VLM backbone |
 | SigLIP 2 (incl. NaFlex) | Sigmoid + captioning + self-supervised, multilingual | ViT / NaFlex | Native aspect ratio & variable seq length | Default open contrastive backbone |
-| DINOv2 ViT-G/14 | Self-supervised distillation | ViT + registers | Dense spatial features, no labels | Segmentation, depth, VLMs |
+| DINOv2 ViT-g/14 | Self-supervised distillation | ViT + registers | Dense spatial features, no labels | Segmentation, depth, VLMs |
 | DINOv3 ViT-7B (+ distilled B/L) | Self-supervised at 1.7B images | ViT + registers | Gram anchoring keeps dense maps sharp | Frozen dense prediction |
 | EVA-CLIP | Image-text + masked prediction | ViT-E | Scalable vision encoder | Open-source VLMs |
 
@@ -927,7 +935,7 @@ To train rather than load, `open_clip` exposes a distributed training entrypoint
 !!! interview "Interview Corner"
     **Q:** What is the difference between CLIP and SigLIP, and when would you prefer one over the other?
 
-    **A:** Both are contrastive image-text models. CLIP uses a softmax (InfoNCE) loss that requires computing a normalization term over all $N$ items in the batch — demanding very large batches (tens of thousands) and global gather operations across GPUs. SigLIP replaces this with a per-pair sigmoid binary cross-entropy that avoids global normalization. SigLIP scales more gracefully to large fleets of GPUs and works better at smaller batch sizes. If you have abundant GPU memory and want the absolute best zero-shot accuracy at a given model size, CLIP with large batches is competitive; SigLIP is generally the better engineering choice for modern multimodal training pipelines. SigLIP is the backbone used in PaliGemma and the Gemini visual encoder family.
+    **A:** Both are contrastive image-text models. CLIP uses a softmax (InfoNCE) loss that requires computing a normalization term over all $N$ items in the batch — demanding very large batches (tens of thousands) and global gather operations across GPUs. SigLIP replaces this with a per-pair sigmoid binary cross-entropy that avoids global normalization. SigLIP scales more gracefully to large fleets of GPUs and works better at smaller batch sizes. If you have abundant GPU memory and want the absolute best zero-shot accuracy at a given model size, CLIP with large batches is competitive; SigLIP is generally the better engineering choice for modern multimodal training pipelines. SigLIP-So400M/14 is the documented image tower of PaliGemma and of many open VLMs; the encoders inside closed models like Gemini are not publicly disclosed.
 
 !!! key "Key Takeaways"
     - ViT divides an image into non-overlapping $P \times P$ patches, flattens each to a vector, and linearly projects them — treating patches exactly like word tokens. For ViT-B/16 on 224×224 images this gives 196 tokens of dimension 768.
@@ -954,7 +962,7 @@ To train rather than load, `open_clip` exposes a distributed training entrypoint
 
     **Recent advances (2023–2026)**
 
-    - [Zhai et al. (Google), *Sigmoid Loss for Language Image Pre-Training* (2023)](https://arxiv.org/abs/2303.15343) — SigLIP replaces CLIP's softmax with per-pair sigmoid loss, removing the global-gather bottleneck; backbone of PaliGemma and Gemini.
+    - [Zhai et al. (Google), *Sigmoid Loss for Language Image Pre-Training* (2023)](https://arxiv.org/abs/2303.15343) — SigLIP replaces CLIP's softmax with per-pair sigmoid loss, removing the global-gather bottleneck; the So400M tower is PaliGemma's documented image encoder.
     - [Tschannen et al. (Google), *SigLIP 2: Multilingual Vision-Language Encoders* (2025)](https://arxiv.org/abs/2502.14786) — adds captioning, self-supervised, and multilingual objectives to the sigmoid recipe; beats SigLIP at every scale with much stronger dense/localization features.
     - [Oquab et al. (Meta AI), *DINOv2: Learning Robust Visual Features without Supervision* (2023)](https://arxiv.org/abs/2304.07193) — self-supervised distillation on 142M curated images yields all-purpose spatial features that outperform weakly-supervised encoders.
     - [Siméoni et al. (Meta AI), *DINOv3* (2025)](https://arxiv.org/abs/2508.10104) — scales self-supervised pre-training to a 7B ViT on 1.7B images with Gram anchoring for sharp dense features; matches specialized supervised systems on dense tasks without fine-tuning.
