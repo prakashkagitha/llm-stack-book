@@ -60,12 +60,20 @@ def passes_web_filter(text: str) -> bool:
 
 def passes_code_filter(text: str) -> bool:
     """Loose gate for StarCoder: reject empty/binary/minified-looking files
-    (dominated by one repeated character); keep everything else."""
+    (dominated by one repeated character); keep everything else.
+
+    Whitespace is stripped BEFORE the dominance test: indentation and spacing
+    make ' ' the most common character in essentially every real source file
+    (20-35% of its bytes), so counting it would push ordinary, well-formatted
+    code over `max_char_frac` and reject exactly what this gate exists to keep.
+    """
     c = FILTER_CONFIG["code"]
     if not (c["min_chars"] <= len(text) <= c["max_chars"]):
         return False
-    head = text[:2000]
-    most_common_frac = max(head.count(ch) for ch in set(head)) / max(len(head), 1)
+    head = "".join(_WORD_RE.findall(text[:2000]))   # drop all whitespace
+    if not head:
+        return False                                # whitespace-only file
+    most_common_frac = max(head.count(ch) for ch in set(head)) / len(head)
     return most_common_frac <= c["max_char_frac"]
 
 

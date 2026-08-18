@@ -42,9 +42,9 @@ def mid_train(model, dataset, *, device="cpu", steps=10, micro_batch_size=4,
     budget, optionally extending context once at the start.
 
     `muon_lr` / `adamw_lr` set the two groups' peaks independently (Ch. 14.6 fixes
-    6e-3 and 3e-3 -- a 2:1 ratio, not an order of magnitude: Muon's RMS-matched
-    update already lives on Adam's scale). When omitted they fall back to
-    `peak_lr` and `peak_lr / 2`.
+    0.02 and 3e-3 -- an empirical ~6.7:1 ratio from its sweep; the RMS-matched
+    update makes Muon's LR shape-invariant, it does NOT equalize the groups).
+    When omitted they fall back to `peak_lr` and `peak_lr / 2`.
     """
     torch.manual_seed(seed)
     device = torch.device(device)
@@ -122,7 +122,7 @@ def steps_for(sub: SubPhase, global_batch_tokens: int) -> int:
 
 def run_mid_training(model, phases, loader_fn, *, device="cpu",
                      global_batch_tokens=524_288, micro_batch_tokens=65_536,
-                     muon_lr=6e-3, adamw_lr=3e-3, grad_clip=1.0,
+                     muon_lr=0.02, adamw_lr=3e-3, grad_clip=1.0,
                      optimizers=None, use_seq_ids=True, log_every=50, seed=1234,
                      checkpoint_fn=None):
     """Walk `phases` back to back under ONE WSD decay leg.

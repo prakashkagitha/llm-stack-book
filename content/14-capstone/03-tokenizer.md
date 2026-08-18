@@ -145,7 +145,7 @@ Numbers are now segmented by a *fixed, content-independent* rule (left-to-right 
 
 ### The trainer
 
-The algorithm is unchanged from [Chapter 2.1](../02-transformer/01-tokenization.html): pre-tokenize, then repeatedly merge the most frequent adjacent pair of symbols. What changes is engineering. The naive trainer recomputes every pair count from scratch after every merge — $O(\text{merges} \times \text{corpus})$. At $M = 32{,}503$ merges over even a modest multi-megabyte sample, that is a multi-hour job. Two standard data structures fix it: an **inverted index** from each pair to the word indices containing it (so a merge only touches the words it affects), and a **lazy-deleted max-heap** (so "which pair is most frequent right now" is an $O(\log n)$ pop instead of an $O(n)$ scan).
+The algorithm is unchanged from [Chapter 2.1](../02-transformer/01-tokenization.html): pre-tokenize, then repeatedly merge the most frequent adjacent pair of symbols. What changes is engineering. The naive trainer recomputes every pair count from scratch after every merge — $O(\text{merges} \times \text{corpus})$. At $M = 32{,}503$ merges over even a modest multi-megabyte sample, that turns a three-second job into a tens-of-minutes one (measured in "Training at scale" below). Two standard data structures fix it: an **inverted index** from each pair to the word indices containing it (so a merge only touches the words it affects), and a **lazy-deleted max-heap** (so "which pair is most frequent right now" is an $O(\log n)$ pop instead of an $O(n)$ scan).
 
 {{fig:bpe-trainer-incremental-merge}}
 
@@ -163,7 +163,7 @@ This is the production version of the algorithm built from first principles in
 ../02-transformer/01-tokenization.html -- same "merge the most frequent adjacent
 pair" idea, same byte-level guarantee that no input is ever unrepresentable, but
 engineered to finish ~32.5k merges on a real multi-megabyte sample in seconds
-instead of hours (measured numbers in "Training at scale" below).
+instead of tens of minutes (measured numbers in "Training at scale" below).
 
 Special tokens are reserved UP FRONT (see SPECIAL_TOKENS) even though most are
 untouched until Ch. 14.9 (SFT/DPO) and Ch. 14.10 (the agent). Once this
@@ -863,8 +863,11 @@ def test_chat_template_matches_render_conversation(trained_tok: StackTokenizer):
     for agp in (False, True):
         ref, _mask = render_conversation(turns, trained_tok,
                                          add_generation_prompt=agp)
+        # return_dict defaults to True on modern transformers, which would hand
+        # back a BatchEncoding rather than the plain list `ref` is.
         got = fast.apply_chat_template(msgs, tokenize=True,
-                                       add_generation_prompt=agp)
+                                       add_generation_prompt=agp,
+                                       return_dict=False)
         assert ref == got
 ```
 
@@ -914,13 +917,15 @@ from typing import Iterator
 from stacklm.tokenizer.bpe import StackTokenizer, VOCAB_SIZE, SPECIAL_TOKENS
 from stacklm.tokenizer.export import save_pretrained
 
-CHUNK = 8 << 20     # read 8 MiB at a time; never f.read() a whole shard
+CHUNK = 8 << 20     # read 8Mi CHARACTERS at a time (the file is opened in text
+                    # mode, so this is <= 32 MiB); never f.read() a whole shard
 
 
 def stream_sample(paths_glob: str, max_bytes: int = 500_000_000) -> Iterator[str]:
-    """Yield bounded text chunks from raw-text shards, stopping at EXACTLY the
-    byte budget (mid-file if necessary) rather than after whichever file
-    happened to cross it."""
+    """Yield bounded text chunks from raw-text shards, stopping at NO MORE than
+    the byte budget (mid-file if necessary) rather than after whichever file
+    happened to cross it. The final chunk is trimmed back to a word boundary, so
+    the total actually emitted is a few bytes under `max_bytes`, never over."""
     total = 0
     for path in sorted(glob.glob(paths_glob)):
         with open(path, "r", encoding="utf-8") as f:

@@ -107,7 +107,7 @@ This is the production version of the algorithm built from first principles in
 ../02-transformer/01-tokenization.html -- same "merge the most frequent adjacent
 pair" idea, same byte-level guarantee that no input is ever unrepresentable, but
 engineered to finish ~32.5k merges on a real multi-megabyte sample in seconds
-instead of hours (measured numbers in "Training at scale" below).
+instead of tens of minutes (measured numbers in "Training at scale" below).
 
 Special tokens are reserved UP FRONT (see SPECIAL_TOKENS) even though most are
 untouched until Ch. 14.9 (SFT/DPO) and Ch. 14.10 (the agent). Once this
@@ -601,13 +601,15 @@ corpus size for natural text. A few hundred MB of sample is comfortable on a
 # see block #9's SKIP note above) -- the one call to it below is skipped, not
 # faked; everything else in this block runs against the book's real logic.
 
-CHUNK = 8 << 20     # read 8 MiB at a time; never f.read() a whole shard
+CHUNK = 8 << 20     # read 8Mi CHARACTERS at a time (the file is opened in text
+                    # mode, so this is <= 32 MiB); never f.read() a whole shard
 
 
 def stream_sample(paths_glob: str, max_bytes: int = 500_000_000) -> Iterator[str]:
-    """Yield bounded text chunks from raw-text shards, stopping at EXACTLY the
-    byte budget (mid-file if necessary) rather than after whichever file
-    happened to cross it."""
+    """Yield bounded text chunks from raw-text shards, stopping at NO MORE than
+    the byte budget (mid-file if necessary) rather than after whichever file
+    happened to cross it. The final chunk is trimmed back to a word boundary, so
+    the total actually emitted is a few bytes under `max_bytes`, never over."""
     total = 0
     for path in sorted(glob.glob(paths_glob)):
         with open(path, "r", encoding="utf-8") as f:

@@ -188,8 +188,11 @@ def test_chat_template_matches_render_conversation(tok, tmp):
     for agp in (False, True):
         ref, _mask = render_conversation(turns, tok, add_generation_prompt=agp)
         try:
+            # return_dict defaults to True on modern transformers; without
+            # return_dict=False this hands back a BatchEncoding, not a list.
             got = fast.apply_chat_template(msgs, tokenize=True,
-                                           add_generation_prompt=agp)
+                                           add_generation_prompt=agp,
+                                           return_dict=False)
         except AttributeError:      # very old jinja2 vs. new transformers
             rendered = template.render(messages=msgs, add_generation_prompt=agp)
             got = fast(rendered, add_special_tokens=False)["input_ids"]

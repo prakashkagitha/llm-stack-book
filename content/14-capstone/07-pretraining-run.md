@@ -648,7 +648,8 @@ in the resume section stays exact) and makes the recorded $S_{\max}$ series comp
 
 **Why every 200 steps.** Attention-logit drift is slow: the gains move by one decayed learning rate
 per step. Measuring 38,147 times to catch a phenomenon that evolves over thousands of steps is pure
-overhead, so Ch. 14.6 gates it behind `qk_clip_every = 200` (~160 measurements across this run). By
+overhead, so Ch. 14.6 gates it behind `qk_clip_every = 200` (~172 measurements across this run's
+34,332 steps). By
 default `Attention` records the **Cauchy–Schwarz bound**
 $\max_i\lVert q_i\rVert \cdot \max_j\lVert k_j\rVert / \sqrt{d_h}$ rather than the exact max, which
 is $O(BHTd_h)$ and keeps the fused SDPA path; setting `attn.record_exact = True` gives the exact
@@ -1030,7 +1031,7 @@ designed to catch.
     loop has not consumed. A cursor read from the sampler therefore over-reports, and every resume
     silently skips a few thousand samples. Deriving the position from `step` is exact by
     construction — which is also why the QK-clip probe above draws from the *val* loader: an extra
-    `next(train_iter)` every 200 steps would put the two out of sync by ~160 micro-batches.
+    `next(train_iter)` every 200 steps would put the two out of sync by ~172 micro-batches.
 
     **Iterable datasets duplicate.** If you replace the map-style dataset with a streaming
     `IterableDataset` — a natural instinct for a shard-based corpus — each of the `num_workers`
@@ -1157,7 +1158,9 @@ def flops_per_token(n_params, n_layers, seq_len, d_model, causal=True):
 def utilization(n_params, tokens_per_sec, cfg, peak_flops=A100_BF16_PEAK,
                 recompute_factor=1.0):
     """Returns (mfu, hfu). `recompute_factor` is 1.0 with no activation
-    checkpointing and ~4/3 with full-block checkpointing."""
+    checkpointing and ~4/3 with full-block checkpointing. Both figures ignore the
+    ~4-5% of recompute the chunked loss head adds; multiply by 1.05 if you want
+    HFU to credit that too."""
     m = cfg.model
     f = flops_per_token(n_params, m.n_layers, m.max_seq_len, m.d_model)
     mfu = f * tokens_per_sec / peak_flops
@@ -1210,7 +1213,10 @@ activation checkpointing (Korthikanti et al., 2022):
 - **HFU** (hardware FLOPs utilization) counts every FLOP the hardware actually executed, including
   recomputed forward passes.
 
-On the A100 tier, where checkpointing is off, MFU = HFU. On the 4090 and T4 tiers with full-block
+On the A100 tier, where checkpointing is off, MFU ≈ HFU — up to the ~4–5% of extra hardware FLOPs
+the chunked loss head spends recomputing the `lm_head` matmul in backward (2.20 TFLOP against 52.2
+TFLOP of attention-inclusive model FLOPs per micro-batch, or 39.9 TFLOP under 6ND), which the
+`recompute_factor=1.0` default rounds away. On the 4090 and T4 tiers with full-block
 checkpointing, each block's forward runs twice, so hardware FLOPs are ~4/3 of model FLOPs and
 $\text{HFU} \approx 1.33 \times \text{MFU}$. A run showing 40% MFU and 53% HFU is not two numbers in
 conflict: it is telling you the silicon is well-fed and one third of its work is being thrown away
@@ -1560,10 +1566,15 @@ local_rank = int(os.environ["LOCAL_RANK"])
 torch.cuda.set_device(local_rank)
 model = DDP(model.to(local_rank), device_ids=[local_rank])
 
-# Each rank must read a DISJOINT slice of the stream: offset the sampler by rank
-# and stride by world size, or keep grad_accum_steps * world constant so the
+# Each rank must read a DISJOINT slice of the stream. `ResumableShuffleSampler`
+# yields its permutation CONTIGUOUSLY from `start`, so offset each rank by a
+# whole per-rank block: `+ rank` alone would shift rank r's stream by a single
+# sample and every rank would re-read 255/256 of rank 0's tokens. (The other
+# option is to give the sampler `rank`/`world` arguments and yield
+# `perm[offset + rank :: world]`.) Divide `grad_accum_steps` by `world` so the
 # effective batch stays at 524,288 tokens.
-start = step * cfg.micro_batch_size * cfg.grad_accum_steps * world + rank
+per_rank = cfg.micro_batch_size * cfg.grad_accum_steps
+start = step * per_rank * world + rank * per_rank
 
 # Skip the gradient all-reduce on every micro-batch except the last one in the
 # accumulation window -- DDP would otherwise synchronize grad_accum_steps times
@@ -1828,19 +1839,29 @@ inside the accumulation loop.
     **Effect of dropping `/ grad_accum_steps`.** Gradients from successive `.backward()` calls are
     *summed* into `.grad`. With the division in place the accumulated gradient is the **mean** over
     the full 524,288-token batch — exactly what a single giant batch would produce. Delete it and
-    the accumulated gradient is the **sum** of 8 micro-batch gradients, i.e. $8\times$ too large, so
-    the update is effectively at $8\times$ the intended learning rate.
+    the accumulated gradient is the **sum** of 8 micro-batch gradients, i.e. $8\times$ too large in
+    norm. Under an SGD-like rule that is exactly an $8\times$ effective learning rate.
 
-    **Practical effect.** The run no longer matches the Muon/WSD hyperparameters tuned in Ch. 14.6.
-    Global grad-norm clipping to $c=1.0$ partly masks it — the clip rescales the inflated norm back
-    toward 1 — but the effective step size is distorted whenever the norm is *below* the clip
-    threshold, so early and late training (small gradients) are most affected. This is precisely the
-    bug Unsloth documented shipping in production trainers.
+    **Practical effect with *this* chapter's optimizers.** Both update rules here are, per step,
+    invariant to a *uniform* positive rescaling of the gradient: Muon orthogonalizes the momentum
+    buffer, and $\mathrm{NS}(8M) \approx \mathrm{NS}(M)$ — that is the entire point of
+    orthogonalization; AdamW's $m/(\sqrt{v}+\epsilon)$ scales numerator and denominator together.
+    So the inflated gradient does **not** cleanly multiply the step size by 8. What it does do is
+    push the pre-clip norm above `grad_clip = 1.0` on essentially every step, and the clip factor
+    $c/\lVert g\rVert$ then varies step to step — a rescaling that is *not* constant in time, which
+    the momentum and $v$ EMAs cannot absorb. The run drifts away from the Muon/WSD hyperparameters
+    tuned in Ch. 14.6 through that changed clipping regime rather than through a clean $8\times$ LR.
+    The bug bites hardest with an SGD-like rule, and — the actual Unsloth case — when the missing
+    normalizer *varies* per micro-batch (a per-micro-batch token count), because reweighting
+    micro-batches against each other changes the gradient's *direction*, which no scale invariance
+    rescues.
 
     **Contrast.** Zeroing inside the loop goes the *opposite* direction: it throws away the previous
     7 gradients, so `optimizer.step()` sees only the last micro-batch — one 65,536-token step at
-    $\frac{1}{8}$ the intended effective batch. Both leave the loss curve going down, but one
-    inflates the effective LR by $8\times$ and the other shrinks the effective batch by $8\times$.
+    $\frac{1}{8}$ the intended effective batch. That one is *not* rescued by scale invariance,
+    because it changes which data the update is computed from, not merely its scale. Both leave the
+    loss curve going down; the moral is that a scale-invariant optimizer hides the first bug's
+    symptoms without making the run correct.
 
 **3.** You are configuring a scaled-down on-ramp tier with a smaller model. You choose
 `micro_batch_size = 4` and `seq_len = 1024`, and you want a **reduced** effective batch of exactly
@@ -1905,8 +1926,12 @@ checkpointing?
     $$
     of which this chapter's 34,332 steps are
     $18.0\times10^9 / 291{,}271 \approx 17.2$ GPU-hours and Ch. 14.8's decay leg the remaining
-    ~1.9 — just under the 22–29 GPU-hour envelope, consistent with a faster step time than
-    the worked example's 2.3 s.
+    ~1.9 by straight division. As in the worked example, that last figure understates: ~0.8B of
+    the decay leg runs at `seq_len = 8192`, where tokens/s is lower, so scale it by the same
+    ~1.5× the main text uses and the decay leg is ~2.8 GPU-hours, for ~20 GPU-hours in total.
+    Either way the projection lands **below** the 22–29 GPU-hour envelope, consistent with a step
+    time faster than the worked example's 2.3 s — treat that as a reason to re-check `dt`, not as
+    a saving already banked.
 
     **What activation checkpointing changes.** It cannot change (b) or (c) *as definitions*, because
     MFU counts only model FLOPs and recompute is not model FLOPs. What it changes is `dt`: the extra
@@ -1949,16 +1974,28 @@ procedure using only the primitives defined in this chapter, and say why each st
        gradients that `torch.isfinite` cannot:
 
        ```python
-       # alongside the isfinite check
+       # folded INTO the isfinite check, replacing it
        gn = grad_norm.item()
        recent.append(gn)                       # collections.deque(maxlen=200)
        med = statistics.median(recent)
-       if len(recent) == recent.maxlen and gn > 10 * med:
+       finite = bool(torch.isfinite(grad_norm))
+       spike = finite and len(recent) == recent.maxlen and gn > 10 * med
+       spike_skips += int(spike)
+
+       if finite and not spike:
            for opt in optimizers:
-               opt.zero_grad(set_to_none=True)  # skip: outlier batch
-           spike_skips += 1
-           continue
+               opt.step()
+       else:
+           for opt in optimizers:
+               opt.zero_grad(set_to_none=True)  # skip: outlier or non-finite batch
+       # Only inf/nan counts toward the abort; an isolated spike skip is normal.
+       consecutive_skips = 0 if finite else consecutive_skips + 1
        ```
+
+       Set a flag; do **not** `continue`. The `step += 1` and `log_metrics` calls live at the
+       *bottom* of the loop — a `continue` would consume 256 samples without advancing `step`,
+       breaking the `start_sample = step * samples_per_step` resume invariant this chapter is
+       built around, and would silently drop the skip from the log.
 
 **6.** Audit `save_rolling` above. (a) Why must the prune run *after* the write, not before?
 (b) Why does the glob pattern make `ckpt_stable.pt` and `final.pt` safe without any special-casing,
@@ -2081,9 +2118,13 @@ Then explain why `no_sync()` changes wall-clock but not the resulting gradient, 
 
     **The two other required changes.** (1) **Shard the data stream by rank.** Every rank must read
     disjoint samples, or you train on each token `world_size` times and the "effective batch" is a
-    fiction; offset `ResumableShuffleSampler`'s `start` by `rank` and stride by `world_size`, and
-    either divide `grad_accum_steps` by `world_size` or accept an 8× larger effective batch (which
-    would then need its own LR retune). (2) **Rank-0-only I/O.** Only rank 0 should write
+    fiction. Because `ResumableShuffleSampler` yields its permutation *contiguously* from `start`,
+    the offset must be a whole per-rank block —
+    `start = step * per_rank * world_size + rank * per_rank` with
+    `per_rank = micro_batch_size * grad_accum_steps` — not a bare `+ rank`, which would leave the
+    ranks overlapping by 255/256; the alternative is to teach the sampler a `rank`/`world` stride and
+    yield `perm[offset + rank :: world]`. Then either divide `grad_accum_steps` by `world_size` or
+    accept an 8× larger effective batch (which would then need its own LR retune). (2) **Rank-0-only I/O.** Only rank 0 should write
     checkpoints, append to `log.jsonl`, and print — otherwise eight processes race on the same
     `.tmp` file and `os.replace` no longer guarantees a coherent checkpoint. Add a `dist.barrier()`
     after saving. (A third, easy to miss: `qk_clip_` mutates parameters in place, so it must run on

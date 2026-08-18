@@ -313,9 +313,19 @@ from dataclasses import dataclass
 # TOOL 1: a SAFE calculator.  We never call eval() on model output.
 # Instead we parse to an AST and walk it, allowing only arithmetic nodes.
 # ----------------------------------------------------------------------
+def _safe_pow(a, b):
+    """Bounded exponentiation. `**` is legal in the expr grammar below, so
+    `9**9**9**9` is a well-formed tool call that would spin the harness
+    forever, and `9**99999` builds an integer Python refuses to stringify.
+    Neither is hypothetical for an unconstrained 100M model."""
+    if abs(b) > 64 or abs(a) > 10 ** 9:
+        raise ValueError("exponent out of range")
+    return operator.pow(a, b)
+
+
 _BINOPS = {
     ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
-    ast.Div: operator.truediv, ast.Pow: operator.pow, ast.Mod: operator.mod,
+    ast.Div: operator.truediv, ast.Pow: _safe_pow, ast.Mod: operator.mod,
     ast.FloorDiv: operator.floordiv,
 }
 _UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
@@ -342,11 +352,13 @@ def calc(expr: str) -> str:
     try:
         tree = ast.parse(expr.strip(), mode="eval")
         val = _eval_node(tree)
+        if isinstance(val, float) and val.is_integer():  # 4042.0 -> "4042"
+            val = int(val)
+        # str() of a very large int raises too (CPython's 4300-digit limit),
+        # so the FORMATTING stays inside the try or the docstring above lies.
+        return str(val)
     except Exception as e:                          # noqa: BLE001 (catch all)
         return f"CalcError: {e}"
-    if isinstance(val, float) and val.is_integer():  # 4042.0 -> "4042"
-        val = int(val)
-    return str(val)
 
 
 # ----------------------------------------------------------------------
@@ -521,7 +533,7 @@ Here is the parser/serializer. It is deliberately a small state machine — no c
 ```python
 # capstone/stacklm/agent/react.py
 """ReAct wire-format constants, (de)serialisation, and the single tokenizer
-entry point. The special-token strings and the non-standard JSON spacing in
+entry point. The special-token strings and the exact JSON spacing in
 `render_call` MUST stay byte-identical across distillation, SFT, and serving
 or the model's memorized groove breaks."""
 
@@ -569,7 +581,14 @@ def parse_assistant_step(text: str) -> Action:
         payload = text.split(TOOL_CALL, 1)[1].split(END, 1)[0].strip()
         try:
             obj = json.loads(payload)
-            return Action("tool", thought, obj["tool"], obj.get("args", {}))
+            tool, args = obj["tool"], obj.get("args", {})
+            # TYPES, not just syntax. `{"tool": "calc", "args": "2+2"}` is valid
+            # JSON, and without this check it reaches ToolEnv.run_tool and
+            # raises AttributeError out of the whole rollout. "Malformed" must
+            # mean "not the one shape we dispatch", not merely "not JSON".
+            if not isinstance(tool, str) or not isinstance(args, dict):
+                raise TypeError("'tool' must be a string and 'args' an object")
+            return Action("tool", thought, tool, args)
         except Exception:
             # Malformed call: surface it so the harness returns an error obs.
             return Action("tool", thought, tool="__malformed__", args={"raw": payload})
@@ -590,6 +609,8 @@ def render_tool_result(obs: str) -> str:
 def render_call(tool: str, args: dict) -> str:
     # Canonical key order (tool, args) and canonical spacing -> ONE grammar for
     # the model to learn, and one grammar for the acceptor below to enforce.
+    # (", ", ": ") IS json.dumps' default when indent is None; we pass it
+    # explicitly so the bytes cannot drift if someone later adds `indent=`.
     body = json.dumps({"tool": tool, "args": args}, separators=(", ", ": "))
     return f"{TOOL_CALL}{body}{END}"
 ```
@@ -817,7 +838,7 @@ Temperature > 0 matters: we want *diverse* trajectories per task so that after f
 
 !!! tip "Practitioner tip: batch the rollouts, don't for-loop them"
 
-    `distill()` below runs $200 \times 8 = 1600$ multi-step rollouts in a plain Python loop, which is fine for a hosted teacher behind an HTTP API (use the provider's batch endpoint and a thread pool) and *terrible* if you self-host. Self-hosted, serve the teacher with **vLLM** or **SGLang** and run the *whole task pool in lockstep*: at each ReAct step submit all live transcripts as one batch, execute the returned tool calls, resubmit. Two properties make this dramatically faster than it sounds: continuous batching keeps the GPU saturated across trajectories of different lengths ([Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)), and every step re-sends a transcript sharing a long prefix with the previous step — precisely what **prefix caching** / SGLang's **RadixAttention** eliminate ([Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html), [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)). The same machinery is what you reuse for the GRPO group rollouts later; see [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html).
+    `distill(train, teacher, env, samples_per_task=8)` below runs $200 \times 8 = 1600$ multi-step rollouts in a plain Python loop, which is fine for a hosted teacher behind an HTTP API (use the provider's batch endpoint and a thread pool) and *terrible* if you self-host. Self-hosted, serve the teacher with **vLLM** or **SGLang** and run the *whole task pool in lockstep*: at each ReAct step submit all live transcripts as one batch, execute the returned tool calls, resubmit. Two properties make this dramatically faster than it sounds: continuous batching keeps the GPU saturated across trajectories of different lengths ([Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)), and every step re-sends a transcript sharing a long prefix with the previous step — precisely what **prefix caching** / SGLang's **RadixAttention** eliminate ([Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html), [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)). The same machinery is what you reuse for the GRPO group rollouts later; see [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html).
 
 ```python
 # capstone/stacklm/agent/distill.py
@@ -845,8 +866,15 @@ class ToolEnv:
         if act.tool == "calc":
             return calc(str(act.args.get("expr", "")))
         if act.tool == "search":
-            hits = self.retriever.search(act.args.get("query", ""),
-                                         int(act.args.get("k", 2)))
+            # Coerce defensively: the parser guarantees `args` is an object,
+            # not that `k` is a number. `{"k": "two"}` must come back as an
+            # observation the agent can read, never as a ValueError that kills
+            # the rollout.
+            try:
+                k = int(act.args.get("k", 2))
+            except (TypeError, ValueError):
+                return "ToolError: 'k' must be an integer"
+            hits = self.retriever.search(str(act.args.get("query", "")), k)
             if not hits:
                 return "NoResults"
             return " ".join(f"[{i+1}] {p.text}" for i, (p, _) in enumerate(hits))
@@ -1461,8 +1489,17 @@ def grpo_agent_step(policy, ref, opt, tok, env, task, *, group_size=8,
     # ---- 1. rollouts. SAMPLED, not greedy (see the aside above). ----------
     traces, rewards = [], []
     for _ in range(group_size):
+        # constrain=False on purpose. `token_logprobs` scores tokens under the
+        # PLAIN policy, so the sampler must be the plain policy too: masking
+        # the logits here would sample from a renormalised q while
+        # differentiating an unmasked pi_theta -- silently off-policy, and it
+        # would put a full policy-gradient term on tokens the mask made
+        # deterministic. (It is also what lets RL learn to stop emitting
+        # malformed calls; a grammar that forbids them teaches nothing.)
+        # Turn the grammar back on for evaluation and serving.
         answer, tr = run_agent(policy, tok, task.question, env,
-                               max_steps=max_steps, temperature=temperature)
+                               max_steps=max_steps, temperature=temperature,
+                               constrain=False)
         # Clamp: when the loop exhausts `max_steps`, run_agent appends ONE more
         # assistant entry for the forced synthesis, so the raw count can reach
         # max_steps + 1 and the penalty would exceed lambda. The reward is

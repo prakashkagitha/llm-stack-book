@@ -72,7 +72,9 @@ def load_hf_stream(entry: DataMixEntry):
 def stream_hf(entry: DataMixEntry, probe: int = 8) -> Iterator[dict]:
     """Yield normalized {"text","source","domain"} docs from the real dataset.
     Asserts that the first `probe` rows are not all empty, so a misconfigured
-    source fails loudly instead of contributing zero tokens."""
+    source fails loudly instead of contributing zero tokens. (A stream that ends
+    before `probe` rows never trips this check; `stream_source` covers that case
+    by requiring a non-empty first document.)"""
     ds = load_hf_stream(entry)
     n_seen = n_nonempty = 0
     for row in ds:
@@ -142,10 +144,26 @@ def stream_source(entry: DataMixEntry, offline: bool = False,
     if not offline:
         try:
             gen = stream_hf(entry)
-            first = next(gen)
-        except (ImportError, OSError, ConnectionError):
-            pass                                   # no `datasets` / no network
+            # A default, not a bare `next`: a StopIteration escaping a generator
+            # body becomes an opaque RuntimeError (PEP 479).
+            first = next(gen, None)
+        except ImportError:
+            pass                                   # `datasets` not installed
+        except OSError as err:
+            # CAREFUL: huggingface_hub's HTTP errors subclass OSError
+            # (HfHubHTTPError -> GatedRepoError / RepositoryNotFoundError), so a
+            # bare `except OSError` would swallow a 401 on the gated
+            # starcoderdata or a 404 on a mistyped repo id and silently
+            # substitute synthetic text. Anything that carries an HTTP response
+            # is a bug, not a missing network: re-raise it.
+            if getattr(err, "response", None) is not None:
+                raise
         else:
+            if first is None:                      # opened fine, yielded nothing
+                raise ValueError(
+                    f"{entry.name}: stream opened but produced no non-empty "
+                    f"{entry.text_column!r} rows -- wrong config or data_dir?"
+                )
             yield first
             yield from gen
             return

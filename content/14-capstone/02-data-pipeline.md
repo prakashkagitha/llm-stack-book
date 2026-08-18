@@ -60,11 +60,11 @@ C \approx \big(6N + 6\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}}\big)\
 = (6.08 + 1.89)\times10^{8} \times 2\times10^{10} \approx 1.6\times10^{19}\ \text{FLOPs.}
 $$
 
-(If you use Kaplan's convention, which does not halve for causality, the attention term is $12\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}} = 3.78\times10^{8}$ and the total is $\approx 2.0\times10^{19}$. Both conventions appear in the literature; state which one you are using whenever you quote an MFU number, because they differ by 25%.)
+(If you use the un-halved convention — PaLM's MFU definition, and Chinchilla's Appendix F FLOP table, neither of which credits causal masking — the attention term is $12\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}} = 3.78\times10^{8}$ and the total is $\approx 2.0\times10^{19}$. Kaplan et al.'s Table 1, by contrast, already charges only $2\,n_{\text{layer}}\,n_{\text{ctx}}\,d_{\text{attn}}$ per token forward, which is the same $6\,L\,T\,d$ training term we use. Both conventions appear in the literature; state which one you are using whenever you quote an MFU number, because they differ by 25%.)
 
 !!! warning "Common pitfall: quoting MFU against the wrong FLOP count"
 
-    Model-FLOP utilization is $\text{MFU} = \frac{\text{FLOPs/token}\times\text{tokens/s}}{\text{peak FLOP/s}}$, and *every* term is a choice. Report MFU against $6N$ alone and you will understate your utilization by ~24% here ($6N / (6N + \text{attn}) = 0.76$); report it against the Kaplan convention and you overstate it. Worse, some tools quote "hardware FLOPs utilization" (HFU), which counts recomputed activations from gradient checkpointing as useful work — HFU is always ≥ MFU and can exceed it by 20–30% in a checkpointed run. When you compare your throughput number to a published one, first check that the two are the same number. Ch. 14.7 measures `Stack-100M`'s MFU with the $6N + 6\,L\,T\,d$ convention used here, and reports both.
+    Model-FLOP utilization is $\text{MFU} = \frac{\text{FLOPs/token}\times\text{tokens/s}}{\text{peak FLOP/s}}$, and *every* term is a choice. Report MFU against $6N$ alone and you will understate your utilization by ~24% here ($6N / (6N + \text{attn}) = 0.76$); report it against PaLM's un-halved convention and you overstate it. Worse, some tools quote "hardware FLOPs utilization" (HFU), which counts recomputed activations from gradient checkpointing as useful work — HFU is always ≥ MFU and can exceed it by 20–30% in a checkpointed run. When you compare your throughput number to a published one, first check that the two are the same number. Ch. 14.7 measures `Stack-100M`'s MFU with the $6N + 6\,L\,T\,d$ convention used here, and reports both.
 
 Wall-clock is $C / (\text{MFU}\times\text{peak})$, so the budget table is:
 
@@ -196,7 +196,9 @@ def load_hf_stream(entry: DataMixEntry):
 def stream_hf(entry: DataMixEntry, probe: int = 8) -> Iterator[dict]:
     """Yield normalized {"text","source","domain"} docs from the real dataset.
     Asserts that the first `probe` rows are not all empty, so a misconfigured
-    source fails loudly instead of contributing zero tokens."""
+    source fails loudly instead of contributing zero tokens. (A stream that ends
+    before `probe` rows never trips this check; `stream_source` covers that case
+    by requiring a non-empty first document.)"""
     ds = load_hf_stream(entry)
     n_seen = n_nonempty = 0
     for row in ds:
@@ -215,6 +217,8 @@ def stream_hf(entry: DataMixEntry, probe: int = 8) -> Iterator[dict]:
 
 The fallback logic deserves one deliberate design note. It is tempting to wrap the whole streaming loop in `try/except Exception: pass` so the pipeline "always works". Do not. That converts a transient HTTP 503 in hour six of a download into a *silently truncated corpus* — you get shards, you get a loss curve, and you never learn that 40% of FineWeb-Edu is missing. We guard only the *opening* of the stream, and only against the two conditions that genuinely mean "there is no network here": `datasets` not installed, or the Hub unreachable.
 
+Narrowing that guard takes one non-obvious step. `huggingface_hub`'s HTTP errors are `OSError` subclasses — `HfHubHTTPError(httpx.HTTPError, OSError)`, and therefore `GatedRepoError` and `RepositoryNotFoundError` too — so a bare `except OSError` would treat a **401 on the gated `starcoderdata`** (you forgot `huggingface_hub.login()`) or a **404 on a mistyped repo id** as "no network", and quietly fill 10% of a 20B-token corpus with the toy text below. Anything that came back carrying an HTTP response is a bug, not an offline machine, so we re-raise it; only errors with no response at all (`LocalEntryNotFoundError` and friends) fall back.
+
 ```python
 def stream_source(entry: DataMixEntry, offline: bool = False,
                   n_docs: int = 2000) -> Iterator[dict]:
@@ -228,17 +232,33 @@ def stream_source(entry: DataMixEntry, offline: bool = False,
     if not offline:
         try:
             gen = stream_hf(entry)
-            first = next(gen)
-        except (ImportError, OSError, ConnectionError):
-            pass                                   # no `datasets` / no network
+            # A default, not a bare `next`: a StopIteration escaping a generator
+            # body becomes an opaque RuntimeError (PEP 479).
+            first = next(gen, None)
+        except ImportError:
+            pass                                   # `datasets` not installed
+        except OSError as err:
+            # CAREFUL: huggingface_hub's HTTP errors subclass OSError
+            # (HfHubHTTPError -> GatedRepoError / RepositoryNotFoundError), so a
+            # bare `except OSError` would swallow a 401 on the gated
+            # starcoderdata or a 404 on a mistyped repo id and silently
+            # substitute synthetic text. Anything that carries an HTTP response
+            # is a bug, not a missing network: re-raise it.
+            if getattr(err, "response", None) is not None:
+                raise
         else:
+            if first is None:                      # opened fine, yielded nothing
+                raise ValueError(
+                    f"{entry.name}: stream opened but produced no non-empty "
+                    f"{entry.text_column!r} rows -- wrong config or data_dir?"
+                )
             yield first
             yield from gen
             return
     yield from synthetic_corpus(entry, n_docs=n_docs)
 ```
 
-Because `stream_hf` is a generator, `load_dataset` does not actually fire until the first `next(gen)` — which is inside the `try`. That is why the guard catches a dead Hub at all, and why nothing after that first row is protected.
+Because `stream_hf` is a generator, `load_dataset` does not actually fire until the first `next(gen)` — which is inside the `try`. That is why the guard catches a dead Hub at all, and why nothing after that first row is protected. A stream that *opens* but yields nothing (an empty `data_dir`, or a column that is empty in every row) is not a network problem either, so it gets its own explicit error rather than a `StopIteration` leaking out of this generator body — which PEP 479 would surface as a baffling `RuntimeError: generator raised StopIteration`.
 
 ### The offline synthetic fallback
 
@@ -361,12 +381,20 @@ def passes_code_filter(text: str) -> bool:
     """Loose gate for StarCoder: reject empty/binary/minified-looking files
     (dominated by one repeated character); keep everything else, since code has
     a very different character distribution than prose and would be wrongly
-    rejected by `passes_web_filter`."""
+    rejected by `passes_web_filter`.
+
+    Whitespace is stripped BEFORE the dominance test. Indentation and spacing
+    make ' ' the most common character in essentially every real source file --
+    20-35% of its bytes -- so counting it would push ordinary, well-formatted
+    code over `max_char_frac` and reject exactly what this gate exists to keep.
+    """
     c = FILTER_CONFIG["code"]
     if not (c["min_chars"] <= len(text) <= c["max_chars"]):
         return False
-    head = text[:2000]
-    most_common_frac = max(head.count(ch) for ch in set(head)) / max(len(head), 1)
+    head = "".join(_WORD_RE.findall(text[:2000]))   # drop all whitespace
+    if not head:
+        return False                                # whitespace-only file
+    most_common_frac = max(head.count(ch) for ch in set(head)) / len(head)
     return most_common_frac <= c["max_char_frac"]
 
 
@@ -1334,7 +1362,7 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
 **Further reading**
 
 - Hoffmann et al., *Training Compute-Optimal Large Language Models* ("Chinchilla"), 2022 — the $D^\*\approx 20N$ result this chapter deliberately trains past.
-- Kaplan et al., *Scaling Laws for Neural Language Models*, 2020 — the appendix where the $6N + 12\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}}$ per-token FLOP accounting comes from.
+- Kaplan et al., *Scaling Laws for Neural Language Models*, 2020 — Table 1 (§2.1) is where the per-token FLOP accounting comes from: $C_{\text{forward}} = 2N + 2\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{attn}}$, i.e. the $6N + 6\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}}$ training convention used here. The un-halved $12\,L\,T\,d$ attention term is PaLM's / Chinchilla's Appendix F, not Kaplan's.
 - Penedo et al., *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale*, HuggingFace, 2024 — FineWeb and FineWeb-Edu, and the MinHash settings the production pipeline above reuses.
 - Ben Allal et al., *SmolLM2*, HuggingFace — the small-model, high-quality-mix recipe this capstone's data mix follows, and the origin of Cosmopedia v2 / `smollm-corpus`.
 - Li et al. and the BigCode community, *StarCoder: May the Source Be With You!*, 2023; and the StarCoder2 / The Stack v2 follow-up.
@@ -1350,7 +1378,7 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
 ??? note "Solution"
     (a) $D/N = 2\times10^{10} / 1.014\times10^{8} \approx 197.2 \approx 200$ tokens/param. Chinchilla-optimal is $D^\* \approx 20N = 2.028\times10^{9}$, so the ratio is $2\times10^{10}/2.028\times10^{9} \approx 9.86 \approx 10\times$.
 
-    (b) Naive: $6ND = 6 \times 1.014\times10^{8} \times 2\times10^{10} = 1.22\times10^{19}$ FLOPs. Attention adds $6\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}} = 6\times30\times2048\times512 = 1.887\times10^{8}$ FLOPs/token against $6N = 6.084\times10^{8}$ — a 31% surcharge. Total per token $\approx 7.97\times10^{8}$, so $C \approx 1.59\times10^{19}\approx 1.6\times10^{19}$ FLOPs. (Kaplan's non-causal convention doubles the attention term to $3.78\times10^{8}$, giving $\approx 2.0\times10^{19}$.)
+    (b) Naive: $6ND = 6 \times 1.014\times10^{8} \times 2\times10^{10} = 1.22\times10^{19}$ FLOPs. Attention adds $6\,n_{\text{layers}}\,n_{\text{ctx}}\,d_{\text{model}} = 6\times30\times2048\times512 = 1.887\times10^{8}$ FLOPs/token against $6N = 6.084\times10^{8}$ — a 31% surcharge. Total per token $\approx 7.97\times10^{8}$, so $C \approx 1.59\times10^{19}\approx 1.6\times10^{19}$ FLOPs. (PaLM's non-causal convention doubles the attention term to $3.78\times10^{8}$, giving $\approx 2.0\times10^{19}$.)
 
     (c) Achieved FLOP/s under $6ND$: $6.084\times10^{8}\times 2.27951\times10^{5} \approx 1.387\times10^{14}$, i.e. 138.7 TFLOP/s, or $138.7/312 \approx \mathbf{44.5\%}$ MFU against the A100's bf16 dense peak. With the attention term: $7.97\times10^{8}\times 2.27951\times10^{5}\approx 1.817\times10^{14}$, i.e. $181.7/312 \approx \mathbf{58.2\%}$. Wall-clock does not depend on the convention, because it comes from the rate: $2\times10^{10}/2.27951\times10^{5}\approx 8.77\times10^{4}$ s $\approx \mathbf{24.4}$ **A100-hours** — mid-band of PLAN's 22–29 hr envelope, and identical to $C/(0.582\times 3.12\times10^{14})$, which is the consistency check worth doing. The lesson: two people can quote 44.5% and 58.2% for the same loop; only the tokens/s number is convention-free.
 
@@ -1450,7 +1478,7 @@ assert int(batch["seq_ids"].max()) >= 0                    # at least one docume
     **Foundational work**
 
     - [Hoffmann et al., *Training Compute-Optimal Large Language Models* (2022)](https://arxiv.org/abs/2203.15556) — the Chinchilla scaling law this chapter deliberately trains past, and the reason "tokens per parameter" is the right unit to reason in.
-    - [Kaplan et al., *Scaling Laws for Neural Language Models* (2020)](https://arxiv.org/abs/2001.08361) — the source of the $6N$ + attention-term FLOP accounting corrected in Section 1.
+    - [Kaplan et al., *Scaling Laws for Neural Language Models* (2020)](https://arxiv.org/abs/2001.08361) — the source of the $6N$ + attention-term FLOP accounting Section 1 carries in full.
     - [Lee et al., *Deduplicating Training Data Makes Language Models Better* (2022)](https://arxiv.org/abs/2107.06499) — the empirical case for the two-stage exact + near dedup implemented here.
 
     **Recent advances (2023–2026)**

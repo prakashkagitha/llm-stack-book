@@ -10,7 +10,6 @@ extension is a no-op unless the shards contain genuinely long documents.
 `verify_positions` is the assertion that catches that before you burn 0.6B tokens.
 """
 import argparse
-from collections import defaultdict
 
 import numpy as np
 
@@ -33,20 +32,42 @@ def length_filtered(docs, tok, min_tokens: int = MIN_DOC_TOKENS):
             yield doc
 
 
-def repo_level_documents(files, sep: str = "\n\n# ==== file: {path} ====\n\n"):
+def repo_level_documents(files, sep: str = "\n\n# ==== file: {path} ====\n\n",
+                         max_repo_bytes: int = 8 << 20):
     """Concatenate a repository's files into ONE document (StarCoder2 / DeepSeek-Coder).
 
     `files` is a stream of dicts with `repo_name`, `path`, `content`. Sorting by
     path makes the concatenation deterministic.
+
+    STREAMING, deliberately. Draining the whole stream into a dict keyed by repo
+    would materialize the entire `python` split of starcoderdata (tens of GB of
+    `content` strings) in RAM before yielding a single document, so `build_shards`
+    would never start writing and the run would OOM. We buffer only the CURRENT
+    repo and flush on every repo change, with a hard byte cap. starcoderdata's
+    rows arrive grouped by repo, so this reproduces the full grouping; interleaved
+    rows would merely yield several shorter documents per repo -- less
+    long-context yield, never a correctness problem. For true out-of-core
+    grouping, sort by repo id on disk (or use `datatrove`).
     """
-    by_repo = defaultdict(list)
-    for f in files:
-        by_repo[f.get("repo_name", "unknown")].append(f)
-    for repo, fs in by_repo.items():
+    def _content(f):
+        return f.get("content", f.get("text", ""))
+
+    def _flush(repo, fs):
         fs.sort(key=lambda f: f.get("path", ""))
-        body = "".join(sep.format(path=f.get("path", "")) + f.get("content", f.get("text", ""))
-                       for f in fs)
-        yield {"text": body, "source": "starcoder_repo", "repo": repo}
+        body = "".join(sep.format(path=f.get("path", "")) + _content(f) for f in fs)
+        return {"text": body, "source": "starcoder_repo", "repo": repo}
+
+    buf, cur, nbytes = [], None, 0
+    for f in files:
+        repo = f.get("repo_name", "unknown")
+        if repo != cur or nbytes >= max_repo_bytes:
+            if buf:
+                yield _flush(cur, buf)
+            buf, cur, nbytes = [], repo, 0
+        buf.append(f)
+        nbytes += len(_content(f))
+    if buf:
+        yield _flush(cur, buf)
 
 
 # The sub-phase-B sources, as Ch. 14.2 `DataMixEntry` records -- FULL loading

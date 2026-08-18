@@ -22,8 +22,8 @@ from stacklm.mid.mixture import (build_mixture_loader, ANNEAL_MIX,
 # batch equals the nominal one at 2048 and at 8192 alike.
 GLOBAL_BATCH_TOKENS = 524_288
 MICRO_BATCH_TOKENS = 65_536      # 32 x 2048 at pretrain length; 8 x 8192 when long
-MUON_PEAK_LR = 6e-3              # Muon group's stable-phase peak (Ch. 14.6)
-ADAMW_PEAK_LR = 3e-3             # AdamW group's peak = muon_lr / 2 (Ch. 14.6)
+MUON_PEAK_LR = 0.02              # Muon group's stable-phase peak (Ch. 14.6)
+ADAMW_PEAK_LR = 3e-3             # AdamW group's peak ~= muon_lr / 6.7 (Ch. 14.6)
 
 # The three moves of mid-training, in order. Token budgets are illustrative
 # (~2B total = ~10% of the 20B pretrain budget); tune per Ch. 14.5.
@@ -43,9 +43,17 @@ def main(stable_ckpt: str, out_dir: str, device: str):
     step, extra = load_checkpoint(stable_ckpt, model, optimizers,
                                   map_location=device)
     # `extra` is the payload Ch. 14.7 stores alongside the tensors: tokens_seen,
-    # the PackedDataset cursor, and the training config. Trust it over this file.
-    muon_peak = extra.get("muon_lr", MUON_PEAK_LR)
-    adamw_peak = extra.get("adamw_lr", ADAMW_PEAK_LR)
+    # the PackedDataset cursor, and the training config. Trust it over this file
+    # -- but read the FIELD NAMES the writer actually used (TrainConfig's
+    # `muon_peak_lr` / `adamw_peak_lr`, nested under "config"), and warn loudly
+    # rather than silently substituting a constant typed in this script.
+    tcfg = extra.get("config") or extra.get("cfg") or {}
+    muon_peak = tcfg.get("muon_peak_lr", MUON_PEAK_LR)
+    adamw_peak = tcfg.get("adamw_peak_lr", ADAMW_PEAK_LR)
+    if "muon_peak_lr" not in tcfg:
+        print("WARNING: checkpoint stores no TrainConfig; falling back to this "
+              f"script's peaks ({MUON_PEAK_LR}, {ADAMW_PEAK_LR}) -- verify they "
+              "match the stable phase before you trust the decay.")
     print(f"resumed {stable_ckpt} @ global step {step} "
           f"({extra.get('tokens_seen', 0)/1e9:.1f}B tokens, LR still at peak); "
           f"peaks muon={muon_peak} adamw={adamw_peak}")

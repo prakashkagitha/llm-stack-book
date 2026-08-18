@@ -128,7 +128,7 @@ $$
 \eta^{\text{Muon}}_{\max} = \mathbf{0.02}, \qquad \eta^{\text{AdamW}}_{\max} = \mathbf{3\text{e-}3},
 $$
 
-a ratio of about **6.7:1**. Treat that ratio as **empirical, not derived** — it comes out of the sweep in the next section, and it is the pair Ch. 14.7's `TrainConfig` ships. Be careful here, because this is where people import the wrong number: **a Muon learning rate is only meaningful together with the update scale it multiplies.** The reference implementations do not all use Moonshot's $0.2\sqrt{\max(m,n)}$ — Keller Jordan's `Muon` (and the `modded-nanogpt` / `nanochat` line that follows it) uses an aspect-ratio factor instead, which leaves the update's per-element RMS near $1/\sqrt{\max(m,n)}$ rather than at $0.2$. The same numeric LR therefore means a very different step in the two conventions. Compare *per-element step sizes* ($\eta \times$ update RMS), never raw learning rates, when you carry a number across repos. The reason the embedding wants the smaller number is concrete: its gradient is row-sparse, so a rare token's row receives a full-magnitude Adam update from the handful of batches that contain it, and a smaller step is cheap insurance against those rows thrashing. The practical point is that you tune a *line* — one LR and a fixed ratio — not a plane.
+a ratio of about **6.7:1**. Treat that ratio as **empirical, not derived** — it comes out of the sweep in the next section, and it is the pair Ch. 14.7's `TrainConfig` ships. Be careful here, because this is where people import the wrong number: **a Muon learning rate is only meaningful together with the update scale it multiplies.** The reference implementations do not all use Moonshot's $0.2\sqrt{\max(m,n)}$ — Keller Jordan's `Muon` (and the `modded-nanogpt` / `nanochat` line that follows it) uses an aspect-ratio factor $\max(1,\,m/n)^{1/2}$ instead, which leaves the update's per-element RMS at $1/\sqrt{n}$ — the *fan-in*, i.e. $1/\sqrt{\min(m,n)}$ for a tall $(m>n)$ weight like `w_gate` and $1/\sqrt{\max(m,n)}$ for a wide one — rather than at a fixed $0.2$. The same numeric LR therefore means a very different step in the two conventions. Compare *per-element step sizes* ($\eta \times$ update RMS), never raw learning rates, when you carry a number across repos. The reason the embedding wants the smaller number is concrete: its gradient is row-sparse, so a rare token's row receives a full-magnitude Adam update from the handful of batches that contain it, and a smaller step is cheap insurance against those rows thrashing. The practical point is that you tune a *line* — one LR and a fixed ratio — not a plane.
 
 ```python
 # stacklm/optim/muon.py  (continued)
@@ -151,7 +151,12 @@ class Muon(Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None):
-        loss = closure() if closure is not None else None
+        # The closure re-runs forward + backward, so it needs grad ENABLED --
+        # this whole method is under no_grad. Same guard every in-tree optimizer uses.
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
         for group in self.param_groups:
             lr, mu = group["lr"], group["momentum"]
             nesterov, wd, ns = group["nesterov"], group["weight_decay"], group["ns_steps"]
@@ -285,7 +290,7 @@ The peak LR is the most consequential number in this chapter, and "0.02-ish, lik
     1. **Look at the pre-clip grad norm** (`clip_grad_norm_` returns it — log it). A multi-sigma jump *before* the loss moves is the real timestamp of the failure. This is your primary sensor, and the next section explains why it is not merely the *first* thing to check but very nearly the *only* gradient-side signal you have for the Muon group.
     2. **Lengthen warmup** before lowering the peak. `2,000 → 4,000` steps costs ~0.5B tokens and fixes a large fraction of early-run divergence.
     3. **Halve the peak LR** (`0.02 → 0.01`, and AdamW `3e-3 → 1.5e-3` — keep the ratio). Re-run 500 steps and compare.
-    4. **Lower `qk_clip_tau` to 30 and check the trigger log** (next section). If it fires constantly, the instability is attention-logit growth and the LR is the cause, not the cure.
+    4. **Lower `qk_clip_tau`** (Ch. 14.7 ships 30; try 20) **and check the trigger log** (next section). If it fires constantly, the instability is attention-logit growth and the LR is the cause, not the cure.
     5. **Safe fallback: drop Muon entirely.** Route everything to AdamW at `peak_lr = 6e-4` — the nanoGPT-124M-calibrated value, a known-good setting for a model of this size. You lose some convergence speed and you will finish the run.
 
 ## Attention-Logit Stability: QK-Norm, QK-Clip, and Soft-Caps
@@ -386,7 +391,7 @@ The capstone therefore offers **three tiers**, and defaults to the cheap one:
 | 1 — **default** | $\max_i\lVert q_i\rVert \cdot \max_j\lVert k_j\rVert / \sqrt{d_h}$ | $O(BHTd_h)$, no $T^2$ tensor | yes |
 | 2 — exact | $\max_{ij} s_{ij}$ over the causal mask | $O(BHT^2)$, 4.3 GB/layer | **no** (SDPA still runs; the score tensor is built beside it) |
 
-Tiers 0 and 1 are Cauchy–Schwarz *upper* bounds, so they fire the clip slightly early — a conservative error, which is what you want in a safety net. Tier 1 is tight in practice because attention keys and queries are not adversarially aligned. Here is the real plumbing in `stacklm/model/attention.py`:
+Tiers 0 and 1 are Cauchy–Schwarz *upper* bounds, so they fire the clip slightly early — a conservative error, which is what you want in a safety net. How loose Tier 1 is depends entirely on the cosine between the largest-norm query and the largest-norm key: Cauchy–Schwarz is *tight* exactly when that pair is aligned, and loose when it is not (near-orthogonal vectors in $d_h = 64$ would overstate the true max by close to $\sqrt{d_h}$). In a trained model the top-scoring pair is substantially aligned, so the overshoot is a small constant factor rather than an order of magnitude — but budget for it when you pick $\tau$, because the clip will fire early. Here is the real plumbing in `stacklm/model/attention.py`:
 
 ```python
 # stacklm/model/attention.py  (inside Attention.forward, after QK-norm + RoPE,
@@ -478,9 +483,9 @@ def _clip_qk_norm_gains_(attn, s_max, tau: float) -> int:
     return 1
 ```
 
-**Choosing $\tau$ — and why the shipped default is 100.** Ch. 14.7's `TrainConfig` ships `qk_clip_tau = 100.0`, Kimi's number, and that is a deliberate, defensible choice with a caveat you must understand. Under QK-norm the logits start bounded by 8, so reaching 100 requires $\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty > 12.5$ — a state so pathological the run is already lost. In other words, **at $\tau = 100$ with `qk_norm = True` the clip is an inert backstop**: it costs nothing, it will essentially never fire, and it is exactly the right value the moment you flip `qk_norm = False` (the Ch. 14.4 ablation), where there is no a-priori bound at all. That is why it is the config default: it is correct across both configurations.
+**Choosing $\tau$ — and why the library default is 100.** `qk_clip_`'s own signature defaults to `tau = 100.0`, Kimi's number, and that is a deliberate, defensible choice with a caveat you must understand. Under QK-norm the logits start bounded by 8, so reaching 100 requires $\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty > 12.5$ — a state so pathological the run is already lost. In other words, **at $\tau = 100$ with `qk_norm = True` the clip is an inert backstop**: it costs nothing, it will essentially never fire, and it is exactly the right value the moment you flip `qk_norm = False` (the Ch. 14.4 ablation), where there is no a-priori bound at all. That is why it is the *function's* default: it is safe across both configurations.
 
-If you want the clip to do the *other* job — be an early-warning **sensor** rather than a last rite — pin $\tau$ to your architecture's natural scale and set `qk_clip_tau = 30`, roughly $4\times$ the initialization bound of 8. That is comfortably above normal gain drift, far below the softmax-saturation regime, and low enough that a rising trigger count tells you the LR is too high days before the loss does. The capstone's recommendation is: **ship 100, and switch to 30 the moment you are debugging.** Exercises 4 and 7 work both settings.
+If you want the clip to do the *other* job — be an early-warning **sensor** rather than a last rite — pin $\tau$ to your architecture's natural scale and set `qk_clip_tau = 30`, roughly $4\times$ the initialization bound of 8. That is comfortably above normal gain drift, far below the softmax-saturation regime, and low enough that a rising trigger count tells you the LR is too high days before the loss does. That is the job worth having here, so **Ch. 14.7's `TrainConfig` ships `qk_clip_tau = 30.0`** — precisely because `qk_norm = True` makes 100 inert — and you go back to the library's 100 the moment you turn QK-norm off. Exercises 4 and 7 work both settings.
 
 ### If you drop QK-norm: Kimi K2's per-head, GQA-aware clip
 
@@ -523,7 +528,7 @@ def _clip_projections_(attn, s_max, tau: float) -> int:
     return int(fired)
 ```
 
-The head that *set* the group maximum lands exactly at $\tau$; the other three query heads in its group get their shared key scaled by the same amount and so are pulled slightly further below $\tau$ — a conservative, safe outcome. Exercise 4 walks the arithmetic. In this configuration the shipped $\tau = 100$ is a genuine, load-bearing safety net.
+The head that *set* the group maximum lands exactly at $\tau$; the other three query heads in its group get their shared key scaled by the same amount and so are pulled slightly further below $\tau$ — a conservative, safe outcome. Exercise 4 walks the arithmetic. In this configuration the library default $\tau = 100$ is a genuine, load-bearing safety net.
 
 !!! warning "Common pitfall: attribute names must match across chapters"
     `qk_clip_` reaches *into* the attention module, so it is coupled to that module's attribute names. The canonical names — the ones `capstone/stacklm/model/attention.py` defines and this chapter uses — are **`n_heads`, `n_kv_heads`, `head_dim`, `groups`, `wq`, `wk`, `q_norm`, `k_norm`**. If you transcribe an `Attention` class that abbreviates them (`d_h`, `n_kv`), the clip dies with an `AttributeError` on its first firing — which, since it fires rarely, may be thousands of steps into the run. Either keep the canonical names or add a two-line adapter. A `getattr(attn, "head_dim", None) or attn.d_h` in library code is a smell; fixing the model class is the right move.
@@ -577,8 +582,10 @@ def wsd_lr(step: int, *, peak_lr: float, warmup_steps: int, total_steps: int,
     - 1 - sqrt() decay over the final phase, down to `final_frac * peak_lr`
       (we use 0.0, i.e. anneal fully to ~0).
 
-    Give EITHER `decay_steps` (absolute) or `decay_frac` (a fraction of
-    total_steps -- what Ch. 14.7's TrainConfig passes, 0.10). `decay_steps` wins.
+    Give EITHER `decay_steps` (absolute -- what Ch. 14.7's TrainConfig passes,
+    3_815) or `decay_frac` (a fraction of total_steps). `decay_steps` wins.
+    Note the truncation: int(0.10 * 38_147) = 3_814, one short of the frozen
+    3_815, which is why the flagship pins the decay leg absolutely.
 
     Call it with peak_lr=1.0 to get a pure MULTIPLIER, which is how the training
     loop drives Muon's 0.02 and AdamW's 3e-3 off one shared curve.
@@ -672,7 +679,7 @@ QK_CLIP_EVERY  = 200      # Tier-2 gating; with Tier-1 harvesting, clip every st
 def optimizer_step(model, batches, muon, adamw, peaks, step, cfg):
     # ONE curve, TWO peaks: peak_lr=1.0 turns wsd_lr into a pure multiplier.
     mult = wsd_lr(step, peak_lr=1.0, warmup_steps=cfg.warmup_steps,
-                  total_steps=cfg.total_steps, decay_frac=cfg.decay_frac)
+                  total_steps=cfg.total_steps, decay_steps=cfg.decay_steps)
     for opt in (muon, adamw):
         for g in opt.param_groups:
             g["lr"] = peaks[id(opt)] * mult      # 0.02 * mult / 3e-3 * mult
@@ -745,7 +752,7 @@ $$
 | `warmup_steps` | 2,000 | ≈1.05B tokens, 5.2% of the run |
 | `decay_frac` | 0.10 | ≈3,815 steps ≈ 2.0B tokens = the mid-training window |
 | Warmup / stable / decay | 2,000 / 32,332 / 3,815 | Ch. 14.7 stops at 34,332 and hands over a pre-decay checkpoint |
-| `qk_clip_tau` | **100** shipped; **30** to debug | 100 is inert under QK-norm and correct without it; 30 (≈4× the $\sqrt{d_h}=8$ bound) makes the clip a sensor |
+| `qk_clip_tau` | **30** in Ch. 14.7's `TrainConfig`; **100** is `qk_clip_`'s own default | 100 is inert under QK-norm and correct without it; 30 (≈4× the $\sqrt{d_h}=8$ bound) makes the clip a sensor |
 | `qk_clip_every` | 1 (Tier 1) / 200 (Tier 2) | logit drift is slow; exact measurement is not free |
 
 ## Worked Example: Step Budget, Overhead, and a Newton–Schulz Trace
@@ -760,7 +767,7 @@ $$
 
     **Phase split.** $T_w = 2{,}000$ (warmup, $1.05$B tokens, 5.2% of the run); decay $= 0.10 \times 38{,}147 \approx 3{,}815$ steps ($2.00$B tokens); stable $= 38{,}147 - 2{,}000 - 3{,}815 = 32{,}332$ steps ($16.95$B tokens on the bulk mix). The **3,815-step decay phase is the mid-training window** where we anneal on premium data ([Chapter 14.8](../14-capstone/08-mid-training.html)) — which is why Ch. 14.7 runs only to step 34,332.
 
-    **LR trace.** At step 1,000 (mid-warmup) the multiplier is $1000/2000 = 0.5$: Muon $1.0\text{e-}2$, AdamW $1.5\text{e-}3$. Through the stable phase, multiplier 1: $2.0\text{e-}2$ and $3.0\text{e-}3$. Halfway through decay ($\text{progress}=0.5$): $1-\sqrt{0.5}=0.293$, so $2.0\text{e-}2\times0.293 \approx 5.9\text{e-}3$ and $8.8\text{e-}4$. At progress $0.9$: $1-\sqrt{0.9}=0.051$, giving $1.0\text{e-}3$ and $1.5\text{e-}4$. The LR falls off fast early in decay — matching the "sharp loss drop" WSD is known for. **Both groups ride the same multiplier; only the peaks differ.**
+    **LR trace.** At step 999 (mid-warmup) the multiplier is $(999+1)/2{,}000 = 0.5$ — the shipped warmup is $(\text{step}+1)/T_w$, so step 0 is not a dead zero-LR step and step 1,999 reaches the peak: Muon $1.0\text{e-}2$, AdamW $1.5\text{e-}3$. Through the stable phase, multiplier 1: $2.0\text{e-}2$ and $3.0\text{e-}3$. Halfway through decay ($\text{progress}=0.5$): $1-\sqrt{0.5}=0.293$, so $2.0\text{e-}2\times0.293 \approx 5.9\text{e-}3$ and $8.8\text{e-}4$. At progress $0.9$: $1-\sqrt{0.9}=0.051$, giving $1.0\text{e-}3$ and $1.5\text{e-}4$. The LR falls off fast early in decay — matching the "sharp loss drop" WSD is known for. **Both groups ride the same multiplier; only the peaks differ.**
 
     **Newton–Schulz FLOPs, exactly.** For $X$ of shape $(r, c)$ with $r=\min(m,n)$, one iteration costs $2r^2c$ (for $XX^\top$) $+\;2r^3$ (for $A^2$) $+\;2r^2c$ (for $PX$). Over 5 iterations:
 
@@ -790,7 +797,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
 - **Pure Muon (no AdamW).** Breaks on the embedding: orthogonalizing a `32768 × 512` matrix with sparse per-row gradients is both wrong and slow, and 1D norms cannot be orthogonalized at all. The hybrid is not optional.
 - **Shampoo / full-matrix preconditioning.** Strictly more expressive than Muon and strictly more expensive: you must form and invert (or root) the preconditioner, and keep its state. Muon is the "just the orthogonal factor, via matmuls only" corner of that design space, and at 100M the extra expressiveness does not pay for its wall-clock.
 - **Cosine instead of WSD.** Works, but forces you to commit to a step count and gives no clean data-annealing hook. Since the capstone's entire mid-training story ([Chapter 14.8](../14-capstone/08-mid-training.html)) rides on the decay phase, WSD is the natural fit. A useful mental model: **WSD is cosine with the middle stretched into a flat plateau you can extend at will.**
-- **No QK-clip.** Defensible here, and worth saying out loud: with QK-norm on, the logits are bounded a priori by $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$, so the run is already structurally safe — which is precisely why the shipped $\tau = 100$ never fires. We keep the clip because at $\tau = 30$ its trigger log is a *free instability sensor*. Without QK-norm, it is not optional; it is the thing standing between you and a NaN at hour 14.
+- **No QK-clip.** Defensible here, and worth saying out loud: with QK-norm on, the logits are bounded a priori by $\sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$, so the run is already structurally safe — which is precisely why the library default $\tau = 100$ would never fire. We keep the clip, at Ch. 14.7's $\tau = 30$, because its trigger log is then a *free instability sensor*. Without QK-norm, it is not optional; it is the thing standing between you and a NaN at hour 14.
 - **Scaling out.** If you move past one GPU, note that Muon's orthogonalization needs the **whole** matrix, which fights naive optimizer-state sharding. Moonshot's Moonlight release shows the fix: a ZeRO-1-style distributed Muon that gathers each matrix, orthogonalizes, and re-shards ([Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html)). At 100M you will never need it — but it is the reason "just wrap it in FSDP" is not a complete answer.
 
 !!! interview "Interview Corner"
@@ -809,7 +816,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
     - **FLOP overhead ≠ wall-clock overhead.** Newton–Schulz is 0.33% of the step's FLOPs but ~4,200 kernel launches; `torch.compile` it or use `batched_muon=True` to bucket the three shape classes into `bmm`s (~60 launches), then *measure* `optimizer.step()`.
     - **Global grad-clip cannot brake the Muon group** — Newton–Schulz normalizes by $\lVert X\rVert_F$ and RMS matching pins the step at $0.2\,\eta$, so a clip only re-weights the clipped gradient against the (unclipped) momentum history; it never shortens the step. Clip anyway (it keeps a spike out of AdamW's moment estimates), but treat the *pre-clip norm it returns* as your sensor, not the clip as your defense.
     - **Under QK-norm, rescaling $W_Q$/$W_K$ is a no-op** — RMSNorm is scale-invariant. The logit obeys $|s| \le \sqrt{d_h}\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty$ (= 8 at init for `Stack-100M`), so the **QK-clip scales the learned gains** by $\sqrt{\tau/S_{\max}}$. Kimi K2's per-head, GQA-aware $W_Q/W_K$ clip is the *alternative* you use when QK-norm is off.
-    - **Measuring $S_{\max}$ costs real money**: the exact max materializes a $(B,H,T,T)$ tensor beside the fused kernel (~4.3 GB/layer at micro-batch 32), forfeiting FlashAttention's memory win and paying a second $QK^\top$. Default to the Cauchy–Schwarz bound (SDPA-safe, cheap enough to run every step); gate exact readings behind `qk_clip_every = 200`. $\tau = 100$ ships and is *inert* under QK-norm; use $\tau = 30$ when you want a sensor.
+    - **Measuring $S_{\max}$ costs real money**: the exact max materializes a $(B,H,T,T)$ tensor beside the fused kernel (~4.3 GB/layer at micro-batch 32), forfeiting FlashAttention's memory win and paying a second $QK^\top$. Default to the Cauchy–Schwarz bound (SDPA-safe, cheap enough to run every step); gate exact readings behind `qk_clip_every = 200`. $\tau = 100$ is the library default (Kimi's number) and is *inert* under QK-norm, which is why Ch. 14.7 ships $\tau = 30$ and gets a sensor instead.
     - **WSD (Warmup–Stable–Decay)** replaces cosine: linear warmup, a long **constant-LR stable phase you can extend at will**, then a $1-\sqrt{}$ **decay to ~0** — and clamp `progress` to 1.0 or you will return a negative LR past the horizon.
     - The **decay phase is the mid-training annealing phase** ([Chapter 14.8](../14-capstone/08-mid-training.html)): low LR + higher-quality data yields a sharp loss drop for little compute — a hook cosine can't cleanly provide. Ch. 14.7 therefore stops *before* decay and hands over a pre-decay checkpoint.
     - Frozen `Stack-100M` numbers: **524,288-token batch** (32 × 2048 × 8), **38,147 steps**, **2,000 warmup / 32,332 stable / 3,815 decay** (`decay_frac = 0.10`), weight decay 0.1 (0.0 on 1D), global grad-clip 1.0, betas (0.9, 0.95), bf16 with no loss scaler.
@@ -891,7 +898,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     **(d)** At `stop_at_step` $= 57{,}221 - 5{,}722 = 51{,}499$ — the last step of the stable phase, LR still at plateau, so mid-training can start the anneal without an LR re-warm.
 
-**4.** *(The no-QK-norm configuration.)* You set `qk_norm = False` to reproduce Kimi K2's setup, so `qk_clip_` takes the `_clip_projections_` path, and you keep the shipped $\tau = 100$ (which is now load-bearing, since there is no a-priori bound). A block has `n_heads = 8` query heads and `n_kv_heads = 2` (GQA group size 4). The per-head max pre-softmax logits recorded this step are
+**4.** *(The no-QK-norm configuration.)* You set `qk_norm = False` to reproduce Kimi K2's setup, so `qk_clip_` takes the `_clip_projections_` path, and you go back to the library default $\tau = 100$ (which is now load-bearing, since there is no a-priori bound). A block has `n_heads = 8` query heads and `n_kv_heads = 2` (GQA group size 4). The per-head max pre-softmax logits recorded this step are
 
     s_max = [120, 90, 100, 80, 150, 60, 70, 200]   # heads 0..7
 
@@ -999,7 +1006,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     The last line is the licence to turn on `batched_muon=True`: $4\times10^{-7}$ absolute is `bmm`-vs-`mm` reduction-order noise, four orders of magnitude below the orthogonality slack we already accept.
 
-**7.** *(The invariance, from scratch.)* Prove that with QK-norm enabled, replacing $W_Q \leftarrow \eta W_Q$ leaves every attention logit unchanged (ignore $\epsilon$), and that replacing $\gamma_q \leftarrow \eta\gamma_q$ multiplies every logit by exactly $\eta$. Then: `Stack-100M` has $d_h = 64$ and shares one gain vector per layer across all 8 query heads. (a) State the a-priori bound on $|s_{ij}|$ at initialization. (b) You are debugging, so you set `qk_clip_tau = 30`. A layer's worst head reports $S_{\max} = 45$. What factor does `_clip_qk_norm_gains_` apply to $\gamma_q$ and to $\gamma_k$, and what happens to a head in the same layer that was sitting at $S_{\max} = 12$? (c) Why is that acceptable, and what one-line architecture change would make the clip per-head instead?
+**7.** *(The invariance, from scratch.)* Prove that with QK-norm enabled, replacing $W_Q \leftarrow \eta W_Q$ leaves every attention logit unchanged (ignore $\epsilon$), and that replacing $\gamma_q \leftarrow \eta\gamma_q$ multiplies every logit by exactly $\eta$. Then: `Stack-100M` has $d_h = 64$ and shares one gain vector per layer across all 8 query heads. (a) State the a-priori bound on $|s_{ij}|$ at initialization. (b) You are running Ch. 14.7's shipped `qk_clip_tau = 30`. A layer's worst head reports $S_{\max} = 45$. What factor does `_clip_qk_norm_gains_` apply to $\gamma_q$ and to $\gamma_k$, and what happens to a head in the same layer that was sitting at $S_{\max} = 12$? (c) Why is that acceptable, and what one-line architecture change would make the clip per-head instead?
 
 ??? note "Solution"
     **Proof.** With $z = W_Q x$, the query is $q = \gamma_q \odot z/\operatorname{rms}(z)$ where $\operatorname{rms}(z) = \sqrt{\frac{1}{d_h}\sum_i z_i^2}$. Replace $W_Q$ by $\eta W_Q$: then $z \mapsto \eta z$ and $\operatorname{rms}(z) \mapsto \eta\operatorname{rms}(z)$, so the ratio $z/\operatorname{rms}(z)$ is unchanged and $q \mapsto q$. RoPE is applied afterwards and is a rotation, hence linear and norm-preserving, so it cannot reintroduce the scale. Therefore $s_{ij} = q_i^\top k_j/\sqrt{d_h}$ is unchanged — **the projection rescale is a no-op**. By contrast $\gamma_q \mapsto \eta\gamma_q$ gives $q \mapsto \eta q$ directly (the gain multiplies *after* normalization), so $s_{ij} \mapsto \eta s_{ij}$ exactly. Scaling both gains by $\sqrt{\tau/S}$ therefore multiplies every logit by exactly $\tau/S$.
@@ -1008,7 +1015,7 @@ It is worth stating plainly why each alternative was rejected, because an interv
     $$
     |s_{ij}| \le \frac{\lVert q\rVert\lVert k\rVert}{\sqrt{d_h}} \le \sqrt{d_h}\,\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty .
     $$
-    At initialization $\gamma = \mathbf{1}$, so the bound is $\sqrt{64} = \mathbf{8}$. (This is also why the shipped $\tau = 100$ is inert: it would take $\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty > 12.5$ to reach it.)
+    At initialization $\gamma = \mathbf{1}$, so the bound is $\sqrt{64} = \mathbf{8}$. (This is also why the library default $\tau = 100$ is inert under QK-norm: it would take $\lVert\gamma_q\rVert_\infty\lVert\gamma_k\rVert_\infty > 12.5$ to reach it.)
 
     **(b)** $\eta = \sqrt{\tau/S_{\max}} = \sqrt{30/45} = \sqrt{2/3} \approx 0.8165$, applied to **both** $\gamma_q$ and $\gamma_k$. The worst head's logit becomes $45 \times 0.8165^2 = 45 \times 2/3 = 30 = \tau$ exactly. The quiet head at 12 shares the same layer-wide gains, so it drops to $12 \times 2/3 = 8$ — well below the cap, through no fault of its own.
 
@@ -1051,4 +1058,4 @@ It is worth stating plainly why each alternative was rejected, because an interv
 
     **(b)** Adam is scale-invariant in the *steady state* (a persistent rescale of $g$ cancels between $m$ and $\sqrt{v}$), and — this is the part people get backwards — it damps a *single-step* spike too, because the numerator is the first moment $m$, not the raw gradient. From a steady state $m \approx 1$, $v \approx 1$, one step with $|g| = 10$ gives $m = 0.9(1) + 0.1(10) = 1.9$ and $v = 0.95(1) + 0.05(100) = 5.95$, so $\sqrt{v} \approx 2.44$ and the update on that step is $1.9/2.44 \approx 0.78$ — slightly *smaller* than a normal step, not $10\times$ larger. The damage is delayed rather than immediate: $v$ stays inflated for $\sim 1/(1-\beta_2) = 20$ steps, so the following ~20 updates to the tied embedding and the 1D gains are *starved* relative to what an unspiked $v$ would have given, and the spike's direction sits in $m$ for $\sim 1/(1-\beta_1) = 10$ steps. (Even a spike sustained for many steps only ever pushes $m/\sqrt{v}$ to about $1.1$ before it settles back to 1 — Adam simply never turns a $10\times$ gradient into a $10\times$ step.) So the clip does genuinely protect the AdamW group — by keeping the bad batch out of both moments — but it buys much less than the "$10\times$ gradient ⇒ $10\times$ step" intuition suggests, and it is aimed at the wrong 16% of the parameters.
 
-    **(c)** Three things, in order. (i) **Log the pre-clip norm** — `clip_grad_norm_` returns it — and find the step where it jumps, which will predate the loss spike. (ii) **Add the non-finite skip guard** (Ch. 14.7): if `torch.isfinite(grad_norm)` is false, discard the step entirely rather than writing NaN into the parameters *and* into all 210 Muon momentum buffers, which is unrecoverable. (iii) **Set `qk_clip_tau = 30`** and watch the trigger count: if the spike is attention-logit growth, that log will have been rising for hundreds of steps. If it has, the fix is a lower Muon peak or a longer warmup, not a tighter clip.
+    **(c)** Three things, in order. (i) **Log the pre-clip norm** — `clip_grad_norm_` returns it — and find the step where it jumps, which will predate the loss spike. (ii) **Add the non-finite skip guard** (Ch. 14.7): if `torch.isfinite(grad_norm)` is false, discard the step entirely rather than writing NaN into the parameters *and* into all 210 Muon momentum buffers, which is unrecoverable. (iii) **Watch the QK-clip trigger count** at the shipped `qk_clip_tau = 30`: if the spike is attention-logit growth, that log will have been rising for hundreds of steps. If it has, the fix is a lower Muon peak or a longer warmup, not a tighter clip.

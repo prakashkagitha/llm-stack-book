@@ -19,13 +19,15 @@ from typing import Iterator
 
 from stacklm.tokenizer.bpe import StackTokenizer, VOCAB_SIZE, SPECIAL_TOKENS
 
-CHUNK = 8 << 20     # read 8 MiB at a time; never f.read() a whole shard
+CHUNK = 8 << 20     # read 8Mi CHARACTERS at a time (the file is opened in text
+                    # mode, so this is <= 32 MiB); never f.read() a whole shard
 
 
 def stream_sample(paths_glob: str, max_bytes: int = 500_000_000) -> Iterator[str]:
-    """Yield bounded text chunks from raw-text shards, stopping at EXACTLY the
-    byte budget (mid-file if necessary) rather than after whichever file
-    happened to cross it."""
+    """Yield bounded text chunks from raw-text shards, stopping at NO MORE than
+    the byte budget (mid-file if necessary) rather than after whichever file
+    happened to cross it. The final chunk is trimmed back to a word boundary, so
+    the total actually emitted is a few bytes under `max_bytes`, never over."""
     total = 0
     for path in sorted(glob.glob(paths_glob)):
         with open(path, "r", encoding="utf-8") as f:

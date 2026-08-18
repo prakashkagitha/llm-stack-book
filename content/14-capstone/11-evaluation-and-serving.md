@@ -97,7 +97,7 @@ def generate_fn(model, tokenizer, prompt, max_new_tokens=64, temperature=0.0, **
 
 !!! tip "Practitioner tip: the KV cache is not a rounding error at 100M"
 
-    `KVCache(cfg, batch_size=1, max_seq=2048, device="cpu", dtype=torch.bfloat16).nbytes()` returns **31,457,280** bytes — 30 MiB, or ≈31.5 MB. Hold that next to the ≈63 MB int4 weight budget we will fight for in §7: at the pretrain context the cache is *half the model*. Small models are relatively *more* KV-bound than large ones, because the cache scales with layers × context while the weights scale with layers × width². Keep the cache in **bf16** — and check that you actually did. `KVCache`'s *class* default is `dtype=torch.bfloat16`, but Ch. 14.4's `generate()` allocates it as `KVCache(self.cfg, B, total, p.device, p.dtype)` with `p = next(self.parameters())`, i.e. it follows the model's parameter dtype. On this chapter's fp32 CPU path that silently gives you an **fp32** cache at 30,720 B/token, so `generate()` needs an explicit `dtype=torch.bfloat16` to hit the number above. Keys and values are activations, re-read once per step and never accumulated, so fp32 doubles the cost for no benefit. Exercise 7 works out where the cache overtakes the weights. Everything past that — fp8/int8 KV quantization, paged blocks, prefix reuse — is a serving-systems problem and lives in [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html) and [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html).
+    `KVCache(cfg, batch_size=1, max_seq=2048, device="cpu", dtype=torch.bfloat16).nbytes()` returns **31,457,280** bytes — 30 MiB, or ≈31.5 MB. Hold that next to the ≈63 MB int4 weight budget we will fight for in §7: at the pretrain context the cache is *half the model*. Small models are relatively *more* KV-bound than large ones, because the cache scales with layers × context while the weights scale with layers × width². Keep the cache in **bf16** — and check that you actually did. `KVCache`'s *class* default is `dtype=torch.bfloat16`, but Ch. 14.4's `generate()` allocates it as `KVCache(self.cfg, B, total, p.device, p.dtype)` with `p = next(self.parameters())`, i.e. it follows the model's parameter dtype. On this chapter's fp32 CPU path that silently gives you an **fp32** cache at 30,720 B/token. There is no dtype knob on `generate()` to fix that from the outside — its signature is `(idx, max_new_tokens, temperature, top_p, top_k, eos_id, use_cache)` — so hitting the number above means a one-line producer-side change: give `generate()` a `kv_dtype=torch.bfloat16` argument and forward it, or hardcode `dtype=torch.bfloat16` in that `KVCache(...)` call. Keys and values are activations, re-read once per step and never accumulated, so fp32 doubles the cost for no benefit. Exercise 7 works out where the cache overtakes the weights. Everything past that — fp8/int8 KV quantization, paged blocks, prefix reuse — is a serving-systems problem and lives in [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html) and [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html).
 
 {{tool:kv-cache-budgeter}}
 
@@ -311,7 +311,7 @@ ARITH_PROBES = [
 
 ### 4.2 A tiny multiple-choice set, scored the way real harnesses do
 
-We score multiple-choice not by asking the model to output the letter "A"/"B"/"C"/"D" — a 100M model's instruction-following is too weak to reliably format that — but by **cloze scoring**: computing the model's total log-probability of each full answer string appended to the question, and picking the highest. This is the technique EleutherAI's `lm-evaluation-harness` (Gao et al., *A Framework for Few-Shot Language Model Evaluation*) uses for MMLU-style tasks (Hendrycks et al., *Measuring Massive Multitask Language Understanding*, 2021), and it sidesteps formatting fragility that would otherwise dominate the result at this scale.
+We score multiple-choice not by asking the model to output the letter "A"/"B"/"C"/"D" — a 100M model's instruction-following is too weak to reliably format that — but by **cloze scoring**: computing the model's total log-probability of each full answer string appended to the question, and picking the highest. This is the technique EleutherAI's `lm-evaluation-harness` (Gao et al., *A Framework for Few-Shot Language Model Evaluation*) uses for its full-continuation multiple-choice tasks — ARC-Easy/Challenge, HellaSwag, PIQA, OpenBookQA — and it sidesteps formatting fragility that would otherwise dominate the result at this scale. Not every harness task scores the full answer string: its MMLU implementation (Hendrycks et al., *Measuring Massive Multitask Language Understanding*, 2021) renders all four options into the prompt and sets `doc_to_choice: ["A", "B", "C", "D"]`, so it scores single-*letter* continuations by log-likelihood — still not free-form generation, but a different cloze target. We score full answer strings because a 100M model has no reliable grip on the convention that the letter "C" names the third option.
 
 ```python
 import torch.nn.functional as F
@@ -378,8 +378,11 @@ def eval_mc_probe(model, tokenizer, mc_set: list[dict] = TINY_MC_SET,
                  removing the length bias that otherwise favours whichever option
                  tokenizes shortest. Note the deliberate deviation:
                  `lm-evaluation-harness` normalizes its `acc_norm` by the
-                 continuation's CHARACTER length (`float(len(choice))`) and
-                 reports the byte-normalized variant separately as `acc_bytes`.
+                 continuation's CHARACTER length (`float(len(choice))`) and has
+                 no byte-normalized accuracy metric at all — its multiple-choice
+                 set is `acc`/`acc_norm`/`acc_mutual_info`, and byte
+                 normalization appears only in its perplexity family
+                 (`bits_per_byte`, `byte_perplexity`).
                  We use bytes because they are the tokenizer-independent unit
                  (§3's bits-per-byte argument); the two coincide on ASCII.
     If they disagree, your choices are length-imbalanced and the raw number is
@@ -691,8 +694,12 @@ The scale vector $s$ is found by a small grid search over a single exponent $\al
 ```python
 def _fake_quant_grouped(W: torch.Tensor, bits: int = 4, group_size: int = 64):
     """Symmetric per-group RTN, dequantized straight back to fp32 ('fake quant').
-    Same grid the reference path in Section 7 ships, so the search optimizes the
-    quantizer we actually use rather than a different, coarser one."""
+    Note the grid: SYMMETRIC, codes in [-7, 7] (15 levels centred on 0), which is
+    NOT the per-group ASYMMETRIC int4 the reference path in Section 7 ships
+    (codes in [0, 15], 16 levels spanning [min(w), max(w)]). The search therefore
+    optimizes a close proxy for the served quantizer, not the served quantizer
+    itself; Exercise 6 builds the symmetric int4 path that would make the two
+    coincide exactly."""
     d_out, d_in = W.shape
     g = W.view(d_out, d_in // group_size, group_size)
     qmax = 2 ** (bits - 1) - 1
@@ -1144,7 +1151,7 @@ if __name__ == "__main__":
 
     Reproduce the two counts yourself. **int8 row scales**: one per output row, so $30 \times (512 + 128 + 128 + 512)$ attention rows $+\ 30 \times (1408 + 1408 + 512)$ MLP rows $+\ 32768$ head rows $= 38{,}400 + 99{,}840 + 32{,}768 = 171{,}008$. **int4 groups**: $101{,}318{,}656 \div 64 = 1{,}583{,}104$ exactly, each storing one fp32 scale **and** one fp32 zero-point (8 B) — $\approx 12.66$ MB, a full **20% of the int4 total**. That overhead is why quoting "int4 = 8× smaller" is a lie you should never repeat; the honest number is 6.4×.
 
-    Production formats attack precisely that 20%. Storing the scale at fp16 and the zero-point at int8 costs ≈5 B/group ≈ 7.9 MB, dropping int4 to ≈58.6 MB (6.9×). GGUF's `Q4_K` goes further: it packs 256 weights into a *super-block* of eight 32-weight sub-blocks, storing 6-bit sub-scales plus a single fp16 super-scale — roughly 4.5 bits/weight all in. The headline: **the whole model, quantized, is smaller than a folder of phone photos**, and sits comfortably in RAM alongside a browser and an IDE.
+    Production formats attack precisely that 20%. Storing the scale at fp16 (2 B) and the zero-point at int8 (1 B) costs 3 B/group ≈ 4.75 MB, dropping int4 to ≈55.4 MB (7.3×) — equivalently $4 + 24/64 = 4.375$ bits/weight. GGUF's `Q4_K` spends a comparable budget on *finer granularity* rather than a smaller footprint: it packs 256 weights into a *super-block* of eight 32-weight sub-blocks, storing eight 6-bit sub-scales **and** eight 6-bit sub-mins (96 bits = 12 B together) alongside an fp16 super-scale and an fp16 super-min — $4 + 12 + 128 = 144$ B per 256 weights, exactly 4.5 bits/weight, but with a scale every 32 weights instead of our every 64. The headline: **the whole model, quantized, is smaller than a folder of phone photos**, and sits comfortably in RAM alongside a browser and an IDE.
 
 {{fig:quant-memory-ladder-and-packing}}
 
@@ -1315,7 +1322,7 @@ if __name__ == "__main__":
     Every piece measured or computed above, for a generation call with a 2048-token context at int4:
 
     - **Quantized weights**: ≈63.3 MB (§7 table — 50.66 MB packed int4 + 12.66 MB fp32 scales/zero-points), plus 0.14 MB of fp32 RMSNorm scales.
-    - **KV cache** (Ch. 14.4's `KVCache`), GQA with `n_kv_heads=2`, `head_dim=64`, 30 layers, bf16: per token per layer, K and V together are $2 \times 2 \times 64 = 256$ elements × 2 B = **512 B**; across 30 layers, **15,360 B ≈ 15 KB/token**; at the full 2048-token context, ≈**31.5 MB**. Mind the default: `generate()` allocates the cache in the model's *parameter* dtype (§2), which on this fp32 CPU path is fp32 — 30,720 B/token and ≈63 MB at 2048, as big as the weights — until you pass `dtype=torch.bfloat16` explicitly.
+    - **KV cache** (Ch. 14.4's `KVCache`), GQA with `n_kv_heads=2`, `head_dim=64`, 30 layers, bf16: per token per layer, K and V together are $2 \times 2 \times 64 = 256$ elements × 2 B = **512 B**; across 30 layers, **15,360 B ≈ 15 KB/token**; at the full 2048-token context, ≈**31.5 MB**. Mind the default: `generate()` allocates the cache in the model's *parameter* dtype (§2), which on this fp32 CPU path is fp32 — 30,720 B/token and ≈63 MB at 2048, as big as the weights — until you add a `kv_dtype` argument to `generate()` (or hardcode `dtype=torch.bfloat16` in its `KVCache(...)` call); there is no dtype parameter to pass today.
     - **Transient dequantization buffer**: `QuantizedLinear.forward` materializes one fp32 weight at a time. The largest is the tied head, $32768 \times 512 \times 4\ \text{B} = 67$ MB — *bigger than the entire quantized model*. This is the reference path's real cost, and the reason `dequantize_rows` exists for the embedding direction.
     - **Activations** (single-token decode): a few MB at most.
 
@@ -1523,7 +1530,7 @@ Read what it wrote. That is the actual point of the entire capstone — not the 
 
     (b) The shown choices are near-uniform in length (`" H2O"`, `" CO2"`, `" NaCl"`, `" O2"`; `" Paris"`, `" Berlin"`, `" Madrid"`, `" Rome"`), so the length bias is roughly constant across options and cancels out of the arg-max. The construction ("small enough to eyeball every item") maintains this invariant by hand.
 
-    (c) `acc_norm` divides the summed log-probability by `len(choice.encode("utf-8"))` — the continuation's **byte** length. (Deliberate deviation, flagged in the docstring: `lm-evaluation-harness`'s own `acc_norm` divides by the continuation's *character* length and exposes the byte-normalized version under the separate name `acc_bytes`; the two agree on ASCII choices, which is all `TINY_MC_SET` contains.) Bytes are the more defensible denominator because token counts are a property of *your tokenizer*, not of the answer: the same string can be 2 tokens under one BPE and 5 under another, so token-normalized scores are not comparable across models, while byte-normalized ones are. (Bytes are also what bits-per-byte uses, for the same reason.) Reporting both is the discipline: if `acc` and `acc_norm` disagree, your option set is length-imbalanced and the raw number is partly measuring string length.
+    (c) `acc_norm` divides the summed log-probability by `len(choice.encode("utf-8"))` — the continuation's **byte** length. (Deliberate deviation, flagged in the docstring: `lm-evaluation-harness`'s own `acc_norm` divides by the continuation's *character* length and has no byte-normalized accuracy metric — byte normalization appears there only in the perplexity family, as `bits_per_byte`; the two denominators agree on ASCII choices, which is all `TINY_MC_SET` contains.) Bytes are the more defensible denominator because token counts are a property of *your tokenizer*, not of the answer: the same string can be 2 tokens under one BPE and 5 under another, so token-normalized scores are not comparable across models, while byte-normalized ones are. (Bytes are also what bits-per-byte uses, for the same reason.) Reporting both is the discipline: if `acc` and `acc_norm` disagree, your option set is length-imbalanced and the raw number is partly measuring string length.
 
 **5.** Compute the KV-cache budget the way §9's worked example does, using the same GQA config (`n_kv_heads = 2`, `head_dim = 64`, 30 layers, bf16 = 2 bytes/element). (a) Bytes per token per layer, and per token across all layers. (b) Total cache for a **512-token** context. (c) The chapter says GQA gives a "4× smaller KV cache than plain multi-head attention." What would the same 512-token cache cost under plain MHA, and what does that imply about the number of query heads? (d) `KVCache` preallocates the full `max_seq_len` buffer at construction. What does that cost at 512 tokens of *actual* use with `max_seq_len = 2048`, and why is it still the right design?
 
@@ -1585,7 +1592,7 @@ Read what it wrote. That is the actual point of the entire capstone — not the 
 **7.** (Quantitative) Stack-100M's KV cache costs 15,360 B/token in bf16 (§2). (a) At what context length does the bf16 KV cache exceed the ≈63.3 MB int4 weight budget, and what is the answer if you leave the cache in fp32? (b) After mid-training extends the context to 8192 (Ch. 14.8), what does the bf16 cache cost, and what does that do to the "runs on a Raspberry Pi" claim? (c) Ch. 14.4's CI asserts that greedy generation is identical with and without the cache. Explain precisely why that assertion must be re-run against the *quantized* model rather than inherited from the fp32 one, and name the specific `QuantizedLinear` bug it would *fail* to catch.
 
 ??? note "Solution"
-    (a) bf16: $63.3\times10^{6} \div 15{,}360 \approx 4{,}121$ tokens — beyond roughly a 4k context, the conversation costs more memory than the model. fp32 doubles the per-token cost to 30,720 B, halving the crossover to $\approx 2{,}060$ tokens, i.e. **just past the 2048 pretrain context**. That is the concrete argument for Ch. 14.4's bf16 cache default: at fp32 the cache overtakes the weights inside the model's own training context.
+    (a) bf16: $63.3\times10^{6} \div 15{,}360 \approx 4{,}121$ tokens — beyond roughly a 4k context, the conversation costs more memory than the model. fp32 doubles the per-token cost to 30,720 B, halving the crossover to $\approx 2{,}060$ tokens, i.e. **just past the 2048 pretrain context**. That is the concrete argument for `KVCache`'s bf16 *class* default — and for actually getting it, since §2 shows `generate()` overrides it with the parameter dtype: at fp32 the cache overtakes the weights inside the model's own training context.
 
     (b) $15{,}360 \times 8192 = 125{,}829{,}120$ B $\approx 126$ MB — **twice** the int4 weights. The "≈100 MB total" figure in §9 is stated for a 2048-token context and does not survive a full 8192-token conversation; the honest number there is ≈190 MB (63 MB weights + 126 MB cache), which still fits a 512MB-class device but no longer leaves a comfortable margin. Report the context length alongside any memory claim, or the claim is not falsifiable.
 

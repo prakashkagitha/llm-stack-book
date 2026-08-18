@@ -132,10 +132,26 @@ def stream_source(entry: DataMixEntry, offline: bool = False,
     if not offline:
         try:
             gen = stream_hf(entry)
-            first = next(gen)
-        except (ImportError, OSError, ConnectionError):
-            pass                                   # no `datasets` / no network
+            # A default, not a bare `next`: a StopIteration escaping a generator
+            # body becomes an opaque RuntimeError (PEP 479).
+            first = next(gen, None)
+        except ImportError:
+            pass                                   # `datasets` not installed
+        except OSError as err:
+            # CAREFUL: huggingface_hub's HTTP errors subclass OSError
+            # (HfHubHTTPError -> GatedRepoError / RepositoryNotFoundError), so a
+            # bare `except OSError` would swallow a 401 on the gated
+            # starcoderdata or a 404 on a mistyped repo id and silently
+            # substitute synthetic text. Anything that carries an HTTP response
+            # is a bug, not a missing network: re-raise it.
+            if getattr(err, "response", None) is not None:
+                raise
         else:
+            if first is None:                      # opened fine, yielded nothing
+                raise ValueError(
+                    f"{entry.name}: stream opened but produced no non-empty "
+                    f"{entry.text_column!r} rows -- wrong config or data_dir?"
+                )
             yield first
             yield from gen
             return
@@ -255,8 +271,10 @@ def passes_code_filter(text: str) -> bool:
     c = FILTER_CONFIG["code"]
     if not (c["min_chars"] <= len(text) <= c["max_chars"]):
         return False
-    head = text[:2000]
-    most_common_frac = max(head.count(ch) for ch in set(head)) / max(len(head), 1)
+    head = "".join(_WORD_RE.findall(text[:2000]))   # drop all whitespace
+    if not head:
+        return False                                # whitespace-only file
+    most_common_frac = max(head.count(ch) for ch in set(head)) / len(head)
     return most_common_frac <= c["max_char_frac"]
 
 
@@ -294,6 +312,12 @@ assert not passes_web_filter("\n".join(["subscribe to our newsletter today pleas
 _code = "def compute(x):\n    return x * x + 1\n\nfor i in range(10):\n    print(i)\n"
 assert not passes_web_filter(_code) and passes_code_filter(_code)
 assert not passes_code_filter("A" * 5000), "single-char (minified/binary) file must fail"
+assert not passes_code_filter(" " * 5000), "whitespace-only file must fail"
+# Whitespace must NOT count toward the dominance test: ' ' is ~33% of the offline
+# synthetic code corpus and 20-35% of real source, so counting it would starve
+# the 10% code slice (measured: 57/2000 synthetic code docs survived).
+assert all(quality_filter(d) for d in synthetic_corpus(_by_name["starcoder"], n_docs=200)), \
+    "the synthetic code stream must survive its own quality gate"
 _math = "let f(x) = x^2 then the derivative is 2x; solve 3x + 5 = 20 for x " * 3
 assert passes_math_filter(_math)
 assert quality_filter({"text": _code, "domain": "code"}) is True

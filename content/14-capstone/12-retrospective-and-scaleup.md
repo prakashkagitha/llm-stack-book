@@ -39,8 +39,11 @@ The capstone's differentiator was that we did not import someone else's scaling 
 
 Two rules carried over from Ch. 14.5, both easy to get wrong:
   1. N is the NON-EMBEDDING parameter count (the 30 blocks: 84.5M), because the
-     ladder fit N against the work the 6ND rule counts. Feeding 101.4M here
-     silently corrupts the comparison.
+     Ch. 14.5 ladder was FIT with N defined that way (the Kaplan convention),
+     so E, A and alpha only mean anything against that same definition. Note it
+     is deliberately NOT the N used in the 6ND cost arithmetic of 14.12.3, which
+     counts the tied output matmul. Feeding 101.4M here silently corrupts the
+     comparison.
   2. The law predicts loss on the PRETRAIN mix. Evaluate `base/` on a held-out
      shard of that same 70/15/10/5 mix -- not on the mid-training anneal mix,
      whose entropy floor E is different.
@@ -422,10 +425,12 @@ def data_manifest(shard_paths: list[str]) -> dict:
 
     For each .bin memmap shard we record its SHA-256, byte size, and token count
     (uint16 tokens => 2 bytes each, valid because vocab_size=32768 <= 65536). The
-    top-level `corpus_hash` fingerprints the WHOLE dataset: change any shard, or
-    the order, and it changes.
+    top-level `corpus_hash` folds the shard digests *in sorted-digest order*, so
+    it fingerprints the WHOLE dataset by CONTENT: change any shard's bytes, or
+    add or remove a shard, and it changes -- while renaming a shard, or passing
+    the paths in a different order, does not.
     """
-    shards, running = [], hashlib.sha256()
+    shards = []
     for path in sorted(shard_paths):                 # sorted => order-independent of FS listing
         h = hashlib.sha256()
         size = 0
@@ -433,10 +438,11 @@ def data_manifest(shard_paths: list[str]) -> dict:
             for chunk in iter(lambda: f.read(1 << 20), b""):  # 1 MB chunks
                 h.update(chunk)
                 size += len(chunk)
-        digest = h.hexdigest()
-        running.update(digest.encode())
-        shards.append({"path": path, "sha256": digest,
+        shards.append({"path": path, "sha256": h.hexdigest(),
                        "bytes": size, "tokens": size // 2})
+    running = hashlib.sha256()
+    for digest in sorted(s["sha256"] for s in shards):   # content order, not path order
+        running.update(digest.encode())
     return {
         "corpus_hash": running.hexdigest()[:16],
         "n_shards": len(shards),
@@ -722,9 +728,12 @@ def block_activation_gb(n_layers: int, d_model: int, seq_len: int, micro_batch: 
       - GQA 8:2, so K and V are h/4 each   -> -3 s*b*h  (K, V storage 4x smaller)
       - SwiGLU at 2.75h with torch.compile fusing silu(g)*u and recomputing it in
         backward -> the MLP costs ~13-16 s*b*h instead of the paper's 19
-    That lands at roughly **16-24**, i.e. ~20 as a planning number -- which is
-    exactly what reconciles this function with Ch. 14.7's measured 15-25 GB
-    trunk budget for the same config. Pass 34 for a conservative upper bound.
+    Term by term that subtraction lands at **23-26**. It is still an over-count,
+    because it charges every sublayer for its own input while `torch.compile`
+    saves the residual stream once per block and recomputes the cheap
+    elementwise intermediates; Ch. 14.7's bottom-up accounting of this exact
+    config puts the trunk at **15-25 s*b*h**. We therefore plan with **~20**, the
+    middle of that measured band. Pass 34 for a conservative upper bound.
     Full activation checkpointing stores only each layer's input: 2*s*b*h.
     """
     s, b, h, a = seq_len, micro_batch, d_model, n_heads
@@ -810,7 +819,7 @@ So **1B fits a single 80 GB GPU, but the headroom is activations, not weights** 
 
 Note also what happened to the folklore threshold: 7B needs ~87 GB of weights+optimizer state, so it does *not* fit an 80 GB A100 or H100 — but it *does* fit an **H200 (141 GB)**, a **B200 (192 GB)**, or an **MI300X (192 GB)** with room for a real batch. **"When do I need FSDP?" is a hardware-generation question, not a model-size question.** The rule that survives is the ratio: shard when weights + optimizer + activations exceed your device memory, and re-derive it every time you change tiers.
 
-Levers, in the order you should reach for them, all covered in [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html): chunk the loss head (free, and biggest at small $d$), raise gradient accumulation (free), turn on activation checkpointing (33% FLOP surcharge), switch AdamW groups to 8-bit (`bitsandbytes.optim.AdamW8bit`, ~6 GB saved at 7B), keep optimizer states in bf16, then — only then — shard.
+Levers, in the order you should reach for them, all covered in [Memory-Efficient Training: Checkpointing, Offloading & LoRA Math](../04-kernels-efficiency/10-memory-efficient-training.html): chunk the loss head (free, and biggest at small $d$), raise gradient accumulation (free), turn on activation checkpointing (33% FLOP surcharge), switch AdamW groups to 8-bit (`bitsandbytes.optim.AdamW8bit`, 16 B/param → 10 B/param, so ~4 GB saved at the 7B split above), keep optimizer states in bf16, then — only then — shard.
 
 ### Time, and the parallelism ladder (with the libraries you would actually use)
 
@@ -997,7 +1006,7 @@ Go run it. Then over-train it. Then, when you are ready, scale it up.
     - **Reproducibility has six pillars** — RNG *state* (plus dataloader state via `StatefulDataLoader`), a hashed frozen config (Hydra/pydantic) logged to a tracker (W&B/MLflow), a content-addressed data manifest (DVC / HF fingerprints), an environment pin (uv.lock hash + container digest, fail on a dirty git tree), safetensors checkpoints that never unpickle, and a **release** (HF Hub + model card + licence provenance + a pinned `lm-evaluation-harness` commit). Validate with a hermetic 50-step CPU run that reproduces bit-for-bit.
     - **Tied embeddings and safetensors:** `safetensors` refuses *aliased* tensors, and `.contiguous()` does not de-alias — drop `lm_head.weight` before saving and re-tie on load, exactly as HF's `_tied_weights_keys` does. Test it on CPU, because `.cpu()` accidentally hides the bug on a GPU run.
     - **At 1B, data breaks first**: you need 200B–1T tokens, which means `datatrove` / NeMo Curator / dolma rather than a laptop dedup script; repetition past ~4 epochs does not substitute for volume.
-    - **Activations decide memory, and at a 32k vocab the loss head decides activations.** Stack-100M is 1.28 GB of weights+optimizer (Muon's single momentum makes it 12 B/param, not 16) against a ~20 GB trunk and a **30 GB naive loss head** — chunk the head and peak falls to ~22 GB, matching Ch. 14.7. Korthikanti's coefficient 34 is an upper bound; GQA + SwiGLU + no dropout put our block nearer 20. A 1B model fits one 80 GB card at micro-batch 16; 7B needs ~87 GB and so fits an H200/B200/MI300X but not an A100 — when to shard is a hardware-generation question.
+    - **Activations decide memory, and at a 32k vocab the loss head decides activations.** Stack-100M is 1.28 GB of weights+optimizer (Muon's single momentum makes it 12 B/param, not 16) against a ~20 GB trunk and a **30 GB naive loss head** — chunk the head and peak falls to ~22 GB, matching Ch. 14.7. Korthikanti's coefficient 34 is an upper bound; GQA + SwiGLU + no dropout put the term-by-term count at 23–26, and `torch.compile`'s fusion brings the *measured* block nearer 20. A 1B model fits one 80 GB card at micro-batch 16; 7B needs ~87 GB and so fits an H200/B200/MI300X but not an A100 — when to shard is a hardware-generation question.
     - **Climb the parallelism ladder only as far as forced**: DDP → FSDP2 (`fully_shard`, not the legacy wrapper) with `torch.distributed.checkpoint` for resharding-safe resume → tensor/pipeline only at tens of billions. `torchtitan` is this exact recipe already wired up at 1B–70B; Megatron-Core, DeepSpeed, and nanotron are the alternatives.
     - **1B costs ~USD 5,400 (~55× the capstone, not 98×), and 43% of it is not GPU** (vs 13% at 100M) — the dedup pipeline plus the synthetic-data bill rival the pretraining run. **MoE** (DeepSeekMoE fine-grained + shared experts, DeepSeek-V3's bias-based balancer, MegaBlocks for dropless grouped GEMMs) decouples capacity from compute/token beyond 1B, at the price of memory, all-to-all communication, and a router you must babysit.
 
@@ -1241,7 +1250,7 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
     n = \frac{6ND}{2N \cdot 256} = \frac{6 \times 2\times10^{10}}{2 \times 256} = \frac{1.2\times10^{11}}{512} \approx 2.34\times10^{8}.
     $$
 
-    **~234 million requests.** The cancellation is the point: the break-even depends only on the *tokens-per-parameter ratio you trained at* and the tokens per request — $n = 3D/(2\cdot\text{tok per request})$ — not on how big the model is. Train at 200 tokens/param and you break even after a fixed number of requests regardless of scale. After roughly a quarter-billion 256-token requests, cumulative serving compute equals the *entire* 20B-token pretraining budget — which is exactly why serving economics, not training economics, dominate the decision to over-train.
+    **~234 million requests.** The cancellation is the point: the break-even depends only on the *tokens-per-parameter ratio you trained at* and the tokens per request — $n = 6D/(2\cdot\text{tok per request}) = 3D/\text{tok per request}$ — not on how big the model is. Train at 200 tokens/param and you break even after a fixed number of requests regardless of scale. After roughly a quarter-billion 256-token requests, cumulative serving compute equals the *entire* 20B-token pretraining budget — which is exactly why serving economics, not training economics, dominate the decision to over-train.
 
 **6.** (Implementation) Two checkpoint-hygiene tasks from §14.12.4. (a) Write a `pytest` test that would have caught the tied-embedding bug: build a tiny `Stack100M` on **CPU** with `tie_embeddings=True`, save and reload a checkpoint, and assert the tie survives the round-trip. Explain why the test must run on CPU. (b) Implement `prune_checkpoints(ckpt_dir, keep_last=3, milestones=())` consistent with the **directory-per-checkpoint** layout: given a directory containing sub-directories named `ckpt_step{N}`, delete every checkpoint except the `keep_last` highest steps and any step in `milestones`; return the list of deleted names. Be careful about the `.tmp` sibling an in-flight atomic write leaves behind.
 
@@ -1352,7 +1361,7 @@ For the annotated, book-wide version of this list see [Key Papers: An Annotated 
     B/D^{\beta} = 234 \times (2\times10^{10})^{-0.30} \approx 0.19.
     $$
 
-    A 0.41-nat gap is larger than the *entire* capacity term and more than double the entire data term. That rules out the gentle hypotheses immediately: you cannot explain it by "the model is slightly too small" (driving $A/N^\alpha$ to zero — an infinitely large model — buys only 0.30) or by "we should have trained longer" (driving $B/D^{\beta}$ to zero buys only 0.19). Even both together do not reach 0.41. Since $E$ is by construction the irreducible entropy of *the mixture under this tokenizer*, a gap this large is only consistent with **the run or the measurement being different from what the ladder fit**: a different effective data distribution, a different tokenizer, a broken optimizer, or an evaluation against the wrong text.
+    A 0.41-nat gap is larger than the *entire* capacity term and more than double the entire data term. That rules out the gentle hypotheses immediately: you cannot explain it by "the model is slightly too small" (driving $A/N^\alpha$ to zero — an infinitely large model — buys only 0.30) or by "we should have trained longer" (driving $B/D^{\beta}$ to zero buys only 0.19). Even both together buy just $0.30 + 0.19 = 0.49$ nats — the *entire* reducible loss — so closing a 0.41-nat gap by scale alone would take a model of essentially unbounded size trained on essentially unbounded data. Since $E$ is by construction the irreducible entropy of *the mixture under this tokenizer*, a gap this large is only consistent with **the run or the measurement being different from what the ladder fit**: a different effective data distribution, a different tokenizer, a broken optimizer, or an evaluation against the wrong text.
 
     (c) In order of cost-to-check:
 

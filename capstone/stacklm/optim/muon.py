@@ -91,7 +91,12 @@ class Muon(Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None):
-        loss = closure() if closure is not None else None
+        # The closure re-runs forward + backward, so it needs grad ENABLED --
+        # this whole method is under no_grad (same guard as the in-tree optimizers).
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
         for group in self.param_groups:
             lr, mu = group["lr"], group["momentum"]
             nesterov, wd, ns = group["nesterov"], group["weight_decay"], group["ns_steps"]
