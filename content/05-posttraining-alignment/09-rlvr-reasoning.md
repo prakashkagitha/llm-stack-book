@@ -324,6 +324,24 @@ The tactic script above is untrusted search — the elaborator and `simp` are fr
 Let us assemble a full reward used in an R1-Zero-style run and then trace exact numbers through it. The reward is a *sum of components* where **correctness dominates** and everything else is a small, contingent guardrail.
 
 ```python
+def constraint_is_satisfied(response: str, spec: str) -> float:
+    """
+    The third verifier family, made concrete: a programmatic rule check.
+    Here `spec` is a small JSON contract, e.g. '{"required": ["name", "age"]}',
+    and the model's answer (everything after its </think> block) must itself be
+    valid JSON containing those keys. Swap in whatever rule your task needs --
+    sentence count, forbidden word absent, full JSON-Schema validation. The only
+    contract that matters is: return 1.0 or 0.0, and NEVER raise.
+    """
+    import json, re
+    body = re.sub(r"(?s)^.*</think>", "", response).strip()
+    try:
+        obj = json.loads(body)
+        required = json.loads(spec).get("required", [])
+    except Exception:                 # malformed on either side -> not satisfied
+        return 0.0
+    return 1.0 if isinstance(obj, dict) and all(k in obj for k in required) else 0.0
+
 def rlvr_reward(question: str, response: str, gold: str,
                 domain: str, test_cases=None) -> dict:
     """

@@ -355,7 +355,8 @@ def toploc_commit(hidden_states, k=128):
     q_vals = (vals * 16).round().to(torch.int32)                    # coarse magnitude buckets
     return {"idx": idx.to(torch.int32), "qval": q_vals, "sign": signs.to(torch.int8)}
 
-def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90, mag_tol=2):
+def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90,
+                  mag_tol=2, rel_tol=0.05):
     """
     VERIFIER side (trusted). recomputed_hidden: (T, d) from a CHEAP batched prefill
     on trusted hardware over the SAME claimed tokens. Returns True if the worker's
@@ -375,11 +376,19 @@ def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90, mag_tol=2
         shared = prover.keys() & ours.keys()
         # (i) the dominant components must mostly be the SAME coordinates ...
         ok_idx = len(shared) / k >= tol_frac
-        # (ii) ... and on those coordinates the coarse magnitudes must agree within mag_tol
-        #      quantization buckets and the signs must match exactly. Without this second
-        #      check, verification is a pure index-set test and the committed qval/sign are
-        #      dead payload -- an adversary reproducing only the top-k index pattern passes.
-        ok_mag = all(abs(prover[i][0] - ours[i][0]) <= mag_tol and prover[i][1] == ours[i][1]
+        # (ii) ... and on those coordinates the coarse magnitudes must agree and the signs
+        #      must match exactly. Without this second check, verification is a pure
+        #      index-set test and the committed qval/sign are dead payload -- an adversary
+        #      reproducing only the top-k index pattern passes.
+        #      The magnitude tolerance must be RELATIVE, not a fixed number of buckets: the
+        #      top-k selects exactly the "massive activations" (1e2-1e4), where one bf16 ULP
+        #      at |h| = 4000 is 16.0 -- i.e. 256 buckets. A flat mag_tol=2 (= 0.125 in
+        #      activation units) would reject two HONEST engines differing by less than one
+        #      representable step, destroying the locality-sensitivity the scheme exists for.
+        #      mag_tol is the absolute floor for the small components; rel_tol governs the
+        #      dominant ones, so the check is ~5% agreement at every scale.
+        ok_mag = all(abs(prover[i][0] - ours[i][0]) <= max(mag_tol, rel_tol * abs(ours[i][0]))
+                     and prover[i][1] == ours[i][1]
                      for i in shared)
         passes += int(ok_idx and ok_mag)
     return passes / T >= tol_frac     # accept only if MOST tokens are consistent
@@ -437,7 +446,7 @@ The dashboard you watch, in priority order:
 
 | Metric | Healthy | Red flag | What it means |
 |---|---|---|---|
-| `mean_staleness` | $\le s_{\max}$, stable | climbing | trainer is generation-starved or workers fell behind |
+| `mean_staleness` | $\le s_{\max}$, stable | climbing | generation is outrunning the trainer (queue backlog growing — tighten backpressure / shrink `queue_maxsize`), or workers are not picking up published weights (version skew) |
 | `frac_dropped_stale` | low, steady | rising | $s_{\max}$ too tight or fleet too slow; add workers / raise $s_{\max}$ |
 | `approx_kl` (fresh data) | $\approx 0$ | nonzero & drifting | **engine mismatch** — trainer vs inference log-probs disagree |
 | `clipfrac` | moderate (5–25%) | $>50\%$ | data too off-policy; lower $s_{\max}$ or publish weights more often |
@@ -592,7 +601,8 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
     import torch
     # from the chapter:
     # def toploc_commit(hidden_states, k=128): ...
-    # def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90, mag_tol=2): ...
+    # def toploc_verify(commitment, recomputed_hidden, k=128, tol_frac=0.90,
+    #                   mag_tol=2, rel_tol=0.05): ...
 
     torch.manual_seed(0)
     T, d, k = 64, 4096, 128            # 64 tokens, hidden dim 4096, top-128 commitment
@@ -616,7 +626,7 @@ The throughline of the whole chapter: **the async barrier-break is a systems ide
     print("forged (different model) passes:", verdict_forged) # expect False
     ```
 
-    **Why it behaves this way.** `toploc_verify` recomputes the top-$k$ largest-magnitude activation indices per token, checks the fraction shared with the prover's committed indices against `tol_frac = 0.90`, and additionally requires that the shared components' coarse magnitude buckets agree within `mag_tol` and their signs match — accepting only if most tokens pass both. Under **benign noise** ($10^{-3}$ scale) the dominant components barely move: the same large-$|h|$ coordinates stay in the top-$k$, so per-token index overlap is well above $0.90$ and the run passes. Under a **large perturbation** ($1.0$ scale, comparable to the signal) the ranking of components is scrambled, the top-$k$ index sets diverge, per-token overlap falls below tolerance, and verification fails. That is exactly the locality-sensitive property the chapter wants: *nearby* activation tensors (honest run, benign hardware noise) produce consistent commitments, while *distant* ones (different model / precision / fabricated tokens) do not — robust to benign numerics, sensitive to real model changes. (You can sweep the perturbation scale from $10^{-3}$ up to $1.0$ to see the verdict flip as the noise starts to re-rank the dominant components.)
+    **Why it behaves this way.** `toploc_verify` recomputes the top-$k$ largest-magnitude activation indices per token, checks the fraction shared with the prover's committed indices against `tol_frac = 0.90`, and additionally requires that the shared components' coarse magnitude buckets agree within tolerance (`rel_tol` relative, with `mag_tol` as an absolute floor for small components) and their signs match — accepting only if most tokens pass both. Under **benign noise** ($10^{-3}$ scale) the dominant components barely move: the same large-$|h|$ coordinates stay in the top-$k$, so per-token index overlap is well above $0.90$ and the run passes. Under a **large perturbation** ($1.0$ scale, comparable to the signal) the ranking of components is scrambled, the top-$k$ index sets diverge, per-token overlap falls below tolerance, and verification fails. That is exactly the locality-sensitive property the chapter wants: *nearby* activation tensors (honest run, benign hardware noise) produce consistent commitments, while *distant* ones (different model / precision / fabricated tokens) do not — robust to benign numerics, sensitive to real model changes. (You can sweep the perturbation scale from $10^{-3}$ up to $1.0$ to see the verdict flip as the noise starts to re-rank the dominant components.)
 
 **6.** *(Implementation — modify the async loss.)* The chapter's `async_ppo_loss` applies a *hard* staleness gate: rollouts with $s \le s_{\max}$ are kept at full weight, everything staler is dropped. A colleague proposes a *soft* alternative: instead of a cliff at $s_{\max}$, down-weight each rollout's loss contribution by an exponential staleness decay $w(s) = \gamma^{s}$ (with, say, $\gamma = 0.8$), while *still* hard-dropping anything past a safety ceiling $s_{\text{ceil}}$. Modify `async_ppo_loss` to implement this, keeping the token-level aggregation correct (the denominator must reflect the same weighting as the numerator), and explain in one sentence why a per-sample weight must be folded into *both*.
 

@@ -2,7 +2,7 @@
 
 In [The Anatomy of an RL-for-LLM System](../06-rl-infra/01-anatomy-rl-system.html) we drew the box diagram: a policy that generates rollouts, a reward source that scores them, and a trainer that turns rewards into gradients. In [The Generation–Training Loop & Rollout Engines](../06-rl-infra/02-generation-training-loop.html) we saw that the *generation* half wants an inference engine (vLLM/SGLang) with PagedAttention and continuous batching, while the *training* half wants a distributed-training engine (FSDP or Megatron) with sharded optimizer state. And in [TRL: HuggingFace's RL Library](../06-rl-infra/03-trl.html) we used a library that runs both halves inside a *single Python process* on each GPU — simple, hackable, and a perfect teaching tool, but one that hits a wall when you want to mix tensor parallelism in the trainer with a different parallelism in the rollout engine, or scale a 70B-policy GRPO run across 64 GPUs.
 
-This chapter is about the framework that broke that wall and became the default substrate for serious RL-for-LLM research and production in 2024–2026: **veRL** (the "volcano engine Reinforcement Learning" library, often stylized `verl`), built on the ideas in the **HybridFlow** paper (Sheng et al., 2024). veRL's central thesis is deceptively small and enormously consequential: **the *control flow* of an RL algorithm and the *computation* of each stage live at different scales, so they should be programmed at different scales.** The high-level dataflow — "generate, score, compute advantages, update" — is written *once*, as ordinary single-threaded Python on a driver process (the **single controller**). Each heavy stage — generation, the actor forward/backward, the critic, the reference log-probs — runs as a SPMD (single-program-multiple-data) program across many GPUs (the **multi-controller** workers). HybridFlow is the glue that lets a single line of driver code like `advantages = compute_advantage(rewards, values)` dispatch onto, and gather results from, hundreds of GPU workers, *and* lets the system **reshard** a model's weights between the layout the trainer wants and the layout the rollout engine wants — without ever round-tripping through disk.
+This chapter is about the framework that broke that wall and became the default substrate for serious RL-for-LLM research and production in 2024–2026: **veRL** (the "volcano engine Reinforcement Learning" library, often stylized `verl`), built on the ideas in the **HybridFlow** paper (Sheng et al., 2024). veRL's central thesis is deceptively small and enormously consequential: **the *control flow* of an RL algorithm and the *computation* of each stage live at different scales, so they should be programmed at different scales.** The high-level dataflow — "generate, score, compute advantages, update" — is written *once*, as ordinary single-threaded Python on a driver process (the **single controller**). Each heavy stage — generation, the actor forward/backward, the critic, the reference log-probs — runs as a SPMD (single-program-multiple-data) program across many GPUs (the **multi-controller** workers). HybridFlow is the glue that lets a single line of driver code like `batch = actor_rollout_wg.generate_sequences(prompt_batch)` dispatch onto, and gather results from, hundreds of GPU workers, *and* lets the system **reshard** a model's weights between the layout the trainer wants and the layout the rollout engine wants — without ever round-tripping through disk.
 
 By the end you will understand: why naive single-controller and naive multi-controller architectures each fail; what the `WorkerGroup` / `ResourcePool` / `@register(dispatch_mode=...)` machinery actually does; how the **3D-HybridEngine** reshards FSDP/Megatron training weights into vLLM's tensor-parallel inference layout with near-zero redundant memory; how Ray placement groups colocate the actor, critic, and rollout engine on the same GPUs; and why this design is what lets veRL scale where a TRL-style monolith cannot. We will write a miniature single-controller dispatcher and a from-scratch resharding routine so the mechanism is concrete, not magic.
 
@@ -98,7 +98,7 @@ def fit(self):
         self.actor_rollout_wg.update_actor(batch)
 ```
 
-Notice that step 6 — the part researchers most want to change — is *local, single-threaded Python on small tensors*. Swapping PPO's GAE for GRPO's group baseline, or for RLOO, or for a brand-new estimator, is a one-function edit with no distributed code in sight. That is the productivity win of the single controller. Steps 1, 2, 5, and 7 are the heavy SPMD stages, each hidden behind one method call.
+Notice that step 6 — the part researchers most want to change — is *local, single-threaded Python on small tensors*. Swapping PPO's GAE for GRPO's group baseline, or for RLOO, or for a brand-new estimator, is a one-function edit with no distributed code in sight. That is the productivity win of the single controller. Steps 1, 2, 3, 5, and 7 are the heavy SPMD stages — each a full sharded forward (or forward/backward) hidden behind one method call — and step 4 joins them whenever the reward comes from a neural reward model rather than a rule-based verifier.
 
 ### The dispatch decorator: how one call becomes N
 
@@ -128,7 +128,7 @@ from verl.protocol import DataProto
 # (args, kwargs) — one entry per rank.
 def dispatch_nd_compute_proto(worker_group, batch):
     dp_size = worker_group.dp_size            # number of data-parallel groups
-    tp_size = worker_group.tp_size            # ranks per DP group (TP * PP)
+    tp_size = worker_group.tp_size            # ranks per DP group (TP; assume PP == 1)
     chunks = batch.chunk(dp_size)             # split the BATCH across DP groups only
     per_rank = []
     for dp_rank in range(dp_size):
@@ -140,8 +140,12 @@ def dispatch_nd_compute_proto(worker_group, batch):
 def collect_nd_compute_proto(worker_group, outputs):
     dp_size = worker_group.dp_size
     tp_size = worker_group.tp_size
-    # Keep only ONE representative per DP group (TP ranks computed identical batch
-    # outputs); concatenate across DP groups to reconstruct the full batch order.
+    # Keep only ONE representative per DP group: TP ranks are REPLICAS, so they all
+    # computed the same batch outputs. Concatenate across DP groups to reconstruct
+    # the full batch order. (PP ranks are NOT replicas — different stages hold
+    # different layers and only the LAST stage produces the logits — so with PP > 1
+    # the real veRL collect keeps the rank with tp_rank == 0 AND
+    # pp_rank == pp_size - 1, not simply the group's first rank as below.)
     reps = [outputs[dp_rank * tp_size] for dp_rank in range(dp_size)]
     return DataProto.concat(reps)
 
@@ -223,9 +227,10 @@ def reshard_column_parallel(local_shard: torch.Tensor,
     Returns this rank's rollout slice, shape (in_dim, out_dim/q). EVERY rank gets a
     slice: with q < p the p ranks of one training TP group become p/q independent
     rollout replicas of TP degree q, so no GPU is idle during generation.
-    Assumes q <= p and q | p (the usual case); when the rollout group is *wider*
-    than the training group (q > p, e.g. FSDP training where the effective p is 1)
-    the gather group must be the rollout TP group that jointly holds the parameter.
+    Assumes q <= p and q | p (the usual Megatron-trainer case). When training is FSDP
+    there is no training TP group at all: every parameter is flat-sharded across the
+    WHOLE FSDP group, so the gather group is the FSDP shard group (all DP ranks), and
+    each rollout rank then slices its own q-th out of the reconstructed tensor.
 
     Mechanism:
       1. all-gather the p training shards WITHIN the (small) TP group -> full weight.
@@ -321,7 +326,7 @@ Colocation is powerful but it forces a tight memory budget: at any instant the G
 
     **Rollout-side memory (vLLM, TP=2):** the rollout engine needs a *full* bf16 copy of the model split across its TP group. With TP=2, each rollout rank holds $14\text{ GB}/2 = 7\text{ GB}$ of weights. The KV cache then uses whatever `gpu_memory_utilization` leaves. With hundreds of thousands to millions of tokens resident across the batched group samples — a GQA 7B costs $\approx 60$ KB of KV per token, an MHA 7B roughly $500$ KB — the KV cache can easily want **tens of GB**, and this is usually the dominant rollout cost. (For the KV-cache size formula, see [The Anatomy of LLM Inference: Prefill, Decode & The KV Cache](../07-inference-serving/01-anatomy-inference.html).)
 
-    **The resharding transient:** when the 3D-HybridEngine gathers a layer to re-split it, the live extra memory is bounded by *one TP group's* weights for *one layer* at a time (a few hundred MB), not the whole 14 GB model — that bound is the entire point of the nested-group arrangement.
+    **The resharding transient:** when the 3D-HybridEngine gathers a layer to re-split it, the live extra memory is bounded by *one layer's* full weights at a time (a few hundred MB), not the whole 14 GB model — layer-at-a-time gathering (and, with a Megatron trainer, the nested train/rollout TP groups) is what keeps that bound tight.
 
     **Does it fit?** Per 80 GB GPU during rollout: $\sim 14\text{ GB}$ (training state, kept resident) $+ \sim 7\text{ GB}$ (rollout weights) $\approx 21\text{ GB}$ baseline, leaving $\sim 59\text{ GB}$ for the KV cache and activations — comfortable. During the update stage, vLLM's KV cache is released, freeing tens of GB for training activations. The colocation works because *the two stages' peak memories don't coincide*: rollout's peak is KV cache, training's peak is activations, and they happen at different times. **If you instead ran PPO with a 7B critic**, you would add another $\sim 14\text{ GB}$/rank of critic training state, and the budget tightens enough that you would likely enable `optimizer_offload`. This is one concrete, mechanical reason the field prefers critic-free GRPO/RLOO for large policies (see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)).
 
@@ -351,28 +356,41 @@ No system is free. The dominant cost in synchronous veRL is the **generation sta
 The single-controller design's biggest practical payoff is that the parts you want to customize — the **reward** and the **advantage** — are plain Python on small tensors, requiring zero distributed code. Here is a realistic sketch of plugging a verifiable math reward and a custom advantage into veRL's driver-side hooks. This is the shape of an actual veRL extension.
 
 ```python
-# 1) A custom reward function. veRL calls this on the DRIVER with a DataProto of
-#    decoded responses. No GPUs, no collectives — just scoring strings. In a real
+# 1) A custom reward function (the RewardManager role). veRL calls this on the DRIVER
+#    with the batch DataProto. No GPUs, no collectives — just scoring strings. In a real
 #    run the verifier might call a sandboxed code runner (see chapter 6.8).
 import re
 import torch
+from math_verify import parse, verify   # HuggingFace's `math-verify` package
+
+def is_math_equiv(pred: str, gold: str) -> bool:
+    """Symbolic equivalence, NOT string equality: "1/2" must match "0.5".
+    veRL's bundled `verl.utils.reward_score` scorers do the same job."""
+    return bool(verify(parse(gold), parse(pred)))
 
 def math_verifiable_reward(data, tokenizer, **kwargs):
-    """Return a per-sample scalar reward tensor for a DataProto batch."""
-    rewards = []
-    responses = tokenizer.batch_decode(data.batch["responses"],
-                                       skip_special_tokens=True)
+    """Score a DataProto batch and return veRL's TOKEN-LEVEL reward tensor.
+
+    `token_level_scores` is shaped (B, response_length), *not* (B,): the RewardManager
+    scores each sequence with a scalar and writes it onto that sequence's LAST valid
+    response token, leaving zeros elsewhere — that shape is what lets
+    `apply_kl_penalty` subtract a per-token KL and what the advantage estimators
+    reduce over. So build the token grid, don't return a bare (B,) vector.
+    """
+    resp_ids = data.batch["responses"]                 # (B, response_length), padded
+    reward_tensor = torch.zeros_like(resp_ids, dtype=torch.float32)
+    # Response-side attention mask -> number of real (non-pad) tokens per sequence.
+    valid_lens = data.batch["attention_mask"][:, -resp_ids.shape[1]:].sum(dim=-1)
+    texts = tokenizer.batch_decode(resp_ids, skip_special_tokens=True)
     golds = data.non_tensor_batch["ground_truth"]      # parallel list of answers
-    for resp, gold in zip(responses, golds):
+    for i, (resp, gold) in enumerate(zip(texts, golds)):
         m = re.search(r"\\boxed\{([^}]*)\}", resp)     # parse the boxed answer
         pred = m.group(1).strip() if m else None
-        # `is_math_equiv` = symbolic equivalence, NOT string equality ("1/2" == "0.5").
-        # In practice use HuggingFace's `math-verify` package (`from math_verify
-        # import parse, verify`) or veRL's bundled `verl.utils.reward_score` scorers.
         correct = (pred is not None) and is_math_equiv(pred, gold)
         fmt = 1.0 if ("<think>" in resp and "</think>" in resp) else 0.0
-        rewards.append(1.0 * correct + 0.1 * fmt)      # correctness dominates
-    return torch.tensor(rewards, dtype=torch.float32)
+        score = 1.0 * correct + 0.1 * fmt              # correctness dominates
+        reward_tensor[i, max(int(valid_lens[i]) - 1, 0)] = score
+    return reward_tensor                               # (B, response_length)
 
 # 2) A custom advantage estimator, registered with veRL's advantage dispatcher.
 #    This is the GRPO group-baseline, written as ordinary local Python. Because it
@@ -395,12 +413,12 @@ def grpo_group_advantage(rewards, group_size, eps=1e-6, normalize_std=False):
 #    and the batch-level `reward_fn` above is the RewardManager that wraps it. The
 #    advantage estimator is chosen with `algorithm.adv_estimator` (gae, grpo, rloo,
 #    reinforce_plus_plus, ...); a new one is a function added to verl's advantage
-#    registry. Either way steps 1/2/5/7 — the heavy SPMD stages — are untouched:
+#    registry. Either way steps 1/2/3/5/7 — the heavy SPMD stages — are untouched:
 #    you changed the algorithm without writing a single line of torch.distributed
 #    code. THAT is the HybridFlow productivity win.
 ```
 
-Compare the effort: in a pure multi-controller system, changing the advantage estimator means editing SPMD code, getting the group reductions right with collectives, and worrying about which rank holds which sample. In veRL, it is the function above, run once on the driver over a `(B,)` tensor. The heavy lifting (generation across 8 GPUs, FSDP backward across 8 GPUs) is unchanged and invisible to you.
+Compare the effort: in a pure multi-controller system, changing the advantage estimator means editing SPMD code, getting the group reductions right with collectives, and worrying about which rank holds which sample. In veRL, it is the `grpo_group_advantage` function above, run once on the driver over a `(B,)` tensor. The heavy lifting (generation across 8 GPUs, FSDP backward across 8 GPUs) is unchanged and invisible to you.
 
 ### Actually launching a run
 
@@ -465,7 +483,7 @@ For the book's capstone this cuts the other way, and it is worth being honest ab
 !!! interview "Interview Corner"
     **Q:** In a colocated veRL run, the actor trains with FSDP and generates with vLLM at TP=2. Walk through what physically happens to the weights and optimizer state in one RL step, and where the memory peaks are.
 
-    **A:** The optimizer state (fp32 master weights + Adam moments) and gradients live the *entire* step in the **FSDP training layout**, sharded across all data-parallel ranks, and are *never moved* — only the bf16 parameters are copied for rollout. At the start of the step, the **3D-HybridEngine** reshards those bf16 params from the FSDP/training partition into vLLM's TP=2 rollout partition: it gathers each layer's shards *within a small TP group* (intra-node, bounded by one TP group's weights, not the whole model) and re-splits them into the TP=2 layout, then injects them into vLLM's parameter buffers in place via `update_weights` — no disk. vLLM then generates $G$ samples per prompt; here the memory peak is the **PagedAttention KV cache**, which can be tens of GB. After generation, the KV cache is released; the driver computes rewards and advantages locally; then `update_actor` runs the FSDP forward/backward, whose memory peak is **training activations**. The key is that the rollout peak (KV cache) and the training peak (activations) occur at *different times*, so colocation fits as long as you don't hold both — which is why `gpu_memory_utilization` must leave headroom and why you may offload optimizer state to CPU during rollout. With GRPO there is no critic, so you avoid a second full set of training state; that is part of why critic-free methods scale better in colocated setups.
+    **A:** The optimizer state (fp32 master weights + Adam moments) and gradients live the *entire* step in the **FSDP training layout**, sharded across all data-parallel ranks, and are *never moved* — only the bf16 parameters are copied for rollout. At the start of the step, the **3D-HybridEngine** reshards those bf16 params from the FSDP/training partition into vLLM's TP=2 rollout partition: because FSDP flat-shards each parameter across the *whole* FSDP group, the gather runs over that group — but **one layer at a time**, so the live transient is bounded by a single layer's full weights, not the whole model — and each rollout rank then slices out its half of the reconstructed tensor for the TP=2 layout. (With a Megatron trainer the picture is nicer still: the training TP group and the rollout TP group are nested on the same GPUs, so the gather is confined to $\max(p,q)$ ranks and stays intra-node.) The resharded weights are then injected into vLLM's parameter buffers in place via `update_weights` — no disk. vLLM then generates $G$ samples per prompt; here the memory peak is the **PagedAttention KV cache**, which can be tens of GB. After generation, the KV cache is released; the driver computes rewards and advantages locally; then `update_actor` runs the FSDP forward/backward, whose memory peak is **training activations**. The key is that the rollout peak (KV cache) and the training peak (activations) occur at *different times*, so colocation fits as long as you don't hold both — which is why `gpu_memory_utilization` must leave headroom and why you may offload optimizer state to CPU during rollout. With GRPO there is no critic, so you avoid a second full set of training state; that is part of why critic-free methods scale better in colocated setups.
 
 !!! key "Key Takeaways"
     - **HybridFlow = single-controller *between* stages + multi-controller *within* stages.** The driver runs the readable `generate → score → advantage → update` loop on small logical batches; each heavy stage runs as an SPMD `WorkerGroup`. This beats both pure single-controller (driver bottleneck, can't compose parallelism) and pure multi-controller (RL logic buried in distributed code).

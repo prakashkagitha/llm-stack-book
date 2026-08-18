@@ -42,7 +42,7 @@ These three mismatches are the crux. If you put both workloads on the same GPU a
 
 {{fig:colocated-disagg}}
 
-In a **colocated** design, the same physical GPUs run both the trainer and the rollout engine. This is the default in [TRL](../06-rl-infra/03-trl.html), the classic configuration in [veRL](../06-rl-infra/04-verl.html)'s "hybrid engine," and the simplest thing to reason about. The fundamental constraint is that an 80 GB GPU cannot simultaneously hold $16P$ bytes of training state *and* $2P$ bytes of inference weights *and* a useful KV cache. Something has to give, and the three strategies for making it give are **time-slicing**, **offloading**, and **memory partitioning**.
+In a **colocated** design, the same physical GPUs run both the trainer and the rollout engine. This is the default in [TRL](../06-rl-infra/03-trl.html), the classic configuration in [veRL](../06-rl-infra/04-verl.html)'s "hybrid engine," and the simplest thing to reason about. The fundamental constraint is a *per-GPU* budget: with data-parallel degree $N$ and inference tensor-parallel degree $\text{TP}$, every device must fit $16P/N$ bytes of training state, plus the backward pass's activation peak, plus $2P/\text{TP}$ bytes of inference weights, plus a KV pool, in 80 GB. At small $N$ the raw arithmetic already fails ($16P = 112$ GB for a 7B model on one GPU). At larger $N$ the static terms do fit — 7B at $N=8$ is only 14 GB of training state per GPU — and the binding constraints become the *dynamic* ones: the activation peak on long-sequence backward passes, vLLM's up-front `gpu_memory_utilization` reservation and the allocator fragmentation that follows from two allocators sharing a device, and above all the fact that rollout throughput scales with KV-cache size, so you want to hand the engine *most* of the GPU during generation rather than a leftover sliver. Something has to give, and the three strategies for making it give are **time-slicing**, **offloading**, and **memory partitioning**.
 
 ### Time-slicing (the hybrid engine)
 
@@ -128,7 +128,7 @@ Time-slicing only works if you can *make room*. The mechanism is offloading: mov
 
 2. **Weight offload / KV-cache release.** The inference engine's KV pool (tens of GB) is released between rollouts. Inference *weights* may be kept resident (they are the same bytes the trainer needs) or, in the most aggressive colocation, the inference engine and trainer literally alias the *same* weight tensors — there is one copy of the parameters and a "view" of them for each role.
 
-The offload transfer is not free. A 7B model's Adam state is $12 \times 7\text{e}9 = 84$ GB. Over a 64 GB/s PCIe 5.0 x16 link (PCIe 4.0 x16 is half that per direction, ~32 GB/s) that is $84 / 64 \approx 1.3$ s each way, or 2.6 s of pure copy per iteration. Over NVLink-C2C (Grace-Hopper, hundreds of GB/s) it is a fraction of that. This copy time is the hidden tax of colocated time-slicing, and it is why fast host interconnects (NVLink-C2C, large pinned buffers, double-buffered async copies) matter so much.
+The offload transfer is not free. A 7B model's Adam state is $12 \times 7\text{e}9 = 84$ GB — but note that this is the *cluster-wide* total. Under FSDP/ZeRO it is sharded over the $N$ data-parallel GPUs, and each GPU pushes its own $12P/N$ bytes down its own x16 link concurrently with the others, so the wall-clock is set by the per-GPU quantity, not the total. Over a 64 GB/s PCIe 5.0 x16 link (PCIe 4.0 x16 is half that per direction, ~32 GB/s), the whole 84 GB on a *single* GPU would be $84 / 64 \approx 1.3$ s each way, or 2.6 s of pure copy; sharded 16 ways it is 5.25 GB per GPU, an ideal $\approx 0.08$ s each way. Real runs land well above that ideal, because the round trip is $2 \times 84 = 168$ GB of host-DRAM traffic shared by every GPU on the node — host memory bandwidth, not the PCIe links, is usually the binding constraint. Over NVLink-C2C (Grace-Hopper, 450 GB/s per direction) it is a fraction of that. This copy time is the hidden tax of colocated time-slicing, and it is why fast host interconnects (NVLink-C2C, large pinned buffers, double-buffered async copies) matter so much.
 
 !!! tip "Practitioner tip"
 
@@ -238,7 +238,7 @@ class WeightSyncGroup:
 
 In real systems this side channel is wrapped so the trainer makes one call per push. In vLLM you supply a **worker extension** (`LLM(..., worker_extension_cls="my_rl_utils.WeightSyncExtension")`) whose methods become invocable on every worker through `llm.collective_rpc("init_weight_update_group", args=...)` and `llm.collective_rpc("update_weight", args=(name, dtype, shape))`; each worker receives the broadcast into a scratch tensor and hands it to `self.model_runner.model.load_weights([(name, tensor)])`. SGLang exposes the same protocol as first-class endpoints — `init_weights_update_group` followed by `update_weights_from_distributed(names, dtypes, shapes, group_name)`, with `update_weights_from_tensor` for the same-process case and `update_weights_from_disk` as the checkpoint fallback. OpenRLHF's `vllm_engine.update_weight` and veRL's resharding manager are thin layers over these primitives.
 
-The transfer runs at NVLink/IB bandwidth: 14 GB of bf16 weights over a 900 GB/s NVLink 4 fabric (H100) is $14 / 900 \approx 16$ ms of ideal transfer time. A real broadcast tree achieves a fraction of peak, so budget tens of milliseconds — still three orders of magnitude faster than an NFS reload. On Blackwell (B200/GB200), NVLink 5 roughly doubles the fabric to ~1.8 TB/s per GPU, halving the already-negligible sync cost. This is why NCCL broadcast is the default in-band sync for every serious RL framework.
+The transfer runs at NVLink/IB bandwidth. Mind the convention: H100's headline "900 GB/s NVLink 4" is the *bidirectional aggregate* (18 links × 50 GB/s bidirectional), so a broadcast — a unidirectional flow out of the root — sees 450 GB/s. Pushing 14 GB of bf16 weights is therefore $14 / 450 \approx 31$ ms of ideal transfer time. A real broadcast tree achieves a fraction of peak, so budget several tens of milliseconds — still three orders of magnitude faster than an NFS reload. On Blackwell (B200/GB200), NVLink 5 roughly doubles the fabric to ~1.8 TB/s per GPU (~900 GB/s per direction), halving the already-negligible sync cost. This is why NCCL broadcast is the default in-band sync for every serious RL framework.
 
 Two practical wrinkles. First, **bf16 vs fp32**: broadcast in the dtype the inference engine consumes (usually bf16), halving the bytes versus fp32 master weights. Second, **bucketing**: broadcasting thousands of tiny tensors one at a time is latency-bound by kernel-launch and handshake overhead; frameworks flatten parameters into large contiguous buckets and broadcast a few big buffers instead, which is bandwidth-bound and far faster.
 
@@ -273,14 +273,18 @@ def import_handles(handles):
     return mapped
 ```
 
-In the most tightly colocated designs the inference engine does not even re-import after every step — the parameter tensors are *aliased once* at startup, and because the trainer writes its updates in place (`optimizer.step()` mutates the same `param.data`), the inference engine automatically "sees" the new weights with literally zero sync work. The catch is correctness: you must ensure the trainer's optimizer step has fully completed (CUDA stream synchronized) before the inference engine reads, and you must guarantee the two are not writing/reading the buffer concurrently. CUDA IPC is the fastest possible sync — effectively free — but only available on a single node and requiring that both processes can map the same memory.
+In the most tightly colocated designs the inference engine does not even re-import after every step — the parameter tensors are *aliased once* at startup, and because the trainer writes its updates in place (`optimizer.step()` mutates the same `param.data`), the inference engine automatically "sees" the new weights with literally zero sync work.
+
+True aliasing, though, is a demanding precondition: it requires the engine to store parameters in *byte-identical, unfused, identically-sharded* buffers, which vLLM and SGLang do not — their `qkv_proj`/`gate_up_proj` are fused and TP-split along the output dimension, so no engine tensor lines up with any single trainer tensor, and under FSDP `param.data` is not even a stable allocation (parameters live in flat shards that are all-gathered into transient storage and freed). It is achievable when *you* own both sides, as in the single-process capstone loop below. The realistic same-node path with a production engine — OpenRLHF's colocate mode, SGLang's `update_weights_from_tensor` — is to export IPC handles and then call the engine's `load_weights`, which performs the fuse and TP-split as a *device-local copy* into the engine's own buffers. That is still the cheapest mechanism by an order of magnitude, since not a byte crosses an interconnect, but it is a copy, not a no-op.
+
+The catch either way is correctness: you must ensure the trainer's optimizer step has fully completed (CUDA stream synchronized) before the inference engine reads, and you must guarantee the two are not writing/reading the buffer concurrently. CUDA IPC is the fastest possible sync — effectively free — but only available on a single node and requiring that both processes can map the same memory.
 
 The decision tree:
 
 | Situation | Mechanism | Order-of-magnitude cost (7B) |
 |---|---|---|
-| Same node, shared GPUs, aliased weights | CUDA IPC | ~0 ms (no copy) |
-| Same/multi node, GPUs reachable by NCCL | NCCL broadcast | ~10–50 ms |
+| Same node, shared GPUs, aliased weights | CUDA IPC | ~0 ms (device-local; no interconnect traffic) |
+| Same/multi node, GPUs reachable by NCCL | NCCL broadcast | ~30–100 ms |
 | Cross-cluster, no NCCL path, or recovery | Checkpoint reload | seconds–minutes |
 
 !!! tip "The 100M case: sync is one function call"
@@ -342,24 +346,30 @@ def reshard_and_sync(trainer, infer_engines, name_map, infer_tp):
         #    Under FSDP this all-gathers the flat shards and reshapes to 2D.
         full_tensors = [trainer.gather_full_param(tn) for tn in spec.trainer_names]
 
-        # 2) FUSE: concatenate Q/K/V (or gate/up) into the engine's fused tensor,
-        #    honoring GQA head grouping if K/V have fewer heads than Q.
-        fused = fuse_along(full_tensors, dim=spec.fuse_dim, head_layout=spec.heads)
+        # 2) RE-SHARD FIRST: split EACH full trainer tensor into per-rank,
+        #    head-aligned groups. Order matters: fusing Q/K/V into one tensor and
+        #    then chunking *that* along the output dim slices straight through the
+        #    Q/K/V boundary and hands each rank a semantically wrong mix (this is
+        #    the silent-garbage bug of Exercise 5).
+        per_rank = [split_for_tp(t, tp=infer_tp, dim=spec.tp_dim,
+                                 head_layout=spec.heads) for t in full_tensors]
 
-        # 3) (optional) QUANTIZE: if the engine runs FP8/INT4, compute scales & pack.
+        # 3) FUSE PER RANK: concatenate rank r's Q/K/V (or gate/up) slices into the
+        #    fused tensor that rank expects -- exactly what QKVParallelLinear holds.
+        shards = [fuse_along([t[r] for t in per_rank], dim=spec.fuse_dim)
+                  for r in range(infer_tp)]
+
+        # 4) (optional) QUANTIZE: if the engine runs FP8/INT4, compute scales & pack.
+        #    Done per shard, since each rank owns its own scales.
         if spec.quantized:
-            fused = quantize(fused, scheme=spec.quant_scheme)
-
-        # 4) RE-SHARD: split the fused tensor into `infer_tp` slices, one per
-        #    inference TP rank, along the engine's tensor-parallel dimension.
-        shards = split_for_tp(fused, tp=infer_tp, dim=spec.tp_dim)
+            shards = [quantize(s, scheme=spec.quant_scheme) for s in shards]
 
         # 5) SEND: broadcast/scatter each shard to its inference rank (Mechanism 2),
         #    or copy in place if same-node aliasing (Mechanism 3).
         scatter_to_infer_ranks(shards, infer_name, infer_engines)
 ```
 
-Steps 1 and 2 are the expensive ones: gathering the full parameter undoes the trainer's sharding (an all-gather of $2P$ bytes), and you need transient memory to hold the full fused tensor. Good implementations do this **layer by layer**, streaming one fused tensor at a time so peak extra memory is one layer's worth, not the whole model. veRL's resharding manager and OpenRLHF's `update_weight` path both implement a version of this name-mapped, layer-streamed gather-fuse-reshard-broadcast pipeline. The single-controller architecture of [veRL](../06-rl-infra/04-verl.html) is in part *designed* to make this resharding step expressible as one orchestrated collective rather than ad-hoc message passing.
+Step 1 is the expensive one: gathering the full parameter undoes the trainer's sharding (an all-gather of $2P$ bytes), and you need transient memory to hold the full tensors plus the per-rank fused shards built from them. Good implementations do this **layer by layer**, streaming one fused tensor at a time so peak extra memory is one layer's worth, not the whole model. veRL's resharding manager and OpenRLHF's `update_weight` path both implement a version of this name-mapped, layer-streamed gather-reshard-fuse-broadcast pipeline. The single-controller architecture of [veRL](../06-rl-infra/04-verl.html) is in part *designed* to make this resharding step expressible as one orchestrated collective rather than ad-hoc message passing.
 
 !!! note "Why not just make the layouts identical?"
 
@@ -389,19 +399,19 @@ When rollout dominates (long reasoning traces), $U_\text{colo}$ is small — you
 
 !!! example "Worked example: colocated vs disaggregated for a 7B reasoning run"
 
-    Setup: a 7B policy, GRPO with $G=8$ samples per prompt, average completion length 4000 tokens (long chain-of-thought). We have 16 H100-80GB GPUs and an NVLink fabric at ~900 GB/s intra-node. Per RL iteration we process a global batch of 32 prompts (= 256 rollout sequences, so about 1.0M trained tokens — enough that the 6P-FLOPs-per-token gradient step stays comfortably under the 16-GPU roofline). Suppose the measured per-iteration stage times are:
+    Setup: a 7B policy, GRPO with $G=8$ samples per prompt, average completion length 4000 tokens (long chain-of-thought). We have 16 H100-80GB GPUs and an NVLink fabric quoted at ~900 GB/s bidirectional (450 GB/s per direction) intra-node. Per RL iteration we process a global batch of 32 prompts (= 256 rollout sequences, so about 1.0M trained tokens — enough that the 6P-FLOPs-per-token gradient step stays comfortably under the 16-GPU roofline). Suppose the measured per-iteration stage times are:
 
     | Stage | Time | Notes |
     |---|---|---|
     | $T_\text{rollout}$ | 40 s | decode 256 × 4000 tokens, memory-bound |
     | $T_\text{reward}$ | 3 s | math/code verifiers, partly overlappable |
     | $T_\text{train}$ | 8 s | a few GRPO minibatch fwd+bwd steps |
-    | $T_\text{offload}$ | 3 s | Adam state out+in over PCIe per iter |
-    | $T_\text{sync}$ | 0.02 s | NCCL broadcast of 14 GB at 900 GB/s |
+    | $T_\text{offload}$ | 3 s | Adam state out+in per iter; host-DRAM-bound, not link-rate |
+    | $T_\text{sync}$ | 0.03 s | NCCL broadcast of 14 GB at 450 GB/s (per direction) |
 
     **Colocated time-sliced (all 16 GPUs do everything, serially):**
 
-    $$T_\text{iter}^\text{colo} = 40 + 3 + 8 + 3 + 0.02 \approx 54\ \text{s}$$
+    $$T_\text{iter}^\text{colo} = 40 + 3 + 8 + 3 + 0.03 \approx 54\ \text{s}$$
 
     Training-GPU utilization:
 
@@ -411,7 +421,7 @@ When rollout dominates (long reasoning traces), $U_\text{colo}$ is small — you
 
     **Disaggregated async (split 16 GPUs as 4 train + 12 rollout):** With 12 GPUs on rollout instead of 16, raw rollout throughput drops to $12/16$ of before (so the time rises by $16/12$), giving $T_\text{rollout}' \approx 40 \times 16/12 \approx 53$ s for the same batch. But rollout now overlaps training, and we can let the rollout pool stay full. With 4 training GPUs, $T_\text{train}' \approx 8 \times 16/4 \approx 32$ s (fewer GPUs, more time) — but training overlaps rollout. The iteration is bounded by the slower stage plus sync:
 
-    $$T_\text{iter}^\text{async} \approx \max(53,\ 32) + 0.02 \approx 53\ \text{s}$$
+    $$T_\text{iter}^\text{async} \approx \max(53,\ 32) + 0.03 \approx 53\ \text{s}$$
 
     That looks no better on wall-clock — and indeed for *this* split it is not, because we over-provisioned training: 4 GPUs finish their 32 s of work and then wait 21 s. The real win is **rebalancing**: because rollout dominates, push GPUs *to rollout* and keep only the smallest training pool that still hides under it, i.e. the smallest $g_t$ with $T_\text{train}' \le T_\text{rollout}'$. That constraint is $8 \times 16/g_t \le 40 \times 16/(16-g_t)$, i.e. $128 \le 48\,g_t$, so $g_t \ge 2.67$ and the split is **3 train + 13 rollout**: $T_\text{rollout}' \approx 40 \times 16/13 \approx 49$ s, $T_\text{train}' \approx 8 \times 16/3 \approx 43$ s, iteration $\approx 49$ s — rollout-bound, training fully hidden, and now genuinely faster than both the 53 s split and the 54 s colocated baseline. The lesson: disaggregation's value is not automatic speedup, it is the *freedom to size the two pools so the cheap, dominant stage is the only thing on the critical path*, while the training GPUs run at $43/49 \approx 87\%$ utilization instead of 15%. On a real cost model where rollout can run on cheaper inference GPUs, that reallocation is a large effective-cost win even when wall-clock is similar.
 
@@ -423,7 +433,7 @@ The example also exposes the staleness cost we hid: in the async case, the rollo
 
     **A:** With 8k-token rollouts, the run is heavily rollout-bound — decode will dominate wall-clock — so I disaggregate. I split the 64 GPUs into a small training pool and a large rollout pool, e.g. 16 train + 48 rollout, sized so training time hides under rollout time. The trainer runs FSDP or Megatron TP+PP to fit optimizer state for 32B ($12P \approx 384$ GB of Adam state alone, $16P \approx 512$ GB of total training state); the rollout pool runs vLLM/SGLang at a low TP degree (TP=2 or 4) to maximize KV-cache headroom for the long sequences. I run **asynchronous** with staleness 1, relying on the PPO/GRPO importance ratio plus clipping to correct the off-policy lag.
 
-    For weight sync I use **NCCL broadcast** over a process group spanning both pools — 64 GB of bf16 weights at NVLink/IB bandwidth is well under a second, so I can afford to sync every step. The **resharding problem** forces me to (1) gather the FSDP-sharded params into full tensors layer by layer, (2) fuse Q/K/V and gate/up into the engine's fused layout, honoring GQA head grouping, and (3) re-split from the trainer's TP degree to the inference TP degree before broadcasting. I keep an explicit name+shape map between the two layouts and stream one layer at a time to cap transient memory. If the inference engine runs FP8, sync also re-quantizes from the bf16 master on each push. I'd checkpoint to disk periodically as the robust fallback and for fault tolerance, but never use checkpoint-reload on the hot sync path because it is orders of magnitude too slow.
+    For weight sync I use **NCCL broadcast** over a process group spanning both pools — 64 GB of bf16 weights at NVLink/IB bandwidth is well under a second, so I can afford to sync every step. The **resharding problem** forces me to (1) gather the FSDP-sharded params into full tensors layer by layer, (2) re-split each projection from the trainer's TP degree into the inference engine's head-aligned per-rank groups, and (3) fuse each rank's Q/K/V and gate/up slices into the engine's fused layout, honoring GQA head grouping, before broadcasting — in that order, since fusing first and then chunking would cut through the Q/K/V boundary. I keep an explicit name+shape map between the two layouts and stream one layer at a time to cap transient memory. If the inference engine runs FP8, sync also re-quantizes from the bf16 master on each push. I'd checkpoint to disk periodically as the robust fallback and for fault tolerance, but never use checkpoint-reload on the hot sync path because it is orders of magnitude too slow.
 
 ## Putting It Together: A Decision Framework
 
@@ -449,7 +459,7 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
     - **Colocated** shares GPUs via time-slicing and offloading (the "hybrid engine"): maximal per-GPU utilization within a phase, but strictly serial phases mean training-capable GPUs spend most of a rollout-bound run doing memory-bound decode at low FLOP utilization.
     - **Disaggregated** uses separate training and rollout pools that can be sized independently and pipelined to overlap; this buys utilization and throughput at the price of **off-policy staleness** (rollouts are produced under slightly stale weights).
     - Weight sync has three mechanisms: **CUDA IPC** (zero-copy, same node, fastest), **NCCL broadcast** (GPU-to-GPU over NVLink/IB, the everyday workhorse at ~10s of ms for a 7B model), and **checkpoint reload** (seconds–minutes, layout-agnostic, the robust fallback and fault-tolerance path).
-    - The **resharding problem** is what makes sync hard: trainer and inference layouts differ in sharding (FSDP vs TP, and TP degree), fusion (separate vs fused QKV / gate-up, with GQA head grouping), and dtype (bf16 master vs FP8/INT4 inference). A correct sync layer gathers, fuses, optionally quantizes, re-shards, and broadcasts, streamed layer by layer.
+    - The **resharding problem** is what makes sync hard: trainer and inference layouts differ in sharding (FSDP vs TP, and TP degree), fusion (separate vs fused QKV / gate-up, with GQA head grouping), and dtype (bf16 master vs FP8/INT4 inference). A correct sync layer gathers, re-shards each projection into head-aligned per-rank groups, fuses *per rank*, optionally quantizes, and broadcasts, streamed layer by layer.
     - Sync mechanism and algorithm staleness are coupled: cheap sync lets you update the rollout policy every step (staleness 1, corrected by the PPO/GRPO importance ratio); expensive sync forces higher staleness.
     - The right design is workload-dependent: rollout-bound + multi-node + staleness-tolerant ⇒ async disaggregation; small/single-node or strictly on-policy ⇒ colocated time-slicing. The win from disaggregation is not automatic wall-clock speedup but the freedom to size pools so the dominant stage is the only thing on the critical path.
 
@@ -504,7 +514,7 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
 
     $$2P = 2 \times 7\text{e}9 = 1.4\text{e}10\ \text{bytes} = 14\ \text{GB}.$$
 
-    Why simultaneous colocation fails: the training state alone (112 GB) already exceeds one 80 GB GPU, so it must be sharded across GPUs *and* you still cannot additionally park 14 GB of inference weights plus a useful (tens-of-GB) KV cache on the same devices at the same instant. The combined footprint does not fit, so the colocated design must **time-slice**: during rollout the trainer's $12P = 84$ GB of optimizer state is offloaded to host RAM to free room for the KV cache, and during training the inference engine sleeps and releases its KV pool. The two roles take turns owning HBM rather than coexisting.
+    Why simultaneous colocation fails — and be careful to compare like with like. The 112 GB is a *cluster-wide* total; it exceeds one 80 GB GPU, so the trainer must shard it. Once sharded the static arithmetic is comfortable: at $N = 8$ data-parallel ranks that is 14 GB of training state per GPU, plus $2P/\text{TP}$ of inference weights (1.75 GB per GPU at TP=8), leaving tens of GB free. So the honest reason for time-slicing is *not* that $16P + 2P$ overflows — it is that (i) the backward pass's activation peak on 4000-token completions can consume most of the remaining headroom, (ii) vLLM reserves its `gpu_memory_utilization` fraction up front and two allocators on one device fragment each other, and (iii) rollout throughput is roughly proportional to KV-cache size, so a colocated engine squeezed into the leftovers decodes far slower than one given most of the GPU. Those pressures push the design to **time-slice**: during rollout the trainer's $12P = 84$ GB of optimizer state is offloaded to host RAM to free room for the KV cache, and during training the inference engine sleeps and releases its KV pool. The two roles take turns owning HBM rather than coexisting.
 
 **2.** (Offload cost.) During the rollout phase of the time-sliced colocated loop, the 7B model's Adam state is offloaded to host RAM and later reloaded before the optimizer step. (a) How many bytes is the Adam state ($m$, $v$, fp32 master)? (b) Compute the round-trip (out + in) copy time over a PCIe 5.0 x16 link at 64 GB/s per direction. (c) Recompute the round-trip over an NVLink-C2C link at 450 GB/s, and state the speedup. (d) Why does the chapter insist on *pinned* host memory and a *dedicated CUDA stream* for these copies?
 
@@ -522,6 +532,8 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
     $$2 \times 0.187 \approx 0.37\ \text{s}.$$
 
     Speedup vs PCIe: $2.6 / 0.37 \approx 7\times$ (equivalently the bandwidth ratio $450/64 \approx 7$).
+
+    Both (b) and (c) assume a single device holding the *whole* $12P$. Under FSDP/ZeRO with $N$ data-parallel ranks each GPU only moves $12P/N$ over its own link, concurrently with the others, so divide by $N$ — 0.16 s round trip at $N = 16$ — and then derate, because 168 GB of round-trip host-DRAM traffic shared across the node is typically the real ceiling.
 
     (d) A naive `tensor.cpu()` allocates *pageable* host memory, which the driver must first stage through a pinned bounce buffer, serializing the transfer and blocking the calling stream. Pre-allocating **pinned (page-locked)** buffers lets the DMA engine copy directly at full link bandwidth, and issuing the copy on a **dedicated CUDA stream** with `non_blocking=True` lets it overlap with the tail of the previous phase (e.g. the end of decode) instead of adding a serial stall. That turns a ~2.6 s exposed copy into a largely hidden one.
 
@@ -552,18 +564,18 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
 
     (c) Wall-clock barely improved (61 s -> 57 s), which is the chapter's point: disaggregation is not an automatic speedup. The real change is utilization. The 2 dedicated training GPUs are busy 48 s of every 57 s ($\approx 84\%$) instead of 16 GPUs busy at ~10%. Rollout — the cheap, memory-bound, dominant stage — is now the only thing on the critical path, and it can run on cheaper/more numerous inference GPUs, which is where the effective-cost win comes from. The hidden cost is that each update now trains on rollouts one iteration stale (staleness $k=1$), corrected by the GRPO importance ratio.
 
-**4.** (Sync mechanism choice + resharding.) (a) For a 70B model (140 GB in bf16), compute the weight-sync time for NCCL broadcast over a 900 GB/s NVLink fabric, and for checkpoint reload over an NFS mount sustaining 1.2 GB/s. State the ratio. (b) The chapter warns that even with a fast NCCL path, sync is "not a memcpy." Name the three axes along which trainer and inference layouts differ, and explain concretely what a trainer running FSDP + TP=8 must do to feed an inference engine running TP=2.
+**4.** (Sync mechanism choice + resharding.) (a) For a 70B model (140 GB in bf16), compute the weight-sync time for NCCL broadcast over an H100 NVLink fabric (headline 900 GB/s bidirectional, so 450 GB/s in the single direction a broadcast uses), and for checkpoint reload over an NFS mount sustaining 1.2 GB/s. State the ratio. (b) The chapter warns that even with a fast NCCL path, sync is "not a memcpy." Name the three axes along which trainer and inference layouts differ, and explain concretely what a trainer running FSDP + TP=8 must do to feed an inference engine running TP=2.
 
 ??? note "Solution"
-    (a) NCCL broadcast, moving 140 GB at 900 GB/s:
+    (a) NCCL broadcast, moving 140 GB out of the root at 450 GB/s (the per-direction half of the 900 GB/s bidirectional figure):
 
-    $$T_\text{NCCL} = 140 / 900 \approx 0.156\ \text{s}.$$
+    $$T_\text{NCCL} = 140 / 450 \approx 0.31\ \text{s}.$$
 
     Checkpoint reload over NFS at 1.2 GB/s (the dominant read/write cost):
 
     $$T_\text{ckpt} \approx 140 / 1.2 \approx 117\ \text{s} \approx 2\ \text{min}.$$
 
-    Ratio: $117 / 0.156 \approx 750\times$. This is why checkpoint reload is fine as a periodic fault-tolerance fallback but far too slow for the hot per-step sync path, whereas NCCL broadcast (sub-second even for 70B) can run every step.
+    Ratio: $117 / 0.31 \approx 375\times$. This is why checkpoint reload is fine as a periodic fault-tolerance fallback but far too slow for the hot per-step sync path, whereas NCCL broadcast (sub-second even for 70B) can run every step.
 
     (b) The three axes are:
 
@@ -571,7 +583,7 @@ The frameworks map onto this flow. [TRL](../06-rl-infra/03-trl.html) is colocate
     - **Fusion:** the inference engine fuses $W_Q, W_K, W_V$ into one `qkv_proj` and `gate_proj`+`up_proj` into `gate_up_proj`; with GQA the concatenation follows a specific head-grouped order.
     - **Dtype/quantization:** trainer holds bf16 (plus fp32 master); the engine may run FP8/INT8/INT4, so sync must recompute the quantized representation rather than copy bytes.
 
-    Going FSDP+TP=8 -> TP=2 concretely: the sync layer must (1) **gather** each FSDP-sharded parameter back into a full, un-flattened tensor (an all-gather that undoes the trainer's sharding), (2) **fuse** Q/K/V and gate/up into the engine's fused tensors honoring GQA head grouping, and then (3) **re-shard** from 8 slices down to 2 — each of the 2 inference ranks must own the head-aligned columns that previously lived on 4 different training ranks, so it effectively gathers the slices of four TP=8 ranks. This is done layer by layer to cap transient memory at one fused layer's worth rather than the whole model.
+    Going FSDP+TP=8 -> TP=2 concretely: the sync layer must (1) **gather** each FSDP-sharded parameter back into a full, un-flattened tensor (an all-gather that undoes the trainer's sharding), (2) **re-shard** from 8 slices down to 2 — each of the 2 inference ranks must own the head-aligned rows that previously lived on 4 different training ranks, so it effectively gathers the slices of four TP=8 ranks — and then (3) **fuse** each rank's Q/K/V and gate/up slices into that rank's fused tensor, honoring GQA head grouping. The re-shard must come before the fuse: chunking an already-fused tensor cuts through the Q/K/V boundary (Exercise 5). This is done layer by layer to cap transient memory at one fused layer's worth rather than the whole model.
 
 **5.** (Implementation.) Implement the **fuse + re-shard** step (steps 2 and 4 of the chapter's `reshard_and_sync` recipe) for a GQA attention block. Write `fuse_qkv(w_q, w_k, w_v)` that concatenates the three full projection weights into one `qkv_proj` tensor in `[Q; K; V]` output-row order, and `shard_qkv_for_tp(w_q, w_k, w_v, tp)` that produces the per-rank fused shard for each of `tp` inference ranks such that each rank holds a *contiguous, head-aligned* block of Q, K, and V heads (a naive `torch.chunk` of the already-fused tensor would split heads incorrectly). Verify on `hidden=4096, n_heads=32, n_kv_heads=8, head_dim=128, tp=2`.
 

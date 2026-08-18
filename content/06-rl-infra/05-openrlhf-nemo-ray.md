@@ -599,7 +599,7 @@ In NeMo-Aligner's PPO implementation, the critic shares the same Megatron parall
 # Actual code lives in nemo_aligner/algorithms/ppo.py
 
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.distributed import masked_mean
+from nemo_aligner.utils.utils import masked_mean   # NOT utils.distributed
 import torch
 
 class MegatronPPOTrainer:
@@ -756,6 +756,13 @@ from typing import List, Tuple, Dict
 import numpy as np
 
 
+# Ask Ray for GPU only if there is one. Requesting a fraction of a GPU on a
+# CPU-only box makes the actors permanently unschedulable, and every
+# `ray.get(...)` below would block forever.
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+GPU_PER_ACTOR = 0.5 if torch.cuda.is_available() else 0
+
+
 # ── Reward function ────────────────────────────────────────────────────────
 def reward_fn(responses: List[str]) -> List[float]:
     """
@@ -772,17 +779,19 @@ def reward_fn(responses: List[str]) -> List[float]:
 
 
 # ── Rollout Actor ──────────────────────────────────────────────────────────
-@ray.remote(num_gpus=0.5)   # share GPU for toy demo
+@ray.remote(num_gpus=GPU_PER_ACTOR)   # share GPU for toy demo
 class RolloutActor:
     """Generates responses given prompts."""
     def __init__(self, model_name: str):
         self.tok = AutoTokenizer.from_pretrained(model_name)
         self.tok.pad_token = self.tok.eos_token
+        self.device = DEVICE
+        # Move the weights too — setting `self.device` alone would leave the
+        # model on CPU while every input got shipped to the GPU.
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name, torch_dtype=torch.float32
-        )
+        ).to(self.device)
         self.model.eval()
-        self.device = "cpu"   # CPU for toy demo; change to "cuda" in practice
 
     def generate(self, prompts: List[str], max_new_tokens: int = 64
                  ) -> List[Tuple[str, List[float]]]:
@@ -840,17 +849,19 @@ class RolloutActor:
 
 
 # ── Policy Training Actor ──────────────────────────────────────────────────
-@ray.remote(num_gpus=0.5)
+@ray.remote(num_gpus=GPU_PER_ACTOR)
 class PolicyActor:
     """Holds the trainable policy and runs PPO updates."""
     def __init__(self, model_name: str, lr: float = 1e-5):
         self.tok = AutoTokenizer.from_pretrained(model_name)
         self.tok.pad_token = self.tok.eos_token
+        self.device = DEVICE
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name, torch_dtype=torch.float32
-        )
+        ).to(self.device)
+        # Build the optimizer *after* the move, so its state lives on the
+        # same device as the parameters it updates.
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr)
-        self.device = "cpu"
 
     def ppo_step(
         self,
@@ -901,19 +912,20 @@ class PolicyActor:
             resp_token_ids = tokens["input_ids"][0, prompt_len:]
             new_lps = F.log_softmax(resp_logits, dim=-1)
             new_lp_seq = new_lps[
-                torch.arange(len(resp_token_ids)), resp_token_ids
+                torch.arange(len(resp_token_ids), device=self.device),
+                resp_token_ids,
             ].tolist()
 
             # Clip old_lp_seq to match actual response length
             seq_len = min(len(old_lp_seq), len(new_lp_seq))
-            old_lp_t = torch.tensor(old_lp_seq[:seq_len])
+            old_lp_t = torch.tensor(old_lp_seq[:seq_len], device=self.device)
             new_lp_t = torch.stack([
                 new_lps[i, resp_token_ids[i]] for i in range(seq_len)
             ])
 
             # Importance sampling ratio: exp(new - old)
             ratio = torch.exp(new_lp_t - old_lp_t)
-            adv_t = torch.tensor(adv)  # broadcast over tokens
+            adv_t = torch.tensor(adv, device=self.device)  # broadcast over tokens
 
             # Clipped surrogate
             surr1 = ratio * adv_t
@@ -1004,7 +1016,7 @@ In any Ray-based RLHF system, throughput is determined by the slowest stage in t
 
     These are peak *aggregate* figures, so treat them as optimistic lower bounds: a weight broadcast is one-directional, so the usable rate is roughly half the bidirectional number, and a parameter-by-parameter loop never saturates the link on the small tensors.
 
-    If PPO update epochs take roughly 30 seconds, weight sync adds 1–7% overhead depending on interconnect — acceptable. But for smaller models where updates are faster (say, 5 seconds for a 7B model), sync overhead can reach 20–40% without careful optimization (e.g., overlapping sync with the next rollout batch).
+    If PPO update epochs take roughly 30 seconds, weight sync adds 1–7% overhead depending on interconnect — acceptable. Note that simply shrinking the model does not change this ratio much: a 7B policy is only 14 GB, so its Gen4 sync is $14/64 \approx 0.22$ s against a ~5 s update — still ~4%. Sync time and update time both scale roughly with parameter count, so the *fraction* is largely size-invariant on a fixed path. Overhead blows up when the transfer stops scaling with the model: when it rides the slow Path-A object-store route (GPU→CPU→serialize→CPU→GPU, a few GB/s effective), or when a parameter-by-parameter loop over thousands of small tensors never reaches peak bandwidth. On those paths 20–40% is easy to hit, and the fixes are the ones listed below — direct NCCL broadcast, lazy sync, and overlapping the sync with the next rollout batch.
 
 ### Reducing Weight Sync Overhead
 
@@ -1152,12 +1164,12 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
 
     The property that degrades without sync is the **on-policy-ness** of the data, i.e. the validity of the importance-sampling ratio $r_t(\theta) = \exp(\log \pi_\theta(a_t\mid s_t) - \log \pi_{\theta_{\text{old}}}(a_t\mid s_t))$. PPO assumes the rollout was drawn from a policy close to the current one, and it corrects the small remaining mismatch with $r_t$ and the clip range $[1-\epsilon,\,1+\epsilon]$. If you never sync, vLLM keeps generating from the *initial* weights forever while the training actor drifts arbitrarily far away. The behavior policy $\pi_{\theta_{\text{old}}}$ and the target policy $\pi_\theta$ diverge without bound, the ratio blows past the clip range on essentially every token (so the clipped surrogate stops providing a useful gradient signal), and every update becomes heavily off-policy. Training does not crash — it silently learns from stale data and the KL-to-reference and reward curves stop tracking what the policy is actually doing. Sync is what keeps the generation policy $\approx$ the training policy so PPO's near-on-policy assumption holds.
 
-**2.** The placement-group example reserves 8 bundles with `strategy="STRICT_PACK"` for a tensor-parallel (TP=8) actor group. (a) What partial-allocation failure does using a placement group prevent in the first place? (b) Why specifically `STRICT_PACK` rather than the default spread, given the actor is tensor-parallel? (c) What would go wrong at runtime if 4 of the 8 shards landed on node A and 4 on node B?
+**2.** The placement-group example reserves 8 bundles with `strategy="STRICT_PACK"` for a tensor-parallel (TP=8) actor group. (a) What partial-allocation failure does using a placement group prevent in the first place? (b) Why specifically `STRICT_PACK` rather than the default `PACK`, given the actor is tensor-parallel? (c) What would go wrong at runtime if 4 of the 8 shards landed on node A and 4 on node B?
 
 ??? note "Solution"
     **(a)** Without a placement group, a request for 8 single-GPU workers is granted greedily and independently. On a busy cluster you can acquire, say, 5 GPUs and then block indefinitely waiting for the other 3 while still holding the 5 — and if several jobs do this simultaneously they deadlock, each pinning GPUs the others need. A placement group reserves the whole "bundle" of 8 GPUs **atomically (gang scheduling)**: `ray.get(pg.ready())` returns only when all 8 are secured, so you never hold a partial, unusable allocation.
 
-    **(b)** TP splits a single transformer layer's matmuls across all 8 ranks, so every layer requires all-reduce / all-gather collectives among the 8 shards *on the critical path of every forward and backward pass*. That traffic must ride the fast intra-node fabric (NVLink). `STRICT_PACK` forces all 8 bundles onto **one node**; the default spread strategy would scatter them across nodes, pushing the per-layer collectives onto slow cross-node links.
+    **(b)** TP splits a single transformer layer's matmuls across all 8 ranks, so every layer requires all-reduce / all-gather collectives among the 8 shards *on the critical path of every forward and backward pass*. That traffic must ride the fast intra-node fabric (NVLink). `STRICT_PACK` forces all 8 bundles onto **one node**. The default strategy, `PACK`, is only *best-effort* co-location: it tries to fit the whole group on the fewest nodes, but if the target node cannot hold all 8 bundles Ray silently spills the remainder onto other nodes, pushing the per-layer collectives onto slow cross-node links. `STRICT_PACK` turns single-node placement into a hard scheduling constraint, so the group stays pending until one node can host it rather than quietly landing on a slow fabric.
 
     **(c)** The group still initializes (the NCCL communicator forms across both nodes), but every TP collective now traverses the inter-node network (InfiniBand/TCP at ~25-200 GB/s) instead of NVLink (~600 GB/s) for *each layer of every step*. Since these collectives are on the hot path and happen many times per token, generation and training throughput collapse — you pay a cross-node round trip repeatedly where you expected NVLink. It is a correctness-preserving but catastrophic performance regression, which is exactly what `STRICT_PACK` exists to prevent.
 
@@ -1256,17 +1268,17 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
     The reference actor loads the same base model as the policy but is frozen; it recomputes log-probs of the *already generated* responses with a teacher-forced forward pass — the same slicing trick `PolicyActor.ppo_step` uses (`prompt_len - 1 : -1`). We return one scalar per sequence (the summed response log-prob) so it lines up with the toy loop's sequence-level advantages.
 
     ```python
-    @ray.remote(num_gpus=0.5)
+    @ray.remote(num_gpus=GPU_PER_ACTOR)   # same CPU/GPU guard as the other actors
     class ReferenceActor:
         """Frozen reference model: scores responses for the KL penalty."""
         def __init__(self, model_name: str):
             self.tok = AutoTokenizer.from_pretrained(model_name)
             self.tok.pad_token = self.tok.eos_token
+            self.device = DEVICE
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_name, torch_dtype=torch.float32
-            )
+            ).to(self.device)
             self.model.eval()
-            self.device = "cpu"
 
         def log_probs(self, prompts, responses):
             """Per-sequence summed log-prob of the response tokens."""
@@ -1288,7 +1300,9 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
                 resp_logits = logits[0, prompt_len - 1:-1, :]      # [resp_len, vocab]
                 resp_ids = tokens["input_ids"][0, prompt_len:]
                 lps = F.log_softmax(resp_logits, dim=-1)
-                tok_lps = lps[torch.arange(len(resp_ids)), resp_ids]
+                tok_lps = lps[
+                    torch.arange(len(resp_ids), device=self.device), resp_ids
+                ]
                 seq_logps.append(tok_lps.sum().item())
             return seq_logps
     ```
@@ -1317,4 +1331,4 @@ One practical note: as of 2026, OpenRLHF and veRL have the largest and most acti
     advantages = [(r - mean_r) / std_r for r in rewards]
     ```
 
-    This reproduces the NeMo-Aligner recipe `rewards = -kl_coef * kl_penalty` with the RM score added on top, but at sequence granularity to fit the toy loop. Because $\pi_{\text{old}}$ (the rollout policy) and $\pi_{\text{ref}}$ start identical, $\text{KL}_{\text{seq}} \approx 0$ at step 0 and grows as the policy drifts from the reference, penalizing responses that stray too far — exactly the role of the KL term in RLHF. Note the reference actor is frozen and holds no optimizer state, matching the chapter's memory budget (parameters only, ~17.5 GB/GPU for a 70B reference).
+    This reproduces the NeMo-Aligner recipe `rewards = -kl_coef * kl_penalty` with the RM score added on top, but at sequence granularity to fit the toy loop. Because $\pi_{\text{old}}$ (the rollout policy) and $\pi_{\text{ref}}$ start identical, $\text{KL}_{\text{seq}} \approx 0$ at step 0 and grows as the policy drifts from the reference, penalizing responses that stray too far — exactly the role of the KL term in RLHF. Note the reference actor is frozen and holds no optimizer state, matching the chapter's memory budget (parameters only — $140/4 = 35$ GB/GPU for a 70B reference on the Worked Memory Example's 4 GPUs).

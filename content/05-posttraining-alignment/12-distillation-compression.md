@@ -228,7 +228,7 @@ For each linear layer with weight matrix $W \in \mathbb{R}^{d_\text{out} \times 
 1. Collect activation statistics $H = X^T X / N$ using calibration data (typically 128 samples).
 2. For each column $q$: compute the pruning score $\text{score}(w_{ij}) = w_{ij}^2 / [H^{-1}]_{jj}$ (analogous to the OBS weight saliency).
 3. Select the mask *per output row*, not per column: within a block of columns (the reference implementation uses blocks of 128), prune the lowest-score entries of each row of that block.
-4. Update the remaining weights in the column to compensate: $\delta w = -\frac{w_q}{[H^{-1}]_{qq}} H^{-1}_{:,q}$.
+4. Update the *not-yet-processed columns* of that same output row to compensate: $\delta w_{j} = -\frac{w_q}{[H^{-1}]_{qq}} [H^{-1}]_{q,j}$ for $j > q$. The update is indexed by input dimension, so it redistributes the pruned weight's contribution onto the connections the sweep has not reached yet.
 5. No per-row Hessian update is needed. Because every output row is pruned in the *same* column order, all rows share one sequence of inverse Hessians, so the Cholesky factor of $H^{-1}$ is computed **once** for the whole layer and successive rows of it are simply read off as the sweep proceeds. This is SparseGPT's central trick — it is exactly what the predecessor exact-OBS/OBC method could not do, since per-row Hessian downdates cost $O(d_\text{in}^3)$ *per row*.
 
 SparseGPT achieves 50–60% sparsity on models like LLaMA with near-zero perplexity increase, and can be extended to 2:4 structured sparsity (2 nonzeros per 4 weights) that maps directly to NVIDIA's sparse tensor core format and yields about 1.5–2x throughput improvement.
@@ -241,7 +241,7 @@ $$
 \text{score}(w_{ij}) = |w_{ij}| \cdot \|x_j\|_2
 $$
 
-where $\|x_j\|_2$ is the RMS magnitude of the $j$-th input feature computed over calibration data. The score combines weight magnitude (what OBS uses) with activation magnitude (how important that feature actually is at runtime). Wanda requires no Hessian inversion — just one forward pass — making it extremely fast to apply even to 70B models.
+where $\|x_j\|_2$ is the $\ell_2$ norm of the $j$-th input feature aggregated over *all* calibration tokens. (The code below returns the per-feature RMS instead, which is that norm divided by $\sqrt{N_\text{tokens}}$ — the same constant for every $j$, so the per-row ranking, and hence the mask, is identical.) The score combines weight magnitude (what OBS uses) with activation magnitude (how important that feature actually is at runtime). Wanda requires no Hessian inversion — just one forward pass — making it extremely fast to apply even to 70B models.
 
 {{fig:distill-wanda-vs-magnitude}}
 
@@ -275,9 +275,12 @@ def compute_activation_norms(
     device: str = "cuda",
 ) -> torch.Tensor:
     """
-    Collect per-feature activation L2 norms for one linear layer
+    Collect per-feature activation magnitudes for one linear layer
     by running a small calibration set through the model.
     Returns a vector of shape (in_features,).
+
+    We return the RMS rather than Wanda's raw L2 norm; the two differ by the
+    constant sqrt(n_tokens), which cancels out of the per-row ranking.
     """
     activation_sq_sum = None
     n_tokens = 0
@@ -396,7 +399,7 @@ model.save_pretrained("Llama-3.2-1B-2of4", save_compressed=True)
 tokenizer.save_pretrained("Llama-3.2-1B-2of4")
 ```
 
-Swap in `WandaPruningModifier(sparsity=0.5, mask_structure="2:4", targets=["Linear"], ignore=["lm_head"])` for the Hessian-free variant — same call, seconds instead of minutes per layer. Both modifiers also accept `sparsity_profile="owl"` (Outlier-Weighed Layerwise sparsity), which allocates *non-uniform* sparsity across layers based on how many activation outliers each one carries; at aggressive ratios (70%+) this recovers a meaningful chunk of the quality that uniform sparsity throws away.
+Swap in `WandaPruningModifier(sparsity=0.5, mask_structure="2:4", targets=["Linear"], ignore=["lm_head"])` for the Hessian-free variant — same call, seconds instead of minutes per layer. Both modifiers also accept `sparsity_profile="owl", owl_m=5, owl_lmbda=0.08` (Outlier-Weighed Layerwise sparsity), which allocates *non-uniform* sparsity across layers based on how many activation outliers each one carries; at aggressive ratios (70%+) this recovers a meaningful chunk of the quality that uniform sparsity throws away. All three arguments must be supplied together — the modifier's validator rejects the profile on its own, since `owl_m` (the outlier multiplier) and `owl_lmbda` (the spread of the per-layer sparsity range) are what define the allocation.
 
 !!! warning "Common pitfall: 2:4 sparsity only pays off with the right kernel"
 
@@ -432,7 +435,15 @@ def kd_loss(
     alpha * CE(student, hard_labels) + (1-alpha) * KL(teacher_soft || student_soft)
 
     The tau^2 factor is included so gradient scale is invariant to temperature.
+
+    `labels` follows the HF convention: aligned with `input_ids`, with prompt /
+    padding positions set to `ignore_index`. So we shift first — logits at
+    position t predict token t+1 — exactly as the SFT loss does.
     """
+    # ── 0. Causal shift: drop the last logit and the first label ─────────────
+    student_logits = student_logits[:, :-1, :]        # (B, T-1, V)
+    teacher_logits = teacher_logits[:, :-1, :]        # (B, T-1, V)
+    labels = labels[:, 1:]                            # (B, T-1)
     B, T, V = student_logits.shape
 
     # ── 1. Hard-label cross-entropy ──────────────────────────────────────────
@@ -590,6 +601,11 @@ def topk_kd_loss(
     (Renormalizing over the top-k support is the standard choice; the alternative
     is to add a k+1-th "everything else" bucket holding the residual mass.)
     """
+    # Same causal shift as `kd_loss`: logits at position t predict token t+1.
+    student_logits = student_logits[:, :-1, :]        # (B, T-1, V)
+    t_values = t_values[:, :-1, :]                    # (B, T-1, k)
+    t_indices = t_indices[:, :-1, :]                  # (B, T-1, k)
+    labels = labels[:, 1:]                            # (B, T-1)
     B, T, V = student_logits.shape
 
     ce = F.cross_entropy(
@@ -642,7 +658,7 @@ $$
 \alpha = \mathbb{E}_{x \sim p_d} \left[ \min\!\left(1, \frac{p_t(x|c)}{p_d(x|c)}\right) \right]
 $$
 
-where $p_t$ is the target distribution and $p_d$ is the draft distribution. Rewriting the expectation gives $\alpha = \sum_x \min(p_d(x), p_t(x)) = 1 - \text{TV}(p_t, p_d)$ (Exercise 3 derives this): the acceptance rate is *exactly* one minus the total-variation distance. So the draft-training objective is to shrink TV, and distillation is the practical way to do it — a KL surrogate is the standard tractable proxy, and it upper-bounds TV via Pinsker's inequality, $\text{TV} \le \sqrt{\text{KL}/2}$.
+where $p_t$ is the target distribution and $p_d$ is the draft distribution. Rewriting the expectation gives $\alpha = \sum_x \min(p_d(x), p_t(x)) = 1 - \text{TV}(p_t, p_d)$ (Exercise 3 derives this): the acceptance rate is *exactly* one minus the total-variation distance. So the draft-training objective is to shrink TV, and distillation is the practical way to do it — a KL surrogate is the standard tractable proxy, because Pinsker's inequality makes $\sqrt{\text{KL}/2}$ an upper bound on TV, $\text{TV} \le \sqrt{\text{KL}/2}$ — so driving the KL to zero drives TV to zero with it.
 
 Training draft models with KD from the target model (rather than from scratch) measurably improves acceptance rates. The target model is available at inference time to provide soft-target signals during training.
 
@@ -662,7 +678,7 @@ This is distillation within a single model — the final layers teach the early-
 
 ### EAGLE: Speculative Drafting with Feature Distillation
 
-EAGLE (Li et al., 2024) takes this further: the draft model conditions on the target model's hidden states (feature distillation) rather than just its output tokens. The draft model is a single transformer layer trained to predict the next *feature* — the target's second-top-layer hidden state — conditioned on the previous features plus the shifted token embeddings; tokens are then read off by passing the predicted feature through the target's frozen LM head. Because the draft model has access to the verifier's internal representations, it achieves acceptance rates in the range of 2–3× speedup on typical text generation tasks. EAGLE-3 (Li et al., 2025) — the current standard-bearer, integrated into vLLM and SGLang — drops feature prediction in favor of direct token prediction with multi-layer feature fusion ("training-time test"), which lets acceptance keep improving as you scale draft-training data and pushes speedups up to ~6.5×.
+EAGLE (Li et al., 2024) takes this further: the draft model conditions on the target model's hidden states (feature distillation) rather than just its output tokens. The draft model is a single transformer layer trained to predict the next *feature* — the target's second-top-layer hidden state — conditioned on the previous features plus the shifted token embeddings; tokens are then read off by passing the predicted feature through the target's frozen LM head. Because the draft model has access to the verifier's internal representations, it achieves high acceptance rates — enough accepted tokens per draft step to translate into roughly 2.7–3.5× wall-clock speedup on typical text generation tasks. EAGLE-3 (Li et al., 2025) — the current standard-bearer, integrated into vLLM and SGLang — drops feature prediction in favor of direct token prediction with multi-layer feature fusion ("training-time test"), which lets acceptance keep improving as you scale draft-training data and pushes speedups up to ~6.5×.
 
 Training your own draft head is packaged too: the SGLang project ships [SpecForge](https://github.com/sgl-project/SpecForge), a training framework for EAGLE-style draft models that exports checkpoints SGLang can serve directly, and vLLM loads EAGLE/EAGLE-3 heads through its speculative-decoding config. In other words, the whole loop of this section — *distill a draft from your target model, then serve the pair* — is now a two-library workflow rather than a research project.
 
@@ -861,6 +877,10 @@ This connects to scaling laws (see [Scaling Laws: Kaplan, Chinchilla & Beyond](.
         ignore_index: int = -100,
     ):
         """alpha * CE(student, hard) + (1-alpha) * KL(student_soft || teacher_soft)."""
+        # 0. Same causal shift as the forward-KL version
+        student_logits = student_logits[:, :-1, :]
+        teacher_logits = teacher_logits[:, :-1, :]
+        labels = labels[:, 1:]
         B, T, V = student_logits.shape
 
         # 1. Hard-label CE (unchanged)

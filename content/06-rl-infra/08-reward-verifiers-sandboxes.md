@@ -225,8 +225,9 @@ def math_reward(
 ) -> float:
     """
     Main entry point: return reward in {0.0, format_bonus, 1.0} for a math
-    response. `format_bonus` is returned when the format is correct but the
-    answer is wrong, to encourage the model to use \boxed{}.
+    response. `format_bonus` is returned when the completion actually used the
+    declared \boxed{} format but the answer is wrong, to encourage the model
+    to use \boxed{}.
 
     Pass format_bonus=0.0 whenever the caller already adds a *separate*
     weighted format term (as the TRL and pipeline examples later in this
@@ -239,9 +240,17 @@ def math_reward(
 
     if math_equivalent(pred, gold_answer):
         return 1.0
-    else:
-        # Small reward for correct format, zero for content
+
+    # Wrong answer: pay the small shaping term only if the *declared* format is
+    # actually present. Gate on \boxed{} rather than on extraction success --
+    # extract_answer_from_completion also fires on its loose "the answer is X"
+    # fallback, so keying the bonus off `pred` would pay format credit for
+    # exactly the unstructured output this bonus exists to eliminate, and would
+    # disagree with the has_boxed / format_reward definition used by the TRL
+    # example and the end-to-end pipeline later in this chapter.
+    if re.search(r'\\boxed\s*\{', completion):
         return format_bonus  # see section on reward shaping
+    return 0.0
 ```
 
 !!! warning "Floating-point equality traps"
@@ -350,9 +359,17 @@ sys.stdout = io.StringIO()
 results = {{"passed": 0, "total": 0, "error": ""}}
 try:
     from solution import *
+    # Snapshot the namespace *after* the solution is imported. `from solution
+    # import *` dumps every public name of the model-written file into
+    # globals(), so a scan for "test_" would count a `def test_ok(): pass` the
+    # completion wrote for itself as a graded test -- free denominator, free
+    # reward, no syscalls needed. Only names the test suite introduces count.
+    _pre_test_names = set(globals())
 {indented_tests}
-    # Each test function is test_<name>; discover and run
-    test_fns = [v for k, v in globals().items() if k.startswith("test_")]
+    # Each test function is test_<name>; discover and run. `callable` also
+    # keeps a fixture like `test_data = [...]` out of the denominator.
+    test_fns = [v for k, v in globals().items()
+                if k.startswith("test_") and k not in _pre_test_names and callable(v)]
     results["total"] = len(test_fns)
     for fn in test_fns:
         try:
@@ -530,8 +547,16 @@ def run_task(task):
     try:
         exec_globals = {}
         exec(compile(task["code"], "<generated>", "exec"), exec_globals)
+        # Snapshot the names the *solution* defined. Both execs share one dict
+        # (the tests must see the solution's names), so a completion that
+        # writes its own `def test_pass(): pass` would otherwise be graded on
+        # it: passed and total both grow, and passed/total climbs toward 1.0
+        # without solving anything. This hack needs no syscall, so no amount of
+        # isolation below stops it -- only honest test discovery does.
+        solution_names = set(exec_globals)
         exec(compile(task["tests"], "<tests>", "exec"), exec_globals)
-        fns = [v for k, v in exec_globals.items() if k.startswith("test_")]
+        fns = [v for k, v in exec_globals.items()
+               if k.startswith("test_") and k not in solution_names and callable(v)]
         result["total"] = len(fns)
         for fn in fns:
             try:
@@ -579,17 +604,34 @@ for line in sys.stdin:
         os._exit(0)
 
     os.close(write_fd)
-    reader = os.fdopen(read_fd, "rb")
     signal.alarm(TASK_TIMEOUT + 1)   # child may have disabled its own alarm
     try:
-        raw = reader.read()          # EOF when the child exits
+        # ONE bounded read, not read()-to-EOF. EOF arrives only when the LAST
+        # holder of write_fd closes it, and fork() copies the fd table: any
+        # background process the generated code spawned (multiprocessing,
+        # subprocess, a daemon thread's child) still holds the write end after
+        # the child exits. Reading to EOF would then block until the alarm
+        # fires and throw away the perfectly good result already in the pipe --
+        # reward 0.0 on a passing solution, exactly the systematic false
+        # negative discussed above. The payload is one small os.write, well
+        # under PIPE_BUF, so a single read gets all of it.
+        raw = os.read(read_fd, 65536)
     except TaskTimeout:
         os.kill(pid, signal.SIGKILL)
         raw = b""
     finally:
         signal.alarm(0)
-        reader.close()
+        os.close(read_fd)
         os.waitpid(pid, 0)
+        # Reap grandchildren orphaned onto this process (PID 1 in the
+        # container). Unreaped zombies count against --pids-limit=50 and would
+        # eventually wedge the worker. Do this *after* the explicit waitpid so
+        # the loop cannot steal the child we are waiting for.
+        try:
+            while os.waitpid(-1, os.WNOHANG)[0]:
+                pass
+        except ChildProcessError:
+            pass
 
     try:
         result = json.loads(raw)
@@ -1308,12 +1350,19 @@ async def compute_reward(req: RewardRequest):
         r = out["passed"] / max(out["total"], 1)
         breakdown["code_tests"] = r
         total = r
-        # execute() also returns error="..." when the *worker* died, the image
-        # was still pulling, or the client-side timeout fired — infrastructure
-        # failures, not judgments about this completion. Caching that 0.0 would
-        # pin a permanent false negative on this (prompt, completion) pair, the
-        # exact failure the false-negative section warns about. Recompute
-        # instead; correct results are cheap to cache and always clean.
+        # `error` is overloaded: it carries deterministic verdicts about the
+        # completion (a syntax error, a bad import, the task's own timeout) as
+        # well as infrastructure failures (the worker died, the image was still
+        # pulling, the client-side timeout fired). Caching the infrastructure
+        # case would pin a permanent false negative on this (prompt,
+        # completion) pair — the exact failure the false-negative section warns
+        # about — and this predicate cannot tell the two apart, so it refuses to
+        # cache either. That is the safe direction: the deterministic errors it
+        # needlessly recomputes are the *cheapest* ones (a syntax error fails at
+        # compile time, in microseconds). If you want the cache hit anyway, have
+        # the runner label the parent-side paths explicitly (e.g. an
+        # `out["infra"]` flag set only on "sandbox child died" and on the pool's
+        # own {"error": str(e)}) and test `not out.get("infra")` instead.
         cacheable = not out.get("error")
 
     elif req.task_type == "judge":

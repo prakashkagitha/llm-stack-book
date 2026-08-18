@@ -60,7 +60,7 @@ Every stable trainer also has a first-class CLI wrapper — `trl sft`, `trl dpo`
 
 `SFTTrainer` wraps `transformers.Trainer` with quality-of-life features for supervised fine-tuning:
 
-- **Automatic sequence packing.** `packing=True` bin-packs examples into `max_length` chunks, eliminating padding waste. Modern TRL defaults to `packing_strategy="bfd"` (best-fit-decreasing: sort examples by length, place each into the fullest bin it still fits) rather than the older naive concatenation, and it emits `position_ids` so FlashAttention treats each packed example as its own sequence — no cross-contamination of attention between neighbours. Alternatives are `"bfd_split"` (split rather than truncate overflow) and `"wrapped"` (the old aggressive cut-anywhere behaviour). For a 2048-token context with typical 200-token instruction examples, packing can increase GPU utilization by 4–6x.
+- **Automatic sequence packing.** `packing=True` bin-packs examples into `max_length` chunks, eliminating padding waste. Modern TRL defaults to `packing_strategy="bfd"` (best-fit-decreasing: sort examples by length, place each into the fullest bin it still fits) rather than the older naive concatenation, and it emits `position_ids` so FlashAttention treats each packed example as its own sequence — no cross-contamination of attention between neighbours. The only alternative is `"wrapped"` (the old naive concatenate-then-chunk behaviour, which cuts examples at arbitrary boundaries) — anything else raises a `ValueError` during dataset preparation. For a 2048-token context with typical 200-token instruction examples, packing can increase GPU utilization by 4–6x.
 - **Padding-free batching.** `padding_free=True` is the middle road: instead of packing, it flattens the batch into one long unpadded sequence plus `position_ids`, again relying on FlashAttention's variable-length kernel. Use it when you want packing's efficiency without merging distinct examples into one training sample.
 - **Chat template application.** Pass a `formatting_func` or set `dataset_text_field` and TRL handles tokenization. `chat_template_path` lets you swap in a template for a base model that ships without one.
 - **PEFT integration.** Pass a `PeftConfig` (e.g., `LoraConfig`) and the trainer wraps the model automatically.
@@ -241,7 +241,9 @@ dpo_config = DPOConfig(
     eval_strategy="steps",             # needed for the completions callback below
     eval_steps=100,
     max_length=2048,                   # max total len (prompt + completion)
-    truncation_mode="keep_start",      # drop the tail, not the prompt, when over budget
+    truncation_mode="keep_start",      # when the *prompt* exceeds `max_prompt_length`,
+                                       # keep its beginning and drop its tail; the default
+                                       # "keep_end" keeps the tail instead
     padding_free=True,                 # flatten batch + position_ids (needs FlashAttention)
     # Memory-saving: reuse base weights for reference model (LoRA only)
     # ref_model=None means TRL auto-creates from base weights
@@ -296,7 +298,7 @@ trainer.train()
 
     $$\mathcal{L} = -\log \sigma(0.2) = -\log(0.5498) \approx 0.598$$
 
-    This is a fairly high loss — the policy barely prefers the chosen response. After sufficient training steps you would expect the margin to grow toward 2–4 and the loss to drop toward 0.1–0.2.
+    This is a fairly high loss — the policy barely prefers the chosen response. After sufficient training steps you would expect the margin to grow toward 2–4 and the loss to drop with it: $-\log\sigma(2) \approx 0.13$ and $-\log\sigma(4) \approx 0.02$, so a well-trained run sits in roughly the 0.02–0.13 band.
 
 ## PPOTrainer: Online RL with a Reward Signal
 
@@ -653,8 +655,8 @@ See [PEFT I: LoRA, QLoRA, DoRA & The Adapter Family](../05-posttraining-alignmen
 
 The primary bottleneck in GRPO (and PPO) is `model.generate()`, which is a batch-of-one-token-at-a-time loop with no paged KV cache and no continuous batching. TRL integrates vLLM as the generation backend, in **two modes** selected by `vllm_mode`:
 
-- `"server"` — a separate `trl vllm-serve` process owns its own GPUs; the trainer is an HTTP client. Clean isolation, but the training GPUs sit idle during generation and the server GPUs sit idle during the backward pass.
-- `"colocate"` (the default) — vLLM runs inside the training process and shares the same GPUs, capped at `vllm_gpu_memory_utilization` (default 0.3). No GPU is ever idle; this is the "no GPU left behind" configuration, reported by HuggingFace at roughly 1.3–1.7x wall-clock on large enough models.
+- `"server"` (the default, so `use_vllm=True` alone expects a running server) — a separate `trl vllm-serve` process owns its own GPUs; the trainer is an HTTP client. Clean isolation, but the training GPUs sit idle during generation and the server GPUs sit idle during the backward pass.
+- `"colocate"` (opt in with `vllm_mode="colocate"`) — vLLM runs inside the training process and shares the same GPUs, capped at `vllm_gpu_memory_utilization` (default 0.3). No GPU is ever idle; this is the "no GPU left behind" configuration, reported by HuggingFace at roughly 1.3–1.7x wall-clock on large enough models.
 
 ```python
 # Mode A: separate server. First, in another terminal:
@@ -1046,7 +1048,7 @@ Report the two log-ratios, the implicit reward margin, and the final loss. Is th
     With $\sigma(0.5) = \dfrac{1}{1 + e^{-0.5}} = \dfrac{1}{1 + 0.6065} = 0.6225$,
     $$\mathcal{L} = -\log(0.6225) \approx 0.474.$$
 
-    The margin is **positive**, so the policy already assigns relatively more probability mass (versus the reference) to $y_w$ than to $y_l$ — it ranks the pair correctly. This would register as a hit in the `train/rewards/accuracies` metric. The loss (0.474) is still well above the 0.1-0.2 "well-trained" range, so there is room to push the margin higher.
+    The margin is **positive**, so the policy already assigns relatively more probability mass (versus the reference) to $y_w$ than to $y_l$ — it ranks the pair correctly. This would register as a hit in the `train/rewards/accuracies` metric. The loss (0.474) is still well above the 0.02-0.13 "well-trained" range (margins of 2-4), so there is room to push the margin higher.
 
 **4.** For one GRPO prompt you sample a group of $G = 8$ completions and score them with the verifiable `math_reward_fn` (reward $1.0$ for a correct boxed answer, else $0.0$). Three completions are correct: $r = [1, 1, 1, 0, 0, 0, 0, 0]$. (a) Compute the group baseline and the advantage $A_i$ for a correct and for an incorrect completion. (b) Now suppose a *different* prompt is so easy that **all 8** completions are correct ($r = [1,1,1,1,1,1,1,1]$). What are the advantages, and what does this imply about the gradient contribution from that prompt? (c) Why does this make dataset difficulty selection important for GRPO?
 

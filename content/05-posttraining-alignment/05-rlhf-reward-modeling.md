@@ -410,18 +410,23 @@ def rlhf_ppo_epoch(actor, critic, reward_model, ref_model,
     with torch.no_grad():
         responses = actor.generate(**queries, max_new_tokens=512, do_sample=True)
 
-    # Full sequence = prompt ++ response, plus a mask marking response tokens.
-    # `build_sequences_and_mask` also RE-PACKS each row to RIGHT padding (the
-    # prompt was LEFT-padded for generation), so seq is [prompt][response][pad...].
-    # That re-pack is mandatory: our RewardModel reads its score at
-    # `attention_mask.sum(1) - 1`, which is the last real token only under right
-    # padding -- with leading pads it would score a token inside the prompt.
-    seq, resp_mask = build_sequences_and_mask(queries, responses)
+    # Full sequence = prompt ++ response, plus the attention mask and a mask
+    # marking response tokens. `build_sequences_and_mask` also RE-PACKS each row
+    # to RIGHT padding (the prompt was LEFT-padded for generation), so seq is
+    # [prompt][response][pad...]. That re-pack is mandatory: our RewardModel reads
+    # its score at `attention_mask.sum(1) - 1`, which is the last real token only
+    # under right padding -- with leading pads it would score a token inside the
+    # prompt.
+    seq, attn, resp_mask = build_sequences_and_mask(queries, responses)
 
     # ---- 2. SCORE & ANCHOR (all under no_grad; these models are not updated). ----
     with torch.no_grad():
         # Terminal scalar reward for each complete response (frozen RM).
-        attn = (seq != tokenizer.pad_token_id)     # right-padded => 1...1 0...0
+        # Use the mask the re-packer already built. Do NOT re-derive it as
+        # `seq != tokenizer.pad_token_id`: under the very common
+        # `tokenizer.pad_token = tokenizer.eos_token` workaround that also zeroes
+        # the response's own terminating EOS, so `sum(1) - 1` reads the reward one
+        # token too early and the backbone is shown a mask that hides a real token.
         scores = reward_model(seq, attention_mask=attn)                             # (B,)
 
         # Per-token log-probs from the FROZEN reference (for the KL penalty).

@@ -173,7 +173,7 @@ $$
 
 with $\alpha$ around $0.1$–$0.3$. The EMA tracks the moving policy: a prompt that was hard becomes easy as the policy learns, and the EMA follows. A cleaner Bayesian alternative is a **Beta–Bernoulli** posterior per task: maintain counts $(s, f)$ of successes and failures (optionally discounted over time so old observations decay), and the posterior pass rate is $\text{Beta}(s+1, f+1)$ with mean $\frac{s+1}{s+f+2}$. The Beta view gives you not just a point estimate but a *credible interval*, which is exactly what you need to decide whether a prompt is "near 0.5" with confidence or just under-sampled — and it plugs naturally into a Thompson-sampling selection policy (below).
 
-This state is small and you must **checkpoint it with the model**. Three floats per task ($s$, $f$, `n_groups`) keyed by `task_id` is a few megabytes for a million-prompt pool — write it as a parquet/JSON sidecar next to every model checkpoint. If you do not, a preempted run resumes with a warm policy and a cold curriculum: the selector spends its first hundred steps re-discovering difficulties it already paid to measure, and (worse) re-samples the mastered prompts you had correctly stopped selecting.
+This state is small and you must **checkpoint it with the model**. Three numbers per task ($s$, $f$, `n_groups`) keyed by `task_id` is on the order of 40 bytes per row — a few tens of megabytes for a million-prompt pool, and single-digit megabytes once you downcast to `float32` and let parquet compress it — write it as a parquet/JSON sidecar next to every model checkpoint. If you do not, a preempted run resumes with a warm policy and a cold curriculum: the selector spends its first hundred steps re-discovering difficulties it already paid to measure, and (worse) re-samples the mastered prompts you had correctly stopped selecting.
 
 !!! warning "Common pitfall: stale difficulty labels"
     The most common difficulty-curriculum bug is computing pass rates *once* and treating them as fixed. Within a few hundred steps a well-chosen 50%-band collapses toward 100% as the policy masters it, and if you keep sampling the same "medium" bucket you are now training on solved prompts — zero gradient, wasted compute, and a training curve that mysteriously plateaus. Difficulty MUST be re-estimated online (EMA or decayed Beta). The whole point is that difficulty is a function of the *current* policy, which is a moving target.
@@ -435,9 +435,14 @@ def prompt_priority(t: TaskState, target_p=0.5, explore_w=5.0):
     closeness = 1.0 / (abs(t.posterior_mean() - target_p) + 0.05)  # in [1.8, 20]
     var = (t.s * t.f) / ((t.s + t.f) ** 2 * (t.s + t.f + 1))       # Beta variance
     # SCALE MATTERS: the raw Beta variance maxes out at 1/12 (at Beta(1,1)) and is
-    # only ~0.02 once s+f ~ 10, so added raw against a closeness term of up to 20
-    # it can never reorder anything -- the "explore" term would be decorative.
-    # Divide by its 1/12 maximum so it lands in [0, 1] and give it real weight.
+    # only ~0.02 once s+f ~ 10, against a closeness term that ranges over [1.8, 20].
+    # Divide by its 1/12 maximum so it lands in [0, 1] and `explore_w` means what
+    # you think it means. But rescaling is a TUNING fix, not a semantic one: the
+    # Beta variance m(1-m)/(n+1) confounds the posterior mean m with the count n,
+    # and when every task shares the same n (as right after the offline pass) it is
+    # a monotone function of |m - target| -- so it re-ranks nothing, at either scale.
+    # It only becomes a real explore signal once n varies across tasks. For an
+    # unconditional under-sampling bonus, add e.g. 1.0 / (1.0 + t.n_groups).
     uncertainty = 12.0 * var
     return closeness + explore_w * uncertainty  # exploit band + explore uncertain
 
@@ -449,7 +454,7 @@ def sample_from_buffer(tasks, n, target_p=0.5, temperature=1.0):
     return [tasks[i] for i in idx]
 ```
 
-The prioritized prompt buffer is the persistent, sampling-without-replacement-per-step version of the Thompson selector: priority rewards proximity to the band (exploit) plus posterior variance (explore under-sampled tasks). The normalization in that second term is not cosmetic — it is the difference between an exploration bonus that changes about half the selected batch and one that is arithmetically incapable of changing anything. Whenever you add two heuristic terms, check their dynamic ranges before you tune the weight. Note this buffer stores *tasks*, never old completions — it is strictly on-policy and therefore free of importance-weighting concerns, unlike the staleness buffer discussed earlier.
+The prioritized prompt buffer is the persistent, sampling-without-replacement-per-step version of the Thompson selector: priority rewards proximity to the band (exploit) plus posterior variance (explore under-sampled tasks). Be honest about how much that second term actually buys, because it is a good lesson in heuristic-stacking. The Beta variance $m(1-m)/(n+1)$ confounds the posterior *mean* $m$ with the count $n = s+f$, and right after the offline pass every surviving task has exactly $n = 10$ — so the bonus is then a strictly decreasing function of $|m - p^\star|$, the same thing `closeness` already measures, and the top-$k$ it selects is *identical* to pure-closeness selection whether you normalize or not. It only starts to bite once $n$ varies across tasks, i.e. after some have been rolled out more than others; in the 8-step run above it moves 5 of the top 64. The $12\times$ rescaling is what makes `explore_w` interpretable — it puts the bonus on the $[0,1]$ scale the weight assumes, and under `sample_from_buffer`'s proportional draw it shifts about 4% of the probability mass rather than the ~0.3% the raw term shifts — not what makes the term work at all. If you want an exploration bonus that fires unconditionally, use an explicit count/recency signal such as `1.0 / (1.0 + t.n_groups)`. The general lesson: whenever you add two heuristic terms, check their dynamic ranges *and* whether they are secretly measuring the same thing, before you tune the weight. Note this buffer stores *tasks*, never old completions — it is strictly on-policy and therefore free of importance-weighting concerns, unlike the staleness buffer discussed earlier.
 
 ## Putting it together: the data-side knobs that move sample efficiency
 
@@ -539,7 +544,7 @@ Each numbered stage is a multiplier on sample efficiency, and they compound: dec
     $$
     \frac{0.25}{0.1875} = \frac{4}{3} \approx 1.33.
     $$
-    So a $p=0.5$ prompt delivers about $1.33\times$ the gradient signal per rollout of a $p=0.75$ prompt. Per prompt, the $p=0.5$ prompt is worth about a third more, so it should receive proportionally more of the budget. (Contrast this with the $p=0.9$ case: $0.9 \times 0.1 = 0.09$, and $0.25 / 0.09 \approx 2.78$ — matching the chapter's $\sim 2.8\times$. The signal cliff steepens fast as you leave the center of the band, which is exactly why targeting a band around $0.5$ pays off.)
+    So a $p=0.5$ prompt delivers about $1.33\times$ the gradient signal per rollout of a $p=0.75$ prompt. Per prompt, the $p=0.5$ prompt is worth about a third more, so it should get the larger share of the budget — but read that as a *weighting* guide, not an allocation rule. Taken literally, total signal $0.25\,n_1 + 0.1875\,n_2$ subject to $n_1 + n_2 = N$ is *linear* in the split, so its maximizer is a corner: $n_1 = N$, the entire budget on the $p=0.5$ population. Nobody does that in practice, because pass rates are non-stationary and the per-prompt estimates are noisy (the small-$k$ SE above), so you tilt toward $0.5$ across a band rather than collapsing onto it. (Contrast this with the $p=0.9$ case: $0.9 \times 0.1 = 0.09$, and $0.25 / 0.09 \approx 2.78$ — matching the chapter's $\sim 2.8\times$. The signal cliff steepens fast as you leave the center of the band, which is exactly why targeting a band around $0.5$ pays off.)
 
 **3.** *(Quantitative.)* You want a training batch of $B_{\text{keep}} = 256$ informative (non-zero-variance) prompts with $G = 8$ samples each. Under the current policy your candidate pool is, in effect, two populations: half the prompts at $p = 0.5$ and half at $p = 0.9$. A group at pass rate $p$ survives the dynamic-sampling filter (has non-zero variance) with probability $1 - p^G - (1-p)^G$. Compute the survival fraction $\rho$ for uniform sampling from this pool, the number of groups you must generate to fill the batch, and the fraction of generated completions thrown away.
 
