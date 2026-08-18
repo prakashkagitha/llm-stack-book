@@ -66,8 +66,10 @@ def make_cpt_schedule(
 ):
     """
     Three-phase CPT LR schedule (re-warm -> stable -> re-decay).
-    Returns a multiplier in [0, 1] RELATIVE to base_peak_lr, so set the
-    optimizer's base lr == base_peak_lr.
+    Returns a multiplier in [0, 1] RELATIVE to base_peak_lr. We PIN the
+    optimizer's base lr to base_peak_lr below rather than trusting the caller
+    to have set it (AdamW's default is 1e-3, so silently scaling the whole
+    schedule to the wrong absolute LR is an easy mistake to make).
 
         |       ____________________
         |      /                    \\
@@ -76,6 +78,12 @@ def make_cpt_schedule(
         +---/------------------------------------>
           T_w        stable           T_d
     """
+    # enforce the contract: LambdaLR multiplies each group's `initial_lr`, and
+    # it only *setdefault*s that key, so we write both explicitly.
+    for group in optimizer.param_groups:
+        group["lr"] = base_peak_lr
+        group["initial_lr"] = base_peak_lr
+
     eta_cpt_mult = rewarm_fraction          # peak as fraction of base peak
     stable_end   = num_total_steps - num_decay_steps
 
@@ -101,7 +109,7 @@ def make_cpt_schedule(
 # Example: base model trained at peak 3e-4, finished at 3e-5.
 # We re-warm to 20% of peak (6e-5), over 2% of the CPT budget, then
 # decay over the final 20%.
-# optimizer base lr is set to 3e-4 (base_peak_lr).
+# the scheduler pins the optimizer's base lr to base_peak_lr (3e-4).
 # sched = make_cpt_schedule(opt, base_peak_lr=3e-4, rewarm_fraction=0.20,
 #             num_rewarm_steps=400, num_total_steps=20_000,
 #             num_decay_steps=4_000, final_lr_frac=0.05)
@@ -338,7 +346,7 @@ def net2wider_linear(W_in: torch.Tensor, W_out: torch.Tensor, new_width: int,
 
 ### Dense-to-MoE upcycling
 
-**Sparse upcycling** turns a trained *dense* model into a *sparse* Mixture-of-Experts model, reusing the dense weights. The recipe (Komatsuzaki et al., 2022; used at scale for several production MoEs): replace each (or every other) dense MLP block with an MoE layer whose $E$ experts are each **initialized as a copy of the original dense MLP**. The router is added fresh (small random init). At step 0, every expert is identical, so — if the router is roughly uniform — the MoE layer computes approximately the original dense MLP's output, preserving the function. Continued pretraining then *differentiates* the experts. This buys you a high-capacity MoE (more parameters, same or modestly higher FLOPs per token) for the cost of a CPT pass, rather than training an MoE from scratch. The regime matters: upcycling wins when the *additional* budget is small relative to the original dense run, while a from-scratch MoE catches up and overtakes if you are willing to spend a large additional budget.
+**Sparse upcycling** turns a trained *dense* model into a *sparse* Mixture-of-Experts model, reusing the dense weights. The recipe (Komatsuzaki et al., 2022; used at scale for several production MoEs): replace each (or every other) dense MLP block with an MoE layer whose $E$ experts are each **initialized as a copy of the original dense MLP**. The router is added fresh (small random init). At step 0, every expert is identical, so — because the top-$k$ gate weights are renormalized to sum to 1 (the `w = w / w.sum(...)` line below) — the MoE layer reproduces the original dense MLP's output *exactly*, preserving the function. Implementations that skip that renormalization instead emit the dense output scaled by the softmax mass the top-$k$ captured, which for a freshly initialized (hence near-uniform) router is only about $k/E$ — a $4\times$ shrink at $E=8$, $k=2$, i.e. *not* function-preserving unless you rescale by $E/k$. Continued pretraining then *differentiates* the experts. This buys you a high-capacity MoE (more parameters, and FLOPs per token that scale with top-$k$: unchanged for top-1 routing, roughly $2\times$ the MLP FLOPs at the $k=2$ used below) for the cost of a CPT pass, rather than training an MoE from scratch. The regime matters: upcycling wins when the *additional* budget is small relative to the original dense run, while a from-scratch MoE catches up and overtakes if you are willing to spend a large additional budget.
 
 ```python
 import torch, torch.nn as nn, copy
@@ -346,8 +354,9 @@ import torch, torch.nn as nn, copy
 class UpcycledMoE(nn.Module):
     """
     Replace a dense MLP with an MoE whose experts are clones of that MLP.
-    At init all experts are identical, so with a near-uniform router the layer
-    approximately reproduces the dense MLP -> function-preserving upcycle.
+    At init all experts are identical AND the top-k gate weights are
+    renormalized to sum to 1, so the layer exactly reproduces the dense MLP
+    for any router logits -> function-preserving upcycle.
     See chapter 2.9 for routing, load balancing, and capacity factors.
     """
     def __init__(self, dense_mlp, num_experts=8, top_k=2):
@@ -607,7 +616,7 @@ def fit_cpt_trajectory(tokens, losses):
 
     **(b)** $D_{\text{cpt}} / D_{\text{base}} = 30\ \text{B} / 1{,}500\ \text{B} = 0.02 = 2\%$. This is squarely in the typical DAPT magnitude (single-digit percent of the base run) — the leverage that makes CPT worthwhile: a day of compute versus the months-long original run.
 
-**4.** *(Conceptual — why upcycling preserves the function.)* Look at the `UpcycledMoE.forward` code. At initialization every expert is a deep copy of the same dense MLP. (a) Show that at step 0 the MoE layer reproduces the dense MLP's output *exactly*, and note precisely which line makes this independent of the router's logits. (b) The chapter's prose says the layer computes the dense output "approximately, if the router is roughly uniform." Reconcile that hedge with your exact result in (a). (c) Name the failure mode the chapter warns about for freshly-added routers, and explain why it becomes a real risk only *after* step 0.
+**4.** *(Conceptual — why upcycling preserves the function.)* Look at the `UpcycledMoE.forward` code. At initialization every expert is a deep copy of the same dense MLP. (a) Show that at step 0 the MoE layer reproduces the dense MLP's output *exactly*, and note precisely which line makes this independent of the router's logits. (b) Some upcycling implementations omit that line and use the raw top-$k$ softmax weights. What does the layer compute at step 0 then, and — for a freshly initialized, near-uniform router with $E = 8$, $k = 2$ — by what factor is the dense output rescaled? (c) Name the failure mode the chapter warns about for freshly-added routers, and explain why it becomes a real risk only *after* step 0.
 
 ??? note "Solution"
     **(a)** Let $g(x)$ be the shared expert function (all experts are identical clones, so $\text{expert}_e(x) = g(x)$ for every $e$). The forward pass selects the top-$k$ experts, renormalizes their gate weights with `w = w / w.sum(-1, keepdim=True)` so that $\sum_{\text{slot}} w_{\text{slot}} = 1$, then accumulates $\sum_{\text{slot}} w_{\text{slot}}\,\text{expert}(x)$. Since every expert returns the same $g(x)$,
@@ -616,7 +625,7 @@ def fit_cpt_trajectory(tokens, losses):
     $$
     The result equals the dense MLP output *exactly*, and the **renormalization line** (`w = w / w.sum(...)`) is what makes it independent of the router logits: whatever top-$k$ experts are chosen and with whatever raw softmax weights, the renormalized weights sum to 1 and multiply the single shared $g(x)$.
 
-    **(b)** The "approximately / roughly uniform" hedge is the *general* statement for an upcycle where the top-$k$ selection could differ or where only a subset of experts are exact clones; it also covers implementations that do **not** renormalize the top-$k$ weights (there the output is $g(x)\sum w_{\text{slot}}$, which depends on how much softmax mass the top-$k$ captured, i.e. on router uniformity). For *this specific code* — identical experts *and* renormalized top-$k$ weights — the preservation is exact, so the hedge is conservative here.
+    **(b)** Without that line the output is $g(x)\sum_{\text{slot}} w_{\text{slot}}$ with the *raw* top-$k$ softmax probabilities — i.e. $g(x)$ scaled by however much softmax mass the selected experts captured. That mass approaches 1 only for a strongly *peaked* router and is **minimized at $k/E$ when the router is uniform**. A freshly initialized router (tiny-std logits) is near-uniform, so at $E = 8$, $k = 2$ the sum is $\approx 2/8 = 0.25$: every MLP contribution to the residual stream is shrunk $4\times$, and such an upcycle is decidedly *not* function-preserving unless you rescale the expert outputs by $E/k$. Router uniformity therefore matters for load balancing and capacity-factor token dropping — not for the output scale of the renormalized version in (a), which is exact regardless.
 
     **(c)** **Router collapse**: the freshly-initialized router learns to send all tokens to a single expert (or a few), leaving the others untrained. It is not a risk at step 0 precisely because all experts are identical — routing is then irrelevant to the output, and the small-init router keeps logits near-uniform. Once CPT begins and experts start to *differentiate*, the router's choices start to matter, and without an auxiliary load-balancing loss (chapter 2.9) the positive feedback loop toward one expert can take over. Hence you must tune load balancing and capacity factors *during* the upcycling CPT.
 

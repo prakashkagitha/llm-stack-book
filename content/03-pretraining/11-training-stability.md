@@ -124,7 +124,6 @@ from collections import Counter
 def batch_anomaly_score(
     input_ids: torch.Tensor,  # (B, T)
     ngram_n: int = 4,
-    repetition_threshold: float = 0.4,
 ) -> torch.Tensor:
     """
     Returns a per-example anomaly score in [0, 1].
@@ -181,7 +180,7 @@ An LR too high produces large gradients on every batch, not just anomalous ones.
 
 ### Floating-point issues
 
-At bf16, the representable range is roughly $\pm 3.4 \times 10^{38}$ (same 8 exponent bits as fp32), but the significand is only 8 bits — about 2–3 significant decimal digits. Overflow is rare but not impossible; underflow to zero is more common and more insidious.
+At bf16, the representable range is roughly $\pm 3.4 \times 10^{38}$ (same 8 exponent bits as fp32), but the significand is only 8 bits — about 2–3 significant decimal digits. Because the exponent field is identical to fp32's, both overflow and underflow-to-zero are about as rare in bf16 as in fp32 — neither is the characteristic bf16 failure. The insidious one is *precision*: with 8 significand bits, consecutive representable values are $2^{-8} \approx 0.4\,\%$ apart, so an update smaller than roughly $2^{-9} \approx 0.2\,\%$ of the weight it is added to rounds straight back to that weight and is silently discarded. That stagnation — not underflow — is why fp32 master weights are mandatory (see the hardening checklist below).
 
 At fp16, overflow occurs above $65\,504$, and activations can silently become inf or NaN during the forward pass if any intermediate value — typically in the attention softmax or MLP feedforward — exceeds this. See [Mixed Precision, bf16 & FP8 Training](../03-pretraining/08-mixed-precision-fp8.html) for the full picture.
 
@@ -322,7 +321,7 @@ $$
 \mathcal{L}_z = \frac{\beta_z}{|B|} \sum_{i \in B} \bigl(\log \sum_v e^{z_{i,v}}\bigr)^2
 $$
 
-where $z_{i,v}$ are the pre-softmax logits for position $i$ and vocabulary token $v$. If the logits grow large, the log-partition function grows, and the z-loss penalizes this. This is especially useful for Mixture-of-Experts models (see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html)) where the router softmax is a common source of collapse. A typical $\beta_z = 10^{-4}$ adds negligible loss overhead but provides a gradient pressure that keeps logit norms bounded.
+where $z_{i,v}$ are the pre-softmax logits for position $i$ and vocabulary token $v$. If the logits grow large, the log-partition function grows, and the z-loss penalizes this. This is especially useful for Mixture-of-Experts models (see [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html)) where the router softmax is a common source of collapse. Typical coefficients are $\beta_z = 10^{-3}$ on an MoE router (ST-MoE's recommended value) and $\beta_z = 10^{-5}$ to $10^{-4}$ on the LM head; either adds negligible loss overhead but provides a gradient pressure that keeps logit norms bounded.
 
 ```python
 def z_loss(logits: torch.Tensor, beta: float = 1e-4) -> torch.Tensor:
@@ -331,7 +330,8 @@ def z_loss(logits: torch.Tensor, beta: float = 1e-4) -> torch.Tensor:
     logits: (B, T, V) or (B, V) pre-softmax values.
     
     Penalizes large log-partition values to prevent logit explosion.
-    Typical beta: 1e-4 for MoE router; 1e-5 for LM head.
+    Typical beta: 1e-3 for the MoE router (ST-MoE's value);
+    1e-5 to 1e-4 for the LM head.
     """
     # log(sum_v exp(z_v)) = log-partition function per position
     # torch.logsumexp is numerically stable
@@ -687,7 +687,7 @@ A team ran a 70B model to 500B tokens with no obvious spikes, but evaluation met
 
 ### Story 2: The creeping LR spike
 
-Every modern LLM training run has seen this: things are fine for weeks, then at precisely the step where the warmup ends and the cosine peak is reached, loss jumps 0.4 nats and the grad norm hits 20×. The model recovers, but with a shifted loss baseline. Root cause: the Adam moments were well-calibrated for the warmup LR, not the peak LR. The effective LR at the peak is $\alpha_\text{peak} / \sqrt{\hat{v}}$, and $\hat{v}$ was too small. Fix: use a longer warmup (1–2 % of total steps rather than 0.1 %) or apply a sqrt-scaled warmup that grows $\alpha$ slower than Adam's $\sqrt{t}$ moment term.
+Every modern LLM training run has seen this: things are fine for weeks, then at precisely the step where the warmup ends and the cosine peak is reached, loss jumps 0.4 nats and the grad norm hits 20×. The model recovers, but with a shifted loss baseline. Root cause: the Adam moments were well-calibrated for the warmup LR, not the peak LR. The effective LR at the peak is $\alpha_\text{peak} / \sqrt{\hat{v}}$, and $\hat{v}$ was too small. Fix: use a longer warmup (1–2 % of total steps rather than 0.1 %), or shape the ramp so that $\alpha$ rises slowly enough for the second moment — an EMA that re-calibrates on a $1/(1-\beta_2) \approx 1000$-step timescale — to track it.
 
 ### Story 3: The fp16 attention NaN cascade
 
@@ -873,7 +873,7 @@ ARCHITECTURE
       (if not: QK-clip / MuonClip enabled -- mandatory under Muon)
   [ ] Residual output projections initialized with 1/sqrt(2L) scaling
   [ ] Embedding init std ≤ 1/sqrt(d_model)
-  [ ] Z-loss enabled (beta ≈ 1e-5 for LM head, 1e-4 for MoE router)
+  [ ] Z-loss enabled (beta ≈ 1e-5..1e-4 for LM head, 1e-3 for MoE router)
   [ ] Pre-norm (RMSNorm before attention/MLP) rather than post-norm
 
 OPTIMIZER
@@ -1030,7 +1030,7 @@ MONITORING
 ??? note "Solution"
     **(a)** The effective per-parameter step size is $\alpha/\sqrt{\hat{v}}$, a product of the *scheduled* LR $\alpha$ and the *learned* denominator $\sqrt{\hat{v}}$. During warmup, $\alpha$ is small, so gradients are small, and Adam's second moment $\hat{v}$ is calibrated to that small-gradient regime. When warmup ends, $\alpha$ jumps to its peak value, but $\hat{v}$ is a slow EMA ($\beta_2 = 0.999$) that still reflects the smaller warmup-era gradients — it has not yet caught up to the larger gradients the peak LR induces. So $\alpha_\text{peak}/\sqrt{\hat{v}}$ is transiently too large: the numerator has stepped up but the denominator has not. Every batch (not just anomalous ones) now produces oversized updates, gradients blow up, and you get the spike and the 20x grad norm. Once $\hat{v}$ absorbs the larger gradient scale over the next few hundred steps, the effective LR settles and the loss partially recovers.
 
-    **(b)** Lengthening warmup ramps $\alpha$ up *slowly enough that $\hat{v}$ tracks it* — the second moment is continuously re-calibrated as the LR rises, so the numerator and denominator grow together and $\alpha/\sqrt{\hat{v}}$ never has a discontinuous jump. A too-short warmup (0.1% of steps) reaches the peak LR before the Adam moments have stabilized, so there is a sharp mismatch exactly at the peak — the same failure. The chapter's fix is warmup $\geq 1$–2% of total steps (or a sqrt-scaled warmup that grows $\alpha$ slower than Adam's moment term), which is also why the Pre-Run Hardening Checklist requires warmup $\geq 1\%$ of total steps.
+    **(b)** Lengthening warmup ramps $\alpha$ up *slowly enough that $\hat{v}$ tracks it* — the second moment is continuously re-calibrated as the LR rises, so the numerator and denominator grow together and $\alpha/\sqrt{\hat{v}}$ never has a discontinuous jump. A too-short warmup (0.1% of steps) reaches the peak LR before the Adam moments have stabilized, so there is a sharp mismatch exactly at the peak — the same failure. The chapter's fix is warmup $\geq 1$–2% of total steps (or any ramp shaped so that $\alpha$ rises slower than $\hat{v}$'s $\approx 1000$-step re-calibration), which is also why the Pre-Run Hardening Checklist requires warmup $\geq 1\%$ of total steps.
 
 **5.** (Implementation) The chapter's `QKNormAttention` bounds logits to $O(\sqrt{d_k})$. A complementary technique referenced in the SOTA section (Rybakov et al.) is **softmax logit capping**: pass the pre-softmax logits through $c\cdot\tanh(\text{logit}/c)$, which smoothly saturates any logit to the range $(-c, c)$ while leaving small logits nearly unchanged. Implement a function `attn_logit_softcap(attn, cap)` and modify `QKNormAttention.forward` to apply the cap *before* the causal mask and softmax. Explain why the cap must be applied before, not after, masking.
 

@@ -116,7 +116,12 @@ class AdamW(Optimizer):
 
     @torch.no_grad()
     def step(self, closure=None):
-        loss = closure() if closure is not None else None
+        loss = None
+        if closure is not None:
+            # Re-enable grad inside the no_grad-decorated step: the closure
+            # runs a forward+backward pass and needs an autograd graph.
+            with torch.enable_grad():
+                loss = closure()
         for group in self.param_groups:
             lr, (b1, b2) = group["lr"], group["betas"]
             eps, wd = group["eps"], group["weight_decay"]
@@ -157,7 +162,7 @@ class AdamW(Optimizer):
         return loss
 ```
 
-A few implementation notes that separate a toy from a production optimizer. The `@torch.no_grad()` decorator is mandatory — the update itself must not build an autograd graph. Operations are **in-place** (`mul_`, `add_`, `addcmul_`, `addcdiv_`) to avoid allocating new tensors every step; for a 7B model a single full-size temporary is 14 GB in bf16. Real implementations go further with **fused** or **foreach** kernels (`torch.optim.AdamW(..., fused=True)`) that batch the elementwise math across all parameters into one CUDA launch, which is a large throughput win when you have thousands of parameter tensors.
+A few implementation notes that separate a toy from a production optimizer. The `@torch.no_grad()` decorator is mandatory — the update itself must not build an autograd graph — but the optional `closure` must be re-wrapped in `torch.enable_grad()`, since it runs a forward/backward pass and would otherwise fail with "does not have a `grad_fn`" (this is exactly what `torch.optim.AdamW` does). Operations are **in-place** (`mul_`, `add_`, `addcmul_`, `addcdiv_`) to avoid allocating new tensors every step; for a 7B model a single full-size temporary is 14 GB in bf16. Real implementations go further with **fused** or **foreach** kernels (`torch.optim.AdamW(..., fused=True)`) that batch the elementwise math across all parameters into one CUDA launch, which is a large throughput win when you have thousands of parameter tensors.
 
 !!! warning "Common pitfall: $\beta_2$ and loss spikes"
     The default $\beta_2 = 0.999$ averages the second moment over $\sim 1/(1-\beta_2) = 1000$ steps. If a single batch produces a large gradient (a "bad" document, a tokenization artifact), $v_t$ reacts slowly, so $\sqrt{\hat v_t}$ stays small and the update explodes — a classic loss spike. Lowering to $\beta_2 = 0.95$ (a $\sim 20$-step window) makes the denominator respond faster and is standard for large LLM pretraining. See [Training Stability, Loss Spikes & Debugging Large Runs](../03-pretraining/11-training-stability.html).
@@ -317,7 +322,7 @@ def lion_step(p, g, m, lr=1e-4, beta1=0.9, beta2=0.99, wd=0.0):
     m.mul_(beta2).add_(g, alpha=1.0 - beta2)
 ```
 
-Because the update magnitude is uniformly $\eta$, Lion's effective step is **larger and more uniform** than AdamW's, so the recommended learning rate is roughly $3$–$10\times$ *smaller* than Adam's, and the weight decay correspondingly $3$–$10\times$ *larger* (to keep $\eta\lambda$ in a sane range). When tuned, Lion matches or beats AdamW on many vision and language pretraining tasks while using half the optimizer memory and slightly less compute (no square root, no second buffer). Its weaknesses: the sign update injects more gradient noise, so it tends to need **larger batch sizes** to behave, and it can be touchier near the end of training. Still, Lion is the cleanest demonstration that you do not need a per-coordinate magnitude estimate at all — a good *sign* plus momentum is often enough.
+Because the update magnitude is uniformly $\eta$, Lion's effective step is **larger and more uniform** than AdamW's, so the recommended learning rate is roughly $3$–$10\times$ *smaller* than Adam's, and the weight decay correspondingly $3$–$10\times$ *larger* (to keep $\eta\lambda$ in a sane range). When tuned, Lion matches or beats AdamW on many vision and language pretraining tasks while using half the moment-buffer memory (8 → 4 bytes/param, a one-third cut in total optimizer state once the fp32 master copy is counted) and slightly less compute (no square root, no second buffer). Its weaknesses: the sign update injects more gradient noise, so it tends to need **larger batch sizes** to behave, and it can be touchier near the end of training. Still, Lion is the cleanest demonstration that you do not need a per-coordinate magnitude estimate at all — a good *sign* plus momentum is often enough.
 
 !!! tip "Practitioner tip: re-tune LR and decay when switching optimizers"
     You cannot drop a new optimizer into an existing recipe and keep the hyperparameters. Lion needs a much smaller LR and larger decay than AdamW; Muon needs its own LR for matrices and a *separate* AdamW for embeddings and the LM head. Always re-sweep learning rate (and warmup) when changing optimizer family. See [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html).
@@ -412,7 +417,7 @@ def muon_step(W, G, momentum_buf, lr=0.02, mu=0.95, ns_steps=5):
 
 Muon's properties make it a compelling AdamW replacement for the bulk of an LLM's parameters:
 
-- **Memory.** Like momentum SGD and Lion, it stores **one** buffer per parameter (momentum), not two — half of Adam's optimizer-state memory. There is no second-moment tensor at all.
+- **Memory.** Like momentum SGD and Lion, it stores **one** buffer per parameter (momentum), not two — half of Adam's *moment-buffer* memory (4 instead of 8 bytes/param). There is no second-moment tensor at all. Counting the fp32 master copy too, total optimizer state falls from 12 to 8 bytes/param: a one-third cut.
 - **Only for 2-D weights.** Orthogonalization is defined for matrices. The standard recipe is **hybrid**: use Muon for the 2-D hidden weight matrices (attention and MLP projections) and a small **AdamW for the 1-D parameters and the input embedding / output head**, which are not matrix-multiplied in the same sense and behave better under Adam.
 - **Scale matching.** The orthogonalized update $UV^\top$ has element RMS $1/\sqrt{\max(n,m)}$, so a bare $O_t$ moves matrices of different shapes by different relative amounts. Multiplying by $0.2\sqrt{\max(n,m)}$ (Moonlight's rule) cancels the shape dependence and fixes the update RMS at $0.2$ — the band a *measured* AdamW update sits in — so one learning rate serves every matrix and much of an AdamW schedule transfers.
 - **Reported gains.** On small-scale benchmarks (nanoGPT speedruns) and, more recently, at MoE scale (Moonshot's 16B/3B-active Moonlight on 5.7T tokens), Muon reaches a target loss in meaningfully fewer steps/tokens than tuned AdamW — roughly $2\times$ compute efficiency at the compute-optimal frontier — while using less memory.
@@ -473,15 +478,15 @@ The table below summarizes the state per parameter (the memory tax) and the char
 | 8-bit AdamW | 2 (quantized) | ~2 | same as AdamW | AdamW quality, $4\times$ less state |
 | LAMB | 2 ($m,v$) | 8 | AdamW × layer trust ratio | very large batches (32k+) |
 | Adafactor | factored | ~$O(n{+}m)$ | factored 2nd moment | memory-bound fine-tuning, T5-scale |
-| Lion | 1 ($m$) | 4 | sign of momentum | half AdamW memory; needs big batches |
+| Lion | 1 ($m$) | 4 | sign of momentum | half AdamW's $m,v$ state; needs big batches |
 | Shampoo | 2 factors | $O(n^2{+}m^2)$ | Kronecker 2nd-order | fewest steps; heavy compute/eng |
-| Muon (2-D) | 1 ($m$) | 4 | orthogonalized momentum | speed + half memory; hybrid recipe |
+| Muon (2-D) | 1 ($m$) | 4 | orthogonalized momentum | speed + half the $m,v$ state; hybrid recipe |
 
 A pragmatic decision procedure for a new pretraining run:
 
 1. **Default to AdamW** with $\beta=(0.9, 0.95)$, weight decay $0.1$ on 2-D weights only, gradient clipping at norm 1.0. It is the most documented and forgiving choice and the safe baseline for an interview answer.
 2. **If optimizer memory is the binding constraint** and you cannot shard further, reach for 8-bit AdamW (smallest behavioral change) or Adafactor (most aggressive, more babysitting).
-3. **If you want speed and have appetite for tuning**, try Muon for the matrices + AdamW for embeddings/head; it is the most exciting current option and halves optimizer-state memory on the bulk of parameters.
+3. **If you want speed and have appetite for tuning**, try Muon for the matrices + AdamW for embeddings/head; it is the most exciting current option and halves the $m,v$ buffers on the bulk of parameters (12 → 8 bytes/param of optimizer state).
 4. **Always re-sweep learning rate, warmup, and weight decay** when you change family — the hyperparameters do not transfer.
 
 !!! interview "Interview Corner"
@@ -499,7 +504,7 @@ A pragmatic decision procedure for a new pretraining run:
     - **AdamW decouples weight decay** from the adaptive term ($\theta\leftarrow(1-\eta\lambda)\theta$); L2-in-the-gradient under-decays high-gradient params. Decay only 2-D weights, never norms or biases.
     - **Optimizer state is the memory hog:** AdamW costs ~12 bytes/param ($m$, $v$, fp32 master) — 6× the bf16 weights, ~84 GB versus 14 GB for a 7B model. This forces ZeRO/FSDP sharding and motivates frugal optimizers.
     - **Adafactor** factors the second moment into row×column vectors ($O(n{+}m)$ memory) and can drop momentum — sublinear optimizer memory, at some stability cost. **8-bit Adam** quantizes $m,v$ for a $4\times$ cut with little quality loss.
-    - **Lion** stores one buffer and steps by the *sign* of momentum (uniform $\pm\eta$); half AdamW memory, needs a smaller LR, larger decay, and bigger batches.
+    - **Lion** stores one buffer and steps by the *sign* of momentum (uniform $\pm\eta$); half AdamW's $m,v$ memory (12 → 8 bytes/param overall), needs a smaller LR, larger decay, and bigger batches.
     - **LARS/LAMB** rescale each layer's update by a **trust ratio** $\lVert\theta\rVert/\lVert u\rVert$ so every layer moves a fixed fraction of its own norm — the key to 32k-batch training, and the origin of the per-layer update-to-weight ratio ($\sim 10^{-3}$) you should be logging.
     - **Shampoo** is a tractable second-order method via Kronecker-factored preconditioners ($L^{-1/4}GR^{-1/4}$); fewest steps, but heavy compute and engineering.
     - **Muon** orthogonalizes the momentum of 2-D weights via a matmul-only Newton-Schulz iteration (singular values → 1), the matrix analogue of Lion's sign. One buffer per param, hybrid with AdamW for embeddings/head; a fast, memory-light, newsmaking AdamW alternative.
@@ -515,7 +520,7 @@ A pragmatic decision procedure for a new pretraining run:
 
     **Recent advances (2023–2026)**
 
-    - [Chen et al., *Symbolic Discovery of Optimization Algorithms* (2023)](https://arxiv.org/abs/2302.06675) — program-search discovers Lion (Evolved Sign Momentum): one buffer, sign update, half Adam's optimizer-state memory.
+    - [Chen et al., *Symbolic Discovery of Optimization Algorithms* (2023)](https://arxiv.org/abs/2302.06675) — program-search discovers Lion (Evolved Sign Momentum): one buffer, sign update, half Adam's moment-buffer memory.
     - [Liu et al., *Muon is Scalable for LLM Training* (2025)](https://arxiv.org/abs/2502.16982) — proves Muon scales to large models with weight decay + per-parameter update scaling, achieving ~2× compute efficiency vs. AdamW on compute-optimal runs.
     - [Vyas et al., *SOAP: Improving and Stabilizing Shampoo using Adam* (2024)](https://arxiv.org/abs/2409.11321) — runs Adam in Shampoo's eigenbasis, reducing iterations by 40% and wall-clock time by 35% on language model training.
     - [Anil et al., *Scalable Second Order Optimization for Deep Learning* (2020)](https://arxiv.org/abs/2002.09018) — Distributed Shampoo: Kronecker-factored preconditioners made tractable via CPU-distributed inverse-root computation.
@@ -639,7 +644,10 @@ A pragmatic decision procedure for a new pretraining run:
 
         @torch.no_grad()
         def step(self, closure=None):
-            loss = closure() if closure is not None else None
+            loss = None
+            if closure is not None:
+                with torch.enable_grad():     # closure needs an autograd graph
+                    loss = closure()
             for group in self.param_groups:
                 lr, (b1, b2) = group["lr"], group["betas"]
                 wd = group["weight_decay"]

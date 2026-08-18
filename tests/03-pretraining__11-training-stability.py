@@ -64,7 +64,6 @@ wandb = _DummyWandb()
 def batch_anomaly_score(
     input_ids: torch.Tensor,  # (B, T)
     ngram_n: int = 4,
-    repetition_threshold: float = 0.4,
 ) -> torch.Tensor:
     """
     Returns a per-example anomaly score in [0, 1].
@@ -81,7 +80,8 @@ def batch_anomaly_score(
         tokens = input_ids[b].tolist()
 
         # Signal 1: n-gram repetition fraction
-        ngrams = [tuple(tokens[i:i+ngram_n]) for i in range(T - ngram_n)]
+        # A length-T sequence contains T - n + 1 n-grams (starts 0 .. T-n).
+        ngrams = [tuple(tokens[i:i+ngram_n]) for i in range(T - ngram_n + 1)]
         if ngrams:
             counts = Counter(ngrams)
             # fraction of positions that are a repeated n-gram

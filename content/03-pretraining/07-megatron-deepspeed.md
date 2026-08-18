@@ -2,14 +2,14 @@
 
 Knowing the theory of tensor, pipeline, and data parallelism is one thing. Knowing how to wire them together on a 512-GPU cluster, pick the right degrees, and then confirm that your hardware is actually doing useful work is another. This chapter bridges that gap. We take the parallelism primitives introduced in [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html) and [Distributed Training II: Tensor, Pipeline, Sequence & Expert Parallelism](../03-pretraining/06-distributed-model-parallel.html), and show how Megatron-LM and DeepSpeed compose them into production training runs.
 
-By the end of this chapter you will understand the Megatron-Core abstraction layer, the full ZeRO hierarchy and its offload variants, the 4-D (DP × TP × PP × EP) parallelism space, how to reason about Model FLOP Utilization (MFU) and Hardware FLOP Utilization (HFU), and exactly which configuration levers to pull for a 70B-parameter run.
+By the end of this chapter you will understand the Megatron-Core abstraction layer, the full ZeRO hierarchy and its offload variants, the 4-D parallelism space (DP × TP × PP, plus expert parallelism carved out of DP), how to reason about Model FLOP Utilization (MFU) and Hardware FLOP Utilization (HFU), and exactly which configuration levers to pull for a 70B-parameter run.
 
 ## Megatron-LM: A Framework Built Around 3-D Parallelism
 
 Megatron-LM, developed at NVIDIA, was the first framework to train models beyond 100B parameters in a systematic way. The 2021 paper by Narayanan et al. ("Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM") introduced the idea of combining tensor parallelism (TP), pipeline parallelism (PP), and data parallelism (DP) in a principled way. The current codebase ships as two packages:
 
 - **Megatron-LM** — the outer loop: launch scripts, training harness, logging, checkpointing.
-- **Megatron-Core (megatron.core)** — a library of parallelism-aware transformer building blocks that other frameworks can import. NVIDIA NeMo (and the domain stacks built on it, such as BioNeMo) is the largest consumer; most non-NVIDIA stacks — Databricks/MosaicML's LLM Foundry, HuggingFace `nanotron`, `allenai/OLMo-core` — instead build on PyTorch FSDP/DTensor directly.
+- **Megatron-Core (megatron.core)** — a library of parallelism-aware transformer building blocks that other frameworks can import. NVIDIA NeMo (and the domain stacks built on it, such as BioNeMo) is the largest consumer; most non-NVIDIA stacks — Databricks/MosaicML's LLM Foundry, `allenai/OLMo-core` — instead build on PyTorch FSDP/DTensor directly, while HuggingFace `nanotron` implements TP/PP/ZeRO-1 itself over raw `torch.distributed` process groups.
 
 ### The 3-D Parallelism Layout
 
@@ -252,11 +252,13 @@ Note that `model_engine.backward()` and `.step()` are gradient-accumulation awar
 
 ## The 4-D Parallelism Space: Adding Expert Parallelism
 
-Modern MoE (Mixture-of-Experts) models add a fourth dimension. See [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) for the architecture. The full parallelism space becomes:
+Modern MoE (Mixture-of-Experts) models add a fourth parallelism *axis*. See [Mixture-of-Experts (MoE) Architectures](../02-transformer/09-mixture-of-experts.html) for the architecture. The GPU grid itself does not grow:
 
 $$
-N = \text{DP} \times \text{TP} \times \text{PP} \times \text{EP}
+N = \text{DP} \times \text{TP} \times \text{PP}, \qquad \text{EP} \mid \text{DP}
 $$
+
+EP is carved *out of* the data-parallel dimension rather than multiplied alongside it. Inside MoE layers the DP group is re-partitioned into EP expert-parallel ranks × DP/EP expert-data-parallel ranks — Megatron-Core's `initialize_model_parallel` builds the world as TP × CP × PP × DP and then asserts that the expert-model-parallel size divides DP × CP, and DeepSpeed-MoE partitions its DP group the same way. So EP costs no extra GPUs; it changes what the DP GPUs you already have hold.
 
 **Expert parallelism (EP)** shards the experts across EP ranks. Within a single MoE layer, tokens are dispatched to experts on different GPUs via all-to-all collectives. EP communicates *token activations* rather than parameters, so the all-to-all volume is proportional to sequence length and hidden size, not parameter count.
 
@@ -266,7 +268,7 @@ Megatron-Core's `MoELayer` handles the EP dimension natively (`--expert-model-pa
 
 ### The Fifth Axis: Context Parallelism
 
-For long-context runs there is one more independent axis. **Context parallelism (CP)** shards the *sequence* across CP ranks and computes attention with a ring exchange of K/V blocks (Ring Attention), so activation memory and attention FLOPs per GPU both fall by CP× while the model weights stay replicated across the CP group. Megatron-Core exposes it as `--context-parallel-size`, and the full grid becomes $N = \text{DP} \times \text{TP} \times \text{PP} \times \text{CP} \times \text{EP}$.
+For long-context runs there is one more independent axis. **Context parallelism (CP)** shards the *sequence* across CP ranks and computes attention with a ring exchange of K/V blocks (Ring Attention), so activation memory and attention FLOPs per GPU both fall by CP× while the model weights stay replicated across the CP group. Megatron-Core exposes it as `--context-parallel-size`, and the full grid becomes $N = \text{DP} \times \text{TP} \times \text{PP} \times \text{CP}$ — with EP still partitioning the DP × CP product rather than multiplying it.
 
 Do not confuse CP with the *sequence parallelism* described above: Megatron's SP is a memory optimization strictly *inside* a TP group (it shards the norm/dropout regions along sequence and is nearly free, so you should turn it on — `--sequence-parallel`, which Megatron only accepts when TP > 1 — in essentially every TP run), whereas CP is a genuine extra dimension of the GPU grid that you spend GPUs on. The rule of thumb is to leave CP=1 until sequence length pushes activation memory past what recomputation can absorb — typically 32K tokens and beyond — then raise CP before raising TP, because the ring exchange is point-to-point and overlappable while the TP all-reduce is not. The mechanism is developed in [Long-Context Pretraining & Context Extension](../03-pretraining/13-long-context-pretraining.html) and [Distributed Training II](../03-pretraining/06-distributed-model-parallel.html).
 
@@ -329,7 +331,7 @@ $$
 \text{DP} = \frac{N_{\text{total GPUs}}}{\text{TP} \times \text{PP}}
 $$
 
-DP is "free" communication if you use ZeRO-1 or ZeRO-2 (the reduce-scatter / all-gather can be overlapped with the backward pass). ZeRO-3 adds synchronous all-gather per forward pass but eliminates parameter redundancy.
+DP is "free" communication if you use ZeRO-1 or ZeRO-2 (the gradient reduce-scatter overlaps with the backward pass, and the post-step parameter all-gather — which cannot start until the optimizer has produced the updated weights — overlaps with the *next* forward pass). ZeRO-3 adds synchronous all-gather per forward pass but eliminates parameter redundancy.
 
 ### Step 5 — Tune global batch size and gradient accumulation
 
@@ -363,7 +365,7 @@ $$
 \text{FLOPs/token} \approx 6P + 12 \cdot n_\text{layers} \cdot d_\text{model} \cdot S
 $$
 
-where the $6P$ term comes from $\sim 2P$ for the forward pass (each parameter participates in roughly 2 multiply-adds) times 3 for the full backward pass, and the second term is the attention quadratic cost (often secondary for moderate sequence lengths). Following the PaLM/Megatron convention, the attention term counts the full $S \times S$ score matrix even though causal masking means a FlashAttention kernel actually computes only half of it — MFU is deliberately a *model*-FLOP metric, so everyone must count the same nominal FLOPs for the numbers to be comparable across papers.
+where the $6P$ term comes from $2P$ for the forward pass (each parameter participates in roughly one multiply-accumulate per token = 2 FLOPs) plus $4P$ for the backward pass (an input-gradient GEMM and a weight-gradient GEMM, each about as expensive as the forward) — so forward + backward is $3\times$ forward — and the second term is the attention quadratic cost (often secondary for moderate sequence lengths). Following the PaLM/Megatron convention, the attention term counts the full $S \times S$ score matrix even though causal masking means a FlashAttention kernel actually computes only half of it — MFU is deliberately a *model*-FLOP metric, so everyone must count the same nominal FLOPs for the numbers to be comparable across papers.
 
 For practical purposes, practitioners often use the simplified rule:
 
@@ -381,7 +383,7 @@ $$
 
 ### Hardware FLOP Utilization (HFU)
 
-HFU counts *all* FLOPs actually issued to the GPU, including those in recomputed activations (gradient checkpointing). If you recompute one third of layers:
+HFU counts *all* FLOPs actually issued to the GPU, including those in recomputed activations (gradient checkpointing):
 
 $$
 \text{HFU} = \text{MFU} \times \frac{\text{total FLOPs issued}}{\text{model FLOPs}}
@@ -460,13 +462,13 @@ print(f"MFU: {mfu:.2%}")  # prints ~54.9% (~55%) for a well-configured run, incl
 
     **Activation memory** (one pipeline stage, without recomputation):
     - Layers per pipeline stage: $80 / 8 = 10$ layers
-    - Activations per layer ≈ two $B \times S \times H$ tensors in bf16 (input and output of the attention block)
-    - With MBS=2, $S=4096$, $H=8192$: $2 \times 2 \times 4096 \times 8192 \times 2 \text{ B} \approx 268$ MB per layer
+    - Activations per layer, *per GPU*, ≈ two $B \times S \times H$ tensors in bf16. This is a deliberately coarse proxy: Korthikanti's full accounting is $34 \cdot B S H$ bytes per layer, but TP=8 with `--sequence-parallel` divides that by TP, giving $34/8 \approx 4.25 \cdot BSH$ bytes — almost exactly the $4 \cdot BSH$ bytes that "two bf16 tensors" comes to. Do *not* divide the figure below by TP a second time.
+    - With MBS=2, $S=4096$, $H=8192$: $2 \times 2 \times 4096 \times 8192 \times 2 \text{ B} \approx 268$ MB per layer per GPU
     - 10 layers: $\approx 2.7$ GB per stage **per in-flight micro-batch** (before recompute)
     - With selective recompute (e.g., recompute attention blocks only): reduce by $\sim$40% → 1.6 GB per in-flight micro-batch
     - **1F1B in-flight multiplier**: stage $i$ stashes the activations of $PP - i$ micro-batches simultaneously, so the *first* stage — the peak — holds $PP = 8$ of them: $8 \times 1.6 \approx 13$ GB. (This is the well-known result that 1F1B does not reduce activation memory on stage 0: $8$ stages $\times$ 10 layers is the whole 80-layer model's worth of stashed activations.)
 
-    **Total per GPU (approximate)**: $6.0 + 13 + 2$ (comm buffers, fragmentation) $\approx 21$ GB on the worst stage — still well within 80 GB, so this config has room for a larger micro-batch or a longer sequence, but the headroom is $\sim 8\times$ smaller than the naive single-micro-batch estimate suggests. Forgetting the in-flight multiplier is one of the most common causes of an OOM that only appears once the pipeline fills.
+    **Total per GPU (approximate)**: $6.0 + 13 + 2$ (comm buffers, fragmentation) $\approx 21$ GB on the worst stage — still well within 80 GB, so this config has room for a larger micro-batch or a longer sequence, but the *activation* footprint is $\sim 8\times$ larger than the naive single-micro-batch estimate suggests (13 GB, not 1.6 GB). Forgetting the in-flight multiplier is one of the most common causes of an OOM that only appears once the pipeline fills.
 
     **MFU check**:
     - FLOPs per token: $6 \times 70 \times 10^9 = 4.2 \times 10^{11}$
@@ -877,7 +879,7 @@ For inference serving after training, the parallelism story shifts toward pure T
     - Pipeline bubble fraction $\approx (PP-1)/(PP-1+m)$. Keep it below 5–10% by increasing micro-batch count $m$ or using interleaved (virtual PP) schedules.
     - Always profile before tuning. Nsight Systems traces quickly reveal whether the bottleneck is NCCL communication, pipeline bubbles, or kernel-launch overhead.
     - The 3D + ZeRO pattern is the dominant approach for frontier pretraining runs, though modern Megatron-Core's own `--use-distributed-optimizer` is ZeRO-1 and often removes the need for DeepSpeed; `pytorch/torchtitan` (FSDP2 + DTensor TP/PP/CP over a `DeviceMesh`) is the PyTorch-native alternative.
-    - Expert parallelism (EP) adds a fourth dimension for MoE models, communicating token activations (not parameters) via all-to-all; context parallelism (CP) adds a fifth for long sequences, sharding the sequence itself with a ring K/V exchange.
+    - Expert parallelism (EP) is the fourth axis for MoE models, communicating token activations (not parameters) via all-to-all — but it *re-partitions* the data-parallel group (EP divides DP) rather than adding GPUs to the grid; context parallelism (CP) is a genuine extra grid dimension for long sequences, sharding the sequence itself with a ring K/V exchange.
     - Every degree above 1 must be *forced* by memory or bandwidth. At ~100M parameters the funnel returns TP=PP=CP=EP=1 and DP-only — plain DDP or FSDP2, no Megatron or DeepSpeed required.
 
 ## Exercises

@@ -388,8 +388,11 @@ def extract_final_answer(trace: str):
     boxed = extract_boxed(trace)
     if boxed is not None:
         return boxed.strip()
-    m = re.search(r"(?:final answer|answer)\s*[:=]\s*(.+)", trace, re.I)
-    return m.group(1).strip() if m else None
+    # LAST match, not re.search's FIRST one: a chain of thought says "answer"
+    # many times before it concludes ("the answer to the sub-problem is ...",
+    # "a common wrong answer is ..."), so the first hit is an intermediate value.
+    ms = list(re.finditer(r"(?:final answer|answer)\s*[:=]\s*(.+)", trace, re.I))
+    return ms[-1].group(1).strip() if ms else None
 
 def verify(pred, gold) -> bool:
     """Domain-specific. For math, normalize then compare; for code, run tests
@@ -723,18 +726,32 @@ def ngrams(text, n=13):
     toks = text.lower().split()
     return {tuple(toks[i:i+n]) for i in range(len(toks) - n + 1)}
 
-def build_eval_ngram_index(eval_items, n=13):
-    idx = set()
-    for item in eval_items:           # questions AND answers from every benchmark
-        idx |= ngrams(item, n)
-    return idx
+def build_eval_ngram_index(eval_items, n=13, min_len=5):
+    """`eval_items` are questions AND answers from every benchmark you report
+    on. Mind the edge case: an item with FEWER than n tokens yields no n-grams
+    at all (`range()` is empty), so MMLU options, numeric golds, and terse
+    prompts would be silently exempt from the whole filter. Index those at
+    their own length instead, and return the lengths in play so the record side
+    can check each one. Items under `min_len` tokens are skipped deliberately:
+    a 1-3 token gram ('paris', '42') matches ordinary prose and would flag the
+    entire corpus -- match short golds in context (concatenated with their
+    question), never on their own."""
+    idx, lens = set(), set()
+    for item in eval_items:
+        m = min(n, len(item.split()))
+        if m < min_len:
+            continue
+        idx |= ngrams(item, m)
+        lens.add(m)
+    return idx, lens
 
-def decontaminate(records, eval_index, n=13, max_overlap=0):
-    """Drop a record if it shares more than `max_overlap` 13-grams with any
+def decontaminate(records, eval_index, max_overlap=0):
+    """Drop a record if it shares more than `max_overlap` n-grams with any
     eval item -- i.e. it has likely memorized/leaked a test question."""
+    idx, lens = eval_index
     clean = []
     for r in records:
-        overlap = len(ngrams(r["text"], n) & eval_index)
+        overlap = sum(len(ngrams(r["text"], m) & idx) for m in lens)
         if overlap <= max_overlap:
             clean.append(r)
     return clean
@@ -763,10 +780,14 @@ def type_token_ratio(texts):
     return len(set(toks)) / max(1, len(toks))   # higher = more diverse
 
 def self_overlap(texts, k=200):
-    """Average fraction of shared unigrams between random pairs. Higher = more
-    repetitive (a collapse warning). Sampled for speed."""
+    """Mean pairwise Jaccard overlap of unigram sets, over a RANDOM sample of k
+    documents. Higher = more repetitive (a collapse warning). Sample rather
+    than slice `texts[:k]`: the head of a shard is usually correlated (one
+    source file, one generation batch), which biases the very quantity the
+    metric exists to detect."""
     import random
-    sets = [set(t.lower().split()) for t in texts[:k]]
+    sample = random.sample(texts, min(k, len(texts)))
+    sets = [set(t.lower().split()) for t in sample]
     pairs, tot = 0, 0.0
     for i in range(len(sets)):
         for j in range(i + 1, len(sets)):

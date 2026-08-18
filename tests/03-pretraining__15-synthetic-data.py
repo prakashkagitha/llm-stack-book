@@ -300,14 +300,37 @@ build an SFT dataset of (problem -> correct trace).
 import re
 from collections import defaultdict
 
+def extract_boxed(trace: str):
+    r"""Return the contents of the LAST \boxed{...}, with BALANCED braces.
+    The tempting one-liner re.search(r"\\boxed\{([^}]*)\}", trace) stops at the
+    FIRST '}', so it mangles every nested answer: \boxed{\frac{1}{2}} comes back
+    as '\frac{1'. That silently rejects most correct math traces (any fraction,
+    root, matrix, or \text{...}). Scan forward tracking brace depth instead."""
+    i = trace.rfind(r"\boxed{")
+    if i < 0:
+        return None
+    j = i + len(r"\boxed{")
+    depth = 1
+    for k in range(j, len(trace)):
+        if trace[k] == "{":
+            depth += 1
+        elif trace[k] == "}":
+            depth -= 1
+            if depth == 0:
+                return trace[j:k]
+    return None                     # unterminated box -> treat as no answer
+
 def extract_final_answer(trace: str):
     """Pull the boxed/'final answer' from a CoT trace. Robust parsing matters;
     a bad extractor silently throws away good traces or keeps bad ones."""
-    m = re.search(r"\\boxed\{([^}]*)\}", trace)
-    if m:
-        return m.group(1).strip()
-    m = re.search(r"(?:final answer|answer)\s*[:=]\s*(.+)", trace, re.I)
-    return m.group(1).strip() if m else None
+    boxed = extract_boxed(trace)
+    if boxed is not None:
+        return boxed.strip()
+    # LAST match, not re.search's FIRST one: a chain of thought says "answer"
+    # many times before it concludes ("the answer to the sub-problem is ...",
+    # "a common wrong answer is ..."), so the first hit is an intermediate value.
+    ms = list(re.finditer(r"(?:final answer|answer)\s*[:=]\s*(.+)", trace, re.I))
+    return ms[-1].group(1).strip() if ms else None
 
 def verify(pred, gold) -> bool:
     """Domain-specific. For math, normalize then compare; for code, run tests
@@ -542,18 +565,32 @@ def ngrams(text, n=13):
     toks = text.lower().split()
     return {tuple(toks[i:i+n]) for i in range(len(toks) - n + 1)}
 
-def build_eval_ngram_index(eval_items, n=13):
-    idx = set()
-    for item in eval_items:           # questions AND answers from every benchmark
-        idx |= ngrams(item, n)
-    return idx
+def build_eval_ngram_index(eval_items, n=13, min_len=5):
+    """`eval_items` are questions AND answers from every benchmark you report
+    on. Mind the edge case: an item with FEWER than n tokens yields no n-grams
+    at all (`range()` is empty), so MMLU options, numeric golds, and terse
+    prompts would be silently exempt from the whole filter. Index those at
+    their own length instead, and return the lengths in play so the record side
+    can check each one. Items under `min_len` tokens are skipped deliberately:
+    a 1-3 token gram ('paris', '42') matches ordinary prose and would flag the
+    entire corpus -- match short golds in context (concatenated with their
+    question), never on their own."""
+    idx, lens = set(), set()
+    for item in eval_items:
+        m = min(n, len(item.split()))
+        if m < min_len:
+            continue
+        idx |= ngrams(item, m)
+        lens.add(m)
+    return idx, lens
 
-def decontaminate(records, eval_index, n=13, max_overlap=0):
-    """Drop a record if it shares more than `max_overlap` 13-grams with any
+def decontaminate(records, eval_index, max_overlap=0):
+    """Drop a record if it shares more than `max_overlap` n-grams with any
     eval item -- i.e. it has likely memorized/leaked a test question."""
+    idx, lens = eval_index
     clean = []
     for r in records:
-        overlap = len(ngrams(r["text"], n) & eval_index)
+        overlap = sum(len(ngrams(r["text"], m) & idx) for m in lens)
         if overlap <= max_overlap:
             clean.append(r)
     return clean
@@ -563,16 +600,20 @@ _eval_items = [
     "What is the boiling point of water at sea level in degrees Celsius "
     "and why does it matter for cooking experiments",
 ]
+_eval_items = _eval_items + ["A) 4 B) 5 C) 6 D) 7"]   # short item: fewer than 13 tokens
 _eval_index = build_eval_ngram_index(_eval_items, n=13)
-assert len(_eval_index) > 0
+assert len(_eval_index[0]) > 0
+assert _eval_index[1] == {8, 13}, "short items must be indexed at their own length"
 
 _decon_records = [
     {"text": "What is the boiling point of water at sea level in degrees "
              "Celsius and why does it matter for cooking experiments"},  # leaked
+    {"text": "Pick the right one. A) 4 B) 5 C) 6 D) 7 -- a leaked short "
+             "multiple-choice block the 13-gram-only index would have missed."},
     {"text": "Photosynthesis converts sunlight into chemical energy stored "
              "in glucose molecules inside chloroplasts of plant cells."},  # clean
 ]
-_clean = decontaminate(_decon_records, _eval_index, n=13, max_overlap=0)
+_clean = decontaminate(_decon_records, _eval_index, max_overlap=0)
 assert len(_clean) == 1
 assert "Photosynthesis" in _clean[0]["text"]
 print(f"Decontamination kept {len(_clean)}/{len(_decon_records)} records "
@@ -595,10 +636,14 @@ def type_token_ratio(texts):
     return len(set(toks)) / max(1, len(toks))   # higher = more diverse
 
 def self_overlap(texts, k=200):
-    """Average fraction of shared unigrams between random pairs. Higher = more
-    repetitive (a collapse warning). Sampled for speed."""
+    """Mean pairwise Jaccard overlap of unigram sets, over a RANDOM sample of k
+    documents. Higher = more repetitive (a collapse warning). Sample rather
+    than slice `texts[:k]`: the head of a shard is usually correlated (one
+    source file, one generation batch), which biases the very quantity the
+    metric exists to detect."""
     import random
-    sets = [set(t.lower().split()) for t in texts[:k]]
+    sample = random.sample(texts, min(k, len(texts)))
+    sets = [set(t.lower().split()) for t in sample]
     pairs, tot = 0, 0.0
     for i in range(len(sets)):
         for j in range(i + 1, len(sets)):
