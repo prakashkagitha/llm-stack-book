@@ -193,24 +193,29 @@ y = model(x)  # compiled
 `torch.compile` exposes several modes trading compilation time for runtime speed:
 
 ```python
+# `model` below stays the *eager* module; each mode gets its own handle.
+
 # "default": balanced; good for most cases
-model = torch.compile(model)
+m_default = torch.compile(model)
 
 # "reduce-overhead": enables CUDA graphs internally for fixed shapes
-model = torch.compile(model, mode="reduce-overhead")
+m_reduce = torch.compile(model, mode="reduce-overhead")
 
 # "max-autotune": exhaustive kernel search via Triton autotuner
 # Compilation can take many minutes but delivers best throughput
-model = torch.compile(model, mode="max-autotune")
+m_maxauto = torch.compile(model, mode="max-autotune")
 
 # "max-autotune-no-cudagraphs": autotune without CUDA graph capture
 # Safer for models with dynamic shapes or side effects
-model = torch.compile(model, mode="max-autotune-no-cudagraphs")
+m_maxauto_nocg = torch.compile(model, mode="max-autotune-no-cudagraphs")
 
 # Dynamic shapes: recompile less aggressively when shapes change
-model = torch.compile(model, dynamic=True)
+m_dynamic = torch.compile(model, dynamic=True)
 
-# Inspect what happened: graph breaks, subgraphs, guards
+# Inspect what happened: graph breaks, subgraphs, guards.
+# explain() installs its own Dynamo context, so hand it the ORIGINAL callable —
+# passing an already-`torch.compile`d module nests compilation and reports
+# nothing useful about the module's real graph breaks.
 torch._dynamo.explain(model)(x)
 ```
 

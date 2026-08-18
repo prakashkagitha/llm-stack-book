@@ -369,7 +369,7 @@ Two consequences worth internalizing. First, the *write* path and the *read* pat
 
 The indirection is not free, but it is cheap:
 
-- **Extra memory traffic** is one small block-table read per block — negligible against loading the block's $B \times H_{kv} \times d_h$ KV elements.
+- **Extra memory traffic** is one small block-table read per block — negligible against the $2 \cdot B \cdot H_{kv} \cdot d_h$ K *and* V elements that one entry unlocks (the same leading $2$ as in the size formula: a block id addresses a block in the K pool and the matching block in the V pool).
 - **Non-contiguous reads** are the real cost: scattered physical blocks defeat large coalesced loads and prefetchers. PagedAttention mitigates this by keeping a *whole block* contiguous (so within a block, loads are coalesced) and by choosing $B$ large enough (16+) to amortize the per-block setup.
 - **The measured tax is real but local.** In the paper's kernel microbenchmark (§7.1), the block-table lookups, extra branches, and variable-length handling cost **20–26% higher attention-kernel latency** than the highly optimized contiguous FasterTransformer kernel they adapted. That sounds large until you remember attention is one operator among the layer's Linear/MLP GEMMs, so the end-to-end cost is a small single-digit percentage — and it is *overwhelmingly* repaid by the larger batch sizes the freed memory enables.
 
@@ -734,7 +734,7 @@ With the old ordering (grow *after* the write, keyed on the post-increment lengt
 
     Two mitigations:
 
-    1. **Keep each block internally contiguous.** A physical block stores its $B \times H_{kv} \times d_h$ K/V elements in a contiguous region, so *within* a block the loads are fully coalesced — scattering happens only at block *boundaries*, not on every element.
+    1. **Keep each block internally contiguous.** A physical block stores its $B \times H_{kv} \times d_h$ elements in a contiguous region of the K pool, and likewise its $B \times H_{kv} \times d_h$ elements in the V pool, so *within* a block the loads are fully coalesced — scattering happens only at block *boundaries*, not on every element.
     2. **Choose $B$ large enough (16+).** With a larger block, each expensive "jump to a new physical location" is amortized over $B$ tokens' worth of contiguous, coalesced reads, so the per-block indirection/setup cost is a small fraction of the useful load. (This is the same trade-off discussed in "Choosing the block size $B$": too small bloats overhead, too large reintroduces internal fragmentation.)
 
     The net effect, per the vLLM authors' kernel microbenchmark, is 20–26% higher *attention-kernel* latency than the highly optimized contiguous FasterTransformer kernel. Because attention is only one operator per layer, that translates into a small single-digit end-to-end tax — overwhelmingly repaid by the larger batches the recovered memory enables.

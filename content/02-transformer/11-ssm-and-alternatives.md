@@ -894,9 +894,10 @@ $N_s$ denotes SSM state dimension (e.g., 16 in Mamba). Note that Mamba/SSM state
     - Per layer: $d_\text{inner} \times N_s \times 2$ bytes $= 8192 \times 16 \times 2 = 256$ KB
     - 32 layers: $256 \times 32 = 8$ MB — **constant, regardless of N** (plus a small depthwise-conv state of $d_\text{inner} \times (d_\text{conv} - 1)$ elements per layer)
 
-    **RWKV state at any N:** two accumulators per channel — the WKV numerator $a_t$ and denominator $b_t$, so $2d$ elements:
+    **RWKV state at any N:** two WKV accumulators per channel — the numerator $a_t$ and denominator $b_t$, so $2d$ elements:
     - Per layer: $2d \times 2$ bytes $= 2 \times 4096 \times 2 = 16$ KB
     - 32 layers: $16 \times 32 = 512$ KB
+    - A real decoder carries a couple more $d$-sized vectors per layer — the running max $p_t$ of the numerically stable kernel above, plus the token-shift copies of $x$ for time- and channel-mixing — so budget $\sim\!4d$–$5d$ ($\approx$ 1–1.3 MB over 32 layers). Still constant in $N$, still four orders of magnitude below the KV cache.
 
     This is the fundamental inference memory advantage of SSM/recurrent models: they can handle arbitrarily long sequences at deployment time with a fixed memory footprint.
 
@@ -1312,7 +1313,7 @@ Use the chapter's 7B configuration: 32 layers, $d = 4096$, $d_k = d_v = 128$, fp
 
     **(b) Mamba state.** The SSM runs on the expanded width $d_\text{inner} = \text{expand}\cdot d = 2 \times 4096 = 8192$, so per layer $d_\text{inner} \times N_s \times 2\text{ bytes} = 8192 \times 16 \times 2 = 262{,}144$ bytes $= 256$ KB. Across 32 layers: $256\text{ KB} \times 32 = \mathbf{8}$ **MB** — independent of $N$. (Decoding also carries the depthwise-conv window, $d_\text{inner}\times(d_\text{conv}-1)$ elements per layer — under 50 KB, small but not zero.)
 
-    **(c) RWKV state.** Two scalar accumulators per channel (the WKV numerator and denominator, each $O(d)$): $\approx 2d \times 2\text{ bytes} = 2 \times 4096 \times 2 = 16$ KB per layer, $\times 32 = \mathbf{512}$ **KB** — independent of $N$.
+    **(c) RWKV state.** Two scalar accumulators per channel (the WKV numerator and denominator, each $O(d)$): $\approx 2d \times 2\text{ bytes} = 2 \times 4096 \times 2 = 16$ KB per layer, $\times 32 = \mathbf{512}$ **KB** — independent of $N$. (A real kernel also keeps the running max and the token-shift vectors, roughly doubling this to $\sim$1 MB; still constant in $N$.)
 
     **Ratio.** $\dfrac{64\text{ GB}}{8\text{ MB}} = \dfrac{64 \times 1024\text{ MB}}{8\text{ MB}} = 8192\times$. Only the transformer KV cache grows with $N$ (linearly); the Mamba and RWKV states are fixed-size regardless of how long the sequence gets — the core inference-memory advantage of recurrent/SSM models.
 

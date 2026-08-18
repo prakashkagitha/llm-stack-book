@@ -65,7 +65,9 @@ import torch.nn.functional as F
 def apply_mlm_mask(input_ids: torch.Tensor,
                    vocab_size: int,
                    mask_token_id: int,
-                   mask_prob: float = 0.15) -> tuple[torch.Tensor, torch.Tensor]:
+                   mask_prob: float = 0.15,
+                   special_tokens_mask: torch.Tensor | None = None,
+                   ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Apply BERT-style MLM masking to a batch of token ids.
 
@@ -74,6 +76,10 @@ def apply_mlm_mask(input_ids: torch.Tensor,
         vocab_size: size of vocabulary
         mask_token_id: id of the [MASK] token
         mask_prob: fraction of tokens to select for masking
+        special_tokens_mask: (B, T) bool, True at positions that must never be
+            selected — [CLS], [SEP] and [PAD]. Skipping this is a silent bug:
+            you would train the model to predict padding and destroy the
+            sentence-boundary tokens every downstream BERT head relies on.
 
     Returns:
         masked_input: (B, T) — input with some tokens replaced
@@ -84,6 +90,8 @@ def apply_mlm_mask(input_ids: torch.Tensor,
     dev = input_ids.device       # build every helper tensor on the input's device
     # Draw a Bernoulli mask: which positions are selected (15%)
     selected = torch.rand(B, T, device=dev) < mask_prob   # (B, T) bool
+    if special_tokens_mask is not None:
+        selected &= ~special_tokens_mask.to(dev, torch.bool)
 
     # Of the selected positions:
     #   80% → [MASK]
@@ -531,7 +539,7 @@ By 2022–2023, essentially all frontier models (GPT-3, PaLM, LLaMA, Mistral, Ge
 
 **6. The serving ecosystem voted.** This is now self-reinforcing: vLLM, SGLang and TensorRT-LLM are built around a causal decoder's prefill/decode split, and features like prefix caching, speculative decoding and continuous batching all assume one growing KV cache. Choosing encoder-decoder in 2026 means giving up most of that tooling. For the same reasons, Stack-100M — the ~100M model built from scratch in Part XIV — is a causal decoder; see [The Stack-100M Architecture](../14-capstone/04-architecture.html).
 
-**What encoder-only is still good for.** Representation tasks with tight latency budgets: search re-ranking, embedding retrieval, token classification. A 110M-parameter encoder produces high-quality contextual embeddings orders of magnitude cheaper than running a 70B decoder-only model. In 2026 the default choice here is no longer original BERT but **ModernBERT** (Warner et al., 2024) — the same bidirectional mask, rebuilt with RoPE, FlashAttention and an 8 192-token window — served through `sentence-transformers` for bi-encoders and cross-encoder rerankers.
+**What encoder-only is still good for.** Representation tasks with tight latency budgets: search re-ranking, embedding retrieval, token classification. A 110M-parameter encoder produces high-quality contextual embeddings orders of magnitude cheaper than running a 70B decoder-only model. In 2026 the default choice here is no longer original BERT but **ModernBERT** (Warner et al., 2024) — still bidirectional, but rebuilt with RoPE, FlashAttention, an 8 192-token context and *alternating* attention (a full-sequence global layer every third block, a 128-token bidirectional sliding window in the rest) — served through `sentence-transformers` for bi-encoders and cross-encoder rerankers.
 
 **But the mask is not destiny.** The strongest embedding models on MTEB-style leaderboards are now *decoder* checkpoints repurposed as encoders (the E5-Mistral / NV-Embed / Qwen3-Embedding lineage). **LLM2Vec** (BehnamGhader et al., 2024) makes the recipe explicit and is worth reading precisely because it is this chapter's thesis run backwards: take a pretrained causal LM, **switch the attention mask to bidirectional**, adapt it with a short masked-next-token-prediction phase, then contrastively fine-tune. Bidirectionality is a property you can *install* into a decoder for a few GPU-hours; what you cannot cheaply install is the pretraining compute the decoder already absorbed. See [Embeddings & Representation Learning](../09-rag-retrieval/01-embeddings-representation.html) for the contrastive-training side of this.
 
@@ -567,6 +575,8 @@ text = "the cat sat on the mat"
 
 # (1) Encoder-only + MLM. DataCollatorForLanguageModeling implements the
 #     80/10/10 scheme we coded above and emits `labels` with -100 padding.
+#     It builds the special-tokens mask itself (via `get_special_tokens_mask`),
+#     so [CLS]/[SEP]/[PAD] are never selected — the argument we added above.
 bert_tok = AutoTokenizer.from_pretrained("bert-base-uncased")
 bert     = AutoModelForMaskedLM.from_pretrained("bert-base-uncased")
 collator = DataCollatorForLanguageModeling(bert_tok, mlm=True, mlm_probability=0.15)

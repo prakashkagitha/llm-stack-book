@@ -626,7 +626,7 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
     - A kernel becomes a **usable layer** only when wrapped in a `torch.autograd.Function` that saves $(Q, K, V, O, L)$ and returns $\mathrm{d}Q, \mathrm{d}K, \mathrm{d}V$ itself — that wrapper is what turns attention's activation memory from quadratic to linear in a real training loop.
 
 !!! sota "State of the Art & Resources (2026)"
-    FlashAttention is now the universal baseline for exact attention on modern GPUs: FA-2 ships inside PyTorch's `scaled_dot_product_attention`, FA-3 (still beta) targets Hopper's async tensor cores and FP8, and FA-4 has since shipped as a production `pip install flash-attn-4` package extending the approach to Blackwell (e.g. B200) alongside Hopper. The core IO-aware tiling idea has spawned a broad ecosystem of inference-optimized and flexibly-programmable attention kernels.
+    FlashAttention is now the universal baseline for exact attention on modern GPUs: FA-2 ships inside PyTorch's `scaled_dot_product_attention`, FA-3 (still beta) targets Hopper's async tensor cores and FP8, and FA-4 has since shipped as a production `pip install flash-attn-4` package that carries the approach to Blackwell (e.g. B200), with FA-3 remaining the Hopper path. The core IO-aware tiling idea has spawned a broad ecosystem of inference-optimized and flexibly-programmable attention kernels.
 
     **Foundational papers**
 
@@ -642,7 +642,7 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
 
     **Open-source & tools**
 
-    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the canonical production library: FA-1/FA-2 stable (Ampere through Hopper), FA-3 beta (Hopper-only, FP8), and FA-4 a production Hopper+Blackwell package via `pip install flash-attn-4`; `flash_attn_varlen_func` for packed sequences, sliding-window and ALiBi support.
+    - [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) — the canonical production library: FA-1/FA-2 stable (Ampere through Hopper), FA-3 beta (Hopper-only, FP8), and FA-4 a production Blackwell-targeted package via `pip install flash-attn-4`; `flash_attn_varlen_func` for packed sequences, sliding-window and ALiBi support.
     - [flashinfer-ai/flashinfer](https://github.com/flashinfer-ai/flashinfer) — inference-focused attention engine with JIT kernel composition, block-sparse KV layout, and (as of v0.4.0) Blackwell-class GPU support; adopted by vLLM, SGLang, and TensorRT-LLM.
 
     **Go deeper**
@@ -793,7 +793,7 @@ Step back and hold the whole thing at once. Standard attention is correct but pa
     print("max abs error:", np.abs(O_flash - O_ref).max())   # ~1e-15
     ```
 
-    The maximum error is $\sim 10^{-15}$ — exact up to round-off, like the chapter's causal check. Note the `break` for future blocks and the `continue` for blocks past the left edge together mean each query block only ever touches the $O(W/B_c)$ key-blocks inside its window, so for $W \ll N$ the work per query block is constant rather than growing with $N$ — the same "masking is nearly free" idea, now bounding total work to $O(N W)$.
+    The maximum error is $\sim 10^{-15}$ — exact up to round-off, like the chapter's causal check. Note the `break` for future blocks and the `continue` for blocks past the left edge together mean each query block only ever touches the key-blocks that overlap its window. A tile's rows $[i_0, i_1)$ can see columns $(i_0 - W,\, i_1 - 1]$, a range of width $W + B_r - 1$, so that is $O\!\big((W + B_r)/B_c\big)$ key-blocks — constant in $N$, so for $W \ll N$ the work per query block does not grow with $N$. The same "masking is nearly free" idea, now bounding total work to $O\!\big(N(W + B_r)\big)$, which is the familiar $O(NW)$ once $W \gg B_r$ (at the toy settings here, $W = 24$ and $B_r = 32$, the tile height still dominates).
 
 **5.** The backward pass reconstructs each probability tile as $P_{ij} = \exp(S_{ij} - L_i)$ instead of storing $P$, using the saved logsumexp $L_i = m_i + \log \ell_i$.
 
