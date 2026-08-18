@@ -533,7 +533,7 @@ DPO and its variants are the **offline preference-tuning** layer of post-trainin
 
     **Go deeper**
 
-    - [HuggingFace TRL DPO Trainer docs](https://huggingface.co/docs/trl/en/dpo_trainer) — covers all loss types (sigmoid, IPO, hinge, SimPO, APO, DiscoPOP…), logging metrics, and PEFT integration in one place.
+    - [HuggingFace TRL DPO Trainer docs](https://huggingface.co/docs/trl/en/dpo_trainer) — covers the `DPOTrainer` loss types (sigmoid, IPO, hinge, robust, APO, DiscoPOP…), logging metrics, and PEFT integration in one place. (SimPO is *not* among them — it lives in `CPOTrainer` via `CPOConfig(loss_type="simpo")`.)
     - [HuggingFace Blog, *Preference Tuning LLMs with DPO Methods* (2024)](https://huggingface.co/blog/pref-tuning) — empirical comparison of DPO, IPO, and KTO on 7B models with MT-Bench sweeps.
 
 ## Further reading

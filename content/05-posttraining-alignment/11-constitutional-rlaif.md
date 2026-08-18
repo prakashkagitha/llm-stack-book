@@ -492,6 +492,8 @@ class RejectionSamplingDataset(Dataset):
         self.pairs = accepted_pairs
         self.tokenizer = tokenizer
         self.max_len = max_len
+        if tokenizer.pad_token is None:      # most base causal LMs have none
+            tokenizer.pad_token = tokenizer.eos_token
 
     def __len__(self):
         return len(self.pairs)
@@ -499,15 +501,29 @@ class RejectionSamplingDataset(Dataset):
     def __getitem__(self, idx):
         prompt, completion = self.pairs[idx]
         text = prompt + completion + self.tokenizer.eos_token
+        # Pad to a fixed width: __getitem__ must return equal-length rows or the
+        # default DataLoader collate (torch.stack) fails for any batch_size > 1.
         tokens = self.tokenizer(
-            text, truncation=True, max_length=self.max_len, return_tensors="pt"
+            text, truncation=True, max_length=self.max_len,
+            padding="max_length", return_tensors="pt",
         )
         input_ids = tokens["input_ids"].squeeze(0)
-        # Mask the prompt tokens in the loss (train only on the completion)
-        prompt_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"].squeeze(0)
+        attention_mask = tokens["attention_mask"].squeeze(0)
+
+        # Mask the prompt tokens in the loss (train only on the completion).
+        # Truncate the prompt the same way as `text`, and clamp the mask: if the
+        # prompt alone fills the window, masking `len(prompt_ids)` positions would
+        # ignore *every* label, and a mean-reduced cross-entropy over zero
+        # unmasked positions is NaN — which poisons the whole batch's gradient.
+        prompt_ids = self.tokenizer(
+            prompt, truncation=True, max_length=self.max_len, return_tensors="pt"
+        )["input_ids"].squeeze(0)
+        n_prompt = min(len(prompt_ids), self.max_len - 1)
+
         labels = input_ids.clone()
-        labels[: len(prompt_ids)] = -100  # ignore_index
-        return {"input_ids": input_ids, "labels": labels}
+        labels[:n_prompt] = -100                 # ignore_index: prompt tokens
+        labels[attention_mask == 0] = -100       # ignore_index: padding tokens
+        return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
 
 
 def rejection_sampling_iteration(

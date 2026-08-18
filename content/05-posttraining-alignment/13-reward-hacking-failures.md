@@ -55,7 +55,7 @@ where $\beta > 0$ is the KL coefficient. As we sweep $\beta$ from $\infty$ (poli
 {{fig:rewardhack-kl-frontier}}
 
 
-Gao et al. (2022) ("Scaling Laws for Reward Model Overoptimization") showed empirically where that peak sits, and that it moves rightward (more optimization is OK before the peak) as the reward model is trained on more data. The location is regime-dependent, and the difference is large: best-of-$n$ reranking is bounded to a few nats of KL by construction (see the closed form below) and its gold peak sits inside that budget, whereas their PPO sweeps run out to $\sqrt{D_\mathrm{KL}}$ of roughly $10$ — i.e. *tens* of nats of sequence-level KL — with the gold peak correspondingly far out. There is therefore no single "the peak is at $X$ nats" number to memorize — quote it per regime, and calibrate it against your own RM. The gap between proxy and true reward grows roughly as $\sqrt{\text{KL}}$ in the low-KL regime — it keeps widening with every extra nat of optimization pressure, though sublinearly in KL itself.
+Gao et al. (2022) ("Scaling Laws for Reward Model Overoptimization") showed empirically where that peak sits, and that it moves rightward (more optimization is OK before the peak) as the reward model is trained on more data. The location is regime-dependent, and the difference is large: best-of-$n$ reranking is bounded to a few nats of KL by construction (see the closed form below) and its gold peak sits inside that budget, whereas their PPO sweeps run out to $\sqrt{D_\mathrm{KL}}$ of roughly $10$ — i.e. on the order of a *hundred* nats of sequence-level KL — with the gold peak correspondingly far out. There is therefore no single "the peak is at $X$ nats" number to memorize — quote it per regime, and calibrate it against your own RM. The gap between proxy and true reward grows roughly as $\sqrt{\text{KL}}$ in the low-KL regime — it keeps widening with every extra nat of optimization pressure, though sublinearly in KL itself.
 
 ### Measuring optimization pressure: the $\sqrt{\mathrm{KL}}$ axis and the best-of-$n$ yardstick
 
@@ -652,15 +652,18 @@ class RobustPPOTrainer:
         responses = self._generate(prompts)
 
         # 2. Ensemble reward + uncertainty penalty
-        input_ids      = self._encode(prompts, responses)
-        raw_proxy, std = self.ens_rm(input_ids, self.cfg.uncertainty_penalty)
+        input_ids            = self._encode(prompts, responses)
+        # NOTE: the first return value is already the *penalized* ensemble score
+        # (mean - uncertainty_penalty * std), not the bare ensemble mean.
+        penalized_proxy, std = self.ens_rm(input_ids, self.cfg.uncertainty_penalty)
 
-        # 3. Clip and normalize -- for the *gradient* only. Keep `raw_proxy` for
-        #    monitoring: with reward_normalize=True the returned tensor is
-        #    mean-zero by construction, so logging its mean gives a flat 0.000
-        #    line that can never show the proxy rising away from gold.
+        # 3. Clip and normalize -- for the *gradient* only. Keep
+        #    `penalized_proxy` for monitoring: with reward_normalize=True the
+        #    returned tensor is mean-zero by construction, so logging its mean
+        #    gives a flat 0.000 line that can never show the proxy rising away
+        #    from gold.
         proxy_r = compute_clipped_rewards(
-            raw_proxy, self.cfg.reward_clip, self.cfg.reward_normalize
+            penalized_proxy, self.cfg.reward_clip, self.cfg.reward_normalize
         )
 
         # 4. KL divergence computation (approximate per-token KL sum)
@@ -677,7 +680,12 @@ class RobustPPOTrainer:
         mean_kl = kl.mean().item()
         self.kl_ctrl.update(mean_kl, n_steps=len(prompts))
 
-        # 7. Monitoring. Log the *raw* ensemble score, not the z-scored one.
+        # 7. Monitoring. Log the *raw* ensemble mean, not the z-scored tensor and
+        #    not the uncertainty-penalized one: the penalty is exactly the term
+        #    designed to suppress high-disagreement (i.e. hacked) outputs, so
+        #    logging it would damp the proxy-vs-gold divergence we are hunting.
+        #    The mean is recoverable in closed form from what __call__ returns.
+        raw_proxy = penalized_proxy + self.cfg.uncertainty_penalty * std
         self.history["proxy"].append(raw_proxy.mean().item())
         self.history["kl"].append(mean_kl)
 
@@ -765,7 +773,7 @@ For deeper coverage of constitutional and self-improvement approaches to these l
 
     - Reward hacking arises because reward models are proxy measures trained on finite data near the reference policy; optimizing them drives the policy off-distribution where the proxy diverges from true preference.
     - The KL–reward frontier shows that proxy reward rises monotonically with KL while true reward peaks at moderate KL and then falls; the optimal policy is found near the peak, not at zero KL.
-    - Goodhart's law manifests in four modes in LLMs: sycophancy (agreeing with users), length bias (padding verbosity), spurious format rewards (unnecessary markdown), and specification gaming (satisfying the letter not the spirit of the reward).
+    - Goodhart's law has four formal modes (regressional, extremal, causal, adversarial), of which extremal is the most dangerous; in LLMs these surface as the observed failure phenomena of sycophancy (agreeing with users), length bias (padding verbosity), spurious format rewards (unnecessary markdown), and specification gaming (satisfying the letter not the spirit of the reward).
     - The KL coefficient $\beta$ is the primary control dial; adaptive KL control (e.g., Ziegler-style multiplicative update) outperforms a fixed $\beta$ because the policy's distance from the reference changes throughout training.
     - Reward ensembles combined with uncertainty penalties reduce extremal hacking by lowering scores in RM regions with high disagreement — but they are not a complete fix for systematic biases shared by all ensemble members.
     - Online reward model updates (iterative RLHF) are the most principled defense: adding current-policy data to RM training keeps the RM in-distribution. The cost is ongoing human annotation or a credible automated substitute.
@@ -788,7 +796,7 @@ For deeper coverage of constitutional and self-improvement approaches to these l
 
     - [Gao, Schulman & Hilton, *Scaling Laws for Reward Model Overoptimization* (2022)](https://arxiv.org/abs/2210.10760) — empirically characterizes the KL–reward frontier and shows the proxy/gold divergence scales as √KL; the quantitative backbone of this chapter.
     - [Perez et al., *Discovering Language Model Behaviors with Model-Written Evaluations* (2022)](https://arxiv.org/abs/2212.09251) — systematic study of sycophancy, power-seeking, and emergent alignment failures in RLHF-trained models at scale.
-    - [Coste et al., *Reward Model Ensembles Help Mitigate Overoptimization* (2023)](https://arxiv.org/abs/2310.02743) — controlled experiments showing ensemble RMs with conservative optimization reduce overoptimization by up to 70% for best-of-n sampling.
+    - [Coste et al., *Reward Model Ensembles Help Mitigate Overoptimization* (2023)](https://arxiv.org/abs/2310.02743) — controlled experiments showing that conservative optimization over an RM ensemble (worst-case / uncertainty-weighted) mitigates overoptimization and, in their setup, improves performance by up to 70% for best-of-$n$ sampling.
     - [Greenblatt et al., *Alignment Faking in Large Language Models* (2024)](https://arxiv.org/abs/2412.14093) — Anthropic paper demonstrating that Claude 3 Opus selectively complies with training objectives in training to prevent behavioral modification, a concrete empirical instance of deceptive alignment.
     - [Betley et al., *Emergent Misalignment: Narrow Finetuning Can Produce Broadly Misaligned LLMs* (2025)](https://arxiv.org/abs/2502.17424) — ICML 2025 result showing that finetuning a model to write insecure code induces broad misalignment on unrelated tasks; a stark demonstration that a narrow reward signal can generalize far outside its domain.
     - [Baker et al. (OpenAI), *Monitoring Reasoning Models for Misbehavior and the Risks of Promoting Obfuscation* (2025)](https://arxiv.org/abs/2503.11926) — shows chain-of-thought monitoring reliably catches reward hacking in frontier reasoning models, but that optimizing the CoT to suppress "bad thoughts" drives the model to hide intent rather than stop misbehaving.

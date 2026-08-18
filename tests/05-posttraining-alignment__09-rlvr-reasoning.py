@@ -265,8 +265,26 @@ def rlvr_reward(question: str, response: str, gold: str,
 
     # 2. Format shaping (tiny, and CONTINGENT on a parseable answer existing).
     has_think = "<think>" in response and "</think>" in response
-    has_answer = extract_boxed_answer(response) is not None
+    #    The parse must be DOMAIN-APPROPRIATE. A code answer lives in a
+    #    ```python fence, not a \boxed{}, so a boxed-only check would make this
+    #    bonus structurally unreachable (dead shaping) on every non-math domain.
+    if domain == "code":
+        answer = extract_code_block(response)
+    elif domain in ("format", "constraint"):
+        answer = response                 # the response itself IS the answer here
+    else:
+        answer = extract_boxed_answer(response)
+    #    Note the non-empty check: `\boxed{}` extracts to "" (not None), so a
+    #    bare empty box would otherwise farm the bonus with zero solving effort.
+    has_answer = answer is not None and answer.strip() != ""
     format_bonus = 0.1 if (has_think and has_answer) else 0.0
+    #    With a GRADED accuracy (code: k hidden tests) the bonus must stay below
+    #    the smallest accuracy gap, 1/k, or a 19/20 response (0.95 + 0.1 = 1.05)
+    #    out-scores a fully correct one (1.0) -- the very inversion the "keep the
+    #    format weight small" rule exists to prevent. Binary domains have gap 1,
+    #    so 0.1 is already safe there.
+    if domain == "code" and test_cases:
+        format_bonus = min(format_bonus, 0.5 / len(test_cases))
 
     # 3. Anti-hacking guard: zero out everything if the response is degenerate
     #    (e.g. empty, or repeats one token -- catches a known length-hack mode).
@@ -321,8 +339,19 @@ rc = rlvr_reward(
     test_cases=_test_cases,
 )
 assert abs(rc["accuracy"] - (2 / 3)) < 1e-9
-assert rc["format"] == 0.0   # no <think>/boxed tags in the code completion
+assert rc["format"] == 0.0   # no <think> tags in the code completion
 print(f"[block #3] rlvr_reward (code domain) = {rc}")
+
+# the shaping bonus must be REACHABLE on the code domain (it is gated on a
+# ```python fence there, not on \boxed{}), and must stay below the per-test gap
+# so a partially-correct answer can never out-score a fully-correct one.
+_thinky_completion = "<think>sum them</think>\n" + _sample_completion
+rc2 = rlvr_reward("Sum two numbers.", _thinky_completion, gold="",
+                  domain="code", test_cases=_test_cases)
+assert rc2["format"] > 0.0, rc2
+assert rc2["format"] < 1.0 / len(_test_cases), rc2      # below the accuracy gap
+assert rc2["total"] < 1.0, rc2                          # never beats a perfect run
+print(f"[block #3] code-domain format bonus is reachable and capped: {rc2}")
 
 # a code row whose test column failed to parse must score 0, not crash.
 assert code_reward(_sample_completion, []) == 0.0

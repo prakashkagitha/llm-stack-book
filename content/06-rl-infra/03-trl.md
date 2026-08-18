@@ -311,7 +311,7 @@ The TRL PPO loop at each iteration:
 1. **Rollout.** Sample a batch of prompts; call `model.generate()` to produce completions.
 2. **Reward scoring.** Pass `(prompt, completion)` pairs through the reward model.
 3. **KL penalty.** Compute per-token KL divergence between the policy and a frozen reference model; subtract it from the reward.
-4. **Advantage estimation.** Run a value head (a separate linear layer on top of the policy backbone) through the rollout to compute GAE (Generalized Advantage Estimation) advantages.
+4. **Advantage estimation.** Run the separate `value_model` — its own full backbone with a scalar `score` head, trained alongside the policy — over the rollout to compute GAE (Generalized Advantage Estimation) advantages.
 5. **PPO update.** Run $K$ mini-batch gradient steps with the clipped surrogate objective.
 
 The modern (v1, experimental) shape wires four *separate* models — policy, reference, reward, and value — and then just calls `.train()`:
@@ -405,10 +405,10 @@ $$
 The policy gradient objective is then:
 
 $$
-\mathcal{L}_\text{GRPO} = -\mathbb{E}\!\left[\sum_{i=1}^{G} \min\!\left(\rho_i A_i,\; \text{clip}(\rho_i, 1-\epsilon, 1+\epsilon) A_i\right) - \beta \mathbb{D}_\text{KL}[\pi_\theta \| \pi_\text{ref}]\right]
+\mathcal{L}_\text{GRPO} = -\mathbb{E}\!\left[\frac{1}{G}\sum_{i=1}^{G} \frac{1}{|y_i|}\sum_{t=1}^{|y_i|}\left(\min\!\left(\rho_{i,t} A_i,\; \text{clip}(\rho_{i,t}, 1-\epsilon, 1+\epsilon) A_i\right) - \beta \mathbb{D}_\text{KL}[\pi_\theta \| \pi_\text{ref}]_{i,t}\right)\right]
 $$
 
-where $\rho_i = \pi_\theta(y_i \mid x) / \pi_{\text{old}}(y_i \mid x)$ is the importance ratio for response $i$. For the complete derivation and comparisons with RLOO, see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html).
+where $\rho_{i,t} = \pi_\theta(y_{i,t} \mid x, y_{i,<t}) / \pi_{\text{old}}(y_{i,t} \mid x, y_{i,<t})$ is the **per-token** importance ratio — TRL's default (`importance_sampling_level="token"`), which is why clipping and loss normalization are both token-level below. Setting `importance_sampling_level="sequence"` collapses it to one ratio per response, i.e. GSPO. The exact normalizer in front of the token sum is what `loss_type` selects (`"grpo"` is the per-sequence $1/|y_i|$ written here; `"dapo"` divides by the token count of the whole batch; `"dr_grpo"` by a constant). For the complete derivation and comparisons with RLOO, see [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html).
 
 ### Configuring and running GRPOTrainer
 
@@ -442,7 +442,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 #    (e.g. unparseable ground truth), which is different from returning 0.0.
 # ----------------------------------------------------------------
 def extract_boxed_answer(text: str) -> str | None:
-    """Parse LaTeX \boxed{...} from model output.
+    r"""Parse LaTeX \boxed{...} from model output.
 
     Teaching version only: `[^}]+` stops at the FIRST `}`, so a nested answer like
     `\boxed{\frac{3}{4}}` yields `\frac{3` and scores 0.0 even when it is correct.
@@ -698,7 +698,7 @@ The workflow with vLLM:
 
     vLLM and the training forward pass compute *different* log-probabilities for the very same tokens. They use different kernels, different batching, and different reduction orders, so bf16 rounding diverges — and vLLM may be running a quantized or differently-fused path entirely. GRPO's importance ratio $\rho_i = \pi_\theta / \pi_\text{old}$ silently assumes $\pi_\text{old}$ *is* the sampler, so this discrepancy injects bias and, at scale, causes runs to collapse after thousands of steps.
 
-    TRL corrects for it explicitly: `vllm_importance_sampling_correction=True` (on by default) multiplies each token's loss by $\exp\!\left(\log \pi_\text{train}(y_t) - \log \pi_\text{vLLM}(y_t)\right)$ — the ratio between the log-prob the trainer recomputes and the one vLLM actually sampled with — clamped to `[vllm_importance_sampling_clip_min, vllm_importance_sampling_clip_max]`. This is truncated importance sampling (TIS). Watch `sampling/sampling_logp_difference/mean` — if it grows over training, your inference and training stacks have drifted apart and the run is on borrowed time. The general problem is covered in [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html).
+    TRL corrects for it explicitly: `vllm_importance_sampling_correction=True` (on by default) reweights the loss by $\exp\!\left(\log \pi_\text{train}(y_t) - \log \pi_\text{vLLM}(y_t)\right)$ — the ratio between the log-prob the trainer recomputes and the one vLLM actually sampled with — bounded by `[vllm_importance_sampling_clip_min, vllm_importance_sampling_clip_max]` (default `[None, 3.0]`). `vllm_importance_sampling_mode` picks the shape: `"token_truncate"` is classic truncated importance sampling (TIS), clamping each token's ratio into that interval; `"*_mask"` modes zero out the offenders instead, and `"sequence_*"` modes form one ratio per response rather than per token. TRL's default is `"sequence_mask"` — drop the whole rollout when its sequence ratio leaves the interval. Watch `sampling/sampling_logp_difference/mean` — if it grows over training, your inference and training stacks have drifted apart and the run is on borrowed time. The general problem is covered in [Colocated vs Disaggregated RL & Weight Synchronization](../06-rl-infra/07-colocated-vs-disaggregated.html).
 
 For a deep dive on the PagedAttention mechanism powering vLLM's generation, see [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html). Note that the diagram's overlap of generation with back-propagation is *not* what stock synchronous GRPO does — each step still waits for all rollouts. True overlap requires `steps_per_generation > gradient_accumulation_steps` (train on rollouts that are one step stale) or the decoupled `trl.experimental.async_grpo` workers; see [Prime-RL, Async RL & Decentralized Training](../06-rl-infra/06-prime-rl-async.html).
 
@@ -709,7 +709,7 @@ The key numerical hyperparameters and their typical ranges:
 | Parameter | DPO | GRPO | PPO | Notes |
 |---|---|---|---|---|
 | `beta` (KL coefficient) | 0.01–0.5 | 0 (verifiable) / 0.001–0.04 (RM) | `kl_coef` ≈ 0.05 | Higher = stay closer to reference |
-| `learning_rate` | 1e-5–5e-5 | 5e-7–2e-6 | 1e-6–3e-6 | GRPO/PPO need very small LR |
+| `learning_rate` | 5e-7–5e-6 full FT / 1e-5–5e-5 LoRA | 5e-7–2e-6 | 1e-6–3e-6 | GRPO/PPO need very small LR; TRL's `DPOConfig` default is 1e-6 |
 | `num_generations` (G) | — | 4–16 | — | More = stable baseline, more memory |
 | `epsilon` / `epsilon_high` | — | 0.2 / 0.28 | `cliprange` 0.1–0.2 | DAPO decouples the two bounds |
 | `max_completion_length` | — | 256–8192 | `response_length` 53–512 | Task-dependent |

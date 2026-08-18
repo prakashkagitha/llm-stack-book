@@ -48,7 +48,7 @@ In classic RL (robotics, Atari) the reward is dense and per-step, the horizon is
 2. **You can cheaply resample.** Unlike a robot, you can draw $G=8$ or $16$ completions for the same prompt in one batched generation call. A Monte Carlo baseline is therefore essentially free relative to the cost you already pay for generation.
 3. **The value function is hard and unstable here.** Training a per-token value head on sparse terminal rewards through a 7B transformer is finicky; it is one of the main sources of RLHF instability. Removing it removes a whole class of bugs.
 
-So we trade a *learned, low-variance, biased-if-wrong* baseline (the critic) for a *Monte Carlo, slightly-higher-variance, unbiased* baseline (the group). For terminal-reward LLM RL, that trade is almost always a win.
+So we trade a *learned, low-variance, biased-if-wrong* baseline (the critic) for a *Monte Carlo, slightly-higher-variance* baseline (the group) that requires no separate model to be right. For terminal-reward LLM RL, that trade is almost always a win.
 
 ## RLOO: REINFORCE with a Leave-One-Out baseline
 
@@ -196,7 +196,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 tok = AutoTokenizer.from_pretrained(MODEL)
-policy = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to(device)
+# The POLICY's parameters must be fp32; only the *forward* passes run in bf16
+# (via autocast below). Pure-bf16 parameters would silently kill this run:
+# AdamW's per-step update is ~lr = 1e-6, while bf16's round-to-nearest threshold
+# (half a ULP) for a typical ~1e-2 weight is ~3e-5 -- so `param.add_()` throws
+# almost every update away and `mean_reward` never moves. The frozen `ref` model
+# is never updated, so bf16 is fine there.
+policy = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.float32).to(device)
 ref    = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to(device)
 ref.eval()
 for p in ref.parameters():
@@ -252,10 +258,11 @@ def rollout(prompts, golds):
         # model's own generation_config (top_k=20, repetition_penalty=1.1 for
         # Qwen2.5-Instruct) silently survives, and the behavior policy would no
         # longer be pi_theta_old -- the ratio would not be 1 on the first epoch.
-        out = policy.generate(ids, do_sample=True, temperature=1.0, top_p=1.0,
-                              top_k=0, repetition_penalty=1.0,
-                              max_new_tokens=MAX_NEW, num_return_sequences=GROUP_SIZE,
-                              pad_token_id=tok.eos_token_id)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            out = policy.generate(ids, do_sample=True, temperature=1.0, top_p=1.0,
+                                  top_k=0, repetition_penalty=1.0,
+                                  max_new_tokens=MAX_NEW, num_return_sequences=GROUP_SIZE,
+                                  pad_token_id=tok.eos_token_id)
         for g in range(GROUP_SIZE):
             full = out[g]                          # (plen + gen_len,)
             text = tok.decode(full[plen:], skip_special_tokens=True)
@@ -293,7 +300,10 @@ def rollout(prompts, golds):
 # 3. Per-token log-prob of the SAMPLED tokens under a given model.
 # ---------------------------------------------------------------------------
 def token_logprobs(model, input_ids, resp_mask):
-    out = model(input_ids).logits[:, :-1, :]       # predict token t+1 from t
+    # bf16 autocast for the transformer (speed/memory); the log-softmax itself is
+    # always done in fp32 -- see `.float()` below.
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        out = model(input_ids).logits[:, :-1, :]   # predict token t+1 from t
     logprobs = F.log_softmax(out.float(), dim=-1)
     targets = input_ids[:, 1:]                     # the actually-sampled next tokens
     tok_lp = logprobs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)  # (B, T-1)
@@ -365,7 +375,7 @@ def grpo_step(prompts, golds):
 ```
 
 !!! note "Expected behavior: what a healthy toy run looks like"
-    - **Trajectory.** On this single-prompt arithmetic toy with `Qwen/Qwen2.5-0.5B-Instruct` and `GROUP_SIZE=8`, `mean_reward` should climb from roughly `0.2`-`0.5` at step 0 (the base instruct model already answers `17+26` some of the time and often emits the tags) to `>1.0` within about `30`-`80` outer steps. It will not sit exactly at the `1.2` ceiling because sampling stays stochastic. Wall-clock is a few minutes on one consumer GPU (24 GB, e.g. RTX 3090/4090); generation dominates the *time*, not the backward pass. **Memory**, though, is the binding constraint, and it is dominated by one line: `token_logprobs` materializes a full `(B, T, V)` float32 log-softmax that autograd must keep, and with `4` prompts $\times$ `G=8` and Qwen2.5's `151936`-token vocabulary each such copy is several GB. If you OOM, drop to one prompt per step or lower `MAX_NEW` first — production trainers avoid the problem entirely by gathering the sampled token's logit and subtracting a chunked `logsumexp` (TRL calls this `selective_log_softmax`) instead of building the whole distribution.
+    - **Trajectory.** On this single-prompt arithmetic toy with `Qwen/Qwen2.5-0.5B-Instruct` and `GROUP_SIZE=8`, `mean_reward` should climb from roughly `0.2`-`0.5` at step 0 (the base instruct model already answers `17+26` some of the time and often emits the tags) to `>1.0` within about `30`-`80` outer steps. It will not sit exactly at the `1.2` ceiling because sampling stays stochastic. Wall-clock is a few minutes on one consumer GPU (24 GB, e.g. RTX 3090/4090); generation dominates the *time*, not the backward pass. **Memory**, though, is the binding constraint. The fp32 policy plus its gradients and AdamW moments costs about `8` GB for a `0.5`B model, but the real hog is one line: `token_logprobs` materializes a full `(B, T, V)` float32 log-softmax that autograd must keep, and with `4` prompts $\times$ `G=8` and Qwen2.5's `151936`-token vocabulary each such copy is several GB. If you OOM, drop to one prompt per step or lower `MAX_NEW` first — production trainers avoid the problem entirely by gathering the sampled token's logit and subtracting a chunked `logsumexp` (TRL calls this `selective_log_softmax`) instead of building the whole distribution.
     - **Healthy diagnostics.** The **fraction of non-degenerate groups** (groups whose `G` rewards are not all equal) should be clearly `>0` in the early steps -- that is the *only* source of gradient. It naturally decays toward `0` as the policy saturates to always-correct, at which point `mean_reward` plateaus near the ceiling (expected, not a bug). Token-level **entropy** should stay positive (the policy keeps exploring).
     - **Failure signatures.** `mean_reward` flat near `0` with all-wrong groups -> reward/parsing broken or task too hard (check the exact `<answer>{gold}</answer>` string match). `mean_reward` stuck mid-range while the non-degenerate-group fraction is already `0` -> dead groups (raise `G`, vary the prompts, add curriculum). Reward rising while decoded samples turn into repetitive gibberish and entropy collapses -> the policy is diverging: lower the learning rate, set `KL_BETA>0`, and confirm the EOS-mask fix in `rollout` is in place.
     - **Beyond the toy.** For a non-trivial signal, swap the single repeated prompt for a small GSM8K slice and track pass@1 over a few hundred steps rather than one arithmetic fact.
@@ -414,7 +424,12 @@ cfg = GRPOConfig(
     scale_rewards=False,            # drop the /std normalization (Dr. GRPO)
     beta=0.0,                       # R1-style: no KL anchor
     learning_rate=1e-6,
-    use_vllm=True,                  # generate on vLLM instead of .generate()
+    # Generate on vLLM instead of .generate(). NOTE the prerequisite: TRL's
+    # default `vllm_mode="server"` expects a separately launched, weight-syncing
+    # server (`trl vllm-serve --model Qwen/Qwen2.5-0.5B-Instruct`) and raises a
+    # connection error at trainer init if none is running. For a single-GPU toy
+    # run either pass vllm_mode="colocate" or just drop this flag.
+    use_vllm=True, vllm_mode="colocate",
 )
 # reward_funcs are plain Python callables returning one float per completion --
 # exactly our reward_fn. Extra dataset columns (here "gold") arrive as kwargs.
@@ -516,7 +531,7 @@ The takeaways for an engineer: (1) a tiny **cold-start SFT** dramatically stabil
 
 ## The 2025 fixes: Dr. GRPO, token-level loss, and clip-higher
 
-GRPO as originally written has two now-well-documented **optimization biases** — places where the loss does not faithfully estimate the policy gradient and instead silently rewards or punishes *length*. The 2025 literature (notably Liu et al., *Understanding R1-Zero-like Training* / "Dr. GRPO", and the Qwen team's *DAPO*) diagnosed and fixed them. These are favorite interview topics because they require you to actually look at the loss algebra.
+GRPO as originally written has two now-well-documented **optimization biases** — places where the loss does not faithfully estimate the policy gradient and instead silently rewards or punishes *length*. The 2025 literature (notably Liu et al., *Understanding R1-Zero-like Training* / "Dr. GRPO", and ByteDance Seed & Tsinghua AIR's *DAPO*) diagnosed and fixed them. These are favorite interview topics because they require you to actually look at the loss algebra.
 
 ### Bias 1: the response-level length normalization
 
@@ -634,7 +649,7 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
 !!! interview "Interview Corner"
     **Q:** PPO and GRPO both use the same clipped surrogate objective. What exactly does GRPO remove, why is that valid for LLM RLHF, and what new failure mode does the replacement introduce?
 
-    **A:** GRPO removes the **value network (critic)** and the **GAE** that PPO uses to estimate the advantage. PPO computes $A_t = \delta_t + \gamma\lambda\delta_{t+1}+\dots$ from a learned $V(s)$; GRPO replaces the entire advantage with a **group-relative score**: sample $G$ responses to the same prompt, and set every token's advantage to the standardized reward $\hat A_i=(R_i-\operatorname{mean})/\operatorname{std}$ within the group. This is valid for the LLM setting because the reward is **terminal** (scored once at the end of a full generation), so there's no intermediate reward to bootstrap — the Monte Carlo group mean is a perfectly good, unbiased baseline, and resampling $G$ completions is cheap. We keep PPO's clipped ratio only so we can take multiple gradient epochs on the same rollouts. The new failure modes are **optimization biases in the loss**: the per-response $1/|o_i|$ length normalization and the $\div\operatorname{std}$ normalization both secretly reweight the gradient and inflate response length and over-weight low-variance prompts — which is exactly what Dr. GRPO/DAPO fix by going token-level, dropping the std, and using clip-higher. A strong answer also notes the **dead-group problem**: if all $G$ rewards are equal the advantage is zero and the group contributes no gradient, so prompt difficulty must be tuned so groups have mixed outcomes.
+    **A:** GRPO removes the **value network (critic)** and the **GAE** that PPO uses to estimate the advantage. PPO computes $A_t = \delta_t + \gamma\lambda\delta_{t+1}+\dots$ from a learned $V(s)$; GRPO replaces the entire advantage with a **group-relative score**: sample $G$ responses to the same prompt, and set every token's advantage to the standardized reward $\hat A_i=(R_i-\operatorname{mean})/\operatorname{std}$ within the group. This is valid for the LLM setting because the reward is **terminal** (scored once at the end of a full generation), so there's no intermediate reward to bootstrap — the Monte Carlo group mean is a perfectly good baseline, and resampling $G$ completions is cheap. (Be precise about "unbiased": the *leave-one-out* mean of RLOO is exactly unbiased; GRPO's include-self group mean contains $R_i$, which shrinks the gradient by the constant factor $\frac{G-1}{G}$ — direction-preserving, so harmless in practice, but not literally unbiased.) We keep PPO's clipped ratio only so we can take multiple gradient epochs on the same rollouts. The new failure modes are **optimization biases in the loss**: the per-response $1/|o_i|$ length normalization and the $\div\operatorname{std}$ normalization both secretly reweight the gradient and inflate response length and over-weight low-variance prompts — which is exactly what Dr. GRPO/DAPO fix by going token-level, dropping the std, and using clip-higher. A strong answer also notes the **dead-group problem**: if all $G$ rewards are equal the advantage is zero and the group contributes no gradient, so prompt difficulty must be tuned so groups have mixed outcomes.
 
 !!! interview "Interview Corner"
     **Q:** Your GRPO run's reward is climbing but average response length is exploding and eval accuracy is flat. What's happening and what knobs do you turn?
@@ -684,7 +699,7 @@ The mental model: **DPO** is the cheapest (offline, no generation) but is limite
 - DeepSeek-AI, **DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning** (2025) — R1-Zero, the multi-stage R1 recipe, distillation results.
 - Ahmadian, Cremer, Gallé, et al., **Back to Basics: Revisiting REINFORCE-Style Optimization for Learning from Human Feedback in LLMs** (2024) — RLOO for LLMs.
 - Liu, Chen, et al., **Understanding R1-Zero-Like Training: A Critical Perspective** (2025) — the "Dr. GRPO" analysis of GRPO's length and std biases.
-- Yu, et al. (Qwen / ByteDance Seed), **DAPO: An Open-Source LLM Reinforcement Learning System at Scale** (2025) — token-level loss, clip-higher, dynamic sampling, overlong filtering.
+- Yu, et al. (ByteDance Seed / Tsinghua AIR), **DAPO: An Open-Source LLM Reinforcement Learning System at Scale** (2025) — token-level loss, clip-higher, dynamic sampling, overlong filtering.
 - Zheng, et al. (Qwen), **Group Sequence Policy Optimization** (2025) — sequence-level importance ratio and clipping; the optimizer behind Qwen3.
 - John Schulman, **Approximating KL Divergence** (blog note) — the k1/k2/k3 estimators used for the GRPO KL term.
 - Williams, **Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement Learning** (1992) — the original REINFORCE.

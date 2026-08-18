@@ -128,13 +128,17 @@ def extract_final_answer(trace: str) -> str:
     then fall back to the last line.
     """
     import re
-    boxed = re.search(r"\\boxed\{([^}]+)\}", trace)
+    # LAST match, not re.search's FIRST one: a self-correcting trace states an
+    # answer, backtracks ("Wait, that ignores the constraint..."), and states a
+    # new one. Taking the first hit votes on the abandoned guess.
+    boxed = re.findall(r"\\boxed\{([^}]+)\}", trace)
     if boxed:
-        return boxed.group(1).strip()
-    answer_line = re.search(r"[Tt]he answer is[:\s]+(\S+)", trace)
-    if answer_line:
-        return answer_line.group(1).strip(" .,")
-    return trace.strip().splitlines()[-1]
+        return boxed[-1].strip()
+    answer_lines = re.findall(r"[Tt]he answer is[:\s]+(\S+)", trace)
+    if answer_lines:
+        return answer_lines[-1].strip(" .,*")   # strip markdown bold too
+    lines = trace.strip().splitlines()
+    return lines[-1] if lines else ""
 ```
 
 ### Sampling N Traces in Practice: vLLM and math-verify
@@ -188,6 +192,8 @@ def pass_at_k(n: int, c: int, k: int) -> float:
 
     1 - C(n-c, k) / C(n, k), written as a product to avoid huge binomials.
     """
+    if k > n:               # estimator undefined: you cannot draw k of n < k samples
+        raise ValueError(f"need n >= k, got n={n}, k={k}")
     if n - c < k:           # fewer than k wrong samples => every k-subset has a correct one
         return 1.0
     return 1.0 - math.prod((n - c - i) / (n - i) for i in range(k))
@@ -531,7 +537,7 @@ class MCTSNode:
     children: list["MCTSNode"] = field(default_factory=list)
     N: int = 0            # visit count
     Q: float = 0.0        # mean value
-    P: float = 1.0        # prior from LM (log-prob of this branch)
+    P: float = 1.0        # prior *probability* from the LM (exp of the branch log-prob)
 
     def ucb_score(self, c_puct: float = 2.0) -> float:
         # No `inf` special case for N == 0: AlphaZero evaluates the same formula
@@ -618,7 +624,7 @@ The key findings:
 {{fig:test-time-scaling-curves}}
 
 !!! example "Worked example: test-time compute budget"
-    Start from the hardware, not from a guessed token rate. Single-stream decode is *memory-bandwidth* bound: every token streams the whole weight matrix out of HBM once (see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html)). A 7B model in bf16 is ~14 GB and an A100-80GB has ~2.0 TB/s of HBM bandwidth, so the ceiling is $2000/14 \approx 145$ tok/s and a real engine lands near **130 tok/s at batch=1**. A typical math solution is 200 tokens, so one sample costs $200 / 130 \approx 1.5\text{ s}$.
+    Start from the hardware, not from a guessed token rate. Single-stream decode is *memory-bandwidth* bound: every token streams the whole weight matrix out of HBM once (see [The Anatomy of LLM Inference](../07-inference-serving/01-anatomy-inference.html)). A 7B model in bf16 is ~14 GB and an A100-80GB has ~2.0 TB/s of HBM bandwidth, so the ceiling is $2000/14 \approx 143$ tok/s and a real engine lands near **130 tok/s at batch=1**. A typical math solution is 200 tokens, so one sample costs $200 / 130 \approx 1.5\text{ s}$.
 
     The saving grace is that batching is nearly free in this regime: one weight-streaming pass per step serves the whole batch, so $N$ samples cost roughly the same wall-clock as one until the batch is large enough to become compute-bound.
 

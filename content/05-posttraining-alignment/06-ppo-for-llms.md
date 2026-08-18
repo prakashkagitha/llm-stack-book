@@ -310,7 +310,11 @@ def ppo_policy_loss(new_logprobs, old_logprobs, advantages, mask, clip_eps=0.2):
 
     # Diagnostics every practitioner watches:
     with torch.no_grad():
-        clipfrac = ((ratio - 1.0).abs() > clip_eps)[mask.bool()].float().mean()
+        # clipfrac = fraction of tokens where the clip actually BINDS, i.e. the
+        # `min` selects the clipped branch and the gradient is zeroed. (Leaving
+        # the window is necessary but not sufficient: for A>0 with r<1-eps the
+        # unclipped branch still wins, so that token is not clipped.)
+        clipfrac = (clipped < unclipped)[mask.bool()].float().mean()
         approx_kl = ((ratio - 1) - log_ratio)[mask.bool()].mean()  # k3 KL(old||new)
     return loss, clipfrac, approx_kl
 ```
@@ -449,8 +453,16 @@ def token_logprobs_and_values(model, input_ids, with_values=True):
 def ppo_rollout(prompts):
     # 1-2: generate responses with the current (behavior) policy.
     input_ids, resp_mask = generate_batch(policy, prompts)   # your decode fn
-    # 3: reward-model scores (one scalar per sequence).
-    rm_scores = reward_model.score(input_ids, resp_mask)     # (B,)
+    # 3: reward-model scores (one scalar per sequence). The RM is a scalar-head
+    #    sequence classifier: run its backbone, apply the scalar head at every
+    #    position, then read off each row's LAST response token (never the pad
+    #    that follows it). Note `reward_model.score` on a HuggingFace
+    #    `*ForSequenceClassification` IS that nn.Linear head, not a helper.
+    rm_hidden = reward_model.base_model(input_ids).last_hidden_state   # (B,T,H)
+    rm_all    = reward_model.score(rm_hidden).squeeze(-1)              # (B,T)
+    pos       = torch.arange(resp_mask.size(1), device=resp_mask.device)
+    last      = (pos.unsqueeze(0) * resp_mask).amax(dim=1).long()      # (B,)
+    rm_scores = rm_all[torch.arange(rm_all.size(0), device=rm_all.device), last]  # (B,)
     # 4: cache behavior log-probs, reference log-probs, and values.
     old_lp,  old_values = token_logprobs_and_values(policy,    input_ids)
     ref_lp,  _          = token_logprobs_and_values(ref_model, input_ids,
@@ -507,7 +519,7 @@ def ppo_update(buf):
     - clipped: $1.20 \times 0.8 = 0.96$
     - $\min(1.12, 0.96) = 0.96$ → **the clip engages**; gradient w.r.t. this token is zeroed.
 
-    Interpretation: the optimizer already moved this token's probability up by $40\%$ since rollout — past the $20\%$ trust region. PPO refuses to reward going further this epoch. The token will get another chance after the *next* rollout, when $\pi_{\text{old}}$ is reset to the current policy and the ratio starts back at $1.0$. This is the trust region in action: bounded, incremental, safe steps. The `clipfrac` diagnostic counts what fraction of tokens have left the $[1-\epsilon, 1+\epsilon]$ window; it is exactly $0$ on the first minibatch of a rollout (where $r_t \equiv 1$) and grows as the epochs push the data off-policy. Healthy runs stay small — roughly $0.05$–$0.25$ by the last epoch, and legitimately near $0$ for recipes that take one near-on-policy step per rollout. A `clipfrac` near $1$ means you're taking wild steps and should lower the LR or $\epsilon$.
+    Interpretation: the optimizer already moved this token's probability up by $40\%$ since rollout — past the $20\%$ trust region. PPO refuses to reward going further this epoch. The token will get another chance after the *next* rollout, when $\pi_{\text{old}}$ is reset to the current policy and the ratio starts back at $1.0$. This is the trust region in action: bounded, incremental, safe steps. The `clipfrac` diagnostic counts what fraction of tokens the clip actually *binds* on — where the `min` selects the clipped branch and the gradient is zeroed, as it does here (which is a strictly smaller set than "tokens whose ratio left the $[1-\epsilon, 1+\epsilon]$ window", since for $\hat A>0$ with $r_t<1-\epsilon$ the unclipped branch still wins); it is exactly $0$ on the first minibatch of a rollout (where $r_t \equiv 1$) and grows as the epochs push the data off-policy. Healthy runs stay small — roughly $0.05$–$0.25$ by the last epoch, and legitimately near $0$ for recipes that take one near-on-policy step per rollout. A `clipfrac` near $1$ means you're taking wild steps and should lower the LR or $\epsilon$.
 
 {{tool:rlhf-ppo-pipeline}}
 
@@ -587,7 +599,7 @@ This is also the calculus we make explicitly in the capstone: Stack-100M's RL st
 !!! interview "Interview Corner"
     **Q:** Walk me through the PPO clipped objective. Why the `min`, and what specifically does clipping prevent? Why do we even need importance sampling here?
 
-    **A:** We need importance sampling because we generate rollouts once (expensive autoregressive decoding) but want to take several gradient steps on them. After the first update the data is off-policy, so we reweight each token by the ratio $r_t = \pi_\theta/\pi_{\text{old}}$; the surrogate $\mathbb{E}[r_t \hat A_t]$ then has the correct gradient at $\theta = \theta_{\text{old}}$. The danger is that a large ratio times a large advantage can take a catastrophic step and blow up the policy. PPO bounds this by clipping: the objective is $\min(r_t\hat A_t,\ \operatorname{clip}(r_t, 1{-}\epsilon, 1{+}\epsilon)\hat A_t)$. The `min` makes it a **pessimistic lower bound** that creates a one-sided trust region. For a *good* token ($\hat A>0$) it stops rewarding you once $r_t > 1+\epsilon$ — no incentive to over-boost; for a *bad* token ($\hat A<0$) it stops rewarding you once $r_t < 1-\epsilon$ — no incentive to over-suppress. Crucially, because of the `min`, clipping only ever *removes* incentive to move further in the rewarding direction; it never blocks a step that corrects an overshoot back toward $\pi_{\text{old}}$. The net effect is small, stable, incremental policy updates without TRPO's expensive second-order KL constraint. I'd also mention the `clipfrac` diagnostic — the fraction of tokens whose ratio has left the window, which starts at 0 on each fresh rollout and should stay small (roughly 0.05–0.25) as the epochs proceed — and that the *separate* KL-to-reference penalty (a different mechanism from the clip) is what prevents reward hacking, while the clip just prevents per-step instability.
+    **A:** We need importance sampling because we generate rollouts once (expensive autoregressive decoding) but want to take several gradient steps on them. After the first update the data is off-policy, so we reweight each token by the ratio $r_t = \pi_\theta/\pi_{\text{old}}$; the surrogate $\mathbb{E}[r_t \hat A_t]$ then has the correct gradient at $\theta = \theta_{\text{old}}$. The danger is that a large ratio times a large advantage can take a catastrophic step and blow up the policy. PPO bounds this by clipping: the objective is $\min(r_t\hat A_t,\ \operatorname{clip}(r_t, 1{-}\epsilon, 1{+}\epsilon)\hat A_t)$. The `min` makes it a **pessimistic lower bound** that creates a one-sided trust region. For a *good* token ($\hat A>0$) it stops rewarding you once $r_t > 1+\epsilon$ — no incentive to over-boost; for a *bad* token ($\hat A<0$) it stops rewarding you once $r_t < 1-\epsilon$ — no incentive to over-suppress. Crucially, because of the `min`, clipping only ever *removes* incentive to move further in the rewarding direction; it never blocks a step that corrects an overshoot back toward $\pi_{\text{old}}$. The net effect is small, stable, incremental policy updates without TRPO's expensive second-order KL constraint. I'd also mention the `clipfrac` diagnostic — the fraction of tokens on which the clip binds (the `min` takes the clipped branch, zeroing that token's gradient), which starts at 0 on each fresh rollout and should stay small (roughly 0.05–0.25) as the epochs proceed — and that the *separate* KL-to-reference penalty (a different mechanism from the clip) is what prevents reward hacking, while the clip just prevents per-step instability.
 
 !!! interview "Interview Corner"
     **Q:** In PPO-RLHF there are two different "KL"s and two different "clips." Distinguish them.

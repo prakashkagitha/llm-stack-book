@@ -221,7 +221,7 @@ $$
 By raw FLOPs, generation looks *cheaper* than training ($2N$ vs $6NE$). So why does it dominate the clock? Because **the two phases run in completely different efficiency regimes**:
 
 - Training is **compute-bound** and runs at high Model FLOPs Utilization (MFU), often 40–55% of peak on a good FSDP/Megatron setup.
-- Decode generation is **memory-bandwidth-bound**: each decode step must stream all $N$ parameters (and the growing KV cache) from HBM to produce a *single* token per sequence. Counting weights alone, the arithmetic intensity of a decode step is $2NB / (N\cdot b_{\text{param}}) = B$ FLOP/byte, against an H100 ridge point of $990/3.35 \approx 300$ FLOP/byte — so at the small batches of interactive serving MFU collapses to low single-digit percent, and even at the large batches RL rollouts use (where the weight read amortizes) the un-amortized KV read keeps you below the roofline knee and far under the trainer's MFU. The wall-clock per token is set not by FLOPs but by how many bytes you must move.
+- Decode generation is **memory-bandwidth-bound**: each decode step must stream all $N$ parameters (and the growing KV cache) from HBM to produce a *single* token per sequence. Counting weights alone, the arithmetic intensity of a decode step is $2NB / (N\cdot b_{\text{param}}) = B$ FLOP/byte, against an H100 ridge point of $990/3.35 \approx 300$ FLOP/byte — so at the small batches of interactive serving MFU collapses to low single-digit percent, and even at the large batches RL rollouts use (where the weight read amortizes) the un-amortized KV read keeps you below the roofline knee — and in practice far below even that ceiling, because the effective batch decays as sequences finish and the tail sequence gates the step. The wall-clock per token is set not by FLOPs but by how many bytes you must move.
 
 The decode time is better modeled by bandwidth. Per decode step across a batch of $B$ sequences, you read the weights once (amortized over the batch) plus each sequence's KV:
 
@@ -361,6 +361,7 @@ def minibatch_update_loop(input_ids, resp_mask, old_lp, ref_lp, advantages,
     B = input_ids.size(0)
     A = advantages.unsqueeze(1)                          # (B,1), broadcast over tokens
     micro = 0                                            # counts minibatches for grad accum
+    opt.zero_grad(set_to_none=True)                      # never inherit stale grads
 
     for epoch in range(ppo_epochs):
         perm = torch.randperm(B, device=input_ids.device)    # reshuffle each epoch
@@ -397,14 +398,21 @@ def minibatch_update_loop(input_ids, resp_mask, old_lp, ref_lp, advantages,
             # INSIDE the minibatch loop is what makes the *later* minibatches
             # genuinely off-policy w.r.t. `old_lp` -- i.e. what gives the clip
             # something to do, and what buys several updates out of one expensive
-            # rollout. Stepping once per epoch instead makes the whole batch a
-            # single on-policy update (ratio stays 1, the clip never engages):
-            # a different algorithm, not a broken one -- it is exactly the
-            # `num_iterations=1` recipe shown earlier.
+            # rollout. Stepping once per epoch instead, with `ppo_epochs=1`,
+            # makes the whole batch a single on-policy update (ratio stays 1,
+            # the clip never engages): a different algorithm, not a broken one
+            # -- it is exactly the `num_iterations=1` recipe shown earlier.
+            # (With `ppo_epochs>1` only the first epoch is on-policy.)
             micro += 1
             if micro % grad_accum == 0:
                 torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
                 opt.step(); opt.zero_grad(set_to_none=True)
+
+    # Flush a partial accumulation window, otherwise those gradients would leak
+    # into the NEXT outer step (grad_accum need not divide ppo_epochs*n_minibatches).
+    if micro % grad_accum != 0:
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
+        opt.step(); opt.zero_grad(set_to_none=True)
     return loss.item(), clip_frac, approx_kl.item()
 ```
 
@@ -496,9 +504,9 @@ def trainer_loop(policy, opt, ref, max_staleness=4, batch_size=512, group_size=8
         step += 1
         # push new weights to generators every few steps (Phase 5)
         if step % 2 == 0:
-            with shared_weights["lock"]:
-                shared_weights["sd"] = copy.deepcopy(policy.state_dict())
-                weight_version["v"] = step
+            sd = copy.deepcopy(policy.state_dict())      # multi-GB copy: do it OUTSIDE
+            with shared_weights["lock"]:                 # the lock, then swap the ref
+                shared_weights["sd"], weight_version["v"] = sd, step
 ```
 
 The async ladder is the single biggest lever on RL throughput, and choosing a rung is the defining architectural decision of an RL system. Synchronous-colocated is simplest and most on-policy; fully-async is fastest and most off-policy. Most production systems live at rung 2 or a *bounded* rung 3 — overlapping generation and training with a small, capped staleness, so the clip stays valid while the expensive generators are never idle.
@@ -511,12 +519,18 @@ The async ladder is the single biggest lever on RL throughput, and choosing a ru
 Here is the whole synchronous loop assembled from the pieces, so the five phases are visible end to end. This is essentially what a single-controller trainer (veRL-style) executes per step, minus the distributed plumbing.
 
 ```python
-def rl_outer_step(prompts, golds, *, engine, policy, ref, opt, tok, group_size=8):
+def rl_outer_step(prompts, golds, *, engine, policy, ref, opt, tok, reward_fn,
+                  group_size=8):
+    pad_id = tok.pad_token_id
+    dev    = next(policy.parameters()).device
+
     # ---- Phase 1: ROLLOUT (inference engine, continuous-batched) -------------
     rollouts = rollout(prompts)                      # G completions/prompt + beh logprobs
 
     # ---- Phase 2: REWARD (verifier / RM / sandbox) ---------------------------
-    for r, gold in zip(rollouts, expand(golds, group_size)):
+    # rollout() emits prompt-major order, so repeat each gold G times to line up.
+    golds_x = [g for g in golds for _ in range(group_size)]
+    for r, gold in zip(rollouts, golds_x):
         response_text = tok.decode(r["response_ids"], skip_special_tokens=True)
         r["reward"] = reward_fn(r["prompt"], response_text, gold)
 
@@ -571,7 +585,7 @@ Every other chapter in this Part is an elaboration of one of these five lines: w
     - [Hu et al., *OpenRLHF: An Easy-to-use, Scalable and High-performance RLHF Framework* (2024)](https://arxiv.org/abs/2405.11143) — Ray + vLLM disaggregated design; first open framework to scale PPO/GRPO beyond 70B.
     - [Noukhovitch et al., *Asynchronous RLHF: Faster and More Efficient Off-Policy RL for Language Models* (2024)](https://arxiv.org/abs/2410.18252) — rigorous measurement of staleness-vs-throughput tradeoff; ~40–70% wall-clock speedup from overlapping generation and training (ICLR 2025).
     - [Fu et al., *AReaL: A Large-Scale Asynchronous Reinforcement Learning System for Language Reasoning* (2025)](https://arxiv.org/abs/2505.24298) — fully decoupled generation and training with a staleness-enhanced PPO variant; up to 2.77× faster training on math/code while matching final quality — a systems-level realization of this chapter's fully-async Rung 3.
-    - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — the GRPO-based loop this chapter dissects; pure RL without SFT achieving o1-level reasoning.
+    - [DeepSeek-AI, *DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning* (2025)](https://arxiv.org/abs/2501.12948) — the GRPO-based loop this chapter dissects; its R1-Zero ablation shows pure RL without any SFT reaching o1-level reasoning, while the released R1 wraps that RL in a cold-start SFT stage plus a second SFT/RL round to fix readability and language mixing.
     - [Yu et al., *DAPO: An Open-Source LLM Reinforcement Learning System at Scale* (2025)](https://arxiv.org/abs/2503.14476) — production recipe for stable large-scale GRPO (decoupled clip, dynamic sampling); 50 pts on AIME 2024 with Qwen2.5-32B.
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — RadixAttention for prefix sharing across the group; direct 2–6× win on the rollout phase's dominant cost (NeurIPS 2024).
 

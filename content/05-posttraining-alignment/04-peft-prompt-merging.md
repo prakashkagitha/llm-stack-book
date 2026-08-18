@@ -22,7 +22,7 @@ Three distinct families emerged:
 |---|---|---|---|
 | **Prompt tuning** (Lester et al., 2021) | $k$ embedding vectors, first-layer input | Input layer only | $k \times d$ |
 | **Prefix tuning** (Li & Liang, 2021) | Key/value pairs injected at every layer | All attention layers | $2 \times L \times k \times d_{kv}$ |
-| **P-tuning v2** (Liu et al., 2022) | Deep prefix + per-layer MLP reparameterization | All layers | similar to prefix tuning |
+| **P-tuning v2** (Liu et al., 2022) | Deep prefix at every layer, optimized directly (no MLP reparameterization) | All layers | similar to prefix tuning |
 
 ---
 
@@ -859,11 +859,15 @@ This is the practical question you actually care about. Here is a decision frame
 
 The loss-landscape intuition is the key: merging works because fine-tunes from the same base model are geometrically close. If the models started from different initializations, the weight spaces are unrelated and merging is noise.
 
-Whatever method you pick, **merging is an empirical search, not a formula** — the merge itself is minutes of CPU arithmetic, so essentially all of your wall-clock goes into evaluating candidates. Make that loop concrete from day one: generate a small grid of configs (say $\lambda \in \{0.3, 0.5, 0.7\}$ × density $\in \{0.2, 0.4\}$), merge each with `mergekit-yaml`, and score each output with `lm-evaluation-harness` on the two or three tasks you actually care about plus one held-out task that neither ingredient was tuned on (to catch a merge that has simply overfit one skill).
+Whatever method you pick, **merging is an empirical search, not a formula** — the merge itself is minutes of CPU arithmetic, so essentially all of your wall-clock goes into evaluating candidates. Make that loop concrete from day one: generate a small grid of configs (say $\lambda \in \{0.3, 0.5, 0.7\}$ × density $\in \{0.2, 0.4\}$), merge each with `mergekit-yaml`, and score each output with `lm-evaluation-harness` on the two or three tasks you actually care about plus one held-out task that neither ingredient was tuned on (to catch a merge that has simply overfit one skill). One trap before you run it: mergekit's $\lambda$ is the per-model `weight`, and it only behaves like the $\lambda$ of $\theta_\text{base} + \lambda \tau_\text{merge}$ when `normalize: false`. Under the `normalize: true` of the config above the weights are rescaled to sum to 1, so scaling all of them by the same $\lambda$ changes nothing — the sweep silently returns three identical models.
 
 ```bash
+# template.yml must set `normalize: false` for this sweep to mean anything:
+# with `normalize: true` mergekit divides the weighted delta sum by the sum of
+# the contributing weights, so multiplying *every* model's `weight` by the same
+# lambda cancels exactly and all three merges come out identical.
 for lam in 0.3 0.5 0.7; do
-  sed "s/__LAMBDA__/$lam/" template.yml > run.yml          # weight: __LAMBDA__
+  sed "s/__LAMBDA__/$lam/g" template.yml > run.yml         # weight: __LAMBDA__
   mergekit-yaml run.yml "./merged-$lam" --cuda --copy-tokenizer
   lm_eval --model hf \
           --model_args "pretrained=./merged-$lam,dtype=bfloat16" \

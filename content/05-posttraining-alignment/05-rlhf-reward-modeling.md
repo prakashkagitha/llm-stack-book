@@ -74,7 +74,7 @@ $$
 where $\sigma(z) = 1/(1 + e^{-z})$ is the logistic sigmoid. This is exactly a softmax over two items, or equivalently logistic regression on the *score gap*. Three properties make it the right choice:
 
 1. **Only differences matter.** Adding a constant $c$ to every score leaves all preference probabilities unchanged ($\sigma((r_w + c) - (r_l + c)) = \sigma(r_w - r_l)$). The reward is identified only up to an additive constant — a fact with real consequences (it is why you must not compare raw reward magnitudes across two separately-trained RMs, and why we mean-center rewards before PPO).
-2. **It is calibrated and monotone.** Equal scores give a coin flip ($\sigma(0)=0.5$); a score gap of $+2$ means $\sigma(2)\approx 0.88$, i.e. "preferred 88% of the time." The score *is* a log-odds of preference, so it has an interpretable scale.
+2. **It is calibrated and monotone.** Equal scores give a coin flip ($\sigma(0)=0.5$); a score gap of $+2$ means $\sigma(2)\approx 0.88$, i.e. "preferred 88% of the time." The score *gap* is exactly the log-odds of preference, so *differences* — never absolute levels — carry an interpretable scale.
 3. **It is differentiable**, so we can fit $r$ by gradient descent.
 
 We replace the abstract strength $r$ with a neural network $r_\phi$ and fit $\phi$ by **maximum likelihood** on the observed preferences.
@@ -139,8 +139,12 @@ class RewardModel(nn.Module):
     def __init__(self, backbone, d_model):
         super().__init__()
         self.backbone = backbone
-        # A single linear layer: d_model -> 1 scalar. Initialize small so early
-        # rewards are near zero (helps optimization stability downstream).
+        # A single linear layer: d_model -> 1 scalar. Fan-in (LeCun-style) init:
+        # with std = 1/sqrt(d_model + 1) the initial reward has roughly the same
+        # variance as one hidden unit -- an O(1) scale rather than the sqrt(d)-times-
+        # larger one a unit-variance init would give. This is the convention OpenAI's
+        # lm-human-preferences used for the reward head; it keeps early rewards on a
+        # sane scale for the downstream optimizer (it does not make them ~0).
         self.value_head = nn.Linear(d_model, 1, bias=False)
         nn.init.normal_(self.value_head.weight, std=1.0 / (d_model + 1) ** 0.5)
 
@@ -153,8 +157,14 @@ class RewardModel(nn.Module):
         # attention_mask is 1 for real tokens, 0 for padding.
         # NOTE: this index is only correct for RIGHT padding. Generation code
         # usually left-pads, so a shared tokenizer can silently make you read the
-        # reward at a pad position; with left padding use `attention_mask.size(1) - 1`
-        # (the true last column) instead. Always assert the padding side.
+        # reward at a pad position. And a batch straight out of `generate()` is
+        # padded on BOTH sides -- leading pads from the prompt, trailing pads on
+        # rows that hit EOS early -- so neither `sum(1) - 1` nor the last column
+        # is right. The padding-side-agnostic index is the largest column whose
+        # mask is 1, which is what HF's *ForSequenceClassification uses:
+        #   pos = torch.arange(attention_mask.size(1), device=...)
+        #   last_idx = (pos * attention_mask.int()).argmax(dim=1)
+        # Below we assume right padding (assert it, or re-pack to it).
         last_idx = attention_mask.sum(dim=1) - 1            # (B,) index of final real token
         batch_idx = torch.arange(input_ids.size(0), device=input_ids.device)
         reward = scores[batch_idx, last_idx]                # (B,) one scalar per sequence
@@ -268,7 +278,8 @@ trainer = RewardTrainer(
         output_dir="rm-out",
         per_device_train_batch_size=8,
         num_train_epochs=1,                  # RMs overfit fast -- one epoch is standard
-        learning_rate=1e-5,                   # TRL's default; below the 2e-5 full-SFT LR of 5.1
+        learning_rate=1e-5,                   # deliberately low -- below the 2e-5 full-SFT LR of 5.1
+                                              # (RewardConfig's own default, 1e-4, is far too hot here)
         max_length=1024,                      # pairs longer than this are dropped, not truncated
         center_rewards_coefficient=0.01,      # auxiliary penalty on (r_w + r_l)^2, see below
     ),
@@ -511,7 +522,7 @@ Trace the four models through it: the **actor** generates (step 1) and supplies 
 ??? note "Solution"
     The reasoning is invalid because the Bradley-Terry model identifies the reward **only up to an additive constant**. The preference probability depends solely on the *difference* of scores: $\sigma\big((r_w + c) - (r_l + c)\big) = \sigma(r_w - r_l)$ for any constant $c$. Adding a constant to every score of a given RM leaves every preference probability, every training loss, and every gradient unchanged. So RM-A and RM-B could be scoring *identically* on every pair and still report wildly different average magnitudes — the absolute offset is an unidentified free parameter fixed by nothing in the loss. The only meaningful quantity is the *gap* between two responses' scores (and hence the RM's held-out preference accuracy). To compare the two RMs you must look at score *differences* or accuracy, never raw averages.
 
-    Consequence for PPO: because the absolute level is meaningless and arbitrary, feeding raw RM scores into the optimizer would inject a constant offset into the advantage estimates that carries no information but does shift the gradient scale. The pipeline therefore **mean-centers the rewards** (subtracts the batch mean) before using them, removing the arbitrary offset and keeping only the informative relative structure. This is the same invariance the chapter flags as having "real consequences": you cannot compare raw magnitudes across separately-trained RMs, and you normalize before PPO.
+    Consequence for PPO: because the absolute level is meaningless and arbitrary, feeding raw RM scores into the optimizer makes the *critic* pay for it. An offset $c$ on the terminal reward shifts every return by $c$, so the advantages $A_t = \text{return} - V_\psi$ are only correct once $V_\psi$ has learned the offset — until then the arbitrary constant leaks straight into the advantages and the early updates are junk. With a critic-free estimator (RLOO/GRPO) it is worse: an uncentered reward inflates the variance of the policy gradient. The pipeline therefore **mean-centers the rewards** (subtracts the batch mean) before using them, removing the arbitrary offset up front and keeping only the informative relative structure. This is the same invariance the chapter flags as having "real consequences": you cannot compare raw magnitudes across separately-trained RMs, and you normalize before PPO.
 
 **2.** For one comparison a reward model outputs $r_\phi(x, y_w) = 1.2$ (chosen) and $r_\phi(x, y_l) = 1.0$ (rejected). (a) What preference probability does the model assign to the chosen response? (b) What is the per-example Bradley-Terry loss in nats? (c) What is the gradient of the loss with respect to the margin $\Delta$, and which direction does gradient descent push $\Delta$? (d) Now the model has a *different* pair backwards: $r_\phi(x, y_w) = 0.3$, $r_\phi(x, y_l) = 2.0$. Recompute (a)-(c) and comment on how the loss and gradient magnitudes changed. Use $e^{-0.2}\approx 0.819$, $e^{1.7}\approx 5.474$.
 

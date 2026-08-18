@@ -185,8 +185,9 @@ def build_chatml_loss_mask(
     warns against — a conversation longer than max_length loses its tail.
     Truncate from the left (drop early turns, keep the system turn and
     the most recent turns) in production, and drop any example whose
-    loss_mask ends up all-False: an all -100 row makes the masked loss
-    0/0 = NaN and poisons the whole batch.
+    loss_mask ends up all-False: it burns compute for zero gradient, and
+    if an entire micro-batch ends up all -100 the masked loss is
+    0/0 = NaN, which poisons that optimizer step.
     """
     # Render full string (no generation prompt needed for training)
     full_text = format_chatml(messages, add_generation_prompt=False)
@@ -412,7 +413,7 @@ A common mistake is to supervise only the *last* assistant turn. This wastes sig
 The causal mask of the transformer still lets each assistant token attend to everything before it (including previous user turns), so learning is coherent — the model sees the full context, it just does not receive gradient for repeating the prompt tokens.
 
 !!! warning "Common pitfall: off-by-one in the loss shift"
-    HuggingFace `*ForCausalLM.forward` shifts labels internally whenever you pass `labels`: it runs the model over the *full* `input_ids` (all $T$ positions produce logits) and then aligns `logits[..., :-1, :]` with `labels[..., 1:]` inside the loss function (`ForCausalLMLoss`). Nothing is truncated on the input side, and `CausalLMOutputWithCrossAttentions` is only the dataclass the result is returned in — it performs no computation. If you pre-shift labels yourself and also let the model shift, every label is off by two positions — completely wrong. Use the convention above: pass the *full* `input_ids` as labels with `-100` masking, and let HuggingFace do the single shift internally.
+    HuggingFace `*ForCausalLM.forward` shifts labels internally whenever you pass `labels`: it runs the model over the *full* `input_ids` (all $T$ positions produce logits) and then aligns `logits[..., :-1, :]` with `labels[..., 1:]` inside the loss function (`ForCausalLMLoss`). Nothing is truncated on the input side, and `CausalLMOutputWithCrossAttentions` is only the dataclass the result is returned in — it performs no computation. If you pre-shift labels yourself and also let the model shift, the labels get shifted twice, so `logits[t]` is scored against `input_ids[t+2]` instead of `input_ids[t+1]` — the model is trained to predict two tokens ahead, which is completely wrong. Use the convention above: pass the *full* `input_ids` as labels with `-100` masking, and let HuggingFace do the single shift internally.
 
 ## System Prompts and Role Tokens
 
@@ -481,7 +482,9 @@ def pack_sequences(
     Pack variable-length (input_ids, labels) pairs into fixed-length bins.
 
     For each packed bin we also build position_ids that reset to 0 at the
-    start of each new document — critical for correct RoPE / ALiBi behaviour.
+    start of each new document — critical for correct RoPE (and learned
+    absolute-position) behaviour. ALiBi does not read position_ids at all,
+    so it relies on the block-diagonal mask / cu_seqlens instead.
     """
     # Sort longest-first for better bin utilisation (first-fit-decreasing)
     examples = sorted(examples, key=lambda x: x[0].shape[0], reverse=True)

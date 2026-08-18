@@ -65,7 +65,7 @@ The **actor**, or **policy**, is the model you are training: the parameters $\th
 - as the **generation weights** inside the rollout engine (used to sample responses), and
 - as the **training weights** inside the learner (used to compute gradients and apply the optimizer step).
 
-In the *colocated* design these are the same bytes time-sliced on the same GPUs; in the *disaggregated* design they are two separate copies on two pools of GPUs that must be synchronized. Either way, the policy is the hub: generation reads it, training writes it, and the gap between "the weights that generated this data" ($\theta_{\text{old}}$, the *behavior* policy) and "the weights we are updating now" ($\theta$) is what makes the math off-policy and forces importance ratios and clipping (recall the ratio $r_{i,t}=\pi_\theta/\pi_{\theta_{\text{old}}}$ from [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)).
+In the *colocated* design both live on the same GPUs, time-sliced — sometimes literally the same bytes resharded in place (veRL's 3D-HybridEngine), but more often a *second* resident weight buffer inside the inference engine that the trainer overwrites every step (TRL's vLLM `colocate` mode, which is why it still needs its own `vllm_gpu_memory_utilization` budget); only in a single-process toy like the one below, where generation *is* `policy.generate()`, are they truly one copy. In the *disaggregated* design they are two copies on two separate pools of GPUs that must be synchronized over the network. Either way, the policy is the hub: generation reads it, training writes it, and the gap between "the weights that generated this data" ($\theta_{\text{old}}$, the *behavior* policy) and "the weights we are updating now" ($\theta$) is what makes the math off-policy and forces importance ratios and clipping (recall the ratio $r_{i,t}=\pi_\theta/\pi_{\theta_{\text{old}}}$ from [GRPO, RLOO & Critic-Free RL](../05-posttraining-alignment/08-grpo-rloo.html)).
 
 ### 2. The rollout / generation engine
 
@@ -159,8 +159,13 @@ tok    = AutoTokenizer.from_pretrained(MODEL)
 #     see ../03-pretraining/08-mixed-precision-fp8.html. ---------------------
 policy = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.float32).to(device)
 
-# --- COMPONENT 5: the REFERENCE model (frozen θ_ref, for the KL term). -------
-reference = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.bfloat16).to(device)
+# --- COMPONENT 5: the REFERENCE model (frozen θ_ref, for the KL term). Load it
+#     in the SAME dtype/numerics as the policy: at step 0 the two ARE the same
+#     checkpoint, so the k3 estimator below must return exactly 0. A bf16
+#     reference against an fp32 policy gives a small nonzero per-token log-prob
+#     gap, and since k3 >= 0 the error cannot cancel -- you would report a
+#     spurious KL floor (and its gradient) from the very first step. ----------
+reference = AutoModelForCausalLM.from_pretrained(MODEL, torch_dtype=torch.float32).to(device)
 reference.eval()
 for p in reference.parameters():
     p.requires_grad_(False)
@@ -202,7 +207,15 @@ def rollout(prompts, golds):
         # eos_token_id is pinned to the SAME id the trim below searches for.
         # (Qwen2.5-Instruct's generation_config stops on a *list* of ids, so
         #  without this a sample could terminate on an id the trim never finds.)
+        # top_k and repetition_penalty must be pinned TOO: generate() starts
+        # from model.generation_config and overrides only what you pass, and
+        # Qwen2.5-*-Instruct ships top_k=20, repetition_penalty=1.1. Leaving
+        # them out would sample from a truncated, penalized q != π_θ while
+        # old_lp below is recomputed as the RAW π_θ -- exactly the
+        # sampler-vs-trainer mismatch of the warning box. top_k=0 and
+        # repetition_penalty=1.0 switch both processors off.
         out = policy.generate(ids, do_sample=True, temperature=1.0, top_p=1.0,
+                              top_k=0, repetition_penalty=1.0,
                               max_new_tokens=MAX_NEW, num_return_sequences=G,
                               eos_token_id=tok.eos_token_id,
                               pad_token_id=tok.eos_token_id)
@@ -302,7 +315,7 @@ Read that loop until the six components and the seven dataflow stages are obviou
 
 Newcomers reading a real RL config are ambushed by the fact that there is no single "batch size." There are three *nested* ones, and conflating them is how people accidentally train far more off-policy than they intended.
 
-1. **Rollout batch** — how many *prompts* the controller hands to the generation engine per outer iteration (veRL `data.train_batch_size`, OpenRLHF `--rollout_batch_size`, TRL `generation_batch_size`). Multiplied by the group size $G$ (veRL `actor_rollout_ref.rollout.n`, OpenRLHF `--n_samples_per_prompt`, TRL `num_generations`) it gives the number of responses generated before *any* weight update. Larger is better for generation throughput (more concurrency for continuous batching) and lowers advantage variance, but stretches the interval between updates.
+1. **Rollout batch** — how many *prompts* the controller hands to the generation engine per outer iteration (veRL `data.train_batch_size`, OpenRLHF `--rollout_batch_size`). Multiplied by the group size $G$ (veRL `actor_rollout_ref.rollout.n`, OpenRLHF `--n_samples_per_prompt`) it gives the number of responses generated before *any* weight update. Watch the units when you move between frameworks: TRL's `generation_batch_size` is counted in **completions**, not prompts — it must be divisible by `num_generations`, and the number of distinct prompts is `generation_batch_size // num_generations` — so there you *divide* by $G$ rather than multiplying. Larger is better for generation throughput (more concurrency for continuous batching) and lowers advantage variance, but stretches the interval between updates.
 2. **Mini-batch** — how much of that rollout batch is consumed per *optimizer step* (veRL `actor_rollout_ref.actor.ppo_mini_batch_size`, OpenRLHF `--train_batch_size`). This is the knob that decides on-policyness. If mini-batch equals rollout batch *and you take a single gradient epoch over it*, you take exactly one optimizer step per rollout and the update is **fully on-policy** ($r_{i,t}\equiv 1$, clipping never fires). If it is smaller you take several steps on data generated by weights that are already stale by the time you reach the last one.
 3. **Micro-batch** — how much fits in GPU memory at once (veRL `ppo_micro_batch_size_per_gpu`, OpenRLHF `--micro_train_batch_size`, TRL `per_device_train_batch_size` with `gradient_accumulation_steps`). Micro-batches are gradient-accumulated into one mini-batch, so this *should* be a pure *memory* knob with **no** effect on the math — changing it must not change your loss curve, which makes it a good sanity check on an implementation. The invariance holds only if the loss is normalized by the **global, mini-batch-wide** unmasked token count; naively averaging each micro-batch's own token-mean (as `(surr*mask).sum()/mask.sum()` does *per micro-batch*) does change the gradient whenever response lengths differ across micro-batches, which is the normal case in RL. This is a real and recurring framework bug, and it is why serious implementations pass a global token-count normalizer into the micro-batch loss.
 

@@ -347,11 +347,26 @@ def rlvr_reward(question: str, response: str, gold: str,
 
     # 2. Format shaping (tiny, and CONTINGENT on a parseable answer existing).
     has_think = "<think>" in response and "</think>" in response
+    #    The parse must be DOMAIN-APPROPRIATE. A code answer lives in a
+    #    ```python fence, not a \boxed{}, so a boxed-only check would make this
+    #    bonus structurally unreachable (dead shaping) on every non-math domain.
+    if domain == "code":
+        answer = extract_code_block(response)
+    elif domain in ("format", "constraint"):
+        answer = response                 # the response itself IS the answer here
+    else:
+        answer = extract_boxed_answer(response)
     #    Note the non-empty check: `\boxed{}` extracts to "" (not None), so a
     #    bare empty box would otherwise farm the bonus with zero solving effort.
-    answer = extract_boxed_answer(response)
     has_answer = answer is not None and answer.strip() != ""
     format_bonus = 0.1 if (has_think and has_answer) else 0.0
+    #    With a GRADED accuracy (code: k hidden tests) the bonus must stay below
+    #    the smallest accuracy gap, 1/k, or a 19/20 response (0.95 + 0.1 = 1.05)
+    #    out-scores a fully correct one (1.0) — the very inversion the "keep the
+    #    format weight small" rule exists to prevent. Binary domains have gap 1,
+    #    so 0.1 is already safe there.
+    if domain == "code" and test_cases:
+        format_bonus = min(format_bonus, 0.5 / len(test_cases))
 
     # 3. Anti-hacking guard: zero out everything if the response is degenerate
     #    (e.g. empty, or repeats one token — catches a known length-hack mode).
@@ -498,6 +513,7 @@ def expert_iteration(prompts, verifier, sample_fn, sft_fn,
     (b) cap per-prompt keeps, which is the same difficulty-balancing job that
     group-relative advantages do for free in GRPO.
     """
+    batch = []                                     # so rounds=0 returns [], not UnboundLocalError
     for _ in range(rounds):
         batch = []
         for p in prompts:
@@ -534,8 +550,12 @@ def accuracy_reward(completions, solution, **kwargs):
 def format_reward(completions, **kwargs):
     """A second, small-weight function. TRL SUMS the list of reward_funcs, so
     shaping terms live in their own function at their own scale — never buried
-    inside the accuracy checker where you cannot ablate them."""
-    return [0.1 if ("<think>" in c and "</think>" in c) else 0.0 for c in completions]
+    inside the accuracy checker where you cannot ablate them. Keep the same
+    contingency guard as `rlvr_reward`: pay only when a non-empty answer was
+    actually attempted, or `<think></think>` alone farms 0.1 for zero effort."""
+    return [0.1 if ("<think>" in c and "</think>" in c
+                    and (extract_boxed_answer(c) or "").strip()) else 0.0
+            for c in completions]
 
 trainer = GRPOTrainer(
     model="Qwen/Qwen2.5-1.5B",                  # a BASE model, R1-Zero style
@@ -698,7 +718,9 @@ The deepest takeaway is a shift in worldview. For a decade, the bottleneck of su
         """Canonical key for distinctness: numeric value if parseable, else norm string."""
         n = normalize_numeric(v)          # from the chapter's math verifier
         if n is not None:
-            return ("num", float(n)) if isinstance(n, float) else ("num", n)
+            # No cast needed: Python's cross-type numeric equality/hashing is
+            # what collapses Fraction(1, 2) and 0.5 into one set element.
+            return ("num", n)
         return ("str", re.sub(r"\s+", "", v).lower())
 
     def math_is_correct_guarded(response: str, gold: str) -> float:
