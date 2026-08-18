@@ -6,13 +6,13 @@ This is the last chapter of Part XV, and it closes the loop the part opened in [
 
 ## 1. Where We Pick Up, and What This Chapter Adds
 
-Recall the state of the checkpoint. [Ch. 15.5](05-posttrain-trl.html) exported `stacklm`'s custom `nn.Module` — RoPE with every-4th-layer NoPE, GQA, QK-norm, SwiGLU, tied embeddings ([Ch. 14.4](../14-capstone/04-architecture.html)) — into a `LlamaConfig`/`LlamaForCausalLM`-shaped checkpoint via a `remap_state_dict` that renames parameters and *verifies logits match to under 1e-4* before trusting the export. Two of Stack-100M's architectural choices, NoPE and QK-norm, do not fit in a stock `LlamaConfig`; 15.5 flagged this explicitly and offered two honest paths: (1) ship a `modeling_stacklm.py` alongside the checkpoint and load it with `trust_remote_code=True`, preserving bit-exact fidelity, or (2) accept the faithful-enough Llama export, which drops those two knobs but is readable by *every* tool in this chapter without a line of custom code.
+Recall the state of the checkpoint. [Ch. 15.5](05-posttrain-trl.html) exported `stacklm`'s custom `nn.Module` — RoPE with every-4th-layer NoPE, GQA, QK-norm, SwiGLU, tied embeddings ([Ch. 14.4](../14-capstone/04-architecture.html)) — into a `LlamaConfig`/`LlamaForCausalLM`-shaped checkpoint via a `remap_state_dict` that renames parameters, gated by a fixed-batch assertion that the exported model's logits match the original's to under 1e-4. Read that gate carefully: only an export that preserves the architecture can pass it, which means path (1) below. Two of Stack-100M's architectural choices, NoPE and QK-norm, do not fit in a stock `LlamaConfig`; 15.5 flagged this explicitly and offered two honest paths: (1) ship a `modeling_stacklm.py` alongside the checkpoint and load it with `trust_remote_code=True`, preserving bit-exact fidelity, or (2) accept the faithful-enough Llama export, which drops those two knobs but is readable by *every* tool in this chapter without a line of custom code.
 
-This chapter takes path (2) as the default, and says exactly why: `llm-compressor`, `AutoAWQ`, and llama.cpp's GGUF converter are all written against well-known HF architectures (Llama, Qwen2, Mistral, …). Feeding them a `trust_remote_code=True` custom model either fails outright or forces you to also write custom kernels for whichever tool you're using — a real cost, not a hypothetical one. If your production model leans harder on exotic architecture choices than Stack-100M's two small ones, path (1) is still there, and vLLM in particular *can* run arbitrary `trust_remote_code` HF models through its **Transformers backend** — a fallback execution path, distinct from vLLM's natively optimized model classes, that trades some throughput for "it just runs your `AutoModelForCausalLM`." Which flag enables it (`--model-impl transformers` as of some 2025 releases) is exactly the kind of surface that moves between vLLM versions; treat the name below as illustrative and check `vllm serve --help` against your pin.
+This chapter takes path (2) as the default, and says exactly why: `llm-compressor`, `AutoAWQ`, and llama.cpp's GGUF converter are all written against well-known HF architectures (Llama, Qwen2, Mistral, …). Feeding them a `trust_remote_code=True` custom model either fails outright or forces you to also write custom kernels for whichever tool you're using — a real cost, not a hypothetical one. If your production model leans harder on exotic architecture choices than Stack-100M's two small ones, path (1) is still there, and vLLM in particular *can* run a `trust_remote_code` HF model through its **Transformers backend** — a fallback execution path, distinct from vLLM's natively optimized model classes, that trades some throughput for "it just runs your `AutoModelForCausalLM`." That escape hatch is not free, though, and it is not universal: the modeling file has to satisfy vLLM's compatibility contract — attention dispatched through Transformers' `ALL_ATTENTION_FUNCTIONS` registry (so vLLM can substitute its own paged-attention implementation), the class advertising `_supports_attention_backend = True`, and `**kwargs` threaded through the forward chain. A `modeling_stacklm.py` lifted straight from [Ch. 14.4](../14-capstone/04-architecture.html), whose `Attention.forward` calls `F.scaled_dot_product_attention` directly, is rejected rather than silently run slower until that one path is rewritten. Which flag enables it (`--model-impl transformers` as of some 2025 releases) is exactly the kind of surface that moves between vLLM versions; treat the name below as illustrative and check `vllm serve --help` against your pin.
 
 !!! warning "Verify the export before you trust anything downstream"
 
-    Every tool in this chapter — vLLM, `llm-compressor`, `AutoAWQ`, llama.cpp — takes the HF checkpoint on faith. If the Llama export silently dropped QK-norm's effect on the logits (it does, by construction) and nobody checked how much that matters *for this checkpoint*, every number in this chapter inherits an unverified assumption. Ch. 15.5's logit-matching assertion checks the export is faithful to the fp32 body; layer it with Ch. 14.11's `compute_perplexity`, re-run on the exported HF model, next to the number `stacklm`'s own model reports on the same held-out shard. A gap bigger than run-to-run noise means the approximation cost more than expected, and you should reach for the `trust_remote_code` path instead of shipping a quietly worse model.
+    Every tool in this chapter — vLLM, `llm-compressor`, `AutoAWQ`, llama.cpp — takes the HF checkpoint on faith. If the Llama export silently dropped QK-norm's effect on the logits (it does, by construction) and nobody checked how much that matters *for this checkpoint*, every number in this chapter inherits an unverified assumption. Ch. 15.5's <1e-4 logit-matching assertion certifies the `trust_remote_code` export, not this one — the stock-`LlamaConfig` path cannot pass it, and its fidelity has to be established empirically instead. So establish it: take Ch. 14.11's `compute_perplexity`, re-run on the exported HF model, next to the number `stacklm`'s own model reports on the same held-out shard. A gap bigger than run-to-run noise means the approximation cost more than expected, and you should reach for the `trust_remote_code` path instead of shipping a quietly worse model.
 
 Here is the piece of the crosswalk table this chapter expands, first sketched in [15.1](01-toolchain-map.html):
 
@@ -20,7 +20,7 @@ Here is the piece of the crosswalk table this chapter expands, first sketched in
 |---|---|---|---|
 | Serving | `stacklm.serve.generate` — token loop, one request at a time | **vLLM** (`vllm serve`) | Continuous batching, PagedAttention, OpenAI-compatible API, Prometheus metrics |
 | Quantization (GPU) | `stacklm.serve.quantize` — hand-rolled RTN `QuantizedLinear` | **`llm-compressor`** (GPTQ), **AutoAWQ** | Calibration-driven accuracy at 4-bit, a standard on-disk format vLLM reads natively |
-| Quantization (CPU/edge) | (not built by hand — RTN targets GPU inference) | **GGUF** via **llama.cpp** | K-quant super-block packing, a mature CPU inference engine, laptop-class deployment |
+| Quantization (CPU/edge) | the same `QuantizedLinear` int4 checkpoint, run on CPU (Ch. 14.11 §9) — dequantize-then-fp32-matmul, the laptop demo | **GGUF** via **llama.cpp** | K-quant super-block packing, a mature CPU inference engine, laptop-class deployment |
 | Evaluation | `stacklm.eval.probes` — five bespoke functions | **`lm-evaluation-harness`** | Standardized, comparable tasks; `stderr` on every metric; a `vllm` backend for speed |
 
 Every row below follows the same shape: name the library, show it running against the real checkpoint, and say plainly what it buys you that the from-scratch version did not.
@@ -175,11 +175,13 @@ calib = load_dataset(
 recipe = GPTQModifier(
     targets="Linear",
     scheme="W4A16",          # 4-bit weights, activations stay bf16/fp16
-    ignore=["lm_head"],      # keep the tied embedding/head at full precision --
-                              # the same call Ch. 14.11 makes with
-                              # embedding_bits=8, for the same reason: the
-                              # 32768x512 table is 17% of the params and its
-                              # rare-token rows are thinly trained
+    ignore=["lm_head"],      # leave the tied embedding/head unquantized (bf16) --
+                              # the same instinct as Ch. 14.11's embedding_bits=8,
+                              # though strictly higher precision than it, and for
+                              # the same reason: the 32768x512 table is 17% of the
+                              # params and its rare-token rows are thinly trained.
+                              # For int8 parity instead, target lm_head with its
+                              # own W8A16 config_groups entry rather than ignoring it
     dampening_frac=0.01,     # the same Hessian damping (`damp`) as Ch. 14.11's
                               # `H += damp * I`
 )
@@ -216,6 +218,7 @@ pip install "autoawq==0.2.7"   # illustrative pin of an archived project; see th
 """
 from awq import AutoAWQForCausalLM
 from transformers import AutoTokenizer
+from datasets import load_dataset
 
 MODEL_DIR = "ckpts/stack-100m-grpo"
 model = AutoAWQForCausalLM.from_pretrained(MODEL_DIR)
@@ -228,13 +231,32 @@ quant_config = {
     "w_bit": 4,
     "version": "GEMM",
 }
+# AWQ's search needs real activations too, and `calib_data` DEFAULTS to a
+# `pileval` slice AutoAWQ downloads for you -- 128 samples of generic web text
+# truncated to 512 tokens, i.e. exactly the out-of-distribution calibration the
+# GPTQ recipe above takes pains to avoid, plus a silent network dependency.
+# Hand it the SAME held-out slice, at the same length, or the two checkpoints
+# you are about to A/B differ in their calibration set as much as in their
+# method.
+calib_texts = load_dataset(
+    "json", data_files="data/holdout_calib.jsonl", split="train"
+).select(range(512))["text"]
+
 # Runs the same salient-channel grid search as Ch. 14.11's
 # awq_search_channel_scales() -- find a per-channel scale s that minimizes
 # post-quantization OUTPUT error, then fold s into the preceding RMSNorm --
 # batched across every linear layer in the model, with the joint-scale
 # constraint Ch. 14.11 flagged (layers reading the SAME normalized hidden
 # state, like wq/wk/wv, must share one s).
-model.quantize(tokenizer, quant_config=quant_config)
+model.quantize(
+    tokenizer,
+    quant_config=quant_config,
+    calib_data=calib_texts,   # a list[str]; AutoAWQ also accepts a Dataset or a
+                               # Hub dataset name (check your pin's signature)
+    max_calib_samples=512,
+    max_calib_seq_len=2048,   # match the GPTQ recipe's max_seq_length=2048;
+                               # the default here is 512
+)
 model.save_quantized("ckpts/stack-100m-awq-w4g64")
 tokenizer.save_pretrained("ckpts/stack-100m-awq-w4g64")
 ```
@@ -309,7 +331,12 @@ print(out["choices"][0]["text"])
 
     plus a small amount for norms and metadata GGUF stores at higher precision — call it **on the order of 57–60 MB** for a file that is `Q4_K` throughout, which is what `Q4_K_S` gives you.
 
-    The `Q4_K_M` we actually produced above is not that: the `_S`/`_M`/`_L` suffix is a **tensor-level mix**, not a different block layout. `llama-quantize` applies `Q4_K` to most tensors but promotes the empirically most sensitive ones — typically `attn_v` and `ffn_down`, plus the output/embedding matrix — to `Q6_K`, which pushes the *whole-file* average a few tenths of a bit above 4.5 (see [Ch. 4.8](../04-kernels-efficiency/08-quantization-formats-qat.html)). At ≈4.8–4.9 bits/weight that is roughly **61–63 MB** for Stack-100M — level with our hand-rolled 63.3 MB, not below it, which sharpens the lesson rather than blunting it: **at the same bit budget, purpose-built packing spends the bits far better** — finer-grained scales (a 6-bit scale *and* min per 32 weights instead of two fp32 scalars per 64) and extra precision aimed at exactly the tensors that need it, instead of a flat 20% metadata tax spread uniformly. If you want the size win too, `Q4_K_S` buys it at ≈57 MB. Either way this is what Ch. 14.11 previewed when it noted production formats "attack precisely that 20%" of overhead.
+    The `Q4_K_M` we actually produced above is not that: the `_S`/`_M`/`_L` suffix is a **tensor-level mix**, not a different block layout. `llama-quantize` applies `Q4_K` to most tensors but promotes the empirically most sensitive ones to `Q6_K` (6.5625 bits/weight), which pushes the *whole-file* average a few tenths of a bit above 4.5 (see [Ch. 4.8](../04-kernels-efficiency/08-quantization-formats-qat.html)). Which tensors, exactly, is worth checking rather than assuming — the promotion set is model-dependent, and for Stack-100M it is smaller than the usual description suggests:
+
+    - `attn_v` and `ffn_down`, but only in the layers llama.cpp's `use_more_bits` heuristic selects (the first eighth, the last eighth, and every third layer in between) — 14 of our 30 blocks, at $65{,}536 + 720{,}896 = 786{,}432$ parameters per block, so ≈11.0M parameters promoted.
+    - The separate output matrix — which **Stack-100M does not have**. Tied embeddings ([Ch. 14.4](../14-capstone/04-architecture.html)) mean the HF checkpoint stores no `lm_head.weight`, the converter emits no `output.weight`, and llama.cpp reuses `token_embd` for the output projection. That single largest tensor (16.8M parameters, 17% of the model) therefore stays at the base `Q4_K` type under the `_M` mix.
+
+    So the promotion costs $11.0\text{M} \times (6.5625 - 4.5)\text{ bits} \approx 2.8$ MB on top of the 57.0 MB `Q4_K` floor: **≈60 MB at ≈4.7 bits/weight**. That is a few MB *below* our hand-rolled 63.3 MB — a real but unspectacular size win, and the size is not the interesting part: **at a comparable bit budget, purpose-built packing spends the bits far better** — finer-grained scales (a 6-bit scale *and* min per 32 weights instead of two fp32 scalars per 64) and extra precision aimed at exactly the tensors that need it, instead of a flat 20% metadata tax spread uniformly. If you want the full size win, `Q4_K_S` buys it at ≈57 MB. Either way this is what Ch. 14.11 previewed when it noted production formats "attack precisely that 20%" of overhead. And do not take the ≈60 MB on faith: `ls -l` the file, or run `llama-quantize`'s own per-tensor log, which prints the type it chose for every tensor.
 
 !!! warning "Common pitfall: comparing tokens/sec across engines without matching conditions"
 
@@ -464,7 +491,7 @@ That gap is also exactly where version drift lives. [Chapter 15.1](01-toolchain-
 
 !!! key "Key Takeaways"
 
-    - **The interfaces are standard formats, not monoliths.** A HF-format checkpoint (verified against the from-scratch model's logits) is the one bridge every downstream tool needs; once you have it, vLLM, `llm-compressor`, `AutoAWQ`, and llama.cpp's converter all just work.
+    - **The interfaces are standard formats, not monoliths.** A HF-format checkpoint, verified against the from-scratch model (logit-match on the `trust_remote_code` path, held-out perplexity on the stock-`LlamaConfig` path that drops NoPE/QK-norm), is the one bridge every downstream tool needs; once you have it, vLLM, `llm-compressor`, `AutoAWQ`, and llama.cpp's converter all just work.
     - **vLLM replaces the token loop, not the mechanism.** Continuous batching (iteration-level scheduling) plus PagedAttention (block-based KV memory) is what turns Ch. 14.11's one-request-at-a-time `generate()` into a server; `vllm serve` gives you that plus an OpenAI-compatible API and Prometheus metrics for free.
     - **A 100M model on a data-center GPU is essentially never KV-cache-bound.** The worked example's ~730-sequence concurrency headroom is the opposite regime from a 70B model, where PagedAttention's memory efficiency is the whole point — tune `--max-num-seqs`/`--max-num-batched-tokens` against your latency SLO instead.
     - **`llm-compressor` (GPTQ) and `AutoAWQ` replace the from-scratch RTN sketch with calibration-driven quantizers and a standard `compressed-tensors` format vLLM loads with dequant-fused int4 kernels** — a real speedup, because the weights are unpacked inside the matmul rather than written back to HBM first, unlike the hand-rolled `QuantizedLinear`'s dequantize-then-fp32-matmul. (The math still runs in bf16 at `W4A16`; the win is 4× less weight traffic, not lower-precision arithmetic.)

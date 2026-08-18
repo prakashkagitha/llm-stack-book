@@ -43,16 +43,17 @@ One bridge has to be crossed before any of this runs. TRL trainers expect a Hugg
 
 ```python
 # capstone/stacklm/export/to_hf.py
-# Stack-100M's components (RMSNorm, RoPE, GQA, SwiGLU, tied embeddings) map almost
-# exactly onto a Llama-shaped config. The two things that do NOT map cleanly are
-# NoPE-on-every-4th-layer and QK-norm — those need a custom modeling file loaded
-# with trust_remote_code=True. For the SFT/DPO paths, a faithful Llama export is
-# enough because we are not changing the architecture, only the weights.
-from transformers import LlamaConfig, LlamaForCausalLM
+# Stack-100M's components (RMSNorm, RoPE, GQA, SwiGLU, tied embeddings) — and, the
+# distinguishing detail, QK-norm as an RMSNorm over head_dim applied BEFORE RoPE —
+# are exactly the Qwen3 recipe, which is why Ch. 14.4's canonical exporter targets
+# Qwen3ForCausalLM (a Llama config has no q_norm/k_norm at all). The ONE thing that
+# does not map is NoPE-on-every-4th-layer: with nope_every=0 this is a pure key
+# rename; keep NoPE and you owe a modeling file loaded with trust_remote_code=True.
+from transformers import Qwen3Config, Qwen3ForCausalLM
 import torch
 
-def stacklm_to_llama(stack_model, tokenizer_len=32768):
-    cfg = LlamaConfig(
+def stacklm_to_qwen3(stack_model, tokenizer_len=32768):
+    cfg = Qwen3Config(
         vocab_size=tokenizer_len,
         hidden_size=512,
         intermediate_size=1408,      # our SwiGLU inner dim
@@ -67,20 +68,24 @@ def stacklm_to_llama(stack_model, tokenizer_len=32768):
                                      # rather than retyping defaults, or the export
                                      # silently rotates positions at the wrong rate.
         rms_norm_eps=1e-5,
+        attention_bias=False,
         tie_word_embeddings=True,    # Press & Wolf, saves 16.8M params
     )
-    hf = LlamaForCausalLM(cfg)
-    # copy_state_dict maps our parameter names → HF names; ~40 lines of renames,
-    # verified by asserting logits match on a fixed batch to < 1e-4 before trusting it.
-    # (with tie_word_embeddings=True, `lm_head.weight` is tied to `model.embed_tokens.weight`
-    #  — emit it in the remapped dict, or load with strict=False and re-tie after.)
-    hf.load_state_dict(copy_state_dict(stack_model.state_dict()), strict=True)
+    hf = Qwen3ForCausalLM(cfg)
+    # to_qwen3's rename map (Ch. 14.4, `stacklm/serve/export_hf.py`) is the canonical
+    # one: ~15 lines of renames per block, including self_attn.q_norm/k_norm, which
+    # Qwen3 carries and Llama does not — drop them and you have silently changed the
+    # architecture, not just the weights. Load non-strictly and re-tie, because
+    # lm_head.weight is tied to model.embed_tokens.weight and so is absent from the map.
+    hf.load_state_dict(rename_to_qwen3(stack_model.state_dict()), strict=False)
+    hf.tie_weights()
+    # Then EARN the export: assert logits match on a fixed batch before trusting it.
     return hf
 ```
 
 !!! note "The custom-architecture escape hatch"
 
-    NoPE layers and QK-norm are genuinely not expressible in stock `LlamaConfig`. Two honest options: (1) ship a `modeling_stacklm.py` next to the checkpoint and load with `trust_remote_code=True` — TRL trains any `PreTrainedModel`, custom or not; or (2) accept a *faithful-enough* Llama export for the post-training experiments and keep the exotic bits only in the from-scratch path. We take (1) for the flagship and note where (2) is fine. Do not silently drop QK-norm and pretend the exported model is identical — verify logits match on a fixed batch first.
+    QK-norm *is* expressible — that is the whole reason Qwen3 is the export target ([Ch. 14.4](../14-capstone/04-architecture.html)). **NoPE-on-every-4th-layer is the one thing that is not**: no stock architecture supports "skip RoPE on this layer." Two honest options: (1) ship a `modeling_stacklm.py` next to the checkpoint and load with `trust_remote_code=True` — TRL trains any `PreTrainedModel`, custom or not; or (2) train the run you intend to post-train with `nope_every=0`, so the Qwen3 export is a pure key rename and the whole ecosystem opens up. We take (1) for the flagship and note where (2) is fine. Either way, do not drop a component and pretend the exported model is identical — verify logits match on a fixed batch first.
 
 ## SFT with `SFTTrainer`: chat template, packing, assistant-only loss
 
@@ -271,7 +276,7 @@ Three things the library owns that our hand-roll left on the table:
 - **LoRA-as-reference.** When training a LoRA-DPO run, you do not need a separate reference model at all — TRL gets $\pi_{\text{ref}}$ by *disabling the adapter* (the base weights are the reference by construction). One model, two behaviors. This is a genuinely clever memory win that is annoying to implement by hand.
 - **The loss-variant menu.** `loss_type` selects among a family that all share the DPO scaffolding but change the objective's shape: `"sigmoid"` (original), `"ipo"` (Azar et al., replaces the logistic loss with a squared-error target on the log-ratio margin to fight the DPO over-optimization discussed in [Ch. 5.13](../05-posttraining-alignment/13-reward-hacking-failures.html)), `"hinge"`, `"robust"`, `"apo_zero"`, and others. Switching is a one-string change; deriving each from scratch is a chapter. Note that not every DPO-adjacent objective is a `DPOConfig` loss variant: CPO and SimPO are their own objectives with their own trainers, so `loss_type="cpo"` is *not* a legal value and raises rather than switching objectives. Print `DPOConfig.__dataclass_fields__["loss_type"].metadata["help"]` for the exact list your version accepts before assuming a variant is one string away.
 
-There is also a **length-bias trap** DPO practitioners hit constantly: because the loss sums token log-probabilities, a longer `chosen` response accrues more negative log-prob and the optimizer can "win" the margin simply by making the policy prefer *longer* text — reward-hacking length rather than quality. TRL exposes a length-normalized variant to counter this (`loss_type="sigmoid_norm"`, which divides each completion's score by its token count before the logistic loss — the SimPO-style average-log-prob idea); the honest move is to log mean chosen/rejected token lengths alongside `rewards/margins` and watch for the policy drifting long. This is the concrete, in-the-trainer face of the over-optimization theory in [Ch. 5.13](../05-posttraining-alignment/13-reward-hacking-failures.html).
+There is also a **length-bias trap** DPO practitioners hit constantly: the implicit reward $\beta\log\frac{\pi_\theta(y\mid x)}{\pi_{\text{ref}}(y\mid x)}$ is an **unnormalized sum of per-token log-ratios**, so the margin a completion can attain grows with its token count — the optimizer can widen `rewards/margins` by nudging the ratio up over *more* tokens, i.e. by preferring *longer* text, rather than better text. That is reward-hacking length rather than quality. TRL exposes a length-normalized variant to counter this (`loss_type="sigmoid_norm"`, which divides each completion's score by its token count before the logistic loss — the SimPO-style average-log-prob idea); the honest move is to log mean chosen/rejected token lengths alongside `rewards/margins` and watch for the policy drifting long. This is the concrete, in-the-trainer face of the over-optimization theory in [Ch. 5.13](../05-posttraining-alignment/13-reward-hacking-failures.html).
 
 The metrics TRL logs are your only window into whether preference optimization is healthy. The ones to watch:
 
@@ -508,7 +513,7 @@ Wire this into CI as a **gate**: a stage promotes only if its eval clears the pr
 !!! key "Key Takeaways"
 
     - **Hand-roll to learn, reach for TRL to ship.** Every TRL post-training trainer subclasses `transformers.Trainer`, so you inherit accum/mixed-precision/FSDP/checkpointing for free and supply only the objective — the loss you already derived in [Ch. 14.9](../14-capstone/09-post-training.html) and [Ch. 5.x](../05-posttraining-alignment/01-sft-instruction-tuning.html).
-    - **Bridge the model first.** TRL needs a HF `PreTrainedModel`; export Stack-100M into a Llama-shaped checkpoint (with a `trust_remote_code` modeling file for NoPE/QK-norm), and *verify logits match* before trusting the export.
+    - **Bridge the model first.** TRL needs a HF `PreTrainedModel`; export Stack-100M into a Qwen3-shaped checkpoint (Qwen3 carries the `q_norm`/`k_norm` our QK-norm needs; only NoPE requires a `trust_remote_code` modeling file), and *verify logits match* before trusting the export.
     - **SFT is a masking problem.** `assistant_only_loss=True` + a `{% generation %}` chat template + boundary-aware `packing` is the whole recipe; the single highest-leverage flag redirects ~35% of gradient from "sound like a user" to "answer like an assistant."
     - **DPO deletes the reward model; cache the reference.** `precompute_ref_log_probs=True` (or LoRA-as-reference) removes two of four forwards; DPO needs an LR one-to-two orders of magnitude below SFT, and you watch `rewards/margins` to know it's healthy.
     - **GRPO's cost is generation, so offload it to vLLM.** `use_vllm=True` with `vllm_mode` colocate (single node) or server (disaggregated, weight-sync); the reward function is *your program* (RLVR), and the group std being zero means zero gradient — RL needs prompts at the edge of competence.

@@ -91,13 +91,13 @@ All three must be present simultaneously for a complete exfiltration attack. Eac
     server receives whatever data was injected into `data=`.
 
     **Why this works in numbers**: Modern LLMs have context windows of 128K–1M tokens.
-    An average email is roughly 300–500 tokens. An attacker can therefore exfiltrate
-    on the order of 100–200 emails in a single injection event. Even at a compact
-    200-byte digest per email (sender, subject, one key line) once URL-encoded — a full
-    email body would be closer to 2 KB — that is roughly 40 KB of data, more than a
-    single URL can carry, since server request-line caps are commonly ~8 KB. So the
-    attacker chunks the payload across a handful of image fetches (Exercise 2 works
-    the arithmetic out).
+    An average email is roughly 300–500 tokens, so even the smallest of those windows
+    holds several hundred emails — a 128K context at 400 tokens/email is about 320 —
+    and a 1M-token context holds thousands. Even at a compact 200-byte digest per email
+    (sender, subject, one key line) once URL-encoded — a full email body would be closer
+    to 2 KB — those 320 emails are roughly 64 KB of data, far more than a single URL can
+    carry, since server request-line caps are commonly ~8 KB. So the attacker chunks the
+    payload across roughly eight image fetches (Exercise 2 works the arithmetic out).
 
 ---
 
@@ -166,7 +166,10 @@ def gcg_step(
     vocab_size = embed_matrix.shape[0]
 
     # Build one-hot embeddings for suffix tokens (requires grad)
-    suffix_one_hot = F.one_hot(suffix_ids, vocab_size).float()
+    # Match the embedding dtype: real GCG targets are loaded in fp16/bf16, and
+    # matmul does not promote across dtypes — a hard-coded .float() here raises
+    # "expected m1 and m2 to have the same dtype" on the one-hot @ E line below.
+    suffix_one_hot = F.one_hot(suffix_ids, vocab_size).to(embed_matrix.dtype)
     suffix_one_hot.requires_grad_(True)
 
     # Embed: we normally embed via the lookup table, but for gradient access
@@ -375,7 +378,9 @@ The real open-source options here are small *encoder* classifiers you host yours
 # pip install transformers torch
 from transformers import pipeline
 
-# Prompt Guard 2 emits LABEL_0 = benign, LABEL_1 = injection/jailbreak.
+# Prompt Guard 2 ships an id2label map, so the pipeline emits BENIGN / MALICIOUS
+# (id 0 / id 1). Read model.config.id2label rather than assuming label strings —
+# a checkpoint without id2label falls back to the generic LABEL_0 / LABEL_1.
 guard = pipeline(
     "text-classification",
     model="meta-llama/Llama-Prompt-Guard-2-86M",
@@ -396,7 +401,7 @@ def classify_injection(text: str, threshold: float = 0.5) -> dict:
     scores = []
     for chunk in chunks:
         dist = {d["label"]: d["score"] for d in guard(chunk)[0]}
-        scores.append(dist.get("LABEL_1", dist.get("MALICIOUS", 0.0)))
+        scores.append(dist.get("MALICIOUS", dist.get("LABEL_1", 0.0)))
     worst = max(scores) if scores else 0.0
     return {"is_injection": worst >= threshold, "score": worst}
 ```
@@ -496,7 +501,10 @@ def read_untrusted_document(
         temperature=0,
     )
     data = json.loads(response.choices[0].message.content)
-    # Validate schema strictly — reject unexpected keys
+    # Read only the four known keys, coerced and length-capped; any extra key the
+    # reader emitted is dropped rather than propagated. If you want the stricter
+    # fail-closed behavior, raise on `set(data) - {"title", "main_topics",
+    # "key_facts", "sentiment"}` before constructing the dataclass.
     return DocumentSummary(
         title=str(data.get("title", ""))[:200],           # length cap
         main_topics=[str(t)[:100] for t in data.get("main_topics", [])[:10]],
@@ -540,12 +548,25 @@ SENSITIVE_PATTERNS = {
     "credit_card":  r'\b(?:\d[ -]?){13,16}\b',
 }
 
+# Fields whose whole job is to carry a sensitive-looking value for a given tool.
+# Every legitimate send_email call contains a recipient address, so scanning the
+# recipient fields against the "email" pattern would block 100% of sends. Exempt
+# them from the pattern scan and validate them against a recipient allowlist
+# (authenticated user + addresses already in the thread) instead.
+TOOL_EXEMPT_FIELDS = {
+    "send_email": {"to", "cc", "bcc"},
+}
+
 def filter_tool_call(tool_name: str, tool_args: dict) -> FilterResult:
     """
     Scan all string arguments to a tool call for sensitive data patterns.
     Block the call if any high-severity pattern is found in an outbound context.
+
+    Fields listed in TOOL_EXEMPT_FIELDS are skipped — they are supposed to match,
+    and are checked against an allowlist elsewhere rather than by regex here.
     """
-    args_str = json.dumps(tool_args)
+    exempt = TOOL_EXEMPT_FIELDS.get(tool_name, set())
+    args_str = json.dumps({k: v for k, v in tool_args.items() if k not in exempt})
     matched = []
 
     for label, pattern in SENSITIVE_PATTERNS.items():

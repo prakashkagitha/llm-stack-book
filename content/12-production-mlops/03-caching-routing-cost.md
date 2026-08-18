@@ -183,17 +183,17 @@ The saving is \$0.0054 per call, so at 10,000 calls per day this is approximatel
     = 20{,}000 \times (0.0144 + 0.006) = 20{,}000 \times 0.0204 = \$408/\text{day}
     $$
 
-    **With prompt caching** (system prompt hits cache 95% of the time):
+    **With prompt caching** (the system prompt hits cache on 95% of calls; the other 5% miss and pay the full input price — we ignore the cache-write premium here):
 
     $$
-    \text{daily cost} \approx 20{,}000 \times \frac{4000 \times 0.95 \times 0.0003 + 800 \times 0.003 + 400 \times 0.015}{1000}
+    \text{daily cost} \approx 20{,}000 \times \frac{4000 \times (0.95 \times 0.0003 + 0.05 \times 0.003) + 800 \times 0.003 + 400 \times 0.015}{1000}
     $$
 
     $$
-    = 20{,}000 \times (0.00114 + 0.0024 + 0.006) = 20{,}000 \times 0.00954 = \$190.80/\text{day}
+    = 20{,}000 \times (0.00174 + 0.0024 + 0.006) = 20{,}000 \times 0.01014 = \$202.80/\text{day}
     $$
 
-    Saving: roughly **\$217/day** or **\$79K/year** — just from restructuring your prompt.
+    Saving: roughly **\$205/day** or **\$75K/year** — just from restructuring your prompt.
 
 To maximise prefix cache hits, keep the stable part of your prompt at the top (system instructions, few-shot examples, retrieved context) and put the variable part at the bottom (user message). This is covered in more depth in [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html) and [Context Engineering & Management](../08-agents-harness/04-context-engineering.html).
 
@@ -442,7 +442,7 @@ A 70B parameter model at FP16 requires approximately 140 GB of GPU memory (2 byt
 | FP16 (baseline) | ~140 GB | 1.0× | 0% |
 | INT8 (SmoothQuant) | ~70 GB | 1.3–1.5× | < 0.5% |
 | INT4 (AWQ/GPTQ) | ~35 GB | 1.8–2.2× | 1–3% |
-| INT4 + 2-bit outliers (QuIP#) | ~25 GB | similar to INT4 | 2–5% |
+| 2-bit lattice codebooks (QuIP#, AQLM) | ~18–20 GB | similar to INT4 | 2–5% |
 
 For a fallback tier receiving queries that were already routed away from the frontier model, the 1–3% MMLU degradation is often acceptable.
 

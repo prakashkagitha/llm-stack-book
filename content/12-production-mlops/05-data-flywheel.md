@@ -18,7 +18,7 @@ Each stage has concrete engineering requirements. We will trace through them in 
 
 ### Why the flywheel is a moat
 
-For a new entrant competing against a mature product, the challenge is not the model itself — open-weight base models make that accessible. The challenge is the data advantage. After $k$ rounds of the flywheel, a product has collected approximately $N_0 \cdot r^k$ training examples (where $r > 1$ is the per-round growth factor from a growing user base). More important than volume is *distribution shift*: after many rounds, a well-run flywheel's training set covers the long tail of real user behaviors in a way no static dataset can match. This is the moat.
+For a new entrant competing against a mature product, the challenge is not the model itself — open-weight base models make that accessible. The challenge is the data advantage. After $k$ rounds of the flywheel, a product has collected approximately $D_0 + k \cdot d \cdot N_0$ training examples (with $N_0$ users each contributing $d$ examples per round) — accumulation is roughly *linear* in $k$, not exponential, because the per-round increment $d\,N_k$ grows only as fast as the user base does, which is slow (the "Compounding Data Advantage" section below works the recurrences out exactly and gets $11\times$ the starting corpus after ten rounds). More important than volume is *distribution shift*: after many rounds, a well-run flywheel's training set covers the long tail of real user behaviors in a way no static dataset can match. This is the moat.
 
 ## Structured Logging as the Foundation
 
@@ -334,7 +334,7 @@ The embeddings come from an off-the-shelf encoder — `sentence-transformers` (a
 """
 Core-set active learning: select a diverse and uncertain subset of
 production examples for annotation.  Uses prompt embeddings from a
-small frozen encoder (e.g., a 100M embedding model).
+small frozen encoder (e.g., `all-MiniLM-L6-v2`, ~22M parameters).
 """
 
 from typing import Optional
@@ -353,6 +353,10 @@ def greedy_coreset_indices(
     use a FAISS index for the nearest-center query instead of the
     dense distance recomputation below.
     """
+    # Clamp: asking for more centers than points would otherwise re-select
+    # index 0 forever once every point is a center (min_dists all zero),
+    # silently returning duplicates.
+    k = min(k, len(embeddings))
     if k <= 0:
         return []
     rng = np.random.default_rng(seed)
@@ -408,9 +412,9 @@ A special case of active learning: examples where the model confidently produced
     Suppose you have 10,000 unlabeled examples from one day's traffic and a budget of 500 human labels.
 
     - Your serving logs already carry the average per-token logprob of every output under the *policy* (the $H(\text{output})$ proxy above — not a reward-model score, which is a single scalar per response and says nothing about token-level uncertainty); you take the bottom 2,000 by that value (lowest average logprob = most uncertain).
-    - You embed all 2,000 with a 100M sentence encoder (takes ~30 seconds on a single A100).
+    - You embed all 2,000 with the small sentence encoder above (`all-MiniLM-L6-v2`, ~22M parameters): a couple of seconds on a single A100, of which model load dominates.
     - Core-set sampling selects 250 diverse examples from this uncertain pool.
-    - An additional 250 are selected from hard negatives: code examples where the generated code failed the unit tests (you run the code in a sandbox for every coding request).
+    - An additional 250 are selected from hard negatives: code examples where the generated code failed the unit tests (you run the code in a sandbox for every coding request). The oracle flags these for free, but flagging is not a label — a human still has to write the *corrected* completion, so they consume annotation budget. (Routing them into the training set as bare negatives, per the section above, is the free option; you are paying here for gold responses.)
     - Total: 500 labeled examples. At USD 0.10 per label (HITL vendors), cost is USD 50.
 
     After one week of this process at 500 labels/day, you have 3,500 high-quality examples. Fine-tuning on these (in addition to the base SFT dataset) typically improves reward model Spearman correlation by on the order of 3–8 percentage points — the exact gain depends on task difficulty and the quality of the base RM.
@@ -590,7 +594,7 @@ retraining_job:
   sft_step:
     base_model: "gs://my-models/checkpoint-stable"  # Pinned stable base
     epochs: 1
-    learning_rate: 2.0e-5
+    learning_rate: 2.0e-4            # LoRA LR: ~10x a full-FT LR (drop to ~2e-5 if you remove `peft`)
     batch_size: 128
     peft: lora                       # LoRA to keep training cheap
     lora_rank: 64
@@ -665,7 +669,7 @@ lm_eval --model hf \
 
 (If the candidate lives in the Hub-backed registry instead, `pretrained=my-org/dpo-candidate,revision=<sha>` is the better form — it pins the exact commit, which is what the reproducibility rule below asks for anyway.)
 
-That JSON carries a bootstrap `stderr` alongside every metric — feed it into the gate, not just the point estimate. For agentic or tool-using tasks, the UK AI Safety Institute's **Inspect AI** is the equivalent (it models an eval as a dataset plus a solver plus a scorer, and handles sandboxed tool execution); for safety scans, **garak** is the open-source probe suite. The harness-building details are in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). The gate below is deliberately harness-agnostic: it invokes a named harness, parses metrics, and compares them to thresholds.
+That JSON carries a bootstrap `stderr` alongside every metric — feed it into the gate, not just the point estimate. For agentic or tool-using tasks, the UK AI Security Institute's **Inspect AI** is the equivalent (it models an eval as a dataset plus a solver plus a scorer, and handles sandboxed tool execution); for safety scans, **garak** is the open-source probe suite. The harness-building details are in [Building Eval Harnesses](../11-evaluation/03-eval-harnesses.html). The gate below is deliberately harness-agnostic: it invokes a named harness, parses metrics, and compares them to thresholds.
 
 ```python
 # flywheel/eval_gate/gate.py
@@ -928,7 +932,7 @@ The weekly retraining cycle is a practical baseline. Teams with very high traffi
 - Ziegler et al., "Fine-Tuning Language Models from Human Preferences," arXiv 2019 — first demonstration of reward modeling from human preference labels.
 - Settles, "Active Learning Literature Survey," University of Wisconsin, 2010 — comprehensive reference on uncertainty sampling, query by committee, and core-set methods.
 - Hinton, Vinyals, and Dean, "Distilling the Knowledge in a Neural Network," NIPS Deep Learning Workshop 2015 — the temperature-scaled soft-label distillation paper.
-- Kim and Rush, "Sequence-Level Knowledge Distillation," EMNLP 2016 — adapts KD to sequence-to-sequence models; the on-policy variant is widely used for LLM compression.
+- Kim and Rush, "Sequence-Level Knowledge Distillation," EMNLP 2016 — adapts KD to sequence-to-sequence models by training the student on teacher-generated sequences; this is the *off-policy* baseline that GKD's on-policy sampling is designed to improve on, and it remains widely used for LLM compression.
 - Agarwal et al., "On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes," ICLR 2024 — GKD, the on-policy distillation objective implemented by TRL's `GKDTrainer`.
 - Shumailov et al., "AI Models Collapse When Trained on Recursively Generated Data," Nature 2024 — why every flywheel round needs fresh human data.
 - Swaminathan and Joachims, "Counterfactual Risk Minimization: Learning from Logged Bandit Feedback," ICML 2015 — the foundational treatment of learning from logged, propensity-weighted interaction data.
@@ -940,7 +944,7 @@ The weekly retraining cycle is a practical baseline. Teams with very high traffi
     - Every logged request is raw material. Design schemas for schema evolution (Avro/Protobuf), join client signals asynchronously into a snapshot-versioned Iceberg/Delta table, and store per-token logprobs *and the sampling parameters* even if you do not use them immediately — together they are the propensity $\pi_{\text{old}}(y\mid x)$ you need for off-policy correction and distillation.
     - Logged data is off-policy and self-generated. Correct offline estimates with clipped importance weights, hold out an exploration slice so the logged distribution stays wider than the greedy policy, and keep genuine human-written data in every mix — otherwise the loop narrows into model collapse.
     - Explicit preference labels are expensive and sparse; proxy reward models trained on implicit signals (copy, edit, session continuation) can extend coverage to 100% of traffic.
-    - Active learning with core-set diversity sampling is 3–5x more label-efficient than random sampling — you get coverage of the hard tail without annotation redundancy on easy clusters.
+    - Active learning with core-set diversity sampling typically buys a meaningful label-efficiency gain over random sampling — coverage of the hard tail without annotation redundancy on easy clusters — but the size of the gain is task- and budget-dependent and can shrink toward zero at large annotation budgets.
     - Distillation from production traffic with top-k logit storage lets you continuously compress the serving model, reducing inference cost while maintaining quality on the actual user distribution.
     - Replay buffers at $\rho \approx 0.3$–$0.5$ are the primary defense against catastrophic forgetting during weekly retraining cycles.
     - The eval gate is not optional: win-rate vs. production, a regression suite, and safety checks must all pass before any deployment, however small. Without this gate, the flywheel degrades via Goodhart's Law — the model optimizes for the training distribution rather than genuine quality.

@@ -132,7 +132,7 @@ The experimental setup is elegant and you can reproduce its logic on any model p
 ```python
 import torch, torch.nn.functional as F
 
-def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=0.5,
+def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=None,
                         aux_weight=0.5):
     """Burns et al. found a key trick: an *auxiliary confidence loss* that
     lets the strong model disagree with weak labels when it is internally
@@ -146,9 +146,14 @@ def weak_to_strong_loss(strong_logits, weak_labels, conf_threshold=0.5,
     p = F.softmax(strong_logits, dim=-1).detach()   # target, not a gradient path
     conf, hardened = p.max(dim=-1)                  # hardened self-label = argmax
     per_sample = F.cross_entropy(strong_logits, hardened, reduction="none")
-    # Only trust the self-label on rows the model is actually confident about;
-    # unconfident rows contribute nothing rather than a spurious target.
-    gate = (conf > conf_threshold).float()
+    # Only trust the self-label on rows the model is actually confident about.
+    # The threshold must be ADAPTIVE: max-softmax is >= 1/C by construction
+    # (>= 0.5 on a binary task), so any fixed bar at or below 1/C would admit
+    # every row and degenerate into plain self-distillation. Burns et al.
+    # likewise harden against a threshold read off the batch's own predicted-
+    # probability distribution; here, keep the more-confident half of the batch.
+    thr = conf.median() if conf_threshold is None else conf_threshold
+    gate = (conf > thr).float()
     conf_loss = (gate * per_sample).sum() / gate.sum().clamp_min(1.0)
 
     return (1 - aux_weight) * ce + aux_weight * conf_loss
@@ -305,12 +310,15 @@ def faithfulness_probes(model, question, full_cot, cued_option="A"):
     steps = full_cot.split("\n")
     final = model.answer_given(question, full_cot)
 
-    # (1) Early-answering: how soon is the final answer locked in?
-    locked_at = None
+    # (1) Early-answering: how soon is the final answer locked in? Lock-in is
+    #     the LAST prefix after which the forced answer never changes again --
+    #     not the first prefix that happens to match, which on a binary task
+    #     agrees by chance half the time and would fake early lock-in.
+    locked_at = 1
     for k in range(1, len(steps) + 1):
-        if model.answer_given(question, "\n".join(steps[:k])) == final:
-            locked_at = k; break
-    early_fraction = (locked_at or len(steps)) / len(steps)
+        if model.answer_given(question, "\n".join(steps[:k])) != final:
+            locked_at = min(k + 1, len(steps))
+    early_fraction = locked_at / len(steps)
 
     # (2) Add-mistake: corrupt a middle step; faithful CoT should change answer.
     corrupted = steps.copy()
@@ -362,18 +370,26 @@ def trusted_monitoring_protocol(untrusted_action, trusted_monitor,
     """One step of a control protocol. The trusted (weak, safe) model scores
     the untrusted (strong, maybe-scheming) model's proposed action; we audit
     the most suspicious actions while the budget lasts, else defer to trusted.
-    `human_audit(action) -> 'safe' | 'BACKDOOR'` is the expensive reviewer."""
+    `human_audit(action) -> 'safe' | 'BACKDOOR'` is the expensive reviewer.
+    Returns (status, action_to_execute, audit_budget_remaining, verdict) --
+    slot 1 is ALWAYS the action the caller should run, and `verdict` is the
+    human's ruling when an audit happened and None otherwise."""
     suspicion = trusted_monitor.suspicion_score(untrusted_action)  # in [0,1]
 
     if suspicion >= audit_threshold and audit_budget_remaining > 0:
         # Spend scarce human review on the scariest actions.
         verdict = human_audit(untrusted_action)        # 'safe' or 'BACKDOOR'
-        return ("audited", verdict, audit_budget_remaining - 1)
+        # A cleared action still executes; a flagged one falls back to trusted
+        # (and, in a real deployment, raises an incident and halts the agent).
+        action = untrusted_action if verdict == "safe" else trusted_fallback
+        return ("audited", action, audit_budget_remaining - 1, verdict)
     elif suspicion >= audit_threshold:
         # Out of audit budget but still suspicious -> use the safe model.
-        return ("deferred_to_trusted", trusted_fallback, audit_budget_remaining)
+        return ("deferred_to_trusted", trusted_fallback,
+                audit_budget_remaining, None)
     else:
-        return ("accepted_untrusted", untrusted_action, audit_budget_remaining)
+        return ("accepted_untrusted", untrusted_action,
+                audit_budget_remaining, None)
 
 def safety_usefulness_frontier(suspicion_scores, is_backdoor, audit_frac):
     """Estimate P(catch a backdoor) given we audit the top `audit_frac`
@@ -439,8 +455,13 @@ def deployment_gate(eval_results: dict, current_safeguards: set,
         return {"level": "baseline", "deploy_permitted": True, "missing": set()}
 
     level = max(triggered, key=lambda lv: levels.index(lv))
-    missing_deploy = level.required_deployment - current_safeguards
-    missing_security = level.required_security - current_safeguards
+    # Requirements are CUMULATIVE: crossing a higher threshold does not excuse
+    # the safeguards of the lower levels the model also crossed, so union the
+    # requirements over every triggered level rather than taking the top one.
+    req_deploy = set().union(*(lv.required_deployment for lv in triggered))
+    req_security = set().union(*(lv.required_security for lv in triggered))
+    missing_deploy = req_deploy - current_safeguards
+    missing_security = req_security - current_safeguards
     missing = missing_deploy | missing_security
 
     return {"level": level.name,
@@ -532,7 +553,7 @@ As capabilities rise, the field expects the load-bearing argument to shift from 
 
     **Go deeper**
 
-    - [Anthropic, *Responsible Scaling Policy*](https://www.anthropic.com/responsible-scaling-policy) — live policy document defining ASL capability thresholds, required safeguards per level, and the hard deployment gate; at v3.4 as of July 2026, with revised thresholds for automated AI R&D.
+    - [Anthropic, *Responsible Scaling Policy*](https://www.anthropic.com/responsible-scaling-policy) — live policy document defining ASL capability thresholds, required safeguards per level, and the hard deployment gate. It is revised periodically (and has been extended to cover automated AI R&D thresholds), so check the version in force when you run your evaluations rather than citing a remembered one.
     - [Google DeepMind, *Introducing the Frontier Safety Framework*](https://deepmind.google/blog/introducing-the-frontier-safety-framework/) — DeepMind's analogous Critical Capability Levels framework with evaluation protocols and deployment mitigations.
 
 ### Further reading

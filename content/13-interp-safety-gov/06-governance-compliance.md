@@ -164,7 +164,7 @@ The *provider* must perform a conformity assessment and register the system in t
 
 The **logging** requirement is operationally significant, and it is also the one most often mis-cited. Article 12(1)–(2) requires that high-risk AI systems technically allow the automatic recording of events over the system's lifetime, at a level of traceability appropriate to the intended purpose — specifically enough to identify situations where the system presents a risk under Article 79(1), to support post-market monitoring under Article 72, and to support the deployer's Article 26(5) monitoring. It does **not** enumerate fields. The concrete minimum field list lives in Article 12(3) and applies only to the remote-biometric-identification systems in Annex III point 1(a): period of each use, the reference database checked against, the input data that produced a match, and the identification of the natural persons who verified the results per Article 14(5).
 
-So the schema below is not a verbatim statutory list. It is a defensible superset for a general high-risk LLM deployment: enough to reconstruct what the system did, for whom, and on what input, which is what "traceability appropriate to the intended purpose" cashes out to in an audit.
+So the schema below is not a verbatim statutory list. It is a defensible superset for a general high-risk LLM deployment: enough to establish what the system did, for whom, and against which input, which is what "traceability appropriate to the intended purpose" cashes out to in an audit. Note the word "which": the record identifies the input by digest rather than storing it, so it supports matching a candidate input to the event, not replaying the event from the log alone.
 
 ```python
 # eu_ai_act_logger.py
@@ -195,8 +195,12 @@ class AIActLogRecord:
     # Identity of the invoking system or user (pseudonymised where required)
     invoker_id: str
 
-    # SHA-256 digest of the raw input text (avoids storing personal data
-    # verbatim while still enabling reconstruction under legal obligation)
+    # SHA-256 digest of the raw input text. This avoids storing personal data
+    # verbatim, but it is a one-way function: it lets you VERIFY that a
+    # later-produced candidate input is the one that was processed, not
+    # reconstruct the input. If replay is actually required, retain the
+    # plaintext (or a key-escrowed ciphertext) in a separate store under a
+    # documented retention and access policy, and keep the digest as the link.
     input_sha256: str
 
     # Full output text — retained for audit (encrypt at rest)
@@ -272,11 +276,13 @@ if __name__ == "__main__":
 
 ### Fines
 
-From August 2026, enforcement is live. Fines are capped at:
+The penalty regime in Chapter XII has applied since **2 August 2025** (Art. 113(b)) — the same date the table above gives for the penalties provisions — with the single exception of Article 101, the fines on GPAI model providers, which waits for 2 August 2026. So the prohibited-practice fine has been enforceable alongside the February 2025 prohibitions it backs. Fines are capped at:
 
-- Up to **EUR 35 million or 7 % of global annual turnover** (whichever is higher) for violations of prohibited AI practices.
-- Up to **EUR 15 million or 3 %** for other violations of the Act.
+- Up to **EUR 35 million or 7 % of global annual turnover** (whichever is higher) for violations of prohibited AI practices (Art. 99(3)).
+- Up to **EUR 15 million or 3 %** for other violations of the Act, including the provider, deployer and Article 50 transparency duties (Art. 99(4)).
 - Up to **EUR 7.5 million or 1 %** for providing incorrect, incomplete or misleading information to notified bodies or national competent authorities (Art. 99(5)).
+
+Article 99(6) inverts the tie-break for SMEs and start-ups: for them, each fine is capped at the **lower** of the fixed amount and the percentage. The "whichever is higher" rule therefore applies only to firms above the EU SME thresholds (broadly, 250+ employees, or turnover above EUR 50 M and balance sheet above EUR 43 M).
 
 The EU AI Office has enforcement jurisdiction over GPAI models; national market surveillance authorities handle high-risk application violations.
 
@@ -315,8 +321,9 @@ architecture:
 # ── Training ─────────────────────────────────────────────────────────────────
 training:
   compute_flops: "~8.4e23"         # 6ND for 70B x 2T; below 1e25 systemic-risk threshold
-  hardware: "4096 x H100 SXM5"
-  duration_days: 42
+  hardware: "4096 x H100 SXM5"     # ~989 TFLOP/s dense BF16 peak per GPU
+  mfu: "~0.40"                     # model FLOPs utilisation, measured
+  duration_days: 6                 # 8.4e23 / (4096 x 9.89e14 x 0.40) ~= 5.2e5 s
   training_objective: "Next-token prediction (causal LM)"
   post_training: ["SFT", "RLHF/DPO"]
 
@@ -559,9 +566,9 @@ import json
 import smtplib
 import time
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from email.mime.text import MIMEText
-from typing import Optional
+from typing import Dict, Optional
 
 
 class IncidentSeverity(enum.Enum):
@@ -601,8 +608,12 @@ class AIIncidentReport:
     # so a frontier incident that also killed someone is not silently
     # de-scoped to a single notification.
     art73_serious: bool = False
-    notified_authority: Optional[str] = None
-    notification_timestamp_ms: Optional[float] = None
+
+    # Recipient key ("ai_office", "national_authority") -> Unix epoch ms at
+    # which THAT notification was sent. A dict, not a scalar pair: notifying
+    # the AI Office must neither overwrite the evidence that the national
+    # authority was notified nor stop the national clock (and vice versa).
+    notifications: Dict[str, float] = field(default_factory=dict)
 
 
 def triage_incident(
@@ -613,13 +624,20 @@ def triage_incident(
     """
     Triage an incoming event and assign severity.
     harm_indicators keys (all bool unless noted): death, serious_injury,
-    service_disruption, fundamental_rights_violation, property_damage,
-    broad_societal_impact, and affected_count (int | None).
+    fundamental_rights_violation, critical_infrastructure_disruption,
+    serious_property_or_environmental_harm, service_disruption (an ordinary
+    outage, NOT critical infrastructure), broad_societal_impact, and
+    affected_count (int | None).
     """
+    # The five limbs of Art. 3(49). Note that critical-infrastructure
+    # disruption and serious harm to property or the environment are serious
+    # incidents in their own right — an ordinary SaaS outage is not.
     is_serious = any([
         harm_indicators.get("death"),
         harm_indicators.get("serious_injury"),
         harm_indicators.get("fundamental_rights_violation"),
+        harm_indicators.get("critical_infrastructure_disruption"),
+        harm_indicators.get("serious_property_or_environmental_harm"),
     ])
     is_systemic = bool(harm_indicators.get("broad_societal_impact"))
 
@@ -631,6 +649,7 @@ def triage_incident(
     elif is_serious:
         severity = IncidentSeverity.SERIOUS
     elif harm_indicators.get("service_disruption") or harm_indicators.get("property_damage"):
+        # Non-critical outage or minor property damage: internal review only.
         severity = IncidentSeverity.SIGNIFICANT
     else:
         severity = IncidentSeverity.MINOR
@@ -656,7 +675,8 @@ def _infer_harm_category(harm_indicators: dict) -> str:
         return "health"
     if harm_indicators.get("fundamental_rights_violation"):
         return "fundamental_rights"
-    if harm_indicators.get("service_disruption"):
+    if (harm_indicators.get("critical_infrastructure_disruption")
+            or harm_indicators.get("service_disruption")):
         return "essential_services"
     return "property"
 
@@ -665,16 +685,20 @@ def notify_authority(
     report: AIIncidentReport,
     smtp_host: str,
     authority_email: str,
+    recipient: str,
 ) -> None:
     """
     Send structured incident notification email to the relevant authority.
     Replace with the AI Office / national-authority reporting portal API
     when one is published.
-    Deadline: SYSTEMIC ~2 days (Code of Practice); SERIOUS <=15 days
-    (Art. 73; tighter for deaths and critical-infrastructure disruption).
+    `recipient` is the track being satisfied: "ai_office" (Art. 55(1)(c)) or
+    "national_authority" (Art. 73). Deadline: SYSTEMIC ~2 days (Code of
+    Practice); SERIOUS <=15 days (Art. 73; tighter for deaths and
+    critical-infrastructure disruption).
     Call this once PER RECIPIENT: a report with severity == SYSTEMIC and
     art73_serious == True owes the AI Office *and* the national market
-    surveillance authority, on their two separate clocks.
+    surveillance authority, on their two separate clocks — and each call
+    records its own entry in `report.notifications`.
     """
     body = json.dumps(asdict(report), indent=2, default=str)
     msg = MIMEText(body, "plain", "utf-8")
@@ -688,8 +712,7 @@ def notify_authority(
     with smtplib.SMTP(smtp_host) as s:
         s.sendmail(msg["From"], [msg["To"]], msg.as_string())
 
-    report.notified_authority = authority_email
-    report.notification_timestamp_ms = time.time() * 1000
+    report.notifications[recipient] = time.time() * 1000
 ```
 
 !!! warning "Common pitfall"
@@ -1045,7 +1068,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
 !!! key "Key Takeaways"
 
-    - The EU AI Act phases in obligations over 2025–2027; the most operationally significant dates are **Aug 2025** (GPAI model duties) and **Aug 2026** (high-risk application enforcement with fines up to 7% of global turnover).
+    - The EU AI Act phases in obligations over 2025–2027; the most operationally significant dates are **Aug 2025** (GPAI model duties, and the penalty regime itself under Art. 113(b)) and **Aug 2026** (high-risk application obligations). Fines run to EUR 35 M / 7 % of global turnover for prohibited practices and EUR 15 M / 3 % for provider, deployer and transparency breaches — inverted to the *lower* of the two for SMEs and start-ups (Art. 99(6)).
     - The **systemic-risk threshold** is $10^{25}$ FLOPs of training compute (Art. 51(2)). Models below it still carry the Art. 53 documentation, copyright and training-data-summary obligations — including the Annex XI energy field; models above it add Art. 55's model evaluation and adversarial testing, systemic-risk mitigation, incident reporting to the EU AI Office, and cybersecurity.
     - The **Article 53(2) open-source carve-out** drops the technical-documentation and downstream-provider duties for genuinely open-weight releases, but never drops the copyright policy or the public training-data summary, and disappears entirely once a model crosses the systemic-risk threshold.
     - **Article 50** turns the "limited-risk" tier into real work from Aug 2026: disclose the AI, and mark synthetic output in a machine-readable way (C2PA content credentials plus text watermarking are the two practical layers).
@@ -1059,7 +1082,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 ---
 
 !!! sota "State of the Art & Resources (2026)"
-    AI governance and compliance has rapidly moved from voluntary guidance to binding law: the EU AI Act's GPAI-model obligations have been in force since Aug 2025 (with the Commission-endorsed GPAI Code of Practice as the primary compliance route), and the high-risk application and Article 50 transparency regimes — with fines up to 7% of global turnover — were legislated to take effect Aug 2026, though the Commission's late-2025 "Digital Omnibus" simplification proposal sought to postpone parts of that regime, so verify the current consolidated timetable before you plan against it. Meanwhile the US layer has shifted to the states (California SB 53's frontier-developer transparency and incident reporting; Colorado's repeatedly delayed AI Act), and the NIST AI RMF and ISO/IEC 42001 have become the operational backbone that organisations use to satisfy all of these at once. The resources below cover the foundational papers, the primary regulatory texts, and the open-source tooling engineers need to build compliant systems.
+    AI governance and compliance has rapidly moved from voluntary guidance to binding law: the EU AI Act's GPAI-model obligations have been in force since Aug 2025 (with the Commission-endorsed GPAI Code of Practice as the primary compliance route), and the high-risk application and Article 50 transparency regimes — breaches of which carry fines up to EUR 15 M or 3% of global turnover, with the 7% tier reserved for prohibited practices — were legislated to take effect Aug 2026, though the Commission's late-2025 "Digital Omnibus" simplification proposal sought to postpone parts of that regime, so verify the current consolidated timetable before you plan against it. Meanwhile the US layer has shifted to the states (California SB 53's frontier-developer transparency and incident reporting; Colorado's repeatedly delayed AI Act), and the NIST AI RMF and ISO/IEC 42001 have become the operational backbone that organisations use to satisfy all of these at once. The resources below cover the foundational papers, the primary regulatory texts, and the open-source tooling engineers need to build compliant systems.
 
     **Foundational work**
 
@@ -1142,7 +1165,7 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     Additional tokens needed: $8.33 \times 10^{12} - 8 \times 10^{12} \approx 3.3 \times 10^{11}$, i.e. roughly **330 billion more tokens**. A modest extension of the run would tip the model across the line and pull in the full Article 55 regime.
 
-**3.** The EU AI Act caps fines as the *higher* of a fixed euro amount or a percentage of global annual turnover: EUR 35 M / 7% for prohibited practices, EUR 15 M / 3% for other violations, EUR 7.5 M / 1% for supplying incorrect information. Compute the maximum fine for each violation category for (a) a large provider with EUR 2 billion global annual turnover, and (b) a startup with EUR 100 million turnover. Which company is bound by the fixed cap rather than the percentage, and for which categories?
+**3.** For firms above the EU SME thresholds, the AI Act caps fines as the *higher* of a fixed euro amount or a percentage of global annual turnover: EUR 35 M / 7% for prohibited practices, EUR 15 M / 3% for other violations, EUR 7.5 M / 1% for supplying incorrect information. Compute the maximum fine for each violation category for (a) a large provider with EUR 2 billion global annual turnover, and (b) a mid-sized provider with EUR 100 million turnover — both above the SME thresholds, so the "higher of" rule applies to both. Which company is bound by the fixed cap rather than the percentage, and for which categories? Then state what changes if company (b) were instead a genuine SME start-up.
 
 ??? note "Solution"
 
@@ -1162,7 +1185,9 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
     - Other violations: $\max(15\text{M},\ 0.03 \times 100\text{M}) = \max(15\text{M},\ 3\text{M}) = \textbf{EUR 15 M}$ (fixed cap).
     - Incorrect information: $\max(7.5\text{M},\ 0.01 \times 100\text{M}) = \max(7.5\text{M},\ 1\text{M}) = \textbf{EUR 7.5 M}$ (fixed cap).
 
-    The **startup is bound by the fixed euro caps in all three categories**, because 7% of its turnover (EUR 7 M) is smaller than the EUR 35 M fixed floor, and likewise for the other rows. The "higher of" rule is what makes the euro caps bite hardest on smaller firms while the percentage bites hardest on large ones — a prohibited-practice fine of EUR 35 M is 35% of the startup's turnover but only 1.75% of the large provider's.
+    The **mid-sized provider is bound by the fixed euro caps in all three categories**, because 7% of its turnover (EUR 7 M) is smaller than the EUR 35 M fixed floor, and likewise for the other rows. The "higher of" rule is what makes the euro caps bite hardest on smaller firms while the percentage bites hardest on large ones — a prohibited-practice fine of EUR 35 M is 35% of the mid-sized provider's turnover but only 1.75% of the large provider's.
+
+    **If (b) were a genuine SME start-up**, Article 99(6) flips the tie-break to `min` rather than `max`, and the arithmetic inverts: the prohibited-practice cap becomes $\min(35\text{M},\ 7\text{M}) = \textbf{EUR 7 M}$, other violations $\min(15\text{M},\ 3\text{M}) = \textbf{EUR 3 M}$, incorrect information $\min(7.5\text{M},\ 1\text{M}) = \textbf{EUR 1 M}$. That is the point of the provision: the percentage, not the fixed floor, is what binds a small firm, so a single enforcement action cannot wipe out a start-up. The EUR 100 M-turnover firm sits above the SME turnover ceiling of EUR 50 M and so does not get that relief.
 
 **4.** The chapter's `write_log_record` note says to "include a chain hash for tamper evidence in high-assurance deployments." Implement that: modify the logging code so each record embeds the SHA-256 of the *previous* record's serialized JSON, forming a hash chain (a mini blockchain). Then write a verifier that walks a log file and returns the index of the first tampered record, or `None` if the chain is intact.
 
@@ -1249,11 +1274,11 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
         print("chain verification OK")
     ```
 
-**5.** Extend the incident pipeline with deadline logic. Take the chapter's configured budgets: a systemic-risk incident (Art. 55(1)(c), day count from the GPAI Code of Practice) gets **2 days** to notify the EU AI Office; an Article 73 serious incident gets **15 days** to notify the national authority; `SIGNIFICANT` is internal-only (no external deadline) and `MINOR` needs no notification. Implement `notification_deadline_ms(report)` returning the absolute deadline timestamp (or `None` when no external notification is required), and `is_overdue(report, now_ms)` returning whether the deadline has passed without a notification having been sent.
+**5.** Extend the incident pipeline with deadline logic. Take the chapter's configured budgets: a systemic-risk incident (Art. 55(1)(c), day count from the GPAI Code of Practice) gets **2 days** to notify the EU AI Office; an Article 73 serious incident gets **15 days** to notify the national authority; `SIGNIFICANT` is internal-only (no external deadline) and `MINOR` needs no notification. Remember that the two obligations are independent, so one incident can owe both. Implement `notification_deadlines_ms(report)` returning a `{recipient: absolute deadline}` mapping (empty when no external notification is required), and `is_overdue(report, now_ms)` returning whether *any* recipient's deadline has passed without that recipient having been notified.
 
 ??? note "Solution"
 
-    We map each `IncidentSeverity` to a deadline measured from `detection_timestamp_ms`, reusing the enum and `AIIncidentReport` dataclass from the chapter's `incident_reporter.py`. `MINOR` and `SIGNIFICANT` carry no external clock, so the deadline is `None`.
+    The trap in this exercise is keying the deadline on `severity` alone. `severity` is a single escalation label, but Art. 73 and Art. 55(1)(c) are separate obligations with separate recipients and separate clocks — which is exactly why `AIIncidentReport` carries `art73_serious` alongside `severity` and records `notifications` per recipient. A frontier incident that also killed someone is `SYSTEMIC` *and* `art73_serious`, and owes two notifications; a scalar deadline would silently drop the 15-day national one.
 
     ```python
     # incident_deadlines.py
@@ -1263,39 +1288,38 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
 
     _MS_PER_DAY = 24 * 60 * 60 * 1000
 
-    # Days allowed for EXTERNAL notification, keyed by severity.
-    _DEADLINE_DAYS = {
-        IncidentSeverity.SYSTEMIC: 2,    # Art. 55(1)(c): EU AI Office
-        IncidentSeverity.SERIOUS: 15,    # Art. 73: national authority
-        # SIGNIFICANT and MINOR: no external deadline
-    }
+    # Days allowed for EXTERNAL notification, keyed by recipient track.
+    AI_OFFICE_DAYS = 2       # Art. 55(1)(c), day count from the Code of Practice
+    NATIONAL_DAYS = 15       # Art. 73 outer limit (tighter for deaths / CI)
 
 
-    def notification_deadline_ms(report: AIIncidentReport):
+    def notification_deadlines_ms(report: AIIncidentReport) -> dict:
         """
-        Absolute deadline (Unix epoch ms) by which an external notification
-        must be sent, or None if this severity requires no external report.
+        {recipient: absolute deadline in Unix epoch ms}. Empty dict when no
+        external notification is owed (MINOR / SIGNIFICANT and not Art. 73).
         """
-        days = _DEADLINE_DAYS.get(report.severity)
-        if days is None:
-            return None
-        return report.detection_timestamp_ms + days * _MS_PER_DAY
+        det = report.detection_timestamp_ms
+        deadlines = {}
+        if report.severity is IncidentSeverity.SYSTEMIC:
+            deadlines["ai_office"] = det + AI_OFFICE_DAYS * _MS_PER_DAY
+        if report.art73_serious or report.severity is IncidentSeverity.SERIOUS:
+            deadlines["national_authority"] = det + NATIONAL_DAYS * _MS_PER_DAY
+        return deadlines
 
 
     def is_overdue(report: AIIncidentReport, now_ms: float) -> bool:
         """
-        True iff an external notification was required, the deadline has passed,
-        and no notification has been sent (notification_timestamp_ms is None).
+        True iff some owed notification is past its deadline and has not been
+        sent. Each recipient is checked against its OWN clock and its OWN
+        entry in `report.notifications`.
         """
-        deadline = notification_deadline_ms(report)
-        if deadline is None:
-            return False                       # nothing was due
-        if report.notification_timestamp_ms is not None:
-            return False                       # already notified -> not overdue
-        return now_ms > deadline
+        for recipient, deadline in notification_deadlines_ms(report).items():
+            if recipient not in report.notifications and now_ms > deadline:
+                return True
+        return False
     ```
 
-    Notes on the design. The deadline is anchored to `detection_timestamp_ms` (the moment of "becoming aware"), matching the Act's wording. A `SYSTEMIC` incident detected at day 0 must be reported within `2 * 86_400_000` ms; if `now_ms` exceeds that and `notification_timestamp_ms` is still `None`, `is_overdue` returns `True`, which is exactly the condition a monitor should page on. Once `notify_authority` sets `notification_timestamp_ms`, the incident is no longer overdue even after the deadline — the obligation was met. `SIGNIFICANT`/`MINOR` return `None`/`False` because the chapter classifies them as internal-only, so they never fire an external-deadline alert.
+    Notes on the design. Each deadline is anchored to `detection_timestamp_ms` (the moment of "becoming aware"), matching the Act's wording. A `SYSTEMIC` incident detected at day 0 must reach the AI Office within `2 * 86_400_000` ms; if `now_ms` exceeds that and `"ai_office"` is absent from `report.notifications`, `is_overdue` returns `True`, which is exactly the condition a monitor should page on. Because the loop tests each recipient separately, notifying the AI Office on day 1 does *not* silence the national-authority alarm on day 16. `SIGNIFICANT`/`MINOR` return an empty mapping, so they never fire an external-deadline alert. Extending this to the tighter Art. 73 tiers is a one-line change: pick 10 days when `harm_category == "health"` and a death occurred, 2 days for critical-infrastructure disruption or a widespread infringement.
 
     ```python
     # Sanity check
@@ -1306,11 +1330,16 @@ See [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/
             affected_system="s", number_of_affected_persons=None,
             harm_category="health", corrective_measures_taken="", ongoing=True,
             detected_by="automated_monitor", assigned_to="team",
+            art73_serious=True,                  # also killed someone
         )
-        two_days = 2 * 24 * 60 * 60 * 1000
-        assert notification_deadline_ms(r) == two_days
-        assert is_overdue(r, now_ms=two_days + 1) is True     # missed it
-        r.notification_timestamp_ms = two_days - 1000         # notified in time
-        assert is_overdue(r, now_ms=two_days + 1) is False
+        day = 24 * 60 * 60 * 1000
+        assert notification_deadlines_ms(r) == {
+            "ai_office": 2 * day, "national_authority": 15 * day,
+        }
+        assert is_overdue(r, now_ms=2 * day + 1) is True      # missed the AI Office
+        r.notifications["ai_office"] = 2 * day - 1000         # notified in time
+        assert is_overdue(r, now_ms=2 * day + 1) is False
+        # ...but the independent Art. 73 clock still runs:
+        assert is_overdue(r, now_ms=15 * day + 1) is True
         print("deadline logic OK")
     ```

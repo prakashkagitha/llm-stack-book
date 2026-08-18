@@ -30,7 +30,7 @@ $$
 \mathcal{L}(\theta) = -\frac{1}{N}\sum_{i=1}^{N} \log p_\theta(x_i \mid x_{<i}).
 $$
 
-Gradient descent drives $p_\theta(x_i \mid x_{<i}) \to 1$ for tokens it can fit. For a *unique, low-entropy, high-surprise* sequence — a random 16-digit credit-card number, a UUID, a GitHub token — there is no generalizable rule that predicts the next digit; the only way to drive its loss down is to *store* it in the weights. Modern LLMs are heavily over-parameterized relative to the information content of any single rare sequence, so there is ample capacity to do exactly that. Memorization is therefore not pathological overfitting that early stopping cures; it is the *optimal* behavior of the objective on rare sequences, and it appears well before the model overfits in the classical (rising-validation-loss) sense.
+Gradient descent drives $p_\theta(x_i \mid x_{<i}) \to 1$ for tokens it can fit. For a *unique, high-entropy, high-surprise* sequence — a random 16-digit credit-card number, a UUID, a GitHub token — there is no generalizable rule that predicts the next digit; the only way to drive its loss down is to *store* it in the weights. Modern LLMs are heavily over-parameterized relative to the information content of any single rare sequence, so there is ample capacity to do exactly that. Memorization is therefore not pathological overfitting that early stopping cures; it is the *optimal* behavior of the objective on rare sequences, and it appears well before the model overfits in the classical (rising-validation-loss) sense.
 
 ### 1.2 The three things that drive memorization
 
@@ -49,7 +49,7 @@ Empirically, three factors dominate how much a given string gets memorized:
 
 ## 2. The Attack Surface: Extraction, Membership Inference, Reconstruction
 
-Memorization is only a *privacy* problem when an adversary can exploit it. There are three canonical attack families, ordered roughly by how much they extract.
+Memorization is only a *privacy* problem when an adversary can exploit it. There are three canonical attack families. We take them in the order you usually meet them in practice, which is *not* the order of severity: by how much they recover, the ladder runs membership inference (one bit) → extraction (verbatim strings) → reconstruction (a targeted record).
 
 ### 2.1 Training-data extraction
 
@@ -111,7 +111,7 @@ where $\operatorname{rank}_\theta(s)$ is the rank of the true canary $s$ among a
 - If the model has *not* memorized the canary, its rank is roughly uniform in $[1, |R|]$, so $\mathbb{E}[\operatorname{rank}] \approx |R|/2$ and exposure $\approx 1$ bit.
 - If the model has *fully* memorized it, $\operatorname{rank} = 1$ and exposure $= \log_2 |R|$ bits (e.g. $\approx 26.6$ bits for $10^8$). **The canary is now extractable by brute-force enumeration.**
 
-Exposure is wonderful because it is a *continuous, calibrated* signal — you do not need to wait until the model emits the canary verbatim; you can watch exposure climb during training and catch the leak early. And computing exact rank does not require enumerating all $|R|$ candidates: under a log-normal model of the perplexity distribution you can estimate rank from a small sample.
+Exposure is wonderful because it is a *continuous, calibrated* signal — you do not need to wait until the model emits the canary verbatim; you can watch exposure climb during training and catch the leak early. And you do not need the *exact* rank, which would mean enumerating all $|R|$ candidates: fit a parametric distribution to the log-perplexities of a small random sample of $R$ (Carlini et al. use a skew-normal fit) and read the rank off the fitted tail.
 
 !!! example "Worked example: from exposure to extractability"
     Insert a canary `"my secret key is XXXXXXXXX"` whose body is 9 random digits, so $|R| = 10^9$ and $\log_2 |R| \approx 29.9$ bits. We train, then rank the true body among all $10^9$ candidates by model perplexity.
@@ -147,7 +147,11 @@ def canary_exposure(model, tokenizer, template, true_body, body_space_size,
     body_space_size: |R|, the number of possible bodies (e.g. 10**8)
 
     We sample candidate bodies, score them, and estimate the rank of the true
-    body via a log-normal fit of the perplexity distribution (Carlini et al.).
+    body from a fitted tail. Carlini et al. fit a *skew*-normal to the sampled
+    log-perplexities; the symmetric Gaussian used below is the simpler special
+    case, and because the log-prob of random fill-ins is usually right-skewed it
+    biases the tail estimate somewhat (swap in scipy.stats.skewnorm's `sf` if you
+    need the faithful version).
     """
     import random
     rng = rng or random.Random(0)
@@ -289,6 +293,7 @@ The algorithm that delivers DP for deep learning is **DP-SGD** (Abadi et al., 20
    $$
    \hat{g} \;=\; \frac{1}{B}\Big(\sum_{i=1}^{B} \tilde{g}_i \;+\; \mathcal{N}\big(0,\; \sigma^2 C^2 \mathbf{I}\big)\Big).
    $$
+   Under Poisson sampling the $B$ in the denominator is the *expected* lot size $qN$ — a constant — while the number of terms in the sum is the realized (random) batch size; dividing by the realized size instead is a different mechanism from the one the accountant prices.
 
 The noise multiplier $\sigma$ together with the **sampling rate** $q = B/N$ and the number of steps $T$ determines $\varepsilon$ via a *privacy accountant* (the Rényi-DP / moments accountant, or the tighter PRV accountant). Each step "spends" privacy budget; composition adds it up over training.
 
@@ -320,16 +325,25 @@ The noise multiplier $\sigma$ together with the **sampling rate** $q = B/N$ and 
 import torch
 
 def dp_sgd_step(model, batch, loss_fn, optimizer,
-                clip_norm=1.0, noise_multiplier=1.0, device="cuda"):
+                clip_norm=1.0, noise_multiplier=1.0,
+                expected_batch_size=None, device="cuda"):
     """
     One DP-SGD step done explicitly (microbatch=1) to expose the mechanism.
     In production use Opacus (PrivacyEngine), which gets per-sample gradients
     via module hooks (GradSampleModule) or torch.func.vmap(grad(...)) instead
     of this Python loop, and tracks the privacy accountant for you. This loop
     is pedagogical, not fast.
+
+    Under Poisson sampling the realized batch size is a RANDOM variable, so the
+    mechanism the accountant prices divides the noisy sum by the EXPECTED lot
+    size q*N, not by |B| (this is Opacus's `expected_batch_size`). Pass it
+    explicitly whenever you Poisson-sample; an empty batch is then a legal draw
+    that still applies a pure-noise update.
     """
     xs, ys = batch                       # xs: (B, ...), ys: (B, ...)
     B = xs.size(0)
+    denom = expected_batch_size if expected_batch_size is not None else max(B, 1)
+    loss = None                          # stays None if this batch came up empty
     # Accumulator for the summed, clipped gradients.
     summed = [torch.zeros_like(p) for p in model.parameters()]
 
@@ -353,10 +367,10 @@ def dp_sgd_step(model, batch, loss_fn, optimizer,
         noise = torch.normal(mean=0.0,
                              std=noise_multiplier * clip_norm,
                              size=acc.shape, device=device)
-        p.grad = (acc + noise) / B                        # noisy mean gradient
+        p.grad = (acc + noise) / denom                    # noisy mean gradient
 
     optimizer.step()
-    return loss.item()
+    return None if loss is None else loss.item()
 
 # Real usage with Opacus (per-sample grads, Poisson sampling, accountant):
 #   from opacus import PrivacyEngine
@@ -693,7 +707,7 @@ The engineering upshot is a single sentence you can take to a design review: **d
 ??? note "Solution"
     **(a) Memorization is decoupled from overfitting.** Validation loss is an *average* over the bulk of the data distribution, whereas verbatim memorization concerns the *tail* of rare, high-surprise examples (a unique credit-card number, a UUID, a one-off secret). A model can drive the loss of thousands of unique sequences to near zero — storing them in its weights — while the *average* validation loss keeps falling smoothly, because those memorized tail examples are a vanishing fraction of the average. So "no train/val gap" tells you nothing about the tail. As the chapter puts it, the two phenomena "are decoupled because memorization concerns the tail of rare examples while validation loss is an average over the bulk."
 
-    Moreover, memorization is not pathological overfitting at all: for a unique, low-entropy, high-surprise sequence there is *no generalizable rule* that predicts the next token, so the only way maximum likelihood can lower that sequence's loss is to store it verbatim. Memorization is therefore the *optimal* behavior of the cross-entropy objective on rare sequences, and it appears *well before* the model overfits in the classical rising-validation-loss sense.
+    Moreover, memorization is not pathological overfitting at all: for a unique, high-entropy, high-surprise sequence there is *no generalizable rule* that predicts the next token, so the only way maximum likelihood can lower that sequence's loss is to store it verbatim. Memorization is therefore the *optimal* behavior of the cross-entropy objective on rare sequences, and it appears *well before* the model overfits in the classical rising-validation-loss sense.
 
     **(b) Weight decay, dropout, and early stopping target the wrong statistic.** These regularizers are designed to close the train/val *average* gap — exactly the statistic that is already healthy here. They do not specifically suppress the storage of individual rare sequences; early stopping in particular is useless because memorization happens early, before any validation-loss turnaround it could trigger on. The right tools operate on the tail and on individual-record influence: **deduplication** (collapses the highest-duplication, most-extractable tail), **PII scrubbing** (removes the secrets pre-training), and **DP-SGD** (formally bounds how much any single record changes the model). Only DP gives a guarantee; the standard regularizers give none.
 

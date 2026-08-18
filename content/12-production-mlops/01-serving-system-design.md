@@ -215,7 +215,7 @@ for rate in 4 8 12 16 20 24; do
 done
 ```
 
-The highest `--request-rate` whose p99 TTFT and p90 TPOT still sit inside the SLO is that replica's **goodput**; dividing it by the target utilization gives the $\mu$ you plug into the sizing formulas. (SGLang ships the equivalent as `python -m sglang.bench_serving`; NVIDIA's `genai-perf` does the same for TensorRT-LLM and Triton.)
+The sweep gives you two different numbers, and confusing them is a classic sizing error. The highest `--request-rate` whose p99 TTFT and p90 TPOT still sit inside the SLO is that replica's **goodput** $g$ — a rate that is *already* derated by the SLO. The $\mu$ in the queueing formulas is a different quantity: the **saturation** service rate, the throughput one replica sustains when you ignore latency entirely and just push it until it stops keeping up (in the worked example below, $\mu = 12.5$ req/s comes from a 10,000 tok/s prefill rate, not from an SLO measurement). Plug the saturation $\mu$ into $c \ge \lambda/(0.7\,\mu)$ and the headroom does its job; set $\mu = g/0.7$ instead and the algebra collapses to $c \ge \lambda/g$, parking every replica exactly on the SLO cliff with zero margin — the $1/\rho$ factor you inserted is cancelled by the one the formula re-applies. Use the goodput as the cross-check instead: the per-replica load you provision, $0.7\,\mu$, must land below $g$. (SGLang ships the equivalent as `python -m sglang.bench_serving`; NVIDIA's `genai-perf` does the same for TensorRT-LLM and Triton.)
 
 !!! example "Worked example: sizing a pool to a p99 TTFT SLO"
 
@@ -402,7 +402,10 @@ Because cold starts are slow, the standard pattern is **predictive + buffered au
 import math
 
 def desired_replicas(current_replicas,
-                     waiting_tokens, running_tokens,
+                     waiting_tokens,           # queued tokens, prefill not started
+                     running_remaining_tokens, # tokens in-flight seqs still have to
+                                               # GENERATE -- not their resident KV,
+                                               # which is finished work, not backlog
                      replica_token_capacity,   # tokens/sec one replica sustains
                      drain_horizon_s=10.0,     # clear the current backlog this fast
                      target_utilization=0.7,
@@ -412,14 +415,17 @@ def desired_replicas(current_replicas,
     Target-tracking autoscaler driven by QUEUE load (a leading indicator),
     not GPU utilization (a lagging one).
 
-    Watch the units: the backlog (queued + in-flight tokens) is a *stock* of
-    tokens, while `replica_token_capacity` is a *rate* (tokens/sec). Convert one
-    into the other with an explicit drain horizon -- we want the work the fleet
-    currently owes cleared within `drain_horizon_s` seconds -- and size so that
-    the resulting token rate sits at `target_utilization` of total capacity,
-    then add a warm buffer to absorb spikes during the slow cold-start window.
+    Watch the units: the backlog is a *stock* of tokens the fleet still OWES,
+    while `replica_token_capacity` is a *rate* (tokens/sec). Only unfinished work
+    counts -- KV already resident for a running sequence is work already done, and
+    charging it to the backlog would manufacture demand that grows with context
+    length even when the queue is empty. Convert stock into rate with an explicit
+    drain horizon -- we want that owed work cleared within `drain_horizon_s`
+    seconds -- and size so that the resulting token rate sits at
+    `target_utilization` of total capacity, then add a warm buffer to absorb
+    spikes during the slow cold-start window.
     """
-    backlog_tokens = waiting_tokens + running_tokens
+    backlog_tokens = waiting_tokens + running_remaining_tokens
     offered_rate = backlog_tokens / drain_horizon_s          # tokens/sec
     raw = math.ceil(offered_rate / (target_utilization * replica_token_capacity))
     desired = raw + warm_buffer
@@ -441,7 +447,16 @@ spec:
     name: vllm-llama3-8b          # the Deployment running `vllm serve`
   minReplicaCount: 2              # never scale to zero for a latency-sensitive model
   maxReplicaCount: 64
-  cooldownPeriod: 300             # scale DOWN slowly: 5 min of quiet before shrinking
+  # NOTE: `cooldownPeriod` governs ONLY the 1 -> 0 transition, so with
+  # minReplicaCount: 2 it never fires. Every N -> M change is delegated to the
+  # HPA underneath, so scale-down damping belongs in `behavior`:
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0     # scale UP immediately
+        scaleDown:
+          stabilizationWindowSeconds: 300   # 5 min of quiet before shrinking
   triggers:
     - type: prometheus
       metadata:
@@ -452,7 +467,7 @@ spec:
         threshold: "5"            # ~5 waiting requests per replica is the target
 ```
 
-`vllm:num_requests_waiting` is one of the gauges vLLM exports on `/metrics` alongside `vllm:num_requests_running`, `vllm:gpu_cache_usage_perc` and the `vllm:time_to_first_token_seconds` / `vllm:time_per_output_token_seconds` histograms (see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html) and [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html)). Asymmetric timing is configured through KEDA's `advanced.horizontalPodAutoscalerConfig.behavior` (fast `scaleUp`, throttled `scaleDown`), and draining is bought with a generous `terminationGracePeriodSeconds` plus a `preStop` hook that deregisters the pod from the router before the engine is asked to stop. **KServe** and **Ray Serve** package the same loop (including scale-to-zero and request-driven autoscaling) at a higher level if you would rather not assemble it from primitives.
+`vllm:num_requests_waiting` is one of the gauges vLLM exports on `/metrics` alongside `vllm:num_requests_running`, `vllm:gpu_cache_usage_perc` and the `vllm:time_to_first_token_seconds` / `vllm:time_per_output_token_seconds` histograms (see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html) and [Observability, Logging & LLMOps](../12-production-mlops/02-observability-llmops.html)). Asymmetric timing is configured through KEDA's `advanced.horizontalPodAutoscalerConfig.behavior` (fast `scaleUp`, throttled `scaleDown`), as above — `cooldownPeriod` is the wrong knob for it, since it only delays the final scale to *zero* and is inert whenever `minReplicaCount > 0`. Draining is bought with a generous `terminationGracePeriodSeconds` plus a `preStop` hook that deregisters the pod from the router before the engine is asked to stop. **KServe** and **Ray Serve** package the same loop (including scale-to-zero and request-driven autoscaling) at a higher level if you would rather not assemble it from primitives.
 
 !!! warning "Common pitfall: autoscaling on the wrong metric"
 
@@ -649,7 +664,7 @@ Every numbered step maps to a layer we designed. Notice how the *same* request t
     c_{\text{mem}} = \left\lceil \frac{800}{57} \right\rceil = \lceil 14.04 \rceil = 15\ \text{replicas}.
     $$
 
-    **Binding constraint:** take the **max**, so the fleet needs $\max(5, 15) = \textbf{15 replicas}$, and it is **memory-bound**. The tell is that concurrency ($L = 800$) is enormous relative to prefill throughput demand because each request lingers for 20 s holding a KV slot. This is the "many concurrent long-context chats" regime the chapter names: KV capacity, not prefill compute, limits you. Ordering only the 5 replicas that throughput sizing suggests would OOM the moment real concurrency arrived.
+    **Binding constraint:** take the **max**, so the fleet needs $\max(5, 15) = \textbf{15 replicas}$, and it is **memory-bound**. The tell is that concurrency ($L = 800$) is enormous relative to prefill throughput demand because each request lingers for 20 s holding a KV slot. This is the "many concurrent long-context chats" regime the chapter names: KV capacity, not prefill compute, limits you. Ordering only the 5 replicas that throughput sizing suggests would not crash — PagedAttention makes a replica *queue and preempt* rather than run out of memory — but with only $5 \times 57 = 285$ KV slots against $L = 800$ requests in flight, the fleet could complete just $285/20 \approx 14$ requests/sec against an offered 40/s. The queue grows without bound and every TTFT SLO is violated.
 
 **5.** *(Implementation.)* The chapter gives `max_concurrent_requests(...)` for memory sizing but leaves the "take the max of the two constraints" step (from the aside and from Exercise 4) as prose. Implement a function `fleet_size(...)` that computes both replica counts and returns the binding one plus a label of the regime. Reuse `max_concurrent_requests` from the chapter, and drive the throughput side from $\lambda$, per-replica $\mu$, and a target utilization; drive the memory side from Little's Law ($L = \lambda W$). Show it on the Exercise 4 numbers.
 

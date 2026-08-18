@@ -12,7 +12,7 @@ order per the task instructions):
       export_rights_register (Article 53(1)(c) copyright rights register)
     - block #3 (line ~454) -- incident_reporter.py: IncidentSeverity,
       AIIncidentReport, triage_incident, _infer_harm_category, notify_authority
-      (Article 62 / 55(1)(b) serious-incident reporting pipeline)
+      (Article 73 / 55(1)(c) serious-incident reporting pipeline)
     - block #5 (line ~700) -- flop_tracker.py: FlopTracker (systemic-risk
       1e25-FLOP threshold tracker)
 
@@ -46,7 +46,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from email.mime.text import MIMEText
-from typing import List, Optional
+from typing import Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
 
@@ -306,8 +306,8 @@ class IncidentSeverity(enum.Enum):
     """
     MINOR = "minor"              # Internal only; no external reporting required
     SIGNIFICANT = "significant"  # Log; 72-hour internal review required
-    SERIOUS = "serious"          # Art. 62 notification to national authority (<=15 days)
-    SYSTEMIC = "systemic"        # Art. 55(1)(b) notification to EU AI Office (<=2 days)
+    SERIOUS = "serious"          # Art. 73 notification to national authority (<=15 days)
+    SYSTEMIC = "systemic"        # Art. 55(1)(c) notification to EU AI Office (~2 days)
 
 
 @dataclass
@@ -327,8 +327,12 @@ class AIIncidentReport:
     # Internal tracking
     detected_by: str               # "automated_monitor", "user_report", "red_team"
     assigned_to: str
-    notified_authority: Optional[str] = None
-    notification_timestamp_ms: Optional[float] = None
+
+    # Art. 73 (national authority) and Art. 55(1)(c) (AI Office) are
+    # INDEPENDENT obligations with different recipients and different clocks.
+    art73_serious: bool = False
+    # recipient key -> Unix epoch ms at which THAT notification was sent.
+    notifications: Dict[str, float] = field(default_factory=dict)
 
 
 def triage_incident(
@@ -338,21 +342,28 @@ def triage_incident(
 ) -> AIIncidentReport:
     """
     Triage an incoming event and assign severity.
-    harm_indicators keys: death, serious_injury, service_disruption,
-    fundamental_rights_violation, property_damage (all bool).
+    harm_indicators keys (all bool unless noted): death, serious_injury,
+    fundamental_rights_violation, critical_infrastructure_disruption,
+    serious_property_or_environmental_harm, service_disruption (an ordinary
+    outage, NOT critical infrastructure), broad_societal_impact, and
+    affected_count (int | None).
     """
+    # The five limbs of Art. 3(49).
     is_serious = any([
         harm_indicators.get("death"),
         harm_indicators.get("serious_injury"),
         harm_indicators.get("fundamental_rights_violation"),
+        harm_indicators.get("critical_infrastructure_disruption"),
+        harm_indicators.get("serious_property_or_environmental_harm"),
     ])
-    is_systemic = harm_indicators.get("broad_societal_impact")
+    is_systemic = bool(harm_indicators.get("broad_societal_impact"))
 
     if is_systemic:
         severity = IncidentSeverity.SYSTEMIC
     elif is_serious:
         severity = IncidentSeverity.SERIOUS
     elif harm_indicators.get("service_disruption") or harm_indicators.get("property_damage"):
+        # Non-critical outage or minor property damage: internal review only.
         severity = IncidentSeverity.SIGNIFICANT
     else:
         severity = IncidentSeverity.MINOR
@@ -369,6 +380,7 @@ def triage_incident(
         ongoing=True,
         detected_by="automated_monitor",
         assigned_to="ai-safety-team@example.com",
+        art73_serious=is_serious,
     )
 
 
@@ -377,7 +389,8 @@ def _infer_harm_category(harm_indicators: dict) -> str:
         return "health"
     if harm_indicators.get("fundamental_rights_violation"):
         return "fundamental_rights"
-    if harm_indicators.get("service_disruption"):
+    if (harm_indicators.get("critical_infrastructure_disruption")
+            or harm_indicators.get("service_disruption")):
         return "essential_services"
     return "property"
 
@@ -386,11 +399,14 @@ def notify_authority(
     report: AIIncidentReport,
     smtp_host: str,
     authority_email: str,
+    recipient: str,
 ) -> None:
     """
     Send structured incident notification email to the relevant authority.
-    Replace with the EU AI Office AISOG portal API when it becomes available.
-    Deadline: SYSTEMIC = 2 days; SERIOUS = 15 days (national authority).
+    `recipient` is the track being satisfied: "ai_office" (Art. 55(1)(c)) or
+    "national_authority" (Art. 73). Call once PER RECIPIENT; each call
+    records its own entry in `report.notifications`.
+    Deadline: SYSTEMIC ~2 days; SERIOUS <=15 days (national authority).
     """
     body = json.dumps(asdict(report), indent=2, default=str)
     msg = MIMEText(body, "plain", "utf-8")
@@ -404,8 +420,7 @@ def notify_authority(
     with smtplib.SMTP(smtp_host) as s:
         s.sendmail(msg["From"], [msg["To"]], msg.as_string())
 
-    report.notified_authority = authority_email
-    report.notification_timestamp_ms = time.time() * 1000
+    report.notifications[recipient] = time.time() * 1000
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +436,8 @@ _incident = triage_incident(
         "death": False,
         "serious_injury": True,
         "fundamental_rights_violation": False,
+        "critical_infrastructure_disruption": False,
+        "serious_property_or_environmental_harm": False,
         "service_disruption": False,
         "property_damage": False,
         "broad_societal_impact": False,
@@ -429,8 +446,28 @@ _incident = triage_incident(
     system_id="wellness-llm-v3.0.1",
 )
 assert _incident.severity == IncidentSeverity.SERIOUS
+assert _incident.art73_serious is True
 assert _incident.harm_category == "health"
 assert _incident.number_of_affected_persons == 1
+
+# Art. 3(49) limb 2: a critical-infrastructure outage IS a serious incident,
+# while an ordinary service outage is only SIGNIFICANT.
+_incident_ci = triage_incident(
+    description="Grid-balancing assistant went down, disrupting operations.",
+    harm_indicators={"critical_infrastructure_disruption": True},
+    system_id="grid-llm-v1.0.0",
+)
+assert _incident_ci.severity == IncidentSeverity.SERIOUS
+assert _incident_ci.art73_serious is True
+assert _incident_ci.harm_category == "essential_services"
+
+_incident_outage = triage_incident(
+    description="Ordinary SaaS inference API outage.",
+    harm_indicators={"service_disruption": True},
+    system_id="chat-llm-v1.0.0",
+)
+assert _incident_outage.severity == IncidentSeverity.SIGNIFICANT
+assert _incident_outage.art73_serious is False
 
 _incident_minor = triage_incident(
     description="Model gave a slightly inaccurate but harmless answer.",
@@ -443,7 +480,8 @@ _mock_smtp_instance = MagicMock()
 _mock_smtp_instance.__enter__.return_value = _mock_smtp_instance
 with patch("smtplib.SMTP", return_value=_mock_smtp_instance) as _mock_smtp_cls:
     notify_authority(_incident, smtp_host="smtp.internal.example.com",
-                      authority_email="incidents@national-authority.example.eu")
+                      authority_email="incidents@national-authority.example.eu",
+                      recipient="national_authority")
 
 _mock_smtp_cls.assert_called_once_with("smtp.internal.example.com")
 assert _mock_smtp_instance.sendmail.called
@@ -451,8 +489,9 @@ _sendmail_args = _mock_smtp_instance.sendmail.call_args[0]
 assert _sendmail_args[0] == "ai-governance@example.com"
 assert _sendmail_args[1] == ["incidents@national-authority.example.eu"]
 assert "SERIOUS" in _sendmail_args[2]
-assert _incident.notified_authority == "incidents@national-authority.example.eu"
-assert _incident.notification_timestamp_ms is not None
+assert "national_authority" in _incident.notifications
+assert _incident.notifications["national_authority"] is not None
+assert "ai_office" not in _incident.notifications   # separate, still-open track
 print("[block #3] incident_reporter.py: OK")
 
 

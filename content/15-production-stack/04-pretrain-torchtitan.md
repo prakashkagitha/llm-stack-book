@@ -33,7 +33,7 @@ honest crosswalk between what we built by hand and what the library hands you.
 | Tensor / context parallel | not attempted at 100M | `tensor_parallel_degree`, `context_parallel_degree` knobs |
 | Activation checkpointing | hand-wrapped `CheckpointedBlock` | `[activation_checkpoint] mode = "selective"` in config |
 | WSD schedule | our `wsd_lr(step, ...)` | `[lr_scheduler]` warmup + decay-ratio |
-| Chunked loss head | our `fused_ce_z_loss` | built-in chunked/compiled cross-entropy |
+| Chunked loss head | our `fused_ce_z_loss` | compiled CE by default; chunked CE is opt-in |
 | Checkpoint + resume | our `save_checkpoint`/`_rng_snapshot` | Distributed Checkpoint (DCP), async, sharded |
 | MFU logging | our `utilization()` | logged every step from `num_flops_per_token` |
 | Fault tolerance | atomic rename + NaN guard | DCP + optional `torchft` semi-sync |
@@ -109,7 +109,10 @@ tokenizer_path = "./tokenizer/stack100m-32768"   # the Ch. 15.3 / 14.3 tokenizer
 [training]
 seq_len         = 2048                        # cfg.model.max_seq_len
 local_batch_size = 32                         # cfg.micro_batch_size (per-rank micro-batch)
-# global batch = local_batch_size * dp_degree * grad_accum; see the batch-size note below
+global_batch_size = 256                       # IN SEQUENCES: 256 x 2048 = 524,288 tokens/step.
+# You never set grad accum directly: torchtitan DERIVES it as
+#   global_batch_size / (local_batch_size * dp_degree)  =  256 / (32 * 1)  =  8 here.
+# Leave global_batch_size at its -1 default and you get 1 accumulation step, i.e. 65,536 tokens.
 steps           = 34332                       # cfg.stop_at_step  (stable-phase end; 18.0B tokens)
 max_norm        = 1.0                         # cfg.grad_clip  (global grad-norm clip)
 seed            = 1337                         # cfg.seed
@@ -177,7 +180,7 @@ from torchtitan.protocols.train_spec import register_train_spec, TrainSpec
 from torchtitan.protocols.model import BaseModelArgs                  # model args must subclass this
 from torchtitan.components.optimizer import build_optimizers          # default AdamW builder
 from torchtitan.components.lr_scheduler import build_lr_schedulers    # default WSD-capable scheduler
-from torchtitan.components.loss import build_cross_entropy_loss       # the chunked/compiled CE default
+from torchtitan.components.loss import build_cross_entropy_loss       # the compiled (NOT chunked) CE default
 
 from stacklm.config import StackConfig
 from stacklm.data import build_stack100m_dataloader   # our Ch. 14.2 packed-shard loader
@@ -240,7 +243,7 @@ register_train_spec(TrainSpec(
     build_lr_schedulers_fn=build_lr_schedulers,
     build_dataloader_fn=build_stack100m_dataloader,   # our packed-shard loader (Ch. 14.2)
     build_tokenizer_fn=None,                  # the one genuinely optional hook (`| None`)
-    build_loss_fn=build_cross_entropy_loss,   # torchtitan's chunked/compiled CE (see below)
+    build_loss_fn=build_cross_entropy_loss,   # compiled full-logit CE — NOT chunked (see below)
 ))
 # Note: `build_dataloader_fn` and `build_loss_fn` are REQUIRED callables — the trainer invokes
 # them unconditionally in __init__, so passing None raises `TypeError: 'NoneType' object is not
@@ -340,7 +343,7 @@ def build_stack100m_optimizers(model_parts, job_config, parallel_dims=None):
     )
     # Wrap [muon, adamw] so step()/zero_grad()/state_dict() fan out to both —
     # the "one clip, two optimizers" pattern of Ch. 14.7, hosted.
-    return PairedOptimizers([muon, adamw])
+    return PairedOptimizers(model, [muon, adamw])
 
 
 class PairedOptimizers:
@@ -352,7 +355,8 @@ class PairedOptimizers:
     protocol in `torchtitan/components/optimizer.py` at your pinned commit — if it
     requires more (e.g. an `optimizers` attribute or lr-scheduler hooks), subclass it."""
 
-    def __init__(self, optimizers):
+    def __init__(self, model, optimizers):
+        self.model = model
         self.optimizers = list(optimizers)
 
     def step(self):
@@ -364,11 +368,24 @@ class PairedOptimizers:
             opt.zero_grad(set_to_none=set_to_none)
 
     def state_dict(self):
-        return {f"opt{i}": opt.state_dict() for i, opt in enumerate(self.optimizers)}
+        # NOT `opt.state_dict()`: a raw optimizer state_dict is keyed by positional
+        # parameter INDEX and holds plain local tensors, which pins the checkpoint to
+        # this job's parameter ordering and sharding. The DCP helpers re-key by
+        # parameter FQN and hand back DTensors, which is what makes the resharding-
+        # tolerant resume below actually true.
+        from torch.distributed.checkpoint.state_dict import (
+            get_optimizer_state_dict, StateDictOptions)
+        opts = StateDictOptions(flatten_optimizer_state_dict=True)
+        return {f"opt{i}": get_optimizer_state_dict(self.model, opt, options=opts)
+                for i, opt in enumerate(self.optimizers)}
 
     def load_state_dict(self, sd):
+        from torch.distributed.checkpoint.state_dict import (
+            set_optimizer_state_dict, StateDictOptions)
+        opts = StateDictOptions(flatten_optimizer_state_dict=True)
         for i, opt in enumerate(self.optimizers):
-            opt.load_state_dict(sd[f"opt{i}"])
+            set_optimizer_state_dict(self.model, opt,
+                                     optim_state_dict=sd[f"opt{i}"], options=opts)
 ```
 
 The important honesty here: **the library gives you the loop, not the research optimizer.** Muon is
@@ -377,19 +394,35 @@ read this; the `build_optimizers_fn` hook is precisely the seam that lets you br
 is the general shape of using a real trainer for a not-yet-standard recipe — you inherit the tested
 distributed loop and inject the one component that is your contribution.
 
-### The chunked loss head, for free
+### The loss head: the default is compiled, *not* chunked
 
 Ch. 14.7 spent a whole section proving that at `d_model = 512`, `vocab = 32768`, the *loss head*
 (not attention) dominates memory — the unchunked `(B·T, V)` logits peak near 30 GB — and built
-`fused_ce_z_loss` to chunk it. torchtitan reaches the same conclusion and ships a chunked/compiled
-cross-entropy as its default `build_loss_fn`; recent versions integrate variants of the same fused
-linear-cross-entropy kernels we recommended (Liger-Kernel, cut-cross-entropy). You take that default
-by naming it — `build_loss_fn=build_cross_entropy_loss` in the `TrainSpec`; the hook is required, so
-there is no "leave it None and get the default". If you need the z-loss term
-(PLAN.md §1's PaLM-style `logsumexp` penalty), supply a `build_loss_fn` that adds it — the same term
-our `_chunk_ce` computed from the `logsumexp` it already needed. See
+`fused_ce_z_loss` to chunk it. Here is the one place in this chapter where the library does **not**
+hand you the mechanism for free, and it is worth stating bluntly because the failure mode is an OOM.
+torchtitan's default cross-entropy calls `torch.nn.functional.cross_entropy` on the *full* flattened
+`(B·T, V)` logits, upcast to fp32, and (when `compile` is on) wraps it in `torch.compile`. Compiled
+is not chunked: `torch.compile` fuses the pointwise work around the reduction, but the full logit
+tensor and its fp32 copy are still materialized. At `local_batch_size = 32`, `seq_len = 2048`,
+`V = 32768` that is exactly the ~30 GB peak Ch. 14.7 measured — by far the largest line item in the
+budget on an 80 GB A100, and an outright OOM on the 24 GB and 16 GB tiers.
+
+Chunking exists in torchtitan, but as an **opt-in wrapper** you compose explicitly (current main
+spells it `ChunkedLossWrapper`, which splits the sequence dimension into N chunks to bring the peak
+from $O(B\,L\,V)$ down to $O(B\,L/N\,V)$). The only other non-vanilla kernel in that module is a
+vocab-parallel CE used when tensor parallelism shards the vocabulary — that is about *sharding* the
+logits across TP ranks, not about avoiding materializing them, so it does nothing for you at
+`tensor_parallel_degree = 1`. There is no Liger-Kernel or cut-cross-entropy integration in
+torchtitan's loss module; if you want a fused linear-cross-entropy kernel (Ch. 4.10's recommendation)
+you bring it yourself.
+
+So the practical rule: name the default in the `TrainSpec` (the hook is required — there is no "leave
+it None and get the default"), then either select the chunked wrapper or pass your own
+`build_loss_fn`. Since Stack-100M needs the z-loss term anyway (PLAN.md §1's PaLM-style `logsumexp`
+penalty), the cleanest port is to supply our `fused_ce_z_loss` through that hook: it chunks *and*
+computes the z-loss from the `logsumexp` it already needed. See
 [Memory-Efficient Training](../04-kernels-efficiency/10-memory-efficient-training.html) for the
-memory arithmetic this default is quietly saving you.
+memory arithmetic that decides how many chunks you need.
 
 ### Activation checkpointing: `mode = "selective"`
 
@@ -437,25 +470,36 @@ score/value matmuls. torchtitan computes a `num_flops_per_token` for the registe
 MFU every `log_freq` steps against the device's known peak (it maintains a table of peak bf16 FLOP/s
 per accelerator). You still owe the reader the convention, and here it is a *third* one — not
 Ch. 14.7's. torchtitan's reference count is
-$6(N - N_{\text{embed}}) + 12\,L\,H\,Q\,s$: attention-inclusive, but with the attention term **not**
+$6\,N_{\text{matmul}} + 12\,L\,H\,Q\,s$: attention-inclusive, but with the attention term **not**
 halved for causality (the PaLM convention Ch. 14.1 flags, with an explicit source comment saying it
-deliberately does not credit causal sparsity) and with the embedding parameters **excluded** from
-the $6N$ term. For Stack-100M that is
-$6(101.3 - 16.8)\text{e}6 + 12 \times 30 \times 512 \times 2048 = 5.07\text{e}8 + 3.78\text{e}8
-\approx 8.85\text{e}8$ FLOP/token, against Ch. 14.1/14.7's causal-halved
-$6N + 6Lsd_q \approx 7.97\text{e}8$ — about **11% higher**, so the *same* run reports ~11% more MFU
+deliberately does not credit causal sparsity).
+
+The subtle part is $N_{\text{matmul}}$, and it is exactly the kind of detail that silently
+misreports your MFU. `model.parameters()` de-duplicates shared tensors, so a **tied** embedding is
+counted *once* in $N$ — and that single tensor is still the `lm_head` weight matrix, i.e. a real
+matmul participant, not just a lookup table. torchtitan therefore sets
+$N_{\text{matmul}} = N - N_{\text{embed}}$ **only when embeddings are untied** (subtracting the
+lookup-table copy, which does no matmul at all) and $N_{\text{matmul}} = N$ when they are tied
+(because the single shared tensor still drives the `lm_head` matmul). Stack-100M ties its embeddings
+(PLAN.md §1), so the tied branch applies: pass `enable_weight_tying=True` to the helper, or your
+`get_nparams_and_flops` will under-count by $6 N_{\text{embed}}$.
+
+For Stack-100M that is
+$6 \times 101.3\text{e}6 + 12 \times 30 \times 512 \times 2048 = 6.08\text{e}8 + 3.78\text{e}8
+\approx 9.85\text{e}8$ FLOP/token, against Ch. 14.1/14.7's causal-halved
+$6N + 6Lsd_q \approx 7.97\text{e}8$ — about **24% higher**, so the *same* run reports ~24% more MFU
 under torchtitan's meter than under ours. Convert before you compare: multiply torchtitan's MFU by
-$7.97/8.85 \approx 0.90$ to put it on Ch. 14.7's footing (and neither number is the 6ND-only one,
+$7.97/9.85 \approx 0.81$ to put it on Ch. 14.7's footing (and neither number is the 6ND-only one,
 which is lower again). A representative torchtitan log line looks like:
 
 ```text
 step: 12000  loss:  3.11  grad_norm:  0.42  lr: 3.00e-03
-  tps: 1.42e5  mfu: 40.3%  memory: 21.7GiB(27.4%)  tflops: 125.7  end_to_end(s): 0.92
+  tps: 1.42e5  mfu: 44.8%  memory: 21.7GiB(27.4%)  tflops: 139.9  end_to_end(s): 0.92
 ```
 
 Those three throughput fields are one number in three costumes, and checking that they agree is a
-free sanity test on your registration: `tflops = num_flops_per_token × tps` ($8.85\text{e}8 \times
-1.42\text{e}5 = 1.257\text{e}14$) and `mfu = tflops / peak` ($125.7 / 312 = 40.3\%$ on an A100 —
+free sanity test on your registration: `tflops = num_flops_per_token × tps` ($9.85\text{e}8 \times
+1.42\text{e}5 = 1.399\text{e}14$) and `mfu = tflops / peak` ($139.9 / 312 = 44.8\%$ on an A100 —
 consistent with the `memory` field's 79 GiB device). If `tflops` and `tps` do not reconcile through
 the FLOP formula above, your `get_nparams_and_flops` is wrong and every MFU you report is wrong with
 it. Every field there is a variable we logged by hand in Ch. 14.7 — `tps` is our `tokens_per_sec`,
@@ -471,19 +515,21 @@ Let us put concrete magnitudes on a torchtitan Stack-100M run so the config abov
 
     **Single A100 (the flagship tier).** `--nproc_per_node=1`,
     `data_parallel_shard_degree = 1` (no sharding), `local_batch_size = 32`, `seq_len = 2048`. With
-    no data parallelism and no built-in gradient accumulation, one optimizer step sees
-    $32 \times 2048 = 65{,}536$ tokens — an *eighth* of Ch. 14.6's target ≈0.5M-token effective
-    batch. To recover the 524,288-token batch you either set
-    `gradient_accumulation_steps = 8` if your torchtitan version supports it (recent ones do; older
-    ones do not — check), or accept the smaller batch and note the Muon/WSD hyperparameters were
-    tuned for ≈0.5M. This is the first real version-drift trap: **the from-scratch loop always had
-    grad accumulation; not every trainer release exposes it, and torchtitan historically preferred
-    scaling data-parallel degree instead.**
+    no data parallelism and `global_batch_size` left at its `-1` default (one accumulation step), one
+    optimizer step sees $32 \times 2048 = 65{,}536$ tokens — an *eighth* of Ch. 14.6's target ≈0.5M
+    effective batch. To recover the 524,288-token batch you set `global_batch_size = 256` and let
+    torchtitan derive the 8 accumulation steps as $256 / (32 \times 1)$. Note the **units trap**,
+    identical to Megatron's below: `global_batch_size` counts **sequences**, not tokens — writing
+    `524288` there asks for 1.07e9 tokens per optimizer step. And note that there is *no*
+    `gradient_accumulation_steps` key in any torchtitan release: accumulation is derived from the
+    two batch fields, never set directly, so a config that names it gets silently ignored (see the
+    unknown-keys pitfall below) and you quietly train at an 8× too-small batch.
 
     **8×H100 (a realistic small cluster).** `--nproc_per_node=8`,
-    `data_parallel_shard_degree = 8`, `local_batch_size = 8`. Global batch is
-    $8 \text{ ranks} \times 8 \times 2048 = 131{,}072$ tokens per step — still shy of 0.5M, so pair
-    it with `gradient_accumulation_steps = 4` for $524{,}288$. Now the step math: at
+    `data_parallel_shard_degree = 8`, `local_batch_size = 8`. With one accumulation step the batch is
+    $8 \text{ ranks} \times 8 \times 2048 = 131{,}072$ tokens — still shy of 0.5M, so keep the same
+    `global_batch_size = 256` (now $256 / (8 \times 8) = 4$ accumulation steps) for $524{,}288$
+    tokens. Now the step math: at
     $C_{\text{step}} \approx (6N + 6 L s d_q)\,B_{\text{tok}}$ per Ch. 14.1's attention-inclusive
     convention, with $N = 101.4\text{M}$, $L = 30$, $s = 2048$, $d_q = 512$, and
     $B_{\text{tok}} = 524{,}288$, the per-step FLOPs are on the order of
@@ -575,9 +621,10 @@ CUDA_DEVICE_MAX_CONNECTIONS=1 \
 ```
 
 Two things to notice about nanotron versus torchtitan, both honest trade-offs rather than a verdict.
-First, **nanotron exposes gradient accumulation directly** (`batch_accumulation_per_replica`), so the
-≈0.5M-token effective batch of Ch. 14.6 is a one-line setting rather than a version-dependent
-feature — a real ergonomic advantage for the small, single-node runs this capstone targets. Do the
+First, **nanotron sets gradient accumulation directly** (`batch_accumulation_per_replica`), whereas
+torchtitan makes you state the *global* batch and derives the accumulation count from it. Neither is
+wrong, but they fail differently: nanotron's number is what you wrote, while torchtitan's changes
+under you the moment the GPU count changes. Do the
 arithmetic explicitly, though: the global batch is `dp × micro_batch_size × accumulation × seq_len`,
 so with `dp: 8` and `micro_batch_size: 8` the accumulation that lands on 524,288 tokens is **4**, not
 8. Second, its `lr_decay_style: "1-sqrt"` with an explicit `lr_decay_steps` is a faithful WSD leg (the
@@ -723,11 +770,14 @@ choice is how much of the loop you want to own versus inherit.
     since 100M already fit on one GPU. The subtle correctness risk is the **effective batch size**.
     My single-GPU loop used `grad_accum_steps = 8` to hit ≈0.5M tokens/step, which is what the Muon
     and WSD hyperparameters were tuned for. On 8 ranks with `local_batch_size = 8`, one step is now
-    $8 \times 8 \times 2048 = 131{,}072$ tokens — a *different* effective batch — unless I also set
-    gradient accumulation, and older torchtitan releases may not expose that flag at all. Get this
+    $8 \times 8 \times 2048 = 131{,}072$ tokens — a *different* effective batch — unless I also
+    declare `global_batch_size = 256` so torchtitan derives 4 accumulation steps; and I have to
+    remember that field counts *sequences*, not tokens, and that there is no
+    `gradient_accumulation_steps` key to set instead. Get this
     wrong and the loss curve still falls, so it is invisible, but the LR schedule and optimizer are
-    now mismatched to the batch. I would compute the global batch explicitly, set grad accum (or DP
-    degree) to restore ≈0.5M, and verify by logging tokens-per-step before trusting the run. The
+    now mismatched to the batch. I would compute the global batch explicitly, set `global_batch_size`
+    (or the DP degree) to restore ≈0.5M, and verify by logging tokens-per-step before trusting the
+    run. The
     secondary risks are the same order: confirm the trainer's "WSD" decay curve matches mine by
     plotting the realized LR, and confirm its MFU FLOP convention (attention-inclusive vs 6ND) before
     comparing numbers to my single-GPU baseline.
@@ -760,8 +810,10 @@ choice is how much of the loop you want to own versus inherit.
       (~1.3 GB weights+grads+opt-state), so `data_parallel_shard_degree` buys wall-clock at the same
       total GPU-hours — matching Ch. 14.7's honest scale-out framing.
     - **Watch the effective batch size on the port.** Global batch = local_batch × dp_degree ×
-      grad_accum, and gradient accumulation is version-dependent in torchtitan while native in
-      nanotron. Get it wrong and the loss still falls while the LR/optimizer silently mismatch the
+      grad_accum. torchtitan makes you declare `global_batch_size` (**in sequences**) and *derives*
+      grad accum as `global_batch_size / (local_batch_size × dp_degree)` — there is no
+      `gradient_accumulation_steps` key — while nanotron sets `batch_accumulation_per_replica`
+      directly. Get it wrong and the loss still falls while the LR/optimizer silently mismatch the
       batch they were tuned for.
     - **"WSD" is a shape, not a formula.** Trainers differ on decay curve, whether the decay length is
       absolute or a ratio, warmup units, and — the one that bites hardest — where the decay leg is
@@ -770,8 +822,11 @@ choice is how much of the loop you want to own versus inherit.
       `lr_decay_starting_step` (which defaults to the end of warmup). Reproduce Ch. 14.6's split by
       plotting the *realized* LR before trusting any config, and stop at the stable-phase checkpoint
       so mid-training owns the decay leg.
-    - **The chunked loss head, DCP checkpointing, selective activation checkpointing, and MFU logging
-      all come free** — the exact mechanisms we built by hand in Ch. 14.7, now one config line each.
+    - **DCP checkpointing, selective activation checkpointing, and MFU logging all come free** — the
+      exact mechanisms we built by hand in Ch. 14.7, now one config line each. The **loss head does
+      not**: torchtitan's default cross-entropy is compiled but *unchunked*, so it materializes the
+      full `(B·T, V)` logits (~30 GB at our shapes). Select the chunked wrapper explicitly, or pass
+      our `fused_ce_z_loss` through `build_loss_fn` — which you want anyway for the z-loss term.
     - **Pick the tool your problem points at:** torchtitan for newest PyTorch-native distributed;
       nanotron for the HuggingFace/SmolLM lineage with native grad accum; Megatron-LM/DeepSpeed only
       at true cluster scale; `accelerate` to keep your own loop and add sharding with almost no code.

@@ -60,10 +60,10 @@ ROME makes a single rank-one update to one MLP down-projection. Two questions: *
 ROME does **not** hand-pick $v_*$. It optimizes it. Freeze all weights; introduce a free vector $\delta$ added to the layer-$\ell$ MLP output at the subject's last token; and minimize the cross-entropy of the *desired* object $o_*$ over a few prompt templates $\{p_j\}$ that elicit the relation:
 
 $$
-v_* = \arg\min_{z}\;\frac{1}{N}\sum_{j=1}^{N} -\log P_{\,m_\ell \mathrel{+}= (z - m_\ell)}\big(o_* \mid p_j\big) \;+\; \lambda\, \text{KL}\big(P(\cdot\mid p') \,\|\, P_{\text{edited}}(\cdot\mid p')\big).
+v_* = \arg\min_{z}\;\frac{1}{N}\sum_{j=1}^{N} -\log P_{\,m_\ell \mathrel{+}= (z - m_\ell)}\big(o_* \mid p_j\big) \;+\; \lambda\, \text{KL}\big(P_{\text{edited}}(\cdot\mid p') \,\|\, P(\cdot\mid p')\big).
 $$
 
-The first term drags the model toward emitting the new object; the KL term (on a neutral prompt $p'$ such as "{subject} is a") is an **essence-preservation** regularizer that stops the edit from mangling the model's general sense of the subject. The minimization is a short Adam loop (typically 20–25 steps) over $z$ only — cheap, because gradients flow through a single forward pass and touch no weights.
+The first term drags the model toward emitting the new object; the KL term (on a neutral prompt $p'$ such as "{subject} is a") is an **essence-preservation** regularizer that stops the edit from mangling the model's general sense of the subject. The KL is written in ROME's order — the *edited* distribution first, the original second — which is the mode-seeking direction that penalizes the edited model for putting mass where the original put none; KL is asymmetric, so the ordering is part of the objective, not notation. The minimization is a short Adam loop (typically 20–25 steps) over $z$ only — cheap, because gradients flow through a single forward pass and touch no weights.
 
 ### 2.2 The key $k_*$ and the closed-form rank-one update
 
@@ -281,6 +281,8 @@ def unlearn_step(model, ref_model, forget_batch, retain_batch,
         ratio = beta * (f_logp - ref_logp)             # how much more likely than ref
         # -log sigmoid(-ratio): drives P_theta below the reference, self-limiting.
         forget_loss = -F.logsigmoid(-ratio).mean() * (2.0 / beta)
+    else:
+        raise ValueError(f"unknown unlearning method {method!r}")
     loss = forget_loss + retain_lambda * retain_loss
     return loss
 
@@ -346,6 +348,12 @@ from transformers import GPT2LMHeadModel, GPT2Tokenizer
 device = "cuda" if torch.cuda.is_available() else "cpu"
 tok = GPT2Tokenizer.from_pretrained("gpt2")
 model = GPT2LMHeadModel.from_pretrained("gpt2").to(device).eval()
+# Freeze every weight: the only thing we optimize below is a free vector `delta`,
+# which is its own leaf and still receives gradients. Without this, the 25-step
+# v* loop accumulates a full gradient buffer for all 124M parameters (~0.5 GB)
+# and leaves a stale .grad on the very matrix we are about to splice.
+for p in model.parameters():
+    p.requires_grad_(False)
 
 # We edit the down-projection (c_proj) of one middle MLP block.
 LAYER = 6                                   # a middle layer (GPT-2 small has 12)
@@ -442,7 +450,7 @@ print("[generalize]", generate("Where is the Eiffel Tower? It is in"))
 print("[locality] ", generate("The Colosseum is located in the city of"))
 ```
 
-What to watch when you run it: the **[edited]** line should now say *Rome*; the **[generalize]** line *often* but not always follows (rank-one edits generalize imperfectly — that's the Section 5 lesson live); and the **[locality]** line is deliberately booby-trapped — the Colosseum genuinely *is* in Rome, so that probe cannot tell "locality preserved" apart from "the edit leaked." Swap in an unrelated subject such as "The Statue of Liberty is located in the city of" (expected: *New York*) to make it informative; Exercise 5 walks through the fix. The Frobenius norm of $\Delta$ printed in step 3 will be tiny relative to $\lVert W\rVert_F$ — the edit is a whisper to the weight matrix, which is exactly why locality is even possible.
+What to watch when you run it: the **[edited]** line should now say *Rome*; the **[generalize]** line *often* but not always follows (rank-one edits generalize imperfectly — that's the Section 5 lesson live); and the **[locality]** line is deliberately booby-trapped — the Colosseum genuinely *is* in Rome, so that probe cannot tell "locality preserved" apart from "the edit leaked." Swap in an unrelated subject such as "The Statue of Liberty is located in the city of" (expected: *New York*) to make it informative; Exercise 5 walks through the fix. The Frobenius norm of $\Delta$ printed in step 3 *is* tiny relative to $\lVert W\rVert_F$ (about 2.4 against 165 on GPT-2 small) — but do not read that smallness as locality. What the edit does to any other key $k$ is $\Delta k = r\,\big((C^{-1}k_*)^\top k\big)\big/\big(k_*^\top C^{-1}k_*\big)$: the leakage into $k$ is set by $k$'s **overlap with the steering direction**, not by $\lVert\Delta\rVert_F$ (that is exactly Exercise 3(c)). With the identity approximation used here, $C^{-1}k_* \propto k_*$ — a direction most other keys have a healthy component along — so expect this listing to leak: run it and the Statue of Liberty probe also answers *Rome*, while the **[generalize]** line degenerates into repetition rather than paraphrasing the edit. Section 7.1's estimated covariance is what actually buys locality: with $C$ measured on a few tens of thousands of WikiText tokens the update gets *bigger* ($\lVert\Delta\rVert_F \approx 5.4$) yet the Statue of Liberty probe correctly returns *New York* — direct evidence that the steering direction, not the update's size, is the mechanism.
 
 ### 7.1 Closing the last black box: estimating $C$ yourself
 
@@ -460,7 +468,7 @@ acts = {}
 h = mlp.c_proj.register_forward_hook(
     lambda mod, inp, out: acts.__setitem__("k", inp[0].detach()))
 
-ds = load_dataset("wikitext", "wikitext-103-raw-v1", split="train[:5000]")
+ds = load_dataset("Salesforce/wikitext", "wikitext-103-raw-v1", split="train[:5000]")
 with torch.no_grad():
     for row in ds:                            # ~1e5-1e6 tokens is plenty for a demo
         text = row["text"].strip()
@@ -596,7 +604,7 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
 
     The same gap governs unlearning (Section 6.5): making the model *refuse* or raising forget-set perplexity changes outputs, but the legal/erasure standard is about removing the data's **influence**. Suppressing one phrasing leaves the knowledge reachable by another path (relearning, paraphrase, membership inference), so "the model won't say it" is not "the model unlearned it."
 
-**2.** Consider a ROME-style rank-one edit to the down-projection $W_{\text{down}}$ of a single GPT-2 small MLP block, where $d_{\text{mlp}} = 3072$ and $d_{\text{model}} = 768$ (the model has $\approx$ 124M parameters total). (a) How many parameters are in that one $W_{\text{down}}$ matrix? (b) The rank-one update $\Delta$ is stored as two vectors — how many numbers is that, and what fraction of the single matrix is it? (c) What fraction of the whole model does the stored update represent? (d) In one sentence, why does this smallness make *locality* even possible?
+**2.** Consider a ROME-style rank-one edit to the down-projection $W_{\text{down}}$ of a single GPT-2 small MLP block, where $d_{\text{mlp}} = 3072$ and $d_{\text{model}} = 768$ (the model has $\approx$ 124M parameters total). (a) How many parameters are in that one $W_{\text{down}}$ matrix? (b) The rank-one update $\Delta$ is stored as two vectors — how many numbers is that, and what fraction of the single matrix is it? (c) What fraction of the whole model does the stored update represent? (d) In one sentence, why is it the update's rank-one *structure* — rather than merely how few numbers it stores — that makes *locality* possible?
 
 ??? note "Solution"
     (a) $W_{\text{down}}$ has shape $d_{\text{mlp}} \times d_{\text{model}} = 3072 \times 768 = 2{,}359{,}296$ parameters ($\approx 2.36$M).
@@ -605,7 +613,7 @@ The recurring meta-lesson: **editing changes associations, not beliefs, and supp
 
     (c) Relative to the full model: $3840 / 124{,}000{,}000 \approx 3.1 \times 10^{-5}$, about **0.0031%**.
 
-    (d) The update is a "whisper" — a rank-one, tiny-Frobenius-norm perturbation that moves one direction in weight space, so almost every other key's mapping ($W k$ for $k$ nearly orthogonal to the edit) is left essentially unchanged, which is precisely what locality requires.
+    (d) Because $\Delta = r\,u^\top$ is rank one, its effect on any other key is $\Delta k = r\,(u^\top k)$ — it moves a key's output *only* in proportion to that key's overlap with the single steering direction $u = C^{-1}k_*$, so every key nearly orthogonal to $u$ is left essentially unchanged, which is precisely what locality requires (a small parameter count by itself guarantees nothing: a small-norm update aimed along a heavily used direction still leaks, as Section 7's identity-$C$ listing shows).
 
 **3.** Work a ROME rank-one update by hand in two dimensions. Let $d_{\text{mlp}} = d_{\text{model}} = 2$, with current weight $W_0 = I_2$ (so $W_0$ maps a key $k$ to $W_0 k$). Take key $k_* = [1,\,1]^\top$, desired value $v_* = [3,\,1]^\top$, and covariance $C = I_2$ (the identity approximation). Using
 $$
@@ -663,6 +671,8 @@ $$
         print(f"[{status}] expect ~{expected!r:12} -> {out}")
     print("locality overall:", "PASS" if all_ok else "FAIL")
     ```
+
+    Expect the Statue of Liberty line to print **FAIL** against the listing exactly as written — that is the harness working, not a bug in it. The identity approximation makes the steering direction $C^{-1}k_* \propto k_*$, which overlaps most other keys, so the edit genuinely leaks; swapping in the estimated covariance of Section 7.1 flips the same probe to PASS (*New York*) even though $\lVert\Delta\rVert_F$ grows.
 
     The check is deliberately conservative: it does not require the model to be *correct* (GPT-2 small may be shaky on geography), only that the *injected* object "Rome" did not contaminate an unrelated subject. A cleaner locality signal would compare the model's probability on these prompts before vs. after the splice, but the leak-detection above is the minimal fix that makes the probe informative.
 

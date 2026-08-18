@@ -1,6 +1,6 @@
 # 15.2 Data at Scale: datatrove and Hugging Face datasets
 
-[Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) built `Stack-100M`'s corpus by hand: a source registry, a lean domain-routed quality filter, a MinHash-and-LSH deduplicator written against nothing but `numpy`, a greedy packer, and a `uint16` memmap shard writer. Every line of that code was chosen so the *mechanism* would be visible — you could set a breakpoint inside the MinHash permutation sweep and watch a Jaccard estimate materialize from raw hashes. That chapter also told you, honestly, where the from-scratch version stops working: past a few hundred thousand documents its in-RAM LSH index silently stops catching duplicates, and its single-threaded MinHash pass costs on the order of 44 core-hours for 20 million documents — a controllable but real tax that does not shrink further without more machines.
+[Data: Sourcing, Filtering, Dedup, Tokenize & Pack ~20B Tokens](../14-capstone/02-data-pipeline.html) built `Stack-100M`'s corpus by hand: a source registry, a lean domain-routed quality filter, a MinHash-and-LSH deduplicator written against nothing but `numpy`, a greedy packer, and a `uint16` memmap shard writer. Every line of that code was chosen so the *mechanism* would be visible — you could set a breakpoint inside the MinHash permutation sweep and watch a Jaccard estimate materialize from raw hashes. That chapter also told you, honestly, where the from-scratch version stops working: past a few hundred thousand documents its in-RAM LSH index silently stops growing, so duplicates that occur only among the later documents are never caught, and its single-threaded MinHash pass costs on the order of 44 core-hours for 20 million documents — a controllable but real tax that does not shrink further without more machines.
 
 This chapter is the answer to "fine, now what do I actually run." Two libraries do this job at production scale in 2026: **Hugging Face `datasets`**, for sourcing, streaming, and mixing already-curated corpora such as FineWeb-Edu and Cosmopedia v2 straight off the Hub, and **`datatrove`** (HuggingFace's own pipeline library — the tool FineWeb itself was built with), for the heavier stages: extracting text from raw Common Crawl WARC files, running the quality-filter battery, deduplicating at cluster scale, and dispatching all of it across a Slurm cluster with one line changed. We will build the same FineWeb-style pipeline `datatrove`'s own examples ship, and then close the loop by writing its output into the *exact* `uint16` memmap shard format `PackedMemmapDataset` (Ch. 14.2) reads — so `stacklm`'s training loop cannot tell whether a shard came from the toy synthetic corpus or a real multi-terabyte Common Crawl dump. Along the way we will look at **NeMo Curator** and **Dolma**, the two other toolkits a working engineer is likely to meet, and be explicit about what each buys you that the others don't.
 
@@ -140,9 +140,10 @@ from datatrove.pipeline.filters import (
 from datatrove.pipeline.writers.jsonl import JsonlWriter
 
 # The *segments folder* of one Common Crawl dump. WarcReader's first
-# argument is a data folder, not a file listing, and its glob is not
-# recursive -- CC lays WARCs out as segments/<segment-id>/warc/*.warc.gz,
-# so the pattern has to name that intermediate level explicitly (this is
+# argument is a data folder, not a file listing, and its glob pattern is
+# matched with fsspec semantics, where `*` does not cross a `/` -- CC lays
+# WARCs out as segments/<segment-id>/warc/*.warc.gz, so the pattern has to
+# name that intermediate level explicitly (this is
 # exactly the glob datatrove's own FineWeb example uses). To drive the run
 # off CC's published warc.paths.gz index instead, pass it as a paths file:
 # WarcReader("s3://commoncrawl/", paths_file=".../warc.paths.gz").
@@ -205,13 +206,13 @@ Every filter in step 5–6 is a *published, citable* heuristic battery — Gophe
 
 !!! tip "Practitioner tip: order your filters cheapest-first"
 
-    `URLFilter` costs a dictionary lookup; `GopherQualityFilter` tokenizes the document and computes half a dozen statistics; `Trafilatura` extraction is the most expensive step of all, often tens of milliseconds per page. `datatrove`'s pipeline list runs top to bottom per document, so ordering matters for wall-clock even though it does not change the final filtered set: reject on URL before you pay for extraction, reject on language before you pay for the Gopher battery. The pipeline above already follows this rule — `URLFilter` runs on the reader's metadata, ahead of `Trafilatura`; if you add a custom filter, insert it by cost, not by conceptual tidiness.
+    `URLFilter` costs a dictionary lookup; `GopherQualityFilter` tokenizes the document and computes half a dozen statistics; `Trafilatura` extraction is the most expensive step of all, often tens of milliseconds per page. `datatrove`'s pipeline list runs top to bottom per document, so ordering matters for wall-clock: reject on URL before you pay for extraction, reject on language before you pay for the Gopher battery. Reordering *pure predicates that read the same field* — the URL metadata, or the post-extraction text — is free in the sense that it leaves the final filtered set unchanged; moving a text filter across `Trafilatura` is not, because the extractor rewrites `doc.text`, so a quality filter placed above it would score raw HTML and keep a different set of documents. The pipeline above already follows this rule — `URLFilter` runs on the reader's metadata, ahead of `Trafilatura`; if you add a custom filter, insert it by cost, not by conceptual tidiness.
 
 This chapter builds directly on [Data Cleaning, Deduplication & Quality Filtering](../03-pretraining/02-data-cleaning-dedup.html), which covers the theory behind every one of these filters — what repetition detection is actually catching, why C4's heuristics were chosen, how language ID models are trained — in far more depth than a pipeline listing can. Treat this section as that chapter's applied, at-scale instantiation, the same relationship Ch. 14.2 has to [Pretraining Data: Sources, Crawling & The Data Pipeline](../03-pretraining/01-pretraining-data.html).
 
 ## Deduplication and Tokenization at Cluster Scale
 
-Ch. 14.2 was explicit about where its from-scratch `near_dedup_stream` breaks: an in-RAM `SignatureStore` plus LSH buckets that measure roughly 3.8 KB per indexed document, giving a hard ceiling around 500k–2M documents on a typical box, past which recall for new documents silently drops to zero. `datatrove`'s `MinhashDedup*` blocks fix this the same way any large distributed system fixes an unbounded-memory problem: put the state on disk, keyed so each worker only ever needs its own slice.
+Ch. 14.2 was explicit about where its from-scratch `near_dedup_stream` breaks: an in-RAM `SignatureStore` plus LSH buckets that measure roughly 3.8 KB per indexed document, giving a hard ceiling around 500k–2M documents on a typical box, past which the index freezes: later documents are still *checked* against the first ~500k, but duplicates that occur only among the post-ceiling documents go silently undetected — recall degrades from full to partial, with no error. `datatrove`'s `MinhashDedup*` blocks fix this the same way any large distributed system fixes an unbounded-memory problem: put the state on disk, keyed so each worker only ever needs its own slice.
 
 ```python
 """
@@ -368,7 +369,7 @@ OUT = "/scratch/stack100m/shards"
 executor = LocalPipelineExecutor(
     pipeline=[
         JsonlReader(IN),
-        StackShardWriterStep(out_dir=OUT, tokenizer_path="capstone/artifacts/tokenizer"),
+        StackShardWriterStep(out_dir=OUT, tokenizer_path="capstone/artifacts/tokenizer.json"),
     ],
     tasks=32,
     logging_dir="/scratch/stack100m/logs/shard_write",
@@ -526,7 +527,7 @@ None of these tools disagree on the underlying algorithms — Gopher/C4 heuristi
 
     **Q:** You have a from-scratch MinHash deduplicator that works correctly on a million-document corpus but falls over past a few million. Your production pipeline uses `datatrove`'s 4-stage `MinhashDedup*` blocks instead. What specifically does that redesign fix, and why can't you fix the from-scratch version by just increasing a buffer size?
 
-    **A:** The from-scratch version keeps a single in-process index — signatures plus LSH buckets — sized by a fixed `index_capacity`. Every document's candidate lookup and insertion touches that one shared structure, so its memory is bounded by design, but the bound is a *hard ceiling*: past it, the code keeps running and keeps yielding documents, but silently stops detecting duplicates for everything after the ceiling — a correctness failure with no error, discoverable only by noticing an unexpectedly high duplicate rate later. Raising `index_capacity` only moves the ceiling; at 20 million documents no single machine's RAM moves it far enough, because the index cost is linear in corpus size by construction.
+    **A:** The from-scratch version keeps a single in-process index — signatures plus LSH buckets — sized by a fixed `index_capacity`. Every document's candidate lookup and insertion touches that one shared structure, so its memory is bounded by design, but the bound is a *hard ceiling*: past it, the code keeps running and keeps yielding documents, but silently stops *indexing* anything new — post-ceiling documents are still matched against the frozen prefix, while duplicates that occur only among the post-ceiling documents are never caught. That is a correctness failure with no error, discoverable only by noticing an unexpectedly high duplicate rate later. Raising `index_capacity` only moves the ceiling; at 20 million documents no single machine's RAM moves it far enough, because the index cost is linear in corpus size by construction.
 
     `datatrove`'s design removes the single shared structure entirely. Stage 1 signs documents independently per task — no cross-task communication needed. Stage 2 partitions candidate search by LSH *bucket*, and because a document's signature is split into fixed bucket slices deterministically, every bucket's candidate set can be computed from only that bucket's data, in its own task, without ever seeing another bucket's documents. That is what makes it disk-backed and horizontally scalable: no process ever needs the whole index in memory, because no single index exists — only per-bucket shards that get combined once, in stage 3's union-find, over a much smaller graph of candidate *pairs* rather than raw documents. The fix isn't a bigger buffer; it's replacing an architecture with a fundamental memory bound by one whose per-worker memory doesn't grow with total corpus size at all.
 
@@ -542,7 +543,7 @@ None of these tools disagree on the underlying algorithms — Gopher/C4 heuristi
     \text{tokens to process} \approx \frac{14\times10^{9}}{0.03} \approx 4.7\times10^{11} \approx 470\text{B raw tokens.}
     $$
 
-    At a typical web document averaging on the order of 500–1000 tokens, that is roughly 500–950 million documents to run through extraction and filtering — roughly 25–50× more than the 20 million *kept* documents Section 4's dedup arithmetic assumed (which is exactly what a keep rate of $r \approx 0.03$ implies: processed/kept $= 1/r \approx 33$). This is the number that should set your cluster request, not the 20M-document post-filter estimate: `Trafilatura` extraction alone, at even an optimistic ~50 ms/page on one core, is
+    At a typical web document averaging on the order of 500–1000 tokens, that is roughly 470–940 million documents to run through extraction and filtering — about $1/r \approx 33\times$ the 14–28 million documents the 14B-token *kept* target implies at that same tokens-per-document rate, and 25–50× the 20 million kept documents Section 4's dedup arithmetic assumed for the whole 20B-token corpus. This is the number that should set your cluster request, not the 20M-document post-filter estimate: `Trafilatura` extraction alone, at even an optimistic ~50 ms/page on one core, is
 
     $$
     7\times10^{8}\ \text{docs} \times 0.05\ \text{s} \approx 3.5\times10^{7}\ \text{s} \approx 9{,}700\ \text{core-hours}

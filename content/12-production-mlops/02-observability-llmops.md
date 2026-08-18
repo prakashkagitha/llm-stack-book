@@ -287,13 +287,19 @@ groups:
     0.00030 \times 10 \times 3600 \times 24 = \$259.20 \text{ per day}
     $$
 
-    If you switch to a model that is 40% cheaper on completion tokens (USD 0.36/M), and you shorten the average prompt by 200 tokens via better context management, daily cost becomes:
+    If you switch to a model that is 40% cheaper on completion tokens (USD 0.36/M), and you shorten the average prompt by 200 tokens via better context management, cost per request becomes:
 
     $$
-    \frac{600}{10^6} \times 0.15 + \frac{300}{10^6} \times 0.36 = 0.000090 + 0.000108 = \$0.000198
+    c' = \frac{600}{10^6} \times 0.15 + \frac{300}{10^6} \times 0.36 = 0.000090 + 0.000108 = \$0.000198
     $$
 
-    That is USD 171.07/day — a 34% reduction. Tracking token distributions per-template makes these opportunities visible; without metrics you are flying blind.
+    At the same 10 requests per second:
+
+    $$
+    0.000198 \times 10 \times 3600 \times 24 = \$171.07 \text{ per day}
+    $$
+
+    That is a 34% reduction against the USD 259.20/day baseline. Tracking token distributions per-template makes these opportunities visible; without metrics you are flying blind.
 
 ### Cost when you host the model yourself
 
@@ -400,8 +406,12 @@ class SamplingPolicy:
 
 def should_evaluate(record: dict, policy: SamplingPolicy) -> bool:
     """Return True if this record should be sent to the async eval pipeline."""
-    # Always evaluate failures and safety flags
-    if record.get("finish_reason") in ("content_filter", "error"):
+    # Always evaluate failures and safety flags. Check `safety_flagged` too: an
+    # external guardrail does not change the provider's finish_reason, so a flagged
+    # record usually still carries "stop" and would otherwise fall through to the
+    # 5% baseline sample.
+    if (record.get("safety_flagged")
+            or record.get("finish_reason") in ("content_filter", "error")):
         return random.random() < policy.failure_rate
     # Evaluate new prompt versions at higher rate to catch regressions early
     if record.get("is_new_prompt_version", False):
@@ -554,13 +564,21 @@ def monitor_embedding_drift(
 
 ### Output quality drift
 
-Track your eval composite score as a rolling mean. Use a Page-Cusum or CUSUM change-point algorithm to detect a sustained downward shift that is not noise:
+Track your eval composite score as a rolling mean. Use a Page–CUSUM change-point algorithm to detect a sustained shift that is not noise. The textbook form is the *upper* CUSUM, which accumulates **upward** deviations:
 
 $$
-S_n = \max\!\left(0,\; S_{n-1} + (x_n - \mu_0 - k)\right)
+S^{+}_n = \max\!\left(0,\; S^{+}_{n-1} + (x_n - \mu_0 - k)\right)
 $$
 
-where $\mu_0$ is the in-control mean quality score, $k$ is the allowance parameter (typically half the smallest shift to detect), and an alert fires when $S_n > h$ (a decision threshold, commonly set by ARL — average run length — analysis).
+where $\mu_0$ is the in-control mean quality score, $k$ is the allowance parameter (typically half the smallest shift to detect), and an alert fires when $S^{+}_n > h$ (a decision threshold, commonly set by ARL — average run length — analysis).
+
+Quality drift, however, is a sustained *drop*, so the detector you actually deploy is the **lower** CUSUM, which flips the sign of the deviation:
+
+$$
+S^{-}_n = \max\!\left(0,\; S^{-}_{n-1} + (\mu_0 - k - x_n)\right), \qquad \text{alert when } S^{-}_n > h
+$$
+
+The direction matters more than it looks: fed a falling score stream, the upper recursion has $x_n - \mu_0 - k < 0$ at every step, so the $\max$ clamps it to zero forever and the alarm can never fire. Exercise 5 implements and hand-traces the lower version.
 
 ### Provider / model version drift
 

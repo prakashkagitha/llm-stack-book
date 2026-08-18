@@ -23,15 +23,15 @@ Everything in this book has been assembling one artifact along one conveyor belt
  ┌─────────────┐   ┌──────────────┐   ┌───────────────┐   ┌────────────────────┐
  │ RAW WEB     │   │ CURATED      │   │ TOKENIZER     │   │ PACKED TOKEN SHARDS │
  │ FineWeb-Edu │──▶│ filter+dedup │──▶│ byte-BPE 32k  │──▶│ .bin uint16 memmaps │
- │ Cosmopedia  │   │  datatrove   │   │  tokenizers   │   │  (datatrove writer) │
- │ code, math  │   │ HF datasets  │   │ sentencepiece │   │                     │
+ │ Cosmopedia  │   │  datatrove   │   │  tokenizers   │   │ datatrove upstream, │
+ │ code, math  │   │ HF datasets  │   │ sentencepiece │   │ stacklm ShardWriter │
  └─────────────┘   └──────────────┘   └───────────────┘   └─────────┬──────────┘
                         Ch 15.2            Ch 15.3                   │
                                                                     ▼
  ┌────────────────────────────────────────────────────────────────────────────┐
  │                        PRETRAIN  (Ch 15.4)                                    │
  │  Stack-100M: 30L × 512d, GQA, RoPE+NoPE, SwiGLU, RMSNorm, QK-norm            │
- │  Muon+AdamW · WSD schedule · bf16 · FSDP2 · activation checkpoint · MFU log  │
+ │  Muon+AdamW · WSD schedule · bf16 · FSDP2 · distributed ckpt · MFU log       │
  │                    torchtitan  /  nanotron  (Megatron/DeepSpeed at scale)    │
  └───────────────────────────────────┬────────────────────────────────────────┘
                                       ▼  base checkpoint (safetensors)
@@ -87,16 +87,16 @@ This is the spine of the whole part. Every row is a stage of the pipeline. Colum
 
 | Stage | `stacklm` module (from scratch) | Production library (2026) | Built by hand in |
 |---|---|---|---|
-| Data curation & dedup | `stacklm.data.pipeline` | **`datatrove`** (+ HF `datasets` streaming); `nemo-curator`, `dolma` as alternatives | [Ch 14.2 Data Pipeline](../14-capstone/02-data-pipeline.html) |
+| Data curation & dedup | `stacklm.data` (`filters`, `dedup`, `build_corpus`) | **`datatrove`** (+ HF `datasets` streaming); `nemo-curator`, `dolma` as alternatives | [Ch 14.2 Data Pipeline](../14-capstone/02-data-pipeline.html) |
 | Tokenizer training | `stacklm.tokenizer.bpe` | **HF `tokenizers`** (Rust `BpeTrainer`); `sentencepiece` | [Ch 14.3 Tokenizer](../14-capstone/03-tokenizer.html) |
-| Model definition | `stacklm.model` | HF `transformers` `PretrainedModel` / `torchtitan` model defs | [Ch 14.4 Architecture](../14-capstone/04-architecture.html) |
+| Model definition | `stacklm.model` | HF `transformers` `PreTrainedModel` / `torchtitan` model defs | [Ch 14.4 Architecture](../14-capstone/04-architecture.html) |
 | Scaling-law fit | `stacklm.scaling` | (mostly bespoke: `numpy`/`scipy` fit — no monolith) | [Ch 14.5 Mini Scaling Laws](../14-capstone/05-mini-scaling-laws.html) |
 | Optimizer & schedule | `stacklm.optim.muon` | `torch` AdamW + Muon (reference impl); trainer-provided | [Ch 14.6 Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html) |
 | Pretraining loop | `stacklm.train.loop` | **`torchtitan`** (FSDP2); `nanotron`, `Megatron-LM`/`DeepSpeed`; `accelerate` for small | [Ch 14.7 Pretraining Run](../14-capstone/07-pretraining-run.html) |
-| Mid-training | `stacklm.train.midtrain` | same trainer, new config (WSD decay anneal, θ rescale) | [Ch 14.8 Mid-Training](../14-capstone/08-mid-training.html) |
+| Mid-training | `stacklm.mid.continue_training` | same trainer, new config (WSD decay anneal, θ rescale) | [Ch 14.8 Mid-Training](../14-capstone/08-mid-training.html) |
 | SFT / DPO / GRPO | `stacklm.post.*` | **`TRL`** (`SFTTrainer`/`DPOTrainer`/`GRPOTrainer`); `alignment-handbook`; `peft`/`unsloth`; `veRL`/`OpenRLHF` at scale | [Ch 14.9 Post-Training](../14-capstone/09-post-training.html) |
 | Narrow agent | `stacklm.agent.react` | (bespoke ReAct loop; distill traces via a teacher API) | [Ch 14.10 Narrow Agent](../14-capstone/10-agentic-narrow.html) |
-| Quantization | `stacklm.quant.rtn` | **`llm-compressor`** (GPTQ), `AutoAWQ`, GGUF via `llama.cpp` | [Ch 14.11 Eval & Serving](../14-capstone/11-evaluation-and-serving.html) |
+| Quantization | `stacklm.serve.quantize` | **`llm-compressor`** (GPTQ), `AutoAWQ`, GGUF via `llama.cpp` | [Ch 14.11 Eval & Serving](../14-capstone/11-evaluation-and-serving.html) |
 | Serving | `stacklm.serve.generate` | **`vLLM`** (`vllm serve`), `SGLang`, `TensorRT-LLM`, `llama.cpp` (CPU) | [Ch 14.11 Eval & Serving](../14-capstone/11-evaluation-and-serving.html) |
 | Evaluation | `stacklm.eval.probes` | **`lm-evaluation-harness`** | [Ch 14.11 Eval & Serving](../14-capstone/11-evaluation-and-serving.html) |
 
@@ -255,7 +255,7 @@ Notice what is *not* in those commands: no attention kernel, no sharding logic, 
 
 - Penedo et al., *The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale* (Hugging Face, 2024) — the data recipe Stack-100M borrows, and the motivation for `datatrove`.
 - Karpathy, *nanoGPT* and *llm.c* — the from-scratch lineage this whole capstone updates; read them to feel how much the from-scratch/library boundary has moved since 2024.
-- Wolf et al., *Transformers: State-of-the-Art Natural Language Processing* (Hugging Face, 2020) — the library and the safetensors/`PretrainedModel` conventions that define most of our seams.
+- Wolf et al., *Transformers: State-of-the-Art Natural Language Processing* (Hugging Face, 2020) — the library and the safetensors/`PreTrainedModel` conventions that define most of our seams.
 - *torchtitan* (PyTorch team) and *nanotron* (Hugging Face) repositories — PyTorch-native distributed pretraining with FSDP2; the primary trainers of Ch 15.4.
 - von Werra et al., *TRL: Transformer Reinforcement Learning* (Hugging Face) repository — the SFT/DPO/GRPO trainers of Ch 15.5; read `examples/scripts/` at your pinned tag.
 - Kwon et al., *Efficient Memory Management for Large Language Model Serving with PagedAttention* (vLLM, 2023) — the serving engine of Ch 15.6.

@@ -44,7 +44,7 @@ These must not regress below a defined threshold, even if the primary metric imp
 
 | Guardrail metric | What it catches |
 |---|---|
-| Deflection rate (support context) | Model is telling users to "contact a human" too aggressively |
+| Escalation / human-handoff rate (support context) | Model is telling users to "contact a human" too aggressively (equivalently: the deflection rate — the share of contacts resolved without an agent — is *falling*) |
 | Hallucination rate (sampled + judged) | Model generating factually incorrect content at elevated rate |
 | Toxicity / safety policy violations | Guardrail model flags on sampled responses |
 | Latency P99 (time-to-first-token) | Slower model degrading user experience |
@@ -105,7 +105,7 @@ where $\delta$ is the minimum detectable effect (MDE) you care about, $\sigma^2$
     = \frac{3.765}{0.0004} \approx 9{,}413 \text{ users per arm}
     $$
 
-    At 100,000 active daily users split 50/50, each arm accrues 50,000 users/day, so you reach this in about 4.5 hours. At 1,000 active daily users, it takes roughly 19 days. This illustrates why low-traffic products need either a higher MDE (coarser test) or variance reduction techniques (see CUPED below).
+    Note what $n$ counts: 9,413 *distinct users* per arm, because the user is the randomization unit. At 100,000 distinct users entering the experiment per day split 50/50, each arm accrues 50,000 users/day, so you reach this in about 4.5 hours. At 1,000 new users per day, it takes roughly 19 days. Do not read that second figure off a daily-active-user count: with a fixed base of 1,000 DAU, the same people return each day, so extra days mostly add *more observations per already-enrolled user* rather than new randomization units, and between-user variance does not shrink at the $\sqrt{t}$ rate the arithmetic implies. That is precisely the regime where a higher MDE (coarser test), variance reduction (see CUPED below), or interleaving — not patience — is the answer.
 
 ### Running the test
 
@@ -209,7 +209,7 @@ result = two_proportion_z_test(
 print(result)
 ```
 
-In production you do not hand-roll the assignment layer, because the hash is the easy half — the hard half is emitting a durable **exposure event** (user, experiment, variant, timestamp) at the moment the variant is actually served, since that log defines the analysis population. Open-source feature-flag/experiment SDKs do both: **GrowthBook** (its SDK hashes `hashAttribute + seed` exactly as above and logs exposures via a `trackingCallback`), **Unleash**, and **Flagsmith**, all behind **OpenFeature** — the CNCF vendor-neutral flag API — so the evaluation call site does not change when you swap providers. Keep the from-scratch version anyway: it is what you use in a load test or a notebook replay, and it makes the failure modes below legible.
+In production you do not hand-roll the assignment layer, because the hash is the easy half — the hard half is emitting a durable **exposure event** (user, experiment, variant, timestamp) at the moment the variant is actually served, since that log defines the analysis population. Open-source feature-flag/experiment SDKs do both: **GrowthBook** (its SDK hashes seed + `hashAttribute` into a uniform bucket the same way, though with FNV-1a rather than SHA-256 so the bucketing is cheap to reimplement identically in every language, and logs exposures via a `trackingCallback`), **Unleash**, and **Flagsmith**, all behind **OpenFeature** — the CNCF vendor-neutral flag API — so the evaluation call site does not change when you swap providers. Keep the from-scratch version anyway: it is what you use in a load test or a notebook replay, and it makes the failure modes below legible.
 
 ### Sanity check first: sample ratio mismatch (SRM)
 
@@ -295,15 +295,17 @@ Traditional A/B tests require large samples to detect small effects because the 
 
 In search/recommendation, interleaving mixes ranked lists. For LLM chat products, one variant is: present two completions side-by-side (a "compare" UI) and record which the user acts on. A more subtle variant records which completion a user copies, continues the conversation from, or clicks "insert" on in a coding assistant.
 
-For document editing or summarization, you can show two alternative completions and ask the user to select or edit one. The fraction of users who prefer treatment over control — the **win rate** — is the primary signal.
+For document editing or summarization, you can show two alternative completions and ask the user to select or edit one. The fraction of decisive comparisons won by treatment — the **win rate** — is the primary signal (aggregated per user before testing, for the clustering reason below).
 
-The statistical efficiency gain is substantial. Because each user sees both models, the between-user variance component is differenced out, leaving only within-user noise. Empirically, interleaving experiments have been reported to require on the order of 100x fewer user-sessions to detect the same effect size as a parallel A/B test for ranking systems (Radlinski & Craswell, "Optimized Interleaving for Online Retrieval Evaluation," WSDM 2013). The gain for LLM completions is product-dependent but typically a factor of 10–30x.
+The statistical efficiency gain is substantial. Because each user sees both models, the between-user variance component is differenced out, leaving only within-user noise. Empirically, interleaving experiments have been reported to require on the order of 100x fewer user-sessions to detect the same effect size as a parallel A/B test for ranking systems (Chapelle, Joachims, Radlinski & Yue, "Large-Scale Validation and Analysis of Interleaved Search Evaluation," ACM TOIS 30(1), 2012; the construction of the interleaving policy itself is refined in Radlinski & Craswell, "Optimized Interleaving for Online Retrieval Evaluation," WSDM 2013). The gain for LLM completions is product-dependent but typically a factor of 10–30x.
 
 {{fig:online-eval-interleaving-vs-ab-variance}}
 
 ```python
 from collections import defaultdict
 from typing import NamedTuple
+
+import numpy as np
 from scipy import stats
 
 class InterleavingSession(NamedTuple):
@@ -318,8 +320,18 @@ def compute_interleaving_win_rate(
     sessions: list[InterleavingSession],
 ) -> dict:
     """
-    Compute treatment win rate and a two-sided binomial test.
-    Only sessions with a preference (not 'none') are counted.
+    Treatment win rate, tested with the *user* as the unit of analysis.
+
+    Only sessions with a preference (not 'none') are counted. A binomial test
+    over decisive *sessions* would be wrong here for exactly the reason given
+    in the ratio-metric section above: one user contributing twenty decisive
+    sessions supplies twenty correlated Bernoulli draws, not twenty
+    independent ones, so `binomtest(wins, n_sessions, 0.5)` understates the
+    standard error. We therefore collapse to one win fraction per user and
+    run a one-sample t-test against 0.5 -- the "collapse to one value per
+    unit" option from the ratio-metric section. (A binomial test over
+    sessions is valid only when each user contributes exactly one decisive
+    session; it is reported alongside so the gap is visible.)
     """
     decisive = [s for s in sessions if s.preferred != "none"]
     n = len(decisive)
@@ -329,19 +341,46 @@ def compute_interleaving_win_rate(
     wins_treatment = sum(1 for s in decisive if s.preferred == "treatment")
     win_rate = wins_treatment / n
 
-    # Under H0: win_rate = 0.5; use binomial test
+    # One value per randomisation unit: user u's fraction of decisive
+    # sessions won by treatment.
+    per_user: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for s in decisive:
+        per_user[s.user_id][0] += int(s.preferred == "treatment")
+        per_user[s.user_id][1] += 1
+    w = np.array([wins / d for wins, d in per_user.values()])
+    k = len(w)
+    if k < 2:
+        return {"win_rate": win_rate, "n_decisive": n, "n_users": k,
+                "p_value": float("nan"), "significant": False}
+
+    # Under H0 the per-user win fraction is centred on 0.5.
     # (scipy.stats.binom_test was superseded by binomtest in SciPy 1.7,
     # deprecated in 1.10 and removed in 1.12; use the modern binomtest API,
     # which returns a result object.)
-    p_value = stats.binomtest(wins_treatment, n, p=0.5, alternative="two-sided").pvalue
+    t_stat, p_value = stats.ttest_1samp(w, 0.5)
+    naive_p = stats.binomtest(
+        wins_treatment, n, p=0.5, alternative="two-sided"
+    ).pvalue
 
     return {
         "win_rate": win_rate,
         "n_decisive": n,
-        "p_value": p_value,
-        "significant": p_value < 0.05,
+        "n_users": k,
+        "se": float(np.std(w, ddof=1) / np.sqrt(k)),
+        "p_value": float(p_value),
+        "naive_p_value_sessions_as_units": float(naive_p),
+        "significant": bool(p_value < 0.05),
     }
 ```
+
+The clustering correction is not cosmetic. Simulate 200 users with heterogeneous
+but *unbiased* idiosyncratic preferences (each user's propensity drawn from
+Beta(2, 2), so there is no true effect) and about ten decisive sessions each:
+the per-user t-test rejects about 5% of the time, as it should, while the
+session-level binomial test rejects more than 20% of the time. Interleaving buys you a
+large variance reduction by differencing out between-user variance *within* a
+comparison; it does not license pretending that repeated sessions from the same
+user are independent.
 
 Interleaving is best suited for *preference* signals (which response is better?) rather than *outcome* signals (did the user's problem get resolved?). For resolution rate and similar task-completion metrics, you still need an A/B test since both models cannot solve the same problem simultaneously in a meaningful way.
 
@@ -866,7 +905,8 @@ None of this requires a million users. When you deploy the capstone model from [
     **Foundational work**
 
     - [Deng et al., *Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data* (WSDM 2013)](https://dl.acm.org/doi/10.1145/2433396.2433413) — the original CUPED paper; still the canonical reference for variance reduction in A/B tests.
-    - [Radlinski & Craswell, *Optimized Interleaving for Online Retrieval Evaluation* (WSDM 2013)](https://dl.acm.org/doi/10.1145/2433396.2433429) — formalises interleaving as an optimisation problem; underpins the 10–100× efficiency gains over parallel A/B for preference signals.
+    - [Chapelle, Joachims, Radlinski & Yue, *Large-Scale Validation and Analysis of Interleaved Search Evaluation* (ACM TOIS 30(1), 2012)](https://dl.acm.org/doi/10.1145/2094072.2094078) — the large-scale study behind the 10–100× sensitivity advantage of interleaving over parallel A/B for preference signals.
+    - [Radlinski & Craswell, *Optimized Interleaving for Online Retrieval Evaluation* (WSDM 2013)](https://dl.acm.org/doi/10.1145/2433396.2433429) — formalises the *construction* of an interleaving policy as an optimisation problem, with unbiasedness constraints on the credit assignment.
     - [Benjamini & Hochberg, *Controlling the False Discovery Rate* (JRSS-B 1995)](https://academic.oup.com/jrsssb/article/57/1/289/7035855) — the FDR correction used when running many simultaneous experiments.
 
     **Recent advances (2023–2026)**
@@ -893,6 +933,7 @@ None of this requires a million users. When you deploy the capstone model from [
 - Deng, A., Xu, Y., Kohavi, R., Walker, T. — "Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data" (CUPED), *WSDM 2013*.
 - Johari, R., Koomen, P., Pekelis, L., Walsh, D. — "Peeking at A/B Tests: Why It Matters, and What to Do About It" (mSPRT), *KDD 2017*.
 - Howard, S. R., Ramdas, A., McAuliffe, J., Sekhon, J. — "Time-uniform, nonparametric, nonasymptotic confidence sequences," *Annals of Statistics 2021*.
+- Chapelle, O., Joachims, T., Radlinski, F., Yue, Y. — "Large-Scale Validation and Analysis of Interleaved Search Evaluation," *ACM TOIS 30(1), 2012* (the source of the order-of-magnitude sensitivity advantage of interleaving).
 - Radlinski, F., Craswell, N. — "Optimized Interleaving for Online Retrieval Evaluation," *WSDM 2013*.
 - Kohavi, R., Tang, D., Xu, Y. — *Trustworthy Online Controlled Experiments: A Practical Guide to A/B Testing*, Cambridge University Press, 2020.
 - Benjamini, Y., Hochberg, Y. — "Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing," *Journal of the Royal Statistical Society B, 1995*.

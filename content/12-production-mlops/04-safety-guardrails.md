@@ -137,8 +137,9 @@ if __name__ == "__main__":
     # This class expects an *encoder* checkpoint with a classification head.
     # Llama Guard is a decoder LM and needs a different call path (Section 6).
     # A real open-weights drop-in for the jailbreak slot is Meta's
-    # Llama Prompt Guard 2 (mDeBERTa-based, 86M and 22M variants), which has a
-    # binary benign/malicious head — so relabel to match its two outputs.
+    # Llama Prompt Guard 2 (86M = mDeBERTa-v3-base, multilingual; 22M =
+    # DeBERTa-v3-xsmall, English-only), which has a binary benign/malicious
+    # head — so relabel to match its two outputs.
     LABEL_NAMES[:] = ["safe", "jailbreak"]
     guard = InputGuardrail(
         model_name="meta-llama/Llama-Prompt-Guard-2-86M", device="cpu"
@@ -152,7 +153,7 @@ if __name__ == "__main__":
 
 Before the classifier (even cheaper), a rule-based filter can catch known high-precision patterns: base64-encoded instructions, DAN prompt templates, excessive role-play framings, and known adversarial templates. This is not sufficient on its own — creative attackers will bypass it — but it catches the long tail of copy-paste attacks with effectively zero false positives.
 
-Above the regex layer, the standard open-weights component for this job is **Llama Prompt Guard 2** (in Meta's [PurpleLlama](https://github.com/meta-llama/PurpleLlama) repo, released 2025): an mDeBERTa encoder in 86M and 22M sizes, trained on a corpus of known prompt-injection and jailbreak attacks, with a binary benign/malicious head. It is deliberately *not* a harm classifier — it detects attempts to subvert the instruction hierarchy, which is a different and much narrower distribution than "harmful topic," and pairs naturally with the harm taxonomy classifier of Section 2.1 rather than replacing it. The 22M variant is small enough to run on CPU inside the API gateway.
+Above the regex layer, the standard open-weights component for this job is **Llama Prompt Guard 2** (in Meta's [PurpleLlama](https://github.com/meta-llama/PurpleLlama) repo, released 2025): a DeBERTa-family encoder in two sizes — 86M (mDeBERTa-v3-base, multilingual) and 22M (DeBERTa-v3-xsmall, English-only, since no multilingual pretrained xsmall exists) — trained on a corpus of known prompt-injection and jailbreak attacks, with a binary benign/malicious head. It is deliberately *not* a harm classifier — it detects attempts to subvert the instruction hierarchy, which is a different and much narrower distribution than "harmful topic," and pairs naturally with the harm taxonomy classifier of Section 2.1 rather than replacing it. The 22M variant is small enough to run on CPU inside the API gateway.
 
 ```python
 # jailbreak_heuristics.py
@@ -423,6 +424,12 @@ class OutputGuardrail:
 
     def __init__(self, model_name: str, device: str = "cuda"):
         self.tok = AutoTokenizer.from_pretrained(model_name)
+        # Truncate from the LEFT, not the tokenizer default of "right". Once
+        # (prompt + response) exceeds max_length, right-truncation would delete
+        # the *newest* text — which under the delay-buffer streaming policy of
+        # Section 5.4 is exactly the not-yet-released buffer this call exists to
+        # classify, silently returning blocked=False for every chunk.
+        self.tok.truncation_side = "left"
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_name
         ).to(device).eval()
@@ -1061,6 +1068,7 @@ Not all content categories carry the same stakes. A pragmatic architecture uses 
                      high: float = 0.7, device: str = "cuda"):
             assert 0.0 <= low <= high <= 1.0, "need 0 <= low <= high <= 1"
             self.tok = AutoTokenizer.from_pretrained(model_name)
+            self.tok.truncation_side = "left"   # keep the newest text (S5.1)
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_name
             ).to(device).eval()

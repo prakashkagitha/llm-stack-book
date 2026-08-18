@@ -8,7 +8,7 @@ We will not re-derive the BPE algorithm — that's [Tokenization: BPE, WordPiece
 
 ## Why Reach for a Library At All
 
-The from-scratch trainer in Chapter 14.3 is not slow because Python is slow in some vague sense — it is slow because Python's interpreter overhead dominates an algorithm that touches millions of small integer tuples in a tight loop, and because it runs on a single core. `tokenizers` fixes both: the trainer and the encoder are written in Rust, and the encoder additionally parallelizes over documents with Rust-native threads (no GIL to fight). Chapter 14.3 measured this directly on the same corpus: HuggingFace's `trainers.BpeTrainer` finished a 32,768-entry vocabulary on an 8.34 MB sample in about the same wall-clock time as the from-scratch Python trainer at that *small* scale (the library's thread pool doesn't pay for its own setup cost until the corpus is much bigger) — but its **encoding** throughput, batched over 16 threads, is the fastest row in that chapter's table. At the corpus sizes a real pretraining run actually uses — hundreds of megabytes for training the tokenizer, tens to hundreds of gigabytes for encoding the full mix — the constant-factor gap between a Rust `encode_batch` and a pure-Python loop is the difference between a job that finishes on your laptop while you get coffee and one that needs a cluster.
+The from-scratch trainer in Chapter 14.3 is not slow because Python is slow in some vague sense — it is slow because Python's interpreter overhead dominates an algorithm that touches millions of small integer tuples in a tight loop, and because it runs on a single core. `tokenizers` fixes both: the trainer and the encoder are written in Rust, and the encoder additionally parallelizes over documents with Rust-native threads (no GIL to fight). Chapter 14.3 measured this directly on the same corpus: HuggingFace's `trainers.BpeTrainer` finished a 32,768-entry vocabulary on an 8.34 MB sample in about the same wall-clock time as the from-scratch Python trainer at that *small* scale (the library's thread pool doesn't pay for its own setup cost until the corpus is much bigger) — but its **encoding** throughput, batched over 16 threads, is 28.6 MB/s in that chapter's table — more than twenty times the uncached pure-Python path, though `tiktoken`'s batched Rust encoder (75.5 MB/s) is still the fastest row measured there. At the corpus sizes a real pretraining run actually uses — hundreds of megabytes for training the tokenizer, tens to hundreds of gigabytes for encoding the full mix — the constant-factor gap between a Rust `encode_batch` and a pure-Python loop is the difference between a job that finishes on your laptop while you get coffee and one that needs a cluster.
 
 There is a second, less obvious reason to prefer the library: **you get the ecosystem for free.** A `tokenizer.json` written by `tokenizers` is the file format `transformers.PreTrainedTokenizerFast`, `vllm serve --tokenizer`, `SGLang`, TRL's `SFTTrainer`, and (with the caveats in the next chapter's serving discussion) `llama.cpp`'s GGUF converter all expect. Chapter 14.3 had to build a 60-line exporter and a byte-identity test to bridge the gap between its bespoke JSON and that ecosystem. If you train with `tokenizers` in the first place, there is no gap to bridge — `save()` writes the ecosystem's native format directly.
 
@@ -136,8 +136,12 @@ tokenizer = Tokenizer(models.BPE(unk_token=None, fuse_unk=False))
 # Split on our regex FIRST (never let a merge cross a pre-token boundary),
 # THEN ByteLevel to remap the 256 raw byte values to printable codepoints.
 # use_regex=False is load-bearing: ByteLevel ships its OWN GPT-2 splitting
-# regex, and if you leave use_regex=True it re-splits AFTER ours, silently
-# overriding the digit cap you just wrote. add_prefix_space=False matches
+# regex, and if you leave use_regex=True it re-splits AFTER ours. A second
+# stage in a Sequence can only fragment existing pre-tokens further, never
+# merge them -- so the digit cap survives, but parity with Ch. 14.3 does NOT,
+# wherever our pattern is coarser than GPT-2's: '(hello' (one pre-token under
+# our `[^\r\n\p{L}\p{N}]?\p{L}+` alternative) would be re-split into '(' +
+# 'hello', changing which merges are ever learnable. add_prefix_space=False matches
 # Ch. 14.3 -- we never inject a synthetic leading space.
 tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
     pre_tokenizers.Split(Regex(SPLIT_PATTERN), behavior="isolated", invert=False),
@@ -232,7 +236,12 @@ A raw `tokenizers.Tokenizer` object is not yet the artifact TRL and vLLM expect.
 
 ```python
 # scripts/wrap_pretrained_tokenizer.py
+from tokenizers import Tokenizer
 from transformers import PreTrainedTokenizerFast
+
+# The artifact `train_hf_tokenizer.py` just wrote -- 32,759 trained entries plus
+# the 9 appended specials.
+tokenizer = Tokenizer.from_file("tokenizer/stack100m-32768-raw.json")
 
 # Reuse the SAME ChatML-style template as Chapter 14.3's exporter, so a model
 # fine-tuned with THIS tokenizer sees byte-identical prompts to one trained
@@ -248,7 +257,7 @@ CHAT_TEMPLATE = (
 )
 
 fast = PreTrainedTokenizerFast(
-    tokenizer_object=tokenizer,              # the trained Tokenizer from above
+    tokenizer_object=tokenizer,              # the trained Tokenizer loaded above
     bos_token="<|bos|>",
     eos_token="<|eos|>",
     pad_token="<|pad|>",
@@ -384,8 +393,24 @@ from transformers import LlamaTokenizerFast
 # vocabulary + special-token layout like ours, the more direct path is
 # converting the .model into a tokenizers.Tokenizer once, offline. That goes
 # through transformers' `convert_slow_tokenizer`, which is exactly what the
-# *TokenizerFast constructors invoke under the hood:
-fast = LlamaTokenizerFast(vocab_file="tokenizer/stack100m-32768-sp.model")
+# *TokenizerFast constructors invoke under the hood.
+#
+# PASS YOUR OWN TOKENS. LlamaTokenizerFast's defaults are unk_token="<unk>",
+# bos_token="<s>", eos_token="</s>", add_bos_token=True, add_eos_token=False --
+# tuned for Meta's original Llama .model, not ours. Left alone, "<s>"/"</s>" are
+# not in our model at all, so they get appended as NEW added tokens (vocab grows
+# past 32768 and bos_token_id stops pointing at id 0), and add_bos_token=True
+# installs a TemplateProcessing post-processor that prepends a BOS to every
+# encoding -- the opposite of the design above, where the chat template is the
+# only thing that emits specials.
+fast = LlamaTokenizerFast(
+    vocab_file="tokenizer/stack100m-32768-sp.model",
+    unk_token="<unk>", bos_token="<|bos|>", eos_token="<|eos|>",
+    pad_token="<|pad|>",
+    add_bos_token=False, add_eos_token=False,   # no implicit post-processor
+)
+assert fast.vocab_size == 32768, fast.vocab_size   # nothing was appended
+assert (fast.bos_token_id, fast.eos_token_id, fast.pad_token_id) == (0, 1, 2)
 fast.backend_tokenizer.save("tokenizer/stack100m-32768-sp-converted.json")
 
 # NOTE: `tokenizers` does ship a `from_spm` helper, but ONLY on
@@ -407,12 +432,12 @@ fast.backend_tokenizer.save("tokenizer/stack100m-32768-sp-converted.json")
 | Encode throughput at scale | Rust, multi-threaded `encode_batch` | Fast C++, single corpus-level API; comparable order of magnitude |
 | Used by (examples, cite what you know) | GPT-2/3/4-family, most `tokenizers`-native open models | Original Llama, T5, Gemma, XLNet, ALBERT |
 
-Stack-100M's data mix is 85% English-dominant text and code ([Chapter 14.2](../14-capstone/02-data-pipeline.html): FineWeb-Edu, Cosmopedia, StarCoder, math), so the byte-level BPE path with our own digit-capped pre-tokenizer is the right default — exactly as Chapter 14.3 argued from first principles. If you were building a multilingual variant of Stack-100M, or one whose corpus skewed toward CJK, this is the section to come back to, and Unigram mode is worth an ablation.
+Stack-100M's data mix is 95% English-dominant text and code ([Chapter 14.2](../14-capstone/02-data-pipeline.html): 70% FineWeb-Edu, 15% Cosmopedia v2, 10% StarCoder), with the remaining 5% English math text (FineMath) and no non-English source at all, so the byte-level BPE path with our own digit-capped pre-tokenizer is the right default — exactly as Chapter 14.3 argued from first principles. If you were building a multilingual variant of Stack-100M, or one whose corpus skewed toward CJK, this is the section to come back to, and Unigram mode is worth an ablation.
 
 !!! example "Worked example: three tokenizers, one sentence"
     Encoding `"The year 2026 arrives in Tōkyō."` with all three paths, trained on the same ~500 MB sample as this chapter, `vocab_size=32768` throughout:
 
-    - **Chapter 14.3's from-scratch tokenizer:** `['The', ' year', ' ', '202', '6', ' arrives', ' in', ' T', 'ō', 'ky', 'ō', '.']` — 12 tokens. The digit cap forces `2026` into `'202'` + `'6'`; `ō` (U+014D, not in the printable-Latin1 fast path) likely falls into a byte-level 2-token UTF-8 split unless a merge learned it whole.
+    - **Chapter 14.3's from-scratch tokenizer:** `['The', ' year', ' ', '202', '6', ' arrives', ' in', ' T', 'ō', 'ky', 'ō', '.']` — 12 tokens. The digit cap forces `2026` into `'202'` + `'6'`. `ō` is U+014D, i.e. the two UTF-8 bytes `0xC5 0x8D`, so it is only *one* token because this ~500 MB sample contained enough of it for the trainer to learn that byte pair as a merge; on a smaller or more purely-ASCII sample it stays two byte-level tokens and the count is 14.
     - **This chapter's `tokenizers`-trained tokenizer (identical regex + vocab_size):** essentially the same segmentation, because it is the *same design*, just a different implementation — that's the whole point of this chapter. Any difference is confined to merge-order tie-breaks on equally-frequent pairs, the same benign divergence Chapter 14.3 measured (rank order differs slightly; the learned vocabulary sets overlap above 99%).
     - **SentencePiece (BPE mode, no digit cap):** `['▁The', '▁year', '▁20', '26', '▁arrives', '▁in', '▁T', 'ō', 'ky', 'ō', '.']` — 11 tokens, and `2026` segments however corpus frequency happened to land, with no structural guarantee that `2031` would segment the same way.
 
@@ -473,7 +498,7 @@ Chapter 14.3 measured its own encode paths on an 8.34 MB training split. The com
 
 ## Wiring the Real Tokenizer Into the Rest of the Production Stack
 
-The artifact this chapter produces, `tokenizer/stack100m-32768-hf/`, is a drop-in replacement for `tokenizer/stack100m-32768-hf/` from Chapter 14.3's exporter — same vocabulary design, same special-token ids, same chat template, different training implementation underneath. Every downstream consumer in Part XV loads it identically:
+The artifact this chapter produces is a drop-in replacement for the one Chapter 14.3's exporter writes — same vocabulary design, same special-token ids, same chat template, different training implementation underneath — and the `save_pretrained` call above deliberately targets the *same* directory, `tokenizer/stack100m-32768-hf/`, so nothing downstream has to change. Mind the collision: running this chapter's script overwrites 14.3's artifact in place. If you want both side by side (to diff merge tables, or to keep 14.3's frozen), point one of the two at a different directory. Every downstream consumer in Part XV loads it identically:
 
 ```bash
 # 15.4's torchtitan / nanotron pretraining config points --tokenizer_path here.

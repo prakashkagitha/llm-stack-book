@@ -143,7 +143,7 @@ def _utcnow() -> datetime.datetime:
 @dataclass
 class ProviderHealth:
     provider: str
-    status: str          # "operational", "degraded", "outage"
+    status: str          # "operational", "degraded", "outage", "unknown"
     indicator: str       # raw indicator from status page
     checked_at: datetime.datetime = field(default_factory=_utcnow)
     error: Optional[str] = None
@@ -171,7 +171,11 @@ async def check_provider_status(provider: str) -> ProviderHealth:
         status = (
             "operational" if indicator == "none"
             else "degraded" if indicator in ("minor", "major")
-            else "outage"
+            else "outage" if indicator == "critical"
+            # Anything outside the documented indicator set is *no signal*, not a
+            # confirmed outage. Mapping an unrecognised value to "outage" would
+            # let a renamed status-page field trigger a spurious failover.
+            else "unknown"
         )
         return ProviderHealth(provider=provider, status=status, indicator=indicator)
     except Exception as exc:
@@ -478,7 +482,7 @@ Review date: 2026-06-06
    [ ] Document re-index runbook in incident wiki
    [ ] Cut MTTD: fault began 07:00, alert fired 09:12 (2h 12m). The canary eval
        runs every 15 min and pages only after two consecutive bad windows, so
-       ~30 min is the floor; the remaining 1h 40m is the job's own silent
+       ~30 min is the floor; the remaining ~1h 42m is the job's own silent
        failure. A direct index-freshness check would have caught it at 07:00.
 
 6. WHAT WENT WELL
@@ -1072,7 +1076,7 @@ War Room Checklist
 - Beyer, Jones, Petoff, Murphy. *Site Reliability Engineering.* Google, O'Reilly, 2016. The foundational SRE text; chapters on SLOs, error budgets, and incident management remain the gold standard.
 - Beyer, Murphy, et al. *The Site Reliability Workbook.* Google, O'Reilly, 2018. Practical implementation of SLOs, multi-window burn rate alerting, and error budget policy.
 - Kleppmann, M. *Designing Data-Intensive Applications.* O'Reilly, 2017. Chapter on reliability covers circuit breakers, timeouts, and fallback patterns applicable to LLM gateways.
-- Brewer, E. "Kubernetes and the Path to Cloud Native." SOSP 2019. Discusses graceful degradation at scale.
+- Brewer, E. "Kubernetes and the Path to Cloud Native." Keynote, ACM Symposium on Cloud Computing (SoCC), 2015. Discusses graceful degradation at scale.
 - LangSmith (LangChain). Observability and tracing for LLM pipelines — a practical reference for trace schema design. langchain.com/langsmith.
 - OpenLLMetry / Traceloop. OpenTelemetry-based instrumentation for LLM systems; provides standard span attributes for model calls, prompt versions, and retrieval stages.
 - Ribeiro, Wu, Guestrin, Singh. "Beyond Accuracy: Behavioral Testing of NLP Models with CheckList." ACL 2020. Foundation for golden-set canary eval design — systematic behavioral test suites rather than held-out accuracy alone.
@@ -1154,7 +1158,7 @@ War Room Checklist
 - `record(timestamp: float, good: bool)` — add one judged response.
 - `sli(now: float) -> float` — judged-good fraction over the last `window_seconds`.
 - `burn_rate(now: float) -> float` — using the chapter's formula $\frac{1 - \text{SLI}}{1 - \text{SLO}}$.
-- `alert_level(now: float) -> str` — return `"page"` if burn rate $\geq 14.4$, `"warn"` if $\geq 6$, else `"ok"`.
+- `alert_level(now: float) -> str` — return `"page"` if burn rate $\geq$ `page_at`, `"warn"` if $\geq$ `warn_at`, else `"ok"`. Default to the SRE Workbook's $14.4$/$6$, but make both constructor parameters so they can be scaled to the SLO (see the chapter's warning box on burn-rate ceilings).
 
 Write it in the chapter's style (dataclass-ish, standard library only), evicting samples older than the window. Then show it firing a page.
 
@@ -1168,10 +1172,14 @@ Write it in the chapter's style (dataclass-ish, standard library only), evicting
         """
         Sliding-window quality SLO monitor with multi-burn-rate alerting.
         Mirrors the chapter: quality SLI = judged-good / total over a window,
-        burn rate = (1 - SLI) / (1 - SLO), page at >=14.4x, warn at >=6x.
+        burn rate = (1 - SLI) / (1 - SLO), page at >=page_at, warn at >=warn_at.
+        Thresholds default to the SRE Workbook's 14.4x/6x but are parameters,
+        because the max achievable burn is 1/(1 - SLO) -- see the demo below.
         """
         slo_target: float = 0.95
         window_seconds: float = 1800.0            # 30-minute window
+        page_at: float = 14.4
+        warn_at: float = 6.0
         _events: deque = field(default_factory=deque)  # (timestamp, good: bool)
 
         def _evict(self, now: float) -> None:
@@ -1198,23 +1206,35 @@ Write it in the chapter's style (dataclass-ish, standard library only), evicting
 
         def alert_level(self, now: float) -> str:
             br = self.burn_rate(now)
-            if br >= 14.4:
+            if br >= self.page_at:
                 return "page"
-            if br >= 6.0:
+            if br >= self.warn_at:
                 return "warn"
             return "ok"
 
 
-    # Demo: a provider regression drives SLI to 0.28 -> burn rate ~14.4x -> page.
+    # Demo A: Workbook thresholds. SLI must fall to 0.27 before 14.4x is exceeded.
     mon = QualitySLOMonitor(slo_target=0.95, window_seconds=1800.0)
     t = 10_000.0
-    # 100 judged responses; 72 bad, 28 good  =>  SLI = 0.28
+    # 100 judged responses; 73 bad, 27 good  =>  SLI = 0.27
     for i in range(100):
-        mon.record(t + i, good=(i >= 72))
+        mon.record(t + i, good=(i >= 73))
     now = t + 100
-    print(f"SLI       = {mon.sli(now):.3f}")          # 0.280
-    print(f"burn rate = {mon.burn_rate(now):.2f}x")   # (1-0.28)/(1-0.95) = 14.40x
+    print(f"SLI       = {mon.sli(now):.3f}")          # 0.270
+    print(f"burn rate = {mon.burn_rate(now):.2f}x")   # (1-0.27)/(1-0.95) = 14.60x
     print(f"alert     = {mon.alert_level(now)}")      # page
+
+    # Demo B: same monitor, thresholds scaled to a 95% *quality* SLO (page 5x, warn 2x).
+    # A realistic regression -- 30% of responses judged bad -- now pages.
+    mon2 = QualitySLOMonitor(slo_target=0.95, window_seconds=1800.0,
+                             page_at=5.0, warn_at=2.0)
+    for i in range(100):
+        mon2.record(t + i, good=(i >= 30))            # 70 good => SLI = 0.70
+    print(f"SLI       = {mon2.sli(now):.3f}")         # 0.700
+    print(f"burn rate = {mon2.burn_rate(now):.2f}x")  # (1-0.70)/(1-0.95) = 6.00x
+    print(f"alert     = {mon2.alert_level(now)}")     # page
     ```
 
-    Working the numbers by hand for the demo: SLI $= 28/100 = 0.28$, so burn rate $= \frac{1 - 0.28}{1 - 0.95} = \frac{0.72}{0.05} = 14.4\times$, which hits the fast-burn page threshold exactly. Per the chapter, a $14.4\times$ burn exhausts a 30-day error budget in $30/14.4 \approx 2$ days, which is why it pages rather than merely warns. The `_evict` call in every read keeps the window honest: samples older than `window_seconds` are dropped so the SLI reflects only recent traffic, and the MTTD for a fault is bounded by the window width.
+    Working the numbers by hand for Demo A: SLI $= 27/100 = 0.27$, so burn rate $= \frac{1 - 0.27}{1 - 0.95} = \frac{0.73}{0.05} = 14.6\times$, which clears the fast-burn page threshold. Per the chapter, a $14.4\times$ burn exhausts a 30-day error budget in $30/14.4 \approx 2$ days, which is why it pages rather than merely warns. Note the deliberate margin: do not build a demo (or an alert test) that lands *exactly* on the threshold, because $1 - 0.95$ is $0.050000000000000044$ in IEEE-754 double and the computed ratio for a nominally $14.4\times$ scenario comes out as $14.399999999999986$ — just below the `>=` bar. Thresholds on computed ratios need slack, not float equality.
+
+    Demo B is the point of the chapter's warning box. Demo A only fires because 73% of responses are judged bad, which is not a regime a quality-scored product survives long enough to alert on — the maximum achievable burn at a 95% SLO is $1/(1 - 0.95) = 20\times$, so the Workbook's 14.4/6 pair, tuned for high-availability SLOs, is nearly unreachable here. Scaling to `page_at=5.0`, `warn_at=2.0` makes a plausible 30%-bad window page instead. The `_evict` call in every read keeps the window honest: samples older than `window_seconds` are dropped so the SLI reflects only recent traffic, and the MTTD for a fault is bounded by the window width.
