@@ -104,7 +104,7 @@ Degree 10:  Bias²=0.0040  Var=0.4787  MSE≈0.4827  (Bias²+Var=0.4827)
 
 Degree-3 wins: low enough bias to capture the sinusoid, low enough variance because 50 training points constrain a four-coefficient cubic well. Degree 10 has driven bias essentially to zero, but its variance is ~50x larger and that is what dominates its total error — the tradeoff in one table.
 
-Two details worth reading off the numbers. First, the measured MSE equals $\text{Bias}^2 + \text{Var}$ *exactly*, with no $\sigma^2$ term, because `avg_mse` is measured against the **noiseless** `y_test_true`: the irreducible-noise term only appears when you score against noisy test labels, in which case every row would shift up by $\sigma^2 = 0.3^2 = 0.09$. Second, the degree-1 bias² is checkable in closed form: the population-optimal linear fit to $\sin$ on $[0, 2\pi]$ leaves residual variance $\tfrac{1}{2} - 3/\pi^2 \approx 0.196$, which is what the empirical $0.2037$ is converging to (the small excess is the estimator's own variance).
+Two details worth reading off the numbers. First, the measured MSE equals $\text{Bias}^2 + \text{Var}$ *exactly*, with no $\sigma^2$ term, because `avg_mse` is measured against the **noiseless** `y_test_true`: the irreducible-noise term only appears when you score against noisy test labels, in which case every row would shift up by $\sigma^2 = 0.3^2 = 0.09$. Second, the degree-1 bias² is checkable in closed form: the population-optimal linear fit to $\sin$ on $[0, 2\pi]$ is $\hat{f}(x) = 3/\pi - (3/\pi^2)\,x$, which leaves residual variance $\tfrac{1}{2} - 3/\pi^2 \approx 0.196$ under a *continuous* uniform $x$. The empirical $0.2037$ sits slightly above that because `x_test` is an endpoint-inclusive `linspace` grid, not a uniform-measure quadrature: it gives full weight to both $x = 0$ and $x = 2\pi$, which is exactly where the optimal line's residual is largest ($|r| = 3/\pi \approx 0.955$). Scoring that same population line on the code's own grid gives $0.2035$ — which is what the empirical number converges to as `N_repeats` grows.
 
 !!! note "The modern twist: double descent"
     In deep learning, the bias-variance tradeoff's U-shaped test-error curve turns into a *double-descent* curve. After the classical interpolation threshold (where the model perfectly memorizes training data), test error *decreases again* as model size grows further. This is an active research area — see Belkin et al., "Reconciling modern machine-learning practice and the classical bias–variance trade-off," PNAS 2019.
@@ -227,9 +227,12 @@ class EarlyStopping:
         if val_loss < self.best_loss - self.min_delta:
             self.best_loss  = val_loss
             self.counter    = 0
-            # Deep-copy only the state dict — cheap on GPU
-            import copy
-            self.best_state = copy.deepcopy(model.state_dict())
+            # Snapshot the weights to CPU. `state_dict()` returns *references*
+            # to the live tensors, so a deepcopy of it would allocate a second
+            # full copy of the model on the GPU — a classic OOM when early
+            # stopping is bolted onto a run that already fits tightly.
+            self.best_state = {k: v.detach().to('cpu', copy=True)
+                               for k, v in model.state_dict().items()}
         else:
             self.counter += 1
 
@@ -560,7 +563,7 @@ Calibration is not just a classical-ML concern. The same sampling temperature th
 
     $$\text{Accuracy} = \frac{80+880}{1000} = 0.96$$
 
-    Accuracy looks impressive at 96%, but this is inflated by the easy ham class. If spam were only 10 of 1000 emails (1% prevalence) and we flagged nothing, accuracy would be 99% — completely useless. This is why F1 and AUC are the right metrics for imbalanced classification.
+    Accuracy looks impressive at 96%, but this is inflated by the easy ham class. If spam were only 10 of 1000 emails (1% prevalence) and we flagged nothing, accuracy would be 99% — completely useless. This is why F1 and PR-AUC are the right metrics for imbalanced classification.
 
 ### Regression Metrics
 
@@ -606,7 +609,7 @@ print(f"{bits_per_byte(3.0, 1_000_000, 4_300_000):.4f}")   # 1.0065
 
 How does any learning algorithm generalize at all? The deep answer lies in *inductive biases* — assumptions baked into the model architecture and training procedure that help it prefer simpler, more structured solutions.
 
-**The No Free Lunch theorem** (Wolpert, 1997) states that no algorithm outperforms all others averaged over all possible problem distributions. Generalization only makes sense relative to a prior on the problem class. Neural networks are not magic; they generalize because the inductive biases of weight sharing (CNNs), sequential attention (Transformers), and gradient descent with small learning rate happen to align well with the structure of natural data (images, language, code).
+**The No Free Lunch theorem** (Wolpert, 1996) states that no algorithm outperforms all others averaged over all possible problem distributions. Generalization only makes sense relative to a prior on the problem class. Neural networks are not magic; they generalize because the inductive biases of weight sharing (CNNs), sequential attention (Transformers), and gradient descent with small learning rate happen to align well with the structure of natural data (images, language, code).
 
 **Occam's Razor in practice.** Regularization implements a soft preference for *simpler* models. The minimum description length (MDL) principle formalizes this: the best model is the one that minimizes total description length of both the model and the data given the model. L2 regularization corresponds to preferring models near the origin (short code) under a Gaussian prior.
 
@@ -709,12 +712,15 @@ for epoch in range(100):
 
     # --- Validate ---
     model.eval()
-    val_losses = []
+    val_loss_sum = 0.0
     with torch.no_grad():
         for X_b, y_b in val_loader:
             X_b, y_b = X_b.to(device), y_b.to(device)
-            val_losses.append(criterion(model(X_b), y_b).item())
-    val_loss = np.mean(val_losses)
+            # criterion averages over the batch, so re-weight by batch size:
+            # the last batch is smaller (600 = 256 + 256 + 88) and a plain mean
+            # over per-batch means would over-weight it.
+            val_loss_sum += criterion(model(X_b), y_b).item() * X_b.size(0)
+    val_loss = val_loss_sum / len(val_loader.dataset)
 
     if val_loss < best_val_loss - 1e-4:
         best_val_loss = val_loss

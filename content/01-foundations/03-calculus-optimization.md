@@ -34,7 +34,7 @@ $$
 
 Each row $i$ of $J$ is the gradient of the $i$-th output with respect to all inputs. The gradient is the special case $m=1$, i.e., $J \in \mathbb{R}^{1 \times n}$ (a row vector; transposing gives the usual column-vector gradient).
 
-In neural network backpropagation, the backward pass through each layer is essentially a Jacobian-vector product (JVP) or vector-Jacobian product (VJP). PyTorch's autograd computes VJPs by default (reverse-mode AD), which is efficient when $m \ll n$ — exactly the situation when we have a scalar loss. See [Automatic Differentiation & PyTorch Internals](../01-foundations/07-autodiff-pytorch.html) for the full derivation.
+In neural network backpropagation, the backward pass through each layer is a vector-Jacobian product (VJP), $v \mapsto J^\top v$; its transpose, the Jacobian-vector product (JVP) $v \mapsto Jv$, is the forward-mode primitive that propagates tangents input-to-output. PyTorch's autograd computes VJPs by default (reverse-mode AD), which is efficient when $m \ll n$ — exactly the situation when we have a scalar loss. See [Automatic Differentiation & PyTorch Internals](../01-foundations/07-autodiff-pytorch.html) for the full derivation.
 
 ### The Hessian: Second-Order Curvature
 
@@ -201,7 +201,7 @@ $$
 \theta_{t+1} = \theta_t + v_{t+1}
 $$
 
-This provides a corrective anticipation. The rate depends on how $\beta$ is set. With Nesterov's *time-varying* schedule $\beta_t = (t-1)/(t+2)$, the method attains the optimal $O(1/t^2)$ rate for smooth convex functions (versus $O(1/t)$ for GD) — the first-order oracle lower bound. With a *fixed* $\beta$ — the form written above, used everywhere in practice and in the code below — you do not get that accelerated rate on general convex problems; what the look-ahead buys you there is the improved $(1 - 1/\sqrt{\kappa})^t$ rate in the *strongly* convex case, discussed under the condition number below.
+This provides a corrective anticipation. The rate depends on how $\beta$ is set. With Nesterov's *time-varying* schedule $\beta_t = (t-1)/(t+2)$, the method attains the optimal $O(1/t^2)$ rate for smooth convex functions (versus $O(1/t)$ for GD) — the first-order oracle lower bound. With a *fixed* $\beta$ — the form written above, used everywhere in practice and in the code below — you do not get that accelerated rate on general convex problems; what the look-ahead can buy you there is the improved $(1 - 1/\sqrt{\kappa})^t$ rate in the *strongly* convex case, discussed under the condition number below. Even that improved rate requires $\beta$ matched to the problem's conditioning — $\beta = (\sqrt{\kappa}-1)/(\sqrt{\kappa}+1)$ with $\eta = 1/L$ — not an arbitrary constant. On the $\kappa = 10$ quadratic worked out later in this chapter ($\eta = 0.05$), the matched value $\beta = 0.52$ contracts the error by $0.684 = 1 - 1/\sqrt{10}$ per step, while the habitual $\beta = 0.9$ contracts by $0.900$ — no better than plain GD, because $\beta = 0.9$ is the matched value for $\kappa = \big(\tfrac{1+\beta}{1-\beta}\big)^2 = 361$, not for the problem at hand.
 
 ### Adaptive Learning Rate Methods
 
@@ -401,7 +401,7 @@ print(f"lambda_max(H) ~= {lam:.4f}")
 print(f"stability ceiling 2/lambda_max = {2.0 / lam:.4f}  (max usable GD lr)")
 ```
 
-On this toy network it prints $\lambda_{\max} \approx 4.09$ and a stability ceiling of $2/\lambda_{\max} \approx 0.49$ — a learning rate well above that will diverge, which you can verify directly with plain `torch.optim.SGD` on this model: `lr=0.4` trains stably, while `lr=0.8` sends the loss to NaN within about twenty steps. (The chapter's `run_gd` below is a pure-NumPy loop over a flat parameter vector, so it is not the tool to use on a `nn.Module`.) Two practical notes: power iteration finds the eigenvalue of largest *magnitude*, so a negative result is informative rather than a bug (it means negative curvature dominates); and for a real LLM you would estimate this on a fixed batch, since $H$ depends on the data you evaluate it on.
+On this toy network it prints $\lambda_{\max} \approx 4.09$ and a stability ceiling of $2/\lambda_{\max} \approx 0.49$ — a learning rate well above that will diverge, which you can verify directly with plain `torch.optim.SGD` on this model: `lr=0.4` trains stably (loss $1.23 \to 0.40$ over 60 steps), while `lr=0.8` diverges — the loss blows past $10^{16}$ within twenty steps and turns to `inf`/`NaN` around step 35. (The chapter's `run_gd` below is a pure-NumPy loop over a flat parameter vector, so it is not the tool to use on a `nn.Module`.) Two practical notes: power iteration finds the eigenvalue of largest *magnitude*, so a negative result is informative rather than a bug (it means negative curvature dominates); and for a real LLM you would estimate this on a fixed batch, since $H$ depends on the data you evaluate it on.
 
 PyTorch ships higher-level wrappers for the same primitives — `torch.autograd.functional.hvp`/`vhp`, and `torch.func.jacrev`/`torch.func.hessian` for functions small enough to materialize — and the [PyHessian](https://github.com/amirgholami/PyHessian) library builds on HVPs to estimate the top-$k$ eigenvalues, the Hessian trace (via Hutchinson's estimator), and the full eigenvalue density of a trained network.
 
@@ -417,7 +417,7 @@ $$
 \|\nabla f(x) - \nabla f(y)\| \leq L \|x - y\| \quad \forall x, y
 $$
 
-Equivalently, $\lambda_{\max}(H) \leq L$ everywhere. The gradient doesn't change "too fast." This is the condition required for gradient descent to make guaranteed progress. The descent lemma gives $f(x - \eta \nabla f) \leq f(x) - \eta\big(1 - \tfrac{L\eta}{2}\big)\|\nabla f\|^2$, so any $\eta \leq 1/L$ decreases the loss by at least $\tfrac{\eta}{2}\|\nabla f\|^2$ — and that guaranteed decrease is maximized at exactly $\eta = 1/L$, where it equals $\|\nabla f\|^2 / (2L)$.
+Equivalently, $\max_i |\lambda_i(H)| \leq L$ — that is, $-L I \preceq H \preceq L I$ — everywhere: the gradient doesn't change "too fast" in *any* direction. (Bounding only $\lambda_{\max}$ would not suffice: a strongly *concave* direction has a large-magnitude negative eigenvalue and a fast-changing gradient too, which matters here because neural loss Hessians are full of negative eigenvalues. For the convex case $H \succeq 0$ the two conditions coincide, which is why $L = \lambda_{\max}(H)$ for the quadratics used later in this chapter.) This is the condition required for gradient descent to make guaranteed progress. The descent lemma gives $f(x - \eta \nabla f) \leq f(x) - \eta\big(1 - \tfrac{L\eta}{2}\big)\|\nabla f\|^2$, so any $\eta \leq 1/L$ decreases the loss by at least $\tfrac{\eta}{2}\|\nabla f\|^2$ — and that guaranteed decrease is maximized at exactly $\eta = 1/L$, where it equals $\|\nabla f\|^2 / (2L)$.
 
 If $\eta > 1/L$, GD can overshoot and diverge. A common rule of thumb: start with $\eta = 1/L$ and use a learning rate finder or warmup (see [Learning Rate Schedules, Warmup, Batch Size & Hyperparameters](../03-pretraining/10-lr-schedules-hparams.html)) to tune from there.
 
@@ -445,7 +445,7 @@ A residual network with skip connections has a better-conditioned loss landscape
 ## Worked Numerical Example: GD on a Quadratic
 
 !!! example "Gradient Descent on a 2D Quadratic"
-    Consider the loss surface $\mathcal{L}(\theta_1, \theta_2) = \theta_1^2 + 10 \theta_2^2$. This is a bowl stretched by 10x in the $\theta_2$ direction — it has condition number $\kappa = 10 / 1 = 10$.
+    Consider the loss surface $\mathcal{L}(\theta_1, \theta_2) = \theta_1^2 + 10 \theta_2^2$. This is a bowl that is $10\times$ *more curved* along $\theta_2$ than along $\theta_1$ — so its elliptical level sets are a factor $\sqrt{10} \approx 3.2$ narrower in $\theta_2$, a long valley running along the $\theta_1$ axis. It has condition number $\kappa = 20/2 = 10$.
 
     The Hessian is $H = \text{diag}(2, 20)$, so $L = 20$, $\mu = 2$.
 
@@ -475,7 +475,7 @@ A residual network with skip connections has a better-conditioned loss landscape
     \mathcal{L}(\theta_2) = 3.24^2 = 10.50
     $$
 
-    After step 1 the $\theta_2$ component (high-curvature direction) is already zeroed out. The remaining convergence is geometric: $\mathcal{L}$ decreases by factor $(1 - 2 \cdot 0.05)^2 = 0.81$ per step. To reach $\mathcal{L} < 0.01$ from the initial loss $\mathcal{L}(\theta_0) = 4^2 + 10 \cdot 1^2 = 26$: $t \geq \log(0.01/26) / \log(0.81) \approx 38$ steps. (Counting instead from the post-step-1 loss of 12.96 gives $\approx 34$ *additional* steps — the same order of magnitude, since step 1 already did most of the work by zeroing the high-curvature component.)
+    After step 1 the $\theta_2$ component (high-curvature direction) is already zeroed out. The remaining convergence is geometric: $\mathcal{L}$ decreases by factor $(1 - 2 \cdot 0.05)^2 = 0.81$ per step. Because that first step also collapses the $10\theta_2^2$ term outright, the loss for every $t \geq 1$ is exactly $\mathcal{L}_t = 16 \cdot 0.81^{\,t}$ (check: $16 \cdot 0.81 = 12.96$), not $26 \cdot 0.81^{\,t}$ — the initial loss of $\mathcal{L}(\theta_0) = 4^2 + 10 \cdot 1^2 = 26$ is off the geometric curve. To reach $\mathcal{L} < 0.01$: $t \geq \log(0.01/16) / \log(0.81) \approx 35.0$, so $t = 36$ steps. (Counting instead from the post-step-1 loss of 12.96 gives $\log(0.01/12.96)/\log(0.81) \approx 34.0$, i.e. 35 *additional* steps after step 1 — the same total of 36.)
 
     With Nesterov (rate $O(1/\sqrt{\kappa})$): $\approx 12$ steps to the same tolerance — $3\times$ faster.
 
@@ -763,7 +763,7 @@ In PyTorch this is the single line `torch.nn.utils.clip_grad_norm_(model.paramet
 
 ### Connection to Second-Order Methods
 
-The ideal update would be $\theta \leftarrow \theta - H^{-1} \nabla \mathcal{L}$ (Newton's method), which solves the local quadratic approximation exactly. This converges in $O(\log(1/\epsilon))$ steps regardless of condition number — it completely handles ill-conditioning. The problem is cost: inverting $H$ for $n = 10^9$ is $O(n^3)$, completely intractable.
+The ideal update would be $\theta \leftarrow \theta - H^{-1} \nabla \mathcal{L}$ (Newton's method), which solves the local quadratic approximation exactly. Its convergence is *quadratic* near the optimum ($\epsilon_{k+1} \sim \epsilon_k^2$), so once inside that basin it needs only $O(\log\log(1/\epsilon))$ steps — and on a genuine quadratic, exactly one — regardless of condition number. It completely handles ill-conditioning. The problem is cost: inverting $H$ for $n = 10^9$ is $O(n^3)$, completely intractable.
 
 **Quasi-Newton methods** (L-BFGS) approximate $H^{-1}$ using the last $k \approx 20$ gradient differences, costing $O(kn)$ per step. They work well for small-to-medium networks but are rarely used for LLMs.
 
@@ -991,4 +991,4 @@ The full probabilistic picture of why the loss landscape is navigable — the st
 
     You can drop it straight into the chapter's script, e.g. add `"Nesterov": run_nesterov(theta0, rosenbrock_grad, lr=0.001, beta=0.9, n_steps=2000)` to the `runs` dict.
 
-    **The one changed line:** heavy-ball momentum computes `g = grad_fn(theta)`, whereas NAG computes `g = grad_fn(theta + beta * velocity)`. Because the parameters are about to move by (approximately) $\beta v$ regardless, evaluating the gradient *after* that anticipated move lets NAG "correct" an overshoot before committing to it. Note the rate caveat from the text: with the fixed $\beta = 0.9$ used here you get the stability and the $(1 - 1/\sqrt{\kappa})^t$ strongly convex speedup, not the $O(1/t^2)$ accelerated rate — that requires the time-varying schedule $\beta_t = (t-1)/(t+2)$, a one-line change you can also try.
+    **The one changed line:** heavy-ball momentum computes `g = grad_fn(theta)`, whereas NAG computes `g = grad_fn(theta + beta * velocity)`. Because the parameters are about to move by (approximately) $\beta v$ regardless, evaluating the gradient *after* that anticipated move lets NAG "correct" an overshoot before committing to it. Note the rate caveat from the text: a *fixed* $\beta$ never gives the $O(1/t^2)$ accelerated convex rate — that requires the time-varying schedule $\beta_t = (t-1)/(t+2)$, a one-line change you can also try — and it delivers the $(1 - 1/\sqrt{\kappa})^t$ strongly convex speedup only when $\beta$ is matched to the conditioning, $\beta = (\sqrt{\kappa}-1)/(\sqrt{\kappa}+1)$. The habitual $\beta = 0.9$ used here is the matched value for $\kappa \approx 361$, so on a well-conditioned problem it buys stability and little else.

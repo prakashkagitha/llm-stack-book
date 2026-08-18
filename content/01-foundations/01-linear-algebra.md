@@ -82,7 +82,7 @@ $$
 
 **View 2 — Column combinations.** The $j$-th column of $C$ is $A$ times the $j$-th column of $B$: $C_{:,j} = A \cdot B_{:,j}$. So each column of $C$ is a linear combination of $A$'s columns, with the mixing coefficients given by the corresponding column of $B$.
 
-**View 3 — Outer products (rank-1 decomposition).** $C = \sum_{p=1}^k A_{:,p} \cdot B_{p,:}^\top$. Each term is a rank-1 matrix (column times row). This view is surprisingly important: low-rank approximations are truncated versions of this sum.
+**View 3 — Outer products (rank-1 decomposition).** $C = \sum_{p=1}^k A_{:,p} \cdot B_{p,:}$, where $A_{:,p} \in \mathbb{R}^{m \times 1}$ is the $p$-th column of $A$ and $B_{p,:} \in \mathbb{R}^{1 \times n}$ is the $p$-th row of $B$. Each term is a rank-1 matrix (column times row). This view is surprisingly important: low-rank approximations are truncated versions of this sum.
 
 {{fig:matmul-three-views}}
 
@@ -480,13 +480,13 @@ A matrix $Q \in \mathbb{R}^{n \times n}$ is **orthogonal** if $Q^\top Q = Q Q^\t
 
 ### Projections
 
-The **orthogonal projection** of $\mathbf{b}$ onto the column space of $A$ is:
+Assume $A \in \mathbb{R}^{m \times n}$ has **full column rank** (independent columns), so that $A^\top A$ is invertible. The **orthogonal projection** of $\mathbf{b}$ onto the column space of $A$ is then:
 
 $$
 \hat{\mathbf{b}} = A(A^\top A)^{-1} A^\top \mathbf{b} = P_A \mathbf{b}
 $$
 
-where $P_A = A(A^\top A)^{-1} A^\top$ is the **projection matrix**. Properties: $P_A^2 = P_A$ (idempotent), $P_A = P_A^\top$ (symmetric).
+where $P_A = A(A^\top A)^{-1} A^\top$ is the **projection matrix**. Properties: $P_A^2 = P_A$ (idempotent), $P_A = P_A^\top$ (symmetric). If $A$ is rank-deficient — the common case in this chapter, since low-rank factors like LoRA's $BA$ are deliberately so — $A^\top A$ is singular and the formula breaks down; use $P_A = A A^{+}$ with the pseudoinverse, or equivalently $P_A = QQ^\top$ for any orthonormal basis $Q$ of $\mathrm{col}(A)$. That $QQ^\top$ form is exactly what the code below computes.
 
 In neural networks, **residual connections** can be viewed geometrically as additive "correction" projections. The self-attention head projects queries and keys into a lower-dimensional subspace (head dimension $d_h = d_{\text{model}} / H$) before computing dot-product similarity; this is a learned projection. See [The Attention Mechanism From Scratch](../02-transformer/03-attention-from-scratch.html).
 
@@ -710,7 +710,7 @@ print("rel err of rank-8 randomized approx:",
 
 ### Einsum notation
 
-Einstein summation (`torch.einsum`) is the most general notation for tensor contractions. Every matrix multiplication, batch multiplication, outer product, and trace can be written as an einsum. It often compiles to efficient CUDA kernels.
+Einstein summation (`torch.einsum`) is the most general notation for tensor contractions. Every matrix multiplication, batch multiplication, outer product, and trace can be written as an einsum. It does not generate a kernel: `torch.einsum` parses the subscript string, picks a pairwise contraction order (via `opt_einsum` when there are three or more operands), and lowers each contraction to `permute`/`reshape` plus the same cuBLAS `bmm`/GEMM that `@` dispatches to. So it is a readability and correctness win, not a speed one — occasionally it even costs an extra layout copy that a hand-written reshape + matmul would avoid.
 
 ```python
 import torch
@@ -815,9 +815,11 @@ print(B.is_contiguous())   # False
 B_c = B.contiguous()
 print(B_c.is_contiguous()) # True
 
-# Do NOT do `A @ B.contiguous()`: the copy costs more than the transposed
-# GEMM saves. Time it -- `A @ B` and `A @ B.contiguous()` on 2048x2048 differ
-# by ~4x in favour of leaving it non-contiguous.
+# Do NOT do `A @ B.contiguous()`: the copy buys nothing the GEMM needs.
+# Time it yourself on 2048x2048 fp32 -- the penalty is device-dependent. On
+# CPU the strided transpose copy is expensive relative to the GEMM (roughly
+# 2-4x slower end to end); on GPU it is only a few percent of the GEMM time,
+# so the loss there is small -- but pointless either way.
 # Where it does pay off: before .view(), or ahead of a chain of elementwise
 # kernels -- e.g. after a permute in multi-head attention:
 x = torch.randn(2, 8, 32, 64)          # (batch, heads, seq, dim)
@@ -840,7 +842,7 @@ x_cont = x_perm.contiguous()           # required before .view(B, S, H*D)
     - Vector and matrix norms ($\ell_2$, Frobenius, spectral) appear in regularization, gradient clipping, and Lipschitz analysis. Know which norm each technique uses.
     - Orthogonal matrices preserve lengths and angles; $U$ and $V$ in the SVD are orthogonal. Replacing a gradient matrix $G = U\Sigma V^\top$ by $UV^\top$ — every direction kept, every scale equalized — is exactly what the Muon optimizer does via Newton-Schulz iterations.
     - `A @ B` dispatches to cuBLAS/oneDNN, not to PyTorch: your job is to feed those kernels well (contiguous, tensor-core-friendly shapes) and to set the precision knobs — `torch.set_float32_matmul_precision("high")` for TF32, and remember that bf16 matmuls accumulate in fp32. Matmul is therefore not bitwise reproducible across GPUs or library versions.
-    - Einsum notation (`torch.einsum`) unifies all tensor contractions in a single API and often compiles to optimal CUDA kernels. Prefer it over manual reshapes when expressing complex multi-dimensional operations.
+    - Einsum notation (`torch.einsum`) unifies all tensor contractions in a single API; it lowers to permutes, reshapes, and the same cuBLAS GEMM/`bmm` calls as `@`, so it buys readability rather than speed. Prefer it over manual reshapes when expressing complex multi-dimensional operations.
     - Never compute explicit matrix inverses in code; use `torch.linalg.solve` or factorization routines for numerical stability.
 
 ---

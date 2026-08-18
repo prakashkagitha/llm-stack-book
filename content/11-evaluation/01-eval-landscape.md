@@ -74,7 +74,7 @@ For MMLU specifically, both Hendrycks' original code and `lm-eval` render the op
 
 **Why GSM8K saturated fast.** Frontier models exceeded 90 % on GSM8K by 2023. The problems are short and the arithmetic is tractable for any model that learned the step-by-step format. Once a model learns *how to write out* arithmetic reasoning, the benchmark mainly tests whether that format was in training data. This led to MATH and then to AIME (below).
 
-**AIME** (American Invitational Mathematics Examination). Problems from the real AIME competition test, where top high-school students in the US solve 15 very difficult integer-answer problems. A score of 4–5 out of 15 would historically have been considered noteworthy for language models; frontier reasoning models began surpassing that threshold in 2024, and by 2026 the strongest reasoning models score near the top of the AIME range on recent exams, pushing the community toward harder, contamination-resistant math benchmarks such as FrontierMath (Glazer et al., 2024), on which frontier models still score in the single digits. Because new AIME exams are released yearly, contamination can be partially controlled by only evaluating on the most recent year's exam.
+**AIME** (American Invitational Mathematics Examination). Problems from the real AIME competition test, where top high-school students in the US solve 15 very difficult integer-answer problems. Two exams are administered each year (AIME I and AIME II), so an "AIME 2025" evaluation is normally all 30 problems, not 15 — worth checking before you compute a standard error, since halving $n$ inflates the SE by $\sqrt{2}$. A score of 4–5 out of 15 would historically have been considered noteworthy for language models; frontier reasoning models began surpassing that threshold in 2024, and by 2026 the strongest reasoning models score near the top of the AIME range on recent exams, pushing the community toward harder, contamination-resistant math benchmarks such as FrontierMath (Glazer et al., 2024), on which frontier models scored in the low single digits at release and, even after the reasoning-model gains of 2025, still solve well under a third of the problems. Because new AIME exams are released yearly, contamination can be partially controlled by only evaluating on the most recent year's exams.
 
 ### Code: HumanEval and MBPP
 
@@ -128,7 +128,7 @@ $$
 
 which equals $\frac{N_{\text{tokens}}}{N_{\text{bytes}}} \cdot \frac{\text{mean NLL per token}}{\ln 2}$. BPB is the honest cross-model, cross-tokenizer comparison metric and is what serious small-scale leaderboards report; `lm_eval` computes it for the `wikitext` and Pile-style perplexity tasks, and AI2's Paloma suite exists specifically to report held-out fit across many domains rather than one. See [Probability, Statistics & Information Theory](../01-foundations/02-probability-information.html) for the bits/nats conversion and [The Pretraining Objective & Loss](../03-pretraining/03-pretraining-objective.html) for the loss itself.
 
-**The zero-shot multiple-choice suite.** The second family is the set of small, pre-instruction-tuning benchmarks that the EleutherAI/Pythia and OLMo model suites report: HellaSwag (commonsense sentence completion), PIQA (physical commonsense), WinoGrande (pronoun coreference), ARC-Easy and ARC-Challenge (grade-school science), OpenBookQA, BoolQ, and SciQ, plus LAMBADA (last-word prediction). All but the last are scored by **length-normalized log-likelihood over the answer options**, not by generation; LAMBADA has no answer options, so it is scored by whether the gold final word is the model's greedy continuation (`lm-eval`'s `lambada_openai` reads that off the `is_greedy` flag of a single log-likelihood request, and reports perplexity on the same word). Either way no generation, instruction-following, or "Answer: C" emission is required, so a base model still produces a usable number. In published small-model sweeps the easier members (SciQ, PIQA, ARC-Easy, LAMBADA, then HellaSwag) typically lift above chance first, while ARC-Challenge and WinoGrande hug chance until roughly the 1B-parameter scale — so at 100M, expect a handful of moving needles and several flat ones, and choose your tracking set accordingly.
+**The zero-shot multiple-choice suite.** The second family is the set of small, pre-instruction-tuning benchmarks that the EleutherAI/Pythia and OLMo model suites report: HellaSwag (commonsense sentence completion), PIQA (physical commonsense), WinoGrande (pronoun coreference), ARC-Easy and ARC-Challenge (grade-school science), OpenBookQA, BoolQ, and SciQ, plus LAMBADA (last-word prediction). All but the last are scored by **log-likelihood over a fixed set of alternatives**, not by generation — but the details differ per task and are worth knowing before you compare numbers. HellaSwag, PIQA, ARC-E/C, OpenBookQA and SciQ score competing answer *continuations* of unequal length, so the harness reports length-normalized accuracy (`acc_norm`) alongside plain `acc`. BoolQ's two options (" no" / " yes") are the same length, so only plain `acc` is reported and normalization is a no-op. WinoGrande is the odd one out: `lm-eval` puts the two candidate fillers in the *context* (`doc_to_choice` returns the sentence prefix with option1 / option2 substituted) and scores the shared suffix after the blank as the continuation, so it compares $\log p(\text{same continuation} \mid \text{two different contexts})$ and reports plain `acc` with no normalization at all. LAMBADA has no answer options, so it is scored by whether the gold final word is the model's greedy continuation (`lm-eval`'s `lambada_openai` reads that off the `is_greedy` flag of a single log-likelihood request, and reports perplexity on the same word). Either way no generation, instruction-following, or "Answer: C" emission is required, so a base model still produces a usable number. In published small-model sweeps the easier members (SciQ, PIQA, ARC-Easy, LAMBADA, then HellaSwag) typically lift above chance first, while ARC-Challenge and WinoGrande hug chance until roughly the 1B-parameter scale — so at 100M, expect a handful of moving needles and several flat ones, and choose your tracking set accordingly.
 
 You do not re-implement any of this. The reference implementation is EleutherAI's `lm-evaluation-harness`:
 
@@ -375,14 +375,20 @@ def extract_mc_answer(output: str) -> Optional[str]:
     Robustly extract a multiple-choice answer letter from model output.
     Handles common formats: "A", "(A)", "Answer: A", "The answer is A.", etc.
     Returns None if no single unambiguous letter is found.
+
+    Every letter pattern below ends in `(?![A-Za-z])`. Without that guard the
+    character class happily matches the FIRST letter of a following word:
+    "The answer is definitely option 3." would return 'D' (the 'd' of
+    "definitely") and "Answer: cannot be determined" would return 'C'. Those
+    are silent wrong answers, which is worse than the None this should return.
     """
     # Try explicit "answer is X" pattern first (most reliable)
-    m = re.search(r"\bthe answer is\s+\(?([A-Da-d])\)?", output, re.IGNORECASE)
+    m = re.search(r"\bthe answer is\s+\(?([A-Da-d])\)?(?![A-Za-z])", output, re.IGNORECASE)
     if m:
         return m.group(1).upper()
 
     # Try "Answer: X" pattern
-    m = re.search(r"\banswer\s*:\s*\(?([A-Da-d])\)?", output, re.IGNORECASE)
+    m = re.search(r"\banswer\s*:\s*\(?([A-Da-d])\)?(?![A-Za-z])", output, re.IGNORECASE)
     if m:
         return m.group(1).upper()
 
@@ -457,8 +463,8 @@ Measuring position bias itself is a separate experiment from scoring existing pr
 
 ```python
 import itertools
+import math
 import random
-from collections import defaultdict
 from typing import List, Optional, Tuple
 
 
@@ -491,22 +497,40 @@ def make_position_bias_variants(
     permutations all share a leading index, so with gold_index=0 and
     max_variants=6 the gold option would land on 'A' in all 6 variants and
     never on B/C/D. We therefore stratify by gold position and draw an
-    equal number from each, so every letter keeps the same trial count
-    (the returned length is rounded down to a multiple of len(choices)).
+    equal number from each, so every letter keeps the same trial count.
+    The returned length is always a multiple of len(choices): max_variants
+    is rounded DOWN to such a multiple, except that at least one variant per
+    position is always kept, so a budget below len(choices) still yields
+    len(choices) variants rather than zero.
+
+    Note that the subsampled branch never materializes the full permutation
+    list -- doing so would pay exactly the cost max_variants exists to avoid
+    (the 10-option enumeration is ~3.6M tuples, several hundred MB). It
+    instead builds each stratum directly by permuting the non-gold indices
+    and splicing the gold index into the target slot.
     """
     letters = "ABCDEFGHIJ"
-    perms = list(itertools.permutations(range(len(choices))))
-    if max_variants is not None and max_variants < len(perms):
-        by_gold_pos = defaultdict(list)
-        for p in perms:
-            by_gold_pos[p.index(gold_index)].append(p)
-        per_pos = max(1, max_variants // len(choices))
+    n = len(choices)
+    if max_variants is None or max_variants >= math.factorial(n):
+        perms = list(itertools.permutations(range(n)))
+    else:
+        per_pos = max(1, max_variants // n)
+        n_per_pos = math.factorial(n - 1)   # permutations with gold at a fixed slot
+        take = min(per_pos, n_per_pos)
+        others = [i for i in range(n) if i != gold_index]
         rng = random.Random(seed)
-        perms = [
-            p
-            for pos in range(len(choices))
-            for p in rng.sample(by_gold_pos[pos], min(per_pos, len(by_gold_pos[pos])))
-        ]
+        perms = []
+        for pos in range(n):
+            if take == n_per_pos:
+                rest_perms = list(itertools.permutations(others))
+            else:
+                seen = set()
+                while len(seen) < take:      # distinct draws, gold-free order
+                    rest = others[:]
+                    rng.shuffle(rest)
+                    seen.add(tuple(rest))
+                rest_perms = sorted(seen)
+            perms.extend(r[:pos] + (gold_index,) + r[pos:] for r in rest_perms)
     variants: List[Tuple[str, str]] = []
     for perm in perms:
         lines = [question, ""]
@@ -654,14 +678,14 @@ Reproducibility is a live problem. The same model evaluated with different harne
 | MMLU-Pro | Knowledge (harder) | 10-choice | ~12,000 | Accuracy | No |
 | GSM8K | Grade-school math | Open answer | 8,500 (1,319 test) | Exact match | Yes |
 | MATH | Competition math | Open answer | 12,500 (5,000 test; MATH-500 subset common) | Exact match | Partial |
-| AIME | Hard competition math | Integer answer | 15/yr | Exact match | No |
+| AIME | Hard competition math | Integer answer | 15/exam (30/yr: AIME I + II) | Exact match | No |
 | HumanEval | Python coding | Code gen + unit tests | 164 | pass@1 | Yes |
 | MBPP | Python coding | Code gen + unit tests | 974 (500 test) | pass@1 | Yes |
 | GPQA | PhD science | 4-choice | ~450 | Accuracy | Partial (cracked by reasoning models) |
 | BBH | Complex reasoning | Open/4-choice | 6,511 | Accuracy | Partial |
 | IFEval | Instruction following | Open (rule-checked) | 541 | Prompt/instr accuracy | No |
 | ARC-AGI | Visual rule induction | Grid matching | 400 | Accuracy | No |
-| HellaSwag / PIQA / ARC-E/C / WinoGrande | Commonsense & science, base models | Multi-choice, log-likelihood scored | ~0.5k–10k each | Length-normalized accuracy | Yes at the frontier — but this is the informative band at ≤1B |
+| HellaSwag / PIQA / ARC-E/C / WinoGrande | Commonsense & science, base models | Multi-choice, log-likelihood scored | ~0.5k–10k each | Accuracy (`acc_norm` where the options differ in length; plain `acc` for WinoGrande/BoolQ) | Yes at the frontier — but this is the informative band at ≤1B |
 | Held-out corpus | Language-modeling fit | Free text | any | Bits-per-byte / perplexity | Never saturates |
 
 ---
@@ -702,7 +726,7 @@ Reproducibility is a live problem. The same model evaluated with different harne
     **Recent advances (2023–2026)**
 
     - [Rein et al., *GPQA: A Graduate-Level Google-Proof Q&A Benchmark* (2023)](https://arxiv.org/abs/2311.12022) — 448 PhD-level science questions where non-expert humans with internet access score ~34%; long a frontier-hard benchmark, though by 2026 the strongest reasoning models have pushed past the domain-expert level, motivating harder successors.
-    - [Phan et al., *Humanity's Last Exam* (2025)](https://arxiv.org/abs/2501.14249) — 2,500 expert-crafted, closed-ended questions across dozens of disciplines, each verifiable but not answerable via retrieval; designed as a deliberately unsaturated frontier-knowledge benchmark. Its companion [FrontierMath (Glazer et al., 2024)](https://arxiv.org/abs/2411.04872) plays the same role for research-level mathematics, where frontier models still score in the single digits.
+    - [Phan et al., *Humanity's Last Exam* (2025)](https://arxiv.org/abs/2501.14249) — 2,500 expert-crafted, closed-ended questions across dozens of disciplines, each verifiable but not answerable via retrieval; designed as a deliberately unsaturated frontier-knowledge benchmark. Its companion [FrontierMath (Glazer et al., 2024)](https://arxiv.org/abs/2411.04872) plays the same role for research-level mathematics: frontier models scored in the low single digits at its late-2024 release and, after the 2025 reasoning-model gains, still solve well under a third of the problems.
     - [Wang et al., *MMLU-Pro: A More Robust and Challenging Multi-Task Language Understanding Benchmark* (2024)](https://arxiv.org/abs/2406.01574) — ten-choice questions with heavier reasoning load; NeurIPS 2024 Spotlight, replacing MMLU as the standard knowledge eval.
     - [Gema et al., *Are We Done with MMLU?* (2024)](https://arxiv.org/abs/2406.04127) — systematic audit finding pervasive label errors in MMLU; introduced MMLU-Redux (5,700 re-annotated questions) and showed reported scores are inflated.
     - [White et al., *LiveBench: A Challenging, Contamination-Limited LLM Benchmark* (2024)](https://arxiv.org/abs/2406.19314) — monthly-updated questions drawn from recent arXiv papers and news; auto-scored with objective ground truth, eliminating judge bias.

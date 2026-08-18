@@ -181,7 +181,7 @@ LLaVA-1.5 replaced the linear projector with this MLP connector, achieving signi
 
 ## Flamingo: Cross-Attention for In-Context Multimodal Learning
 
-Flamingo (Alayrac et al., DeepMind 2022) took a different path. Rather than prepending visual tokens, it freezes a large pretrained LLM and inserts new *gated cross-attention* layers every $k$ transformer blocks ($k = 1$ for Flamingo-3B, every 4th layer for Flamingo-9B, every 7th layer for the 80B flagship — the insertion stride is a real cost/quality knob). Each cross-attention layer attends from LLM hidden states to vision encoder outputs.
+Flamingo (Alayrac et al., DeepMind 2022) took a different path. Rather than prepending visual tokens, it freezes a large pretrained LLM and inserts new *gated cross-attention* layers every $k$ transformer blocks ($k = 1$ for Flamingo-3B, every 4th layer for Flamingo-9B, every 7th layer for the 80B flagship — the insertion stride is a real cost/quality knob). The cross-attention layers do not read the vision encoder's feature grid directly: a **Perceiver Resampler** first compresses the frozen NFNet encoder's variable-length features into a fixed set of 64 learned latent vectors, and every gated cross-attention layer attends from LLM hidden states to those 64 latents. That fixed budget per image is what keeps many-image contexts affordable.
 
 The gated cross-attention update for layer $\ell$ is:
 
@@ -196,7 +196,7 @@ The key architectural difference from the projector approach:
 | Dimension | LLaVA-style projector | Flamingo cross-attn |
 |---|---|---|
 | Visual tokens in LLM stream | Yes — they occupy sequence positions | No — LLM residual stream unchanged |
-| New parameters | Projector only (~21M) | Cross-attn Q/K/V/out + FFW in every $k$-th layer |
+| New parameters | Projector only (~21M) | Perceiver Resampler + cross-attn Q/K/V/out + FFW in every $k$-th layer |
 | LLM context consumed by image | Proportional to N_patches (e.g. 576) | Zero — image stored externally |
 | Few-shot image interleaving | Awkward — prepend all images | Natural — interleaved in context |
 | Fine-tuning complexity | Straightforward | More complex; two parameter groups |
@@ -273,7 +273,7 @@ class GatedCrossAttention(nn.Module):
 # Demo
 if __name__ == "__main__":
     B, T_text = 2, 64          # batch, text tokens
-    N_vis     = 64             # 8x8 visual tokens (pooled)
+    N_vis     = 64             # Perceiver Resampler latents (fixed per image)
     d_model   = 2048           # LLM width (e.g. Chinchilla-style 1.4B; the 7B point
                                #  in that family is d_model = 4096)
     d_vision  = 1024           # CLIP ViT-L/14
@@ -361,12 +361,21 @@ def tile_image(
     # Compute number of tiles in each dimension
     n_cols = max(1, round(W / tile_size))
     n_rows = max(1, round(H / tile_size))
-    # Clip to max_tiles (e.g. 6 for LLaVA-1.6)
+    # Clip to max_tiles (6 is this chapter's default; real LLaVA-1.6 caps at
+    # 4 tiles via its grid_pinpoints, InternVL 1.5/2 at ~12)
     if n_rows * n_cols > max_tiles:
         # Reduce proportionally — simplified version
         scale = (max_tiles / (n_rows * n_cols)) ** 0.5
         n_cols = max(1, int(n_cols * scale))
         n_rows = max(1, int(n_rows * scale))
+        # The max(1, ...) floor can cancel the short axis's share of the
+        # reduction, so an extreme aspect ratio can still exceed the cap
+        # (a 4368x336 strip goes 13x1 -> 8x1). Enforce it explicitly.
+        while n_rows * n_cols > max_tiles:
+            if n_cols >= n_rows:
+                n_cols -= 1
+            else:
+                n_rows -= 1
 
     # Resize image to exact grid dimensions
     resized = image.resize((n_cols * tile_size, n_rows * tile_size), Image.BICUBIC)
@@ -595,7 +604,7 @@ One of the most commercially important capabilities of modern VLMs is reading te
 
 ### Why Standard VLMs Struggle with OCR
 
-A $336 \times 336$ image contains ~100,000 pixels. A character at 12pt font in a standard document is roughly $10 \times 10$ pixels. At $14 \times 14$ patch size, a single patch covers 196 pixels — the model sees at most a few characters per patch, smeared together. Fine text recognition requires either:
+A $336 \times 336$ image contains ~100,000 pixels — but a scanned page never arrives at that size, so the resize is the whole story. A 12pt character is roughly $10 \times 10$ pixels in the document's own scan, yet squeezing a full $8.5 \times 11$ inch page down to $336 \times 336$ leaves only ~30–40 pixels per inch, shrinking that character to a couple of pixels across. At $14 \times 14$ patch size, a single patch covers 196 pixels — which at that scale is a dozen or more characters smeared into one embedding. Fine text recognition requires either:
 
 1. **Higher resolution:** More patches per image. The patch stays $14 \times 14 = 196$ pixels no matter the input size, but each patch now covers a *smaller* physical region of the page, so a character spans one or more patches instead of a fraction of one.
 2. **Specialized pretraining data:** The model needs to have "read" thousands of document images with ground-truth OCR labels during training.
@@ -647,7 +656,7 @@ def encode_document_pages(
     for i, page_img in enumerate(pages):
         tiles  = tile_image(page_img, max_tiles=max_tiles_per_page)
         tokens = encode_tiles_to_visual_tokens(
-            tiles, vision_encoder, projector, image_processor)
+            tiles, vision_encoder, projector, image_processor, device=device)
         # tokens: [1, K*576, D_llm]
         all_embeds.append(tokens)
         if i < len(pages) - 1:
@@ -657,7 +666,8 @@ def encode_document_pages(
     doc_embeds = torch.cat(all_embeds, dim=1)  # [1, total_visual_tokens, D_llm]
     doc_embeds = doc_embeds[:, :max_len]
     total_len  = doc_embeds.shape[1]
-    attn_mask  = torch.ones(1, total_len, dtype=torch.long)
+    attn_mask  = torch.ones(1, total_len, dtype=torch.long,
+                            device=doc_embeds.device)
     return {"inputs_embeds": doc_embeds, "attention_mask": attn_mask}
 ```
 

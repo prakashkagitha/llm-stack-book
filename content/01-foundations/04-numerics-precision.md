@@ -65,7 +65,7 @@ The key visual: **bf16 is the top 16 bits of fp32**. They share the same 8-bit e
 
 ### Machine epsilon and ULP
 
-**Machine epsilon** ($\varepsilon_{\text{mach}}$) is the smallest value such that $1 + \varepsilon_{\text{mach}} \neq 1$ in the given format. It equals $2^{-p}$ where $p$ is the number of mantissa bits:
+**Machine epsilon** ($\varepsilon_{\text{mach}}$) is the gap between $1.0$ and the next representable number above it. It equals $2^{-p}$ where $p$ is the number of stored mantissa bits, and it is what `torch.finfo(dtype).eps` reports. (Beware the folklore definition "the smallest $x$ with $1 + x \neq 1$": under IEEE 754's default round-to-nearest-even that quantity is only *half* this value, because $1 + x$ rounds up once $x$ exceeds half a ULP. This chapter — like PyTorch and NumPy — uses the spacing-at-1 convention throughout.)
 
 | Format | $\varepsilon_{\text{mach}}$ |
 |--------|-----------------------------|
@@ -74,7 +74,7 @@ The key visual: **bf16 is the top 16 bits of fp32**. They share the same 8-bit e
 | bf16 | $\approx 7.8 \times 10^{-3}$ |
 | fp16 | $\approx 9.8 \times 10^{-4}$ |
 
-**Unit in the last place** (ULP) is the spacing between adjacent representable numbers at any given magnitude. For a normal fp32 number with magnitude around 1.0, 1 ULP ≈ $1.2 \times 10^{-7}$. For a number around $10^4$, 1 ULP ≈ $1.2 \times 10^{-3}$ — precision scales with magnitude.
+**Unit in the last place** (ULP) is the spacing between adjacent representable numbers at any given magnitude. For a normal fp32 number with magnitude around 1.0, 1 ULP ≈ $1.2 \times 10^{-7}$. For a number around $10^4$ (which lives in the binade $[2^{13}, 2^{14})$), 1 ULP $= 2^{13} \times 2^{-23} = 2^{-10} \approx 9.8 \times 10^{-4}$ — precision scales with magnitude.
 
 {{fig:float-number-line}}
 
@@ -95,7 +95,7 @@ bf16 keeps fp32's 8-bit exponent (max value ~$3.4 \times 10^{38}$) but sacrifice
 
 **Overflow** occurs when a computed value exceeds the format's maximum. In IEEE 754, the result is `+inf` or `-inf`. Arithmetic involving `inf` often produces NaN, which then propagates and kills training.
 
-**Underflow** occurs when a value is too small to represent as a normal number. IEEE 754 defines **subnormal** (denormal) numbers that fill the gap between zero and the minimum normal value by using a leading `0.` instead of `1.`. Subnormals sacrifice precision (they give up the implicit leading 1, so significant bits are lost as the value shrinks) in exchange for extending the range downward, giving a *gradual* underflow instead of an abrupt drop to zero. The catch is that on hardware they are typically much slower to process — or disabled entirely (FTZ mode). On most GPU training setups, FTZ is enabled, so very small activations silently become zero.
+**Underflow** occurs when a value is too small to represent as a normal number. IEEE 754 defines **subnormal** (denormal) numbers that fill the gap between zero and the minimum normal value by using a leading `0.` instead of `1.`. Subnormals sacrifice precision (they give up the implicit leading 1, so significant bits are lost as the value shrinks) in exchange for extending the range downward, giving a *gradual* underflow instead of an abrupt drop to zero. The catch is that on hardware they can be much slower to process — or disabled entirely (flush-to-zero, FTZ). NVIDIA GPUs do handle fp32 subnormals in hardware, and stock PyTorch is *not* compiled with FTZ (`nvcc` defaults to `-ftz=false`), so a plain fp32 elementwise op or cuBLAS matmul preserves them. But several fast paths do flush: kernels compiled with fast-math, some hand-written Triton kernels, and the reduced-precision tensor-core formats. Never write code that relies on gradual underflow to carry information.
 
 !!! warning "fp16 overflow in practice"
     During early LLM training, gradient norms can spike to values well above 65504. With fp16 these spikes produce `inf` gradients, which then corrupt the parameter update. The standard remedy is **loss scaling** (multiply the loss by a large scalar before backward, divide gradients after) — but the approach is fragile. bf16 makes the problem largely disappear because the dynamic range matches fp32.
@@ -125,7 +125,7 @@ Consider computing $a - b$ where $a = 1.0000001$ and $b = 1.0000000$ in fp32. Th
 
     $$e^{1000 - 1001} = e^{-1} \approx 0.368, \quad e^{1001 - 1001} = e^0 = 1.0$$
 
-    Sum $= 1.368$, softmax $= [0.268, 0.732]$. Perfectly stable, and mathematically identical because the $e^m$ terms cancel.
+    Sum $= 1.368$, softmax $= [0.269, 0.731]$. Perfectly stable, and mathematically identical because the $e^{-m}$ terms cancel.
 
 ---
 
@@ -481,7 +481,9 @@ with torch.autocast(device_type=dev, dtype=torch.bfloat16):
     print(h.dtype)                  # torch.bfloat16
     p = torch.softmax(h, dim=-1)    # softmax -> forced back to fp32 (CUDA policy)
     print(p.dtype)                  # torch.float32 on CUDA; torch.bfloat16 on CPU
-    loss = p.mean()                 # fp32 loss
+    # An fp32 NLL on class 0. (Note: `p.mean()` would be a trap -- softmax rows
+    # sum to 1, so it is the constant 1/512 with an identically zero gradient.)
+    loss = -torch.log(p[:, 0]).mean()   # fp32 loss
 
 # Backward and the optimizer step run OUTSIDE the autocast context.
 # Gradients arrive in the dtype of each parameter (fp32 here), so the

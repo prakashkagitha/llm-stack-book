@@ -155,7 +155,7 @@ Key properties:
 - **Non-negative**: $D_{\text{KL}}(p \,\|\, q) \geq 0$, with equality iff $p = q$ (by Gibbs' inequality)
 - **Asymmetric**: $D_{\text{KL}}(p \,\|\, q) \neq D_{\text{KL}}(q \,\|\, p)$ in general
 - **Not a metric**: violates the triangle inequality
-- **Infinite if $q(x)=0$ where $p(x)>0$**: this is why label smoothing matters (more below)
+- **Infinite if the second slot is zero where the first is positive**: $D_{\text{KL}}(p\,\|\,q) = \infty$ whenever $q(x)=0$ but $p(x)>0$. This is why label smoothing matters for objectives that put a one-hot *target* in the second slot — e.g. $D_{\text{KL}}(q\,\|\,p_{\text{target}})$ (more below); the forward training direction with a softmax $q$ is always finite.
 
 The forward KL $D_{\text{KL}}(p\|q)$ is called **inclusive** — minimizing it forces $q$ to cover all modes of $p$. The reverse KL $D_{\text{KL}}(q\|p)$ is **exclusive** — minimizing it lets $q$ concentrate on one mode of $p$. This asymmetry is critical in variational inference and in RLHF/DPO, where we penalize the KL between the fine-tuned policy and the reference model.
 
@@ -197,7 +197,7 @@ Several properties conspire to make cross-entropy the right loss for language mo
 
 **1. It is the negative log-likelihood.** For categorical outputs, minimizing cross-entropy is identical to MLE. MLE is consistent and asymptotically efficient (the Cramér-Rao bound) under standard regularity conditions.
 
-**2. It is a proper scoring rule.** A loss $\ell(p, y)$ is proper if the minimum is achieved exactly when $p$ matches the true distribution. Cross-entropy (log loss) is strictly proper: the model is maximally rewarded for reporting its true beliefs.
+**2. It is a proper scoring rule.** A loss $\ell(p, y)$ is proper if the *expected* loss $\mathbb{E}_{y \sim p_{\text{true}}}[\ell(p, y)]$ is minimized when the reported $p$ matches the true distribution $p_{\text{true}}$ (strictly proper if that minimizer is unique). Note this is a statement about the expectation, not about any single observed label — for one fixed $y$, $-\log p(y)$ is of course minimized by the degenerate report that puts all mass on $y$. Cross-entropy (log loss) is strictly proper: the model is maximally rewarded for reporting its true beliefs.
 
 **3. It has well-behaved gradients.** The gradient of cross-entropy with softmax output is $\hat{p} - p_{\text{true}}$, the probability residual. No vanishing gradients even when the correct token probability is small (unlike squared error, whose gradient $(\hat{p} - p_{\text{true}}) \cdot \hat{p}(1-\hat{p})$ vanishes when $\hat{p} \to 0$).
 
@@ -666,13 +666,15 @@ H = dist.entropy()               # (4,) nats; the ceiling here is log(8) = 2.079
 
 # 3. KL between two categorical distributions — the RLHF/DPO reference-model penalty.
 ref_logits = logits + 0.3 * torch.randn_like(logits)
-kl = kl_divergence(Categorical(logits=ref_logits),          # p = reference
-                   Categorical(logits=logits))              # q = policy  -> D_KL(p||q)
+kl = kl_divergence(Categorical(logits=logits),              # p = policy
+                   Categorical(logits=ref_logits))          # q = reference
+#    -> D_KL(pi_theta || pi_ref): the *reverse* direction, policy first. That is the
+#    direction RLHF/DPO actually penalize (see the k3 estimator discussed earlier).
 
 # 4. The same number via F.kl_div, whose signature is a well-known trap (see below).
 kl_f = F.kl_div(
-    F.log_softmax(logits, dim=-1),         # `input`  MUST already be LOG-probs (q)
-    F.log_softmax(ref_logits, dim=-1),     # `target` (p) — log-probs only because...
+    F.log_softmax(ref_logits, dim=-1),     # `input`  MUST already be LOG-probs (q = reference)
+    F.log_softmax(logits, dim=-1),         # `target` (p = policy) — log-probs only because...
     log_target=True,                       # ...we set log_target=True
     reduction="none",
 ).sum(dim=-1)                              # sum over vocabulary -> per-position KL

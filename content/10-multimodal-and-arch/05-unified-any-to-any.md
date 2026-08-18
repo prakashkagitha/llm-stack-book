@@ -36,7 +36,7 @@ $$
 
 where $\text{sg}(\cdot)$ is the stop-gradient operator (`.detach()` in PyTorch): the second term drags codebook vectors toward the encoder outputs assigned to them, the third keeps the encoder from drifting away from its chosen code. The $\arg\min$ itself has zero gradient everywhere, so the reconstruction gradient reaches the encoder only via the **straight-through estimator** — in code, `z_q = z_e + (z_q - z_e).detach()`, which forward-passes the quantised vector but back-propagates as if quantisation were the identity. Without that one line the encoder receives no learning signal at all.
 
-After training, each image becomes a 1-D token sequence of length $h \times w$, with each token in $\{0, \ldots, K-1\}$. A 256×256 image with $f=8$ yields a $32 \times 32 = 1024$-token sequence — the same length as a medium-length paragraph of text.
+After training, each image becomes a 1-D token sequence of length $h \times w$, with each token in $\{0, \ldots, K-1\}$. A 256×256 image with $f=8$ yields a $32 \times 32 = 1024$-token sequence — as many tokens as roughly 750 words of English prose, i.e. two or three pages of text, for a single thumbnail-sized image.
 
 {{fig:vqvae-image-to-tokens-pipeline}}
 
@@ -61,8 +61,13 @@ def fsq_quantize(z: torch.Tensor, levels: list[int], eps: float = 1e-3):
     """
     dev, dt = z.device, z.dtype
     # Squash each channel into a window that rounds to exactly L_i distinct integers.
-    half_l = torch.tensor([(L - 1) * (1 - eps) / 2 for L in levels], device=dev, dtype=dt)
-    # Even L needs a half-step shift so the grid stays symmetric about 0.
+    # The (1 + eps) widening is what `vector-quantize-pytorch` uses, and it matters:
+    # it keeps offset / half_l strictly inside atanh's domain even at L = 2, where
+    # a (1 - eps) window would hand atanh an argument of 1.001 and silently return
+    # NaN — which becomes garbage int64 token ids two lines later.
+    half_l = torch.tensor([(L - 1) * (1 + eps) / 2 for L in levels], device=dev, dtype=dt)
+    # Even L needs a half-step offset so the window still spans L rounding cells;
+    # the atanh shift inside the tanh is what keeps z = 0 on a grid point.
     offset = torch.tensor([0.5 if L % 2 == 0 else 0.0 for L in levels], device=dev, dtype=dt)
     half_w = torch.tensor([L // 2 for L in levels], device=dev, dtype=dt)
 
@@ -157,7 +162,10 @@ A $256 \times 256$ image at $f=8$ produces 1024 tokens. A $512 \times 512$ image
     A dense $N = 7$B model costs about $2N = 1.4 \times 10^{10}$ FLOPs per token in the
     forward pass and $6N = 4.2 \times 10^{10}$ for forward + backward (the standard
     accounting of [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html),
-    ignoring the attention term, which at 4352 context adds only a few percent). One
+    ignoring the attention term, which at 4352 context adds roughly 8% at a 7B
+    shape — $12 L d \bar T = 6 L d T = 6 \times 32 \times 4096 \times 4352 \approx
+    3.4 \times 10^{9}$ against $6N = 4.2 \times 10^{10}$, with $L=32$, $d=4096$ and
+    $\bar T = T/2$ as in [The Stack-100M Architecture](../14-capstone/04-architecture.html)). One
     optimiser step is therefore
 
     $$
@@ -192,7 +200,7 @@ Chameleon's architecture is deliberately minimal:
 
 Chameleon's paper is remarkably candid about training instability. The joint vocabulary creates a softmax over 65K entries; image and text tokens have very different frequency distributions, making gradients noisy. Several techniques help:
 
-**Query-key normalisation (QK-Norm).** Apply RMS normalisation to queries and keys before computing attention logits. This prevents attention logit explosion when the model encounters unusual token combinations at modality boundaries. Without QK-Norm, training diverges within the first few thousand steps on interleaved data.
+**Query-key normalisation (QK-Norm).** Apply a per-head normalisation to queries and keys before computing attention logits — Chameleon (following Dehghani et al., 2023) uses LayerNorm here; most modern implementations use RMSNorm, which pins the same norm and behaves equivalently. This prevents attention logit explosion when the model encounters unusual token combinations at modality boundaries. Without QK-Norm, training diverges within the first few thousand steps on interleaved data.
 
 **Dropout — and its limits at scale.** Chameleon-7B additionally used *ordinary* dropout after the attention and feed-forward sub-layers. It is worth knowing that this was not a general fix: the same recipe failed to stabilise the 34B model, which needed a reordering of the layer norms instead. Stabilisers found at one scale do not automatically transfer to the next.
 
@@ -204,7 +212,8 @@ import torch.nn.functional as F
 
 def qk_norm(q: torch.Tensor, k: torch.Tensor, eps: float = 1e-6):
     """
-    Query-key normalisation as used in Chameleon.
+    Query-key normalisation as used in Chameleon (which applies LayerNorm;
+    RMSNorm is the equivalent modern choice and what we write here).
     RMS-normalises each query and key vector independently before dot-product
     attention, so their norms are pinned at sqrt(head_dim) and the logit
     q·k = ||q|| ||k|| cos(theta) can no longer explode from norm growth.
@@ -337,7 +346,7 @@ out = model.generate(**inputs, max_new_tokens=64, do_sample=False)
 print(processor.decode(out[0], skip_special_tokens=True))
 ```
 
-Two honest caveats. First, the publicly released Chameleon checkpoints ship the *understanding* half only — Meta withheld the image-generation capability, so `generate` will not emit image tokens no matter how you prompt it. If you want an open model that actually generates images by next-token prediction, use BAAI's **Emu3**, which publishes both the generation checkpoint and its vision tokenizer separately, or DeepSeek's **Janus-Pro** (MIT-licensed weights and code). Second, `device_map="auto"` needs `accelerate`; a 7B model in BF16 is ~14 GB of weights before the KV cache, so plan for a 24 GB card.
+Two honest caveats. First, the publicly released Chameleon checkpoints ship the *understanding* half only — Meta withheld the image-generation capability, so `generate` will not emit image tokens no matter how you prompt it. If you want an open model that actually generates images by next-token prediction, use BAAI's **Emu3**, which publishes both the generation checkpoint and its vision tokenizer separately, or DeepSeek's **Janus-Pro** (MIT-licensed code; the weights themselves are under the DeepSeek Model License, which does permit commercial use). Second, `device_map="auto"` needs `accelerate`; a 7B model in BF16 is ~14 GB of weights before the KV cache, so plan for a 24 GB card.
 
 ### Data Mixture and Modality Balance
 
@@ -542,7 +551,7 @@ The "any-to-any" aspiration means the same model handles text, images, audio, an
 
 ### AnyGPT
 
-AnyGPT (Zhan et al., 2024) is an example of a fully discrete any-to-any model. It unifies text, image, speech, and music under a single autoregressive transformer by bolting together four *existing* off-the-shelf tokenizers rather than training new ones: a SEED-style image tokenizer, SpeechTokenizer for speech (whose first RVQ layer is deliberately semantic, with the remaining acoustic layers reconstructed at synthesis time by a SoundStorm-style model), and EnCodec for music. This is the practical lesson of the design — an any-to-any model is mostly an exercise in *plumbing frozen codecs into one vocabulary*, and every one of those codecs is a `pip install` away (`transformers` ships `EncodecModel`, and `torchaudio`/`audiocraft` expose the same weights). The vocabulary is the union of all per-modality codebooks. Special delimiter tokens mark modality boundaries:
+AnyGPT (Zhan et al., 2024) is an example of a fully discrete any-to-any model. It unifies text, image, speech, and music under a single autoregressive transformer by bolting three *existing* off-the-shelf codecs onto the base LLM's text BPE rather than training new ones: a SEED-style image tokenizer, SpeechTokenizer for speech (whose first RVQ layer is deliberately semantic, with the remaining acoustic layers reconstructed at synthesis time by a SoundStorm-style model), and EnCodec for music. This is the practical lesson of the design — an any-to-any model is mostly an exercise in *plumbing frozen codecs into one vocabulary*, and every one of those codecs is a `pip install` away (`transformers` ships `EncodecModel`, and `torchaudio`/`audiocraft` expose the same weights). The vocabulary is the union of all per-modality codebooks. Special delimiter tokens mark modality boundaries:
 
 ```text
 [TEXT_START] "Describe this sound:" [TEXT_END]
@@ -591,7 +600,9 @@ class ModalityAwareMoE(nn.Module):
         self.n_experts = n_experts
         self.top_k     = top_k
         # Split experts conceptually: first half text-specialist, second half image-specialist
-        self.n_image_experts = n_image_experts or (n_experts // 2)
+        # `is None`, not `or`: n_image_experts=0 is a meaningful request ("no
+        # image specialists") and `or` would silently turn it into n_experts // 2.
+        self.n_image_experts = (n_experts // 2) if n_image_experts is None else n_image_experts
 
         # Router: maps each token to a distribution over experts
         self.router = nn.Linear(d_model, n_experts, bias=False)
@@ -868,7 +879,7 @@ At 100M parameters this produces recognisably-prompted but blurry 256×256 thumb
 
     - [facebookresearch/chameleon](https://github.com/facebookresearch/chameleon) — official inference code and evaluation prompts for Meta's Chameleon model.
     - [showlab/show-o](https://github.com/showlab/show-o) — training and inference code for Show-o and Show-o2, with pretrained checkpoints on Hugging Face.
-    - [deepseek-ai/Janus](https://github.com/deepseek-ai/Janus) — Janus, JanusFlow, and Janus-Pro implementations with MIT-licensed code and model weights.
+    - [deepseek-ai/Janus](https://github.com/deepseek-ai/Janus) — Janus, JanusFlow, and Janus-Pro implementations; the code repository is MIT-licensed, while use of the model weights is governed by the DeepSeek Model License.
     - [baaivision/Emu3](https://github.com/baaivision/Emu3) — pure next-token-prediction unified model; the generation checkpoint and its vision tokenizer are released separately, so you can reuse the tokenizer alone to pre-tokenise your own image corpus.
     - [lucidrains/vector-quantize-pytorch](https://github.com/lucidrains/vector-quantize-pytorch) — VQ, residual VQ, FSQ and lookup-free quantisation as drop-in `nn.Module`s, with the straight-through estimator, EMA codebook updates and dead-code restarts already handled.
     - Hugging Face `transformers` — first-class `Chameleon` classes (understanding only in the public weights) and, in recent versions, Emu3 and the Qwen-Omni family; `EncodecModel` gives you discrete audio tokens in three lines.

@@ -137,7 +137,7 @@ Running untrusted model-generated code on the host machine is a security catastr
 
 **Docker + seccomp** is the most common approach for research harnesses — SWE-bench, for instance, ships one Docker image *per benchmark instance* so that a repo's dependency pins can never leak across tasks. For stronger isolation, **gVisor** (Google's user-space kernel, which intercepts syscalls before they reach the host kernel) and **Firecracker microVMs** (the substrate under AWS Lambda, which boots a microVM in on the order of 100 ms) give VM-grade boundaries without a full VM's boot cost.
 
-Below the container layer, the real open-source primitives are worth naming because you will reach for them directly when Docker-per-execution is too slow: **`nsjail`** (Google) and **`bubblewrap`** (the sandbox under Flatpak) both wrap Linux namespaces, cgroups, and seccomp-BPF filters behind a single command line, so you can spawn a locked-down `python3` in a few milliseconds rather than a few hundred; `firejail` is a lighter-weight alternative. For hosted execution — the usual choice when eval or RL rollouts need thousands of concurrent sandboxes and you do not want to operate the fleet — **E2B**, **Modal**, and **Daytona** expose per-execution microVM sandboxes behind a Python SDK. The same sandbox pool typically serves both eval and RLVR training, which is precisely why its correctness matters twice over; see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html).
+Below the container layer, the real open-source primitives are worth naming because you will reach for them directly when Docker-per-execution is too slow: **`nsjail`** (Google) and **`bubblewrap`** (the sandbox under Flatpak) both wrap Linux namespaces, cgroups, and seccomp-BPF filters behind a single command line, so you can spawn a locked-down `python3` in a few milliseconds rather than a few hundred; `firejail` is a lighter-weight alternative. For hosted execution — the usual choice when eval or RL rollouts need thousands of concurrent sandboxes and you do not want to operate the fleet — **E2B** (Firecracker microVMs), **Modal** (gVisor-isolated sandboxes), and **Daytona** expose per-execution isolated sandboxes behind a Python SDK. The same sandbox pool typically serves both eval and RLVR training, which is precisely why its correctness matters twice over; see [Reward Engineering, Verifiers & Sandboxes](../06-rl-infra/08-reward-verifiers-sandboxes.html).
 
 ### A Minimal Sandbox in Python
 
@@ -434,14 +434,16 @@ python -m swebench.harness.run_evaluation \
   --dataset_name princeton-nlp/SWE-bench_Verified \
   --predictions_path predictions.jsonl \
   --max_workers 8 --run_id my-agent-v3
-# -> my-agent-v3.json with resolved_ids / unresolved_ids and per-instance logs
+# -> <model_name_or_path>.<run_id>.json (here: my-agent-v3.my-agent-v3.json)
+#    with resolved_ids / unresolved_ids; per-instance logs under
+#    logs/run_evaluation/<run_id>/<model_name_or_path>/<instance_id>/
 ```
 
 Note the split of responsibilities: the harness scores patches, it does not produce them. Generating `model_patch` is the agent's problem, and the agent-computer interface you wrap around the model dominates the resulting score — the same model can move by tens of points depending on its edit format and search tools, which is the argument developed in [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html). Open-source reference agents (SWE-agent, OpenHands, Aider) exist precisely so that a *model* comparison is not silently a *scaffold* comparison; always report which scaffold produced a SWE-bench number.
 
 ### WebArena, OSWorld, and τ-Bench
 
-**WebArena** (Zhou et al., 2023) evaluates agents on realistic web tasks: booking a flight, submitting a form, finding information in a CMS. The agent controls a real browser (Playwright) inside a sandbox, and success is measured by final page state or database content — not by what the agent said it did.
+**WebArena** (Zhou et al., 2023) evaluates agents on realistic web tasks across self-hosted clones of real sites: placing an order in a storefront, changing a product setting in the e-commerce CMS, filing or searching issues in GitLab, and finding information across a forum and a wiki. The agent controls a real browser (Playwright) inside a sandbox, and success is measured by final page state or database content — not by what the agent said it did.
 
 **OSWorld** extends this to full desktop environments: the agent interacts with a virtual machine via screenshot + keyboard/mouse, performing tasks in real applications (LibreOffice, Chrome, terminal).
 
@@ -613,10 +615,13 @@ This creates a fundamental incomparability problem: a model scoring 80% on AIME 
 The right framework is to compare models at the same *token budget* or the same *wall-clock time*. We define:
 
 $$
-\text{Acc}(B) = \mathbb{E}_{\text{problem}}\left[\text{Correct}\;|\;\text{total tokens} \leq B\right]
+\text{Acc}(B) = \mathbb{E}_{\text{problem}}\left[\text{Correct}_{\leq B}\right], \\[4pt]
+\text{Correct}_{\leq B} = \mathbb{1}\left[\text{a correct answer is emitted within a total budget of } B \text{ tokens}\right]
 $$
 
 and plot accuracy vs. token budget $B$ as a curve. A model that dominates everywhere on this curve is unambiguously better. When curves cross, the comparison is budget-dependent.
+
+Note where the budget sits: inside the *indicator*, not in a conditioning event. Generation is truncated at $B$ tokens and a run that hits the cap without answering scores 0 — truncated runs are penalized, not treated as missing data. Conditioning instead on "this rollout happened to use $\leq B$ tokens" would select for the easy problems the model finishes quickly, pushing $\text{Acc}(B)$ toward 1 at small $B$ and destroying the monotone reading of the curve.
 
 {{fig:rcae-accuracy-vs-compute-crossing-curves}}
 

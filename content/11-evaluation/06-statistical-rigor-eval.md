@@ -486,32 +486,42 @@ print(NormalIndPower().solve_power(proportion_effectsize(0.81, 0.80),
                                    power=0.80, alpha=0.05, ratio=1.0))
 ```
 
-The missing link in practice is getting **per-item** results out of your eval run at all — an aggregate accuracy cannot be paired with anything. [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) exposes this with `--log_samples --output_path <dir>`, which writes one JSONL record per document (containing the `doc_id`, the model's filtered response, and the per-document metric values) next to the aggregate `results.json`. Run both models with identical `--tasks`, `--num_fewshot`, and seed, then join on `doc_id`:
+The missing link in practice is getting **per-item** results out of your eval run at all — an aggregate accuracy cannot be paired with anything. [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) exposes this with `--log_samples --output_path <dir>`, which writes one JSONL record per document (containing the `doc_id`, the model's filtered response, and the per-document metric values) next to the aggregate `results.json`. Run both models with identical `--tasks`, `--num_fewshot`, and seed, then join on `doc_id` (scoped by subtask, since the harness restarts `doc_id` at 0 in every task file):
 
 ```python
-import json, glob
+import json, glob, os
 import numpy as np
 
 
 def load_per_item(samples_glob, metric="acc"):
-    """Read lm-evaluation-harness --log_samples JSONL into {doc_id: score}.
+    """Read lm-evaluation-harness --log_samples JSONL into {key: score}.
 
     Field names shift a little across harness versions, so we key on `doc_id`
     and read whichever metric key the task emitted (`acc`, `exact_match`,
     `acc_norm`, ...). Always compare runs produced by the SAME harness commit.
+
+    `doc_id` is only unique *within one task file*: the harness writes one
+    `samples_{task}_{timestamp}.jsonl` per (sub)task and restarts doc_id at 0
+    in each. A grouped benchmark therefore matches many files -- `task="mmlu"`
+    globs all 57 `samples_mmlu_abstract_algebra_*.jsonl`, ... -- so keying on
+    doc_id alone would silently overwrite subtasks into one scrambled dict.
+    Key on (subtask, doc_id) instead. The trailing `_{timestamp}` is the last
+    underscore-separated field of the filename, so stripping it recovers the
+    subtask name and makes the key stable across runs.
     """
     out = {}
     for path in glob.glob(samples_glob, recursive=True):   # recursive=True: `**`
+        subtask = os.path.basename(path).rsplit("_", 1)[0]  # "samples_mmlu_anatomy"
         with open(path) as f:
             for line in f:
                 rec = json.loads(line)
                 if metric in rec:
-                    out[rec["doc_id"]] = float(rec[metric])
+                    out[(subtask, rec["doc_id"])] = float(rec[metric])
     return out
 
 
 def paired_vectors(dir_a, dir_b, task, metric="acc"):
-    """Align two runs on their shared doc_ids -> (a_scores, b_scores)."""
+    """Align two runs on their shared (subtask, doc_id) keys -> (a, b)."""
     A = load_per_item(f"{dir_a}/**/samples_{task}_*.jsonl", metric)
     B = load_per_item(f"{dir_b}/**/samples_{task}_*.jsonl", metric)
     shared = sorted(set(A) & set(B))          # defensive: runs can differ
@@ -693,16 +703,22 @@ def simulate_power(p_both, p_b, p_c, n, n_sims=4000, alpha=0.05, seed=0):
 
 
 if __name__ == "__main__":
-    # We want to detect a true 3-point accuracy edge for A.
-    # Suppose models agree 80% of the time; of the 20% discordant items,
-    # A wins on 11.5% and B on 8.5% -> a 3-point gap.
+    # We want to detect a true 3-point accuracy edge for A: 83.0% vs 80.0%.
+    # Suppose the models agree on 80% of items; the other 20% are discordant,
+    # with A winning 11.5 points of them and B 8.5 points -> a 3-point gap.
+    # The four cells are therefore both-right 0.715, A-only 0.115, B-only
+    # 0.085, both-wrong 0.085 -- so acc_A = 0.83 and acc_B = 0.80, and the
+    # 20% discordance is well below the 30.2% two independent models with
+    # those marginals would show (i.e. the models are positively correlated,
+    # which is exactly the structure pairing exploits).
     p_b, p_c = 0.115, 0.085
     n_closed = n_for_mcnemar(p_b, p_c)
     print(f"closed-form n for 80% power: {n_closed}")
     for n in [n_closed, 2 * n_closed]:
-        pw = simulate_power(p_both=0.80, p_b=p_b, p_c=p_c, n=n)
+        pw = simulate_power(p_both=0.715, p_b=p_b, p_c=p_c, n=n)
         print(f"  n={n:5d} -> simulated power {pw:.2f}")
-    # Compare to the UNPAIRED requirement for the same 3-point gap at p~0.8.
+    # Compare to the UNPAIRED requirement for those SAME two models (83% vs 80%).
+    # ~1,742 paired items vs ~2,630 items PER ARM (5,260 evaluations) unpaired.
     print("unpaired n PER ARM:", n_for_unpaired_proportions(0.83, 0.80))
 ```
 
@@ -872,7 +888,7 @@ Everything above assumed a model good enough that accuracy is the interesting si
 
 ### Measure against the chance floor, not against zero
 
-A four-way multiple-choice benchmark has a **chance floor** of $p_0 = 0.25$. A 100M model that scores 27 % on such a task has demonstrated nothing: the null hypothesis is not "accuracy is 0," it is "accuracy is 0.25." Near the floor the standard error is $\sqrt{0.25 \times 0.75/n} \approx 0.43/\sqrt n$, so on $n = 1{,}000$ items the 95 % margin is about 2.7 points — you must clear roughly **27.7 %** before you may claim the model is above chance at all, and the right test is a one-sided exact binomial against $p_0$:
+A four-way multiple-choice benchmark has a **chance floor** of $p_0 = 0.25$. A 100M model that scores 27 % on such a task has demonstrated nothing: the null hypothesis is not "accuracy is 0," it is "accuracy is 0.25." Near the floor the standard error is $\sqrt{0.25 \times 0.75/n} \approx 0.43/\sqrt n$, so on $n = 1{,}000$ items the two-sided 95 % margin is about 2.7 points. The relevant bar, though, is the one-sided one — "above chance" is a directional claim — and at $z_{0.95} = 1.645$ that puts the threshold at $0.25 + 1.645 \times 0.0137 \approx$ **27.3 %**: you must clear roughly 27 % before you may claim the model is above chance at all, and the right test is a one-sided exact binomial against $p_0$ (which crosses $p = 0.05$ at 274/1,000):
 
 ```python
 from scipy import stats
@@ -885,7 +901,7 @@ print(stats.binomtest(k, n, p0, alternative="greater").pvalue)   # ~0.014
 print((k / n - p0) / (1 - p0))    # ~0.041 -> 4.1% of available headroom
 ```
 
-Report the chance-corrected accuracy $(\hat p - p_0)/(1 - p_0)$ alongside the raw number whenever a model sits near the floor; it makes "28 % vs 26 %" legible as "captured 4 % of the headroom vs 1.3 %," which is the honest framing. Note also that the log-likelihood scoring used by lm-evaluation-harness has *no* random-guessing behaviour — a small model always picks the highest-scoring option — so a *significantly* below-chance score (test it with the same one-sided binomial run in the other direction) is a real and informative signal of a systematic bias toward, say, the longest option. A small below-chance gap is still just item-sampling noise: at $p_0 = 0.25$ and $n = 1{,}000$ the SE is 1.4 points, so 23 % is entirely consistent with chance.
+Report the chance-corrected accuracy $(\hat p - p_0)/(1 - p_0)$ alongside the raw number whenever a model sits near the floor; it makes "28 % vs 26 %" legible as "captured 4 % of the headroom vs 1.3 %," which is the honest framing. Note also that the log-likelihood scoring used by lm-evaluation-harness has *no* random-guessing behaviour — a small model always picks the highest-scoring option — so a *significantly* below-chance score (test it with the same one-sided binomial run in the other direction) is a real and informative signal of a systematic bias toward, say, the *shortest* option — the classic artifact of ranking options by their unnormalized summed log-likelihood, where every extra token adds another negative term and long answers are penalized. That is precisely what the length-normalized `acc_norm` exists to correct, so report both. A small below-chance gap is still just item-sampling noise: at $p_0 = 0.25$ and $n = 1{,}000$ the SE is 1.4 points, so 23 % is entirely consistent with chance.
 
 ### At small scale, validation loss is the sensitive instrument
 

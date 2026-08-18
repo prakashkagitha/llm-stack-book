@@ -116,9 +116,12 @@ By default, `.grad` accumulates (adds) across multiple `.backward()` calls. This
 ```python
 accumulation_steps = 8         # number of micro-batches per optimizer step
 
+batches = iter(loader)         # a DataLoader is iterable, NOT an iterator:
+                               # next(loader) raises TypeError -- call iter() first
+
 optimizer.zero_grad()          # clear accumulated grads
 for _ in range(accumulation_steps):
-    inputs, targets = next(loader)
+    inputs, targets = next(batches)
     loss = loss_fn(model(inputs), targets) / accumulation_steps
     loss.backward()            # accumulates into .grad
 optimizer.step()               # update once with the full-batch gradient
@@ -184,7 +187,7 @@ Trading PCIe bandwidth for HBM this way is only a win when the transfer overlaps
 The engine calls user callbacks at two points, and essentially every distributed-training library is built on them.
 
 - `tensor.register_hook(fn)` fires when *that tensor's* gradient has been computed. Return `None` to merely observe, or return a tensor to **replace** the gradient that continues downstream. This is how you implement per-tensor clipping, gradient reversal layers, or a probe that logs which layer first goes NaN.
-- `tensor.register_post_accumulate_grad_hook(fn)` (PyTorch 2.1+) fires on a **leaf** after `.grad` has been updated — that is, once the parameter's gradient is final for this backward. `nn.Module.register_full_backward_hook` gives the same idea at module granularity.
+- `tensor.register_post_accumulate_grad_hook(fn)` (PyTorch 2.1+) fires on a **leaf** after `.grad` has been updated — that is, once the parameter's gradient is final for this backward. `nn.Module.register_full_backward_hook` is the module-granularity analogue of `tensor.register_hook`, not of this one: it sees the gradients w.r.t. the module's *inputs and outputs*, and it fires **before** that module's parameter `AccumulateGrad` nodes have run — inside such a hook `module.weight.grad` is still `None` (or stale). Use `register_post_accumulate_grad_hook` when you need "this parameter's gradient is ready."
 
 ```python
 import torch
@@ -206,7 +209,7 @@ h1.remove()                     # hooks are handles -- always remove them
 h2.remove()
 ```
 
-Why this matters beyond debugging: `DistributedDataParallel` registers exactly this kind of hook on every parameter, so that as soon as a **bucket** of parameters has its gradients ready, the all-reduce for that bucket launches *while the rest of the backward is still running*. That overlap of communication with computation is the entire reason DDP is not bandwidth-bound — see [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html), which reconstructs the bucketing engine from these primitives. FSDP uses the same hook points to trigger the reduce-scatter and to free resharded parameters. For the debugging use, a `register_hook` that checks `torch.isfinite(g).all()` per layer is the cheap always-on complement to the anomaly detector at the end of this chapter.
+Why this matters beyond debugging: `DistributedDataParallel` registers exactly this kind of hook on every parameter, so that as soon as a **bucket** of parameters has its gradients ready, the all-reduce for that bucket launches *while the rest of the backward is still running*. That overlap of communication with computation is what keeps the all-reduce from serializing *behind* the backward pass. It hides communication time; it does not reduce the volume moved, so a run whose gradient bytes divided by link bandwidth exceed the backward's compute time is still bandwidth-bound — which is what motivates bf16 all-reduce, gradient compression, and ZeRO/FSDP sharding. See [Distributed Training I: Data Parallelism, DDP, ZeRO & FSDP](../03-pretraining/05-distributed-data-parallel.html), which reconstructs the bucketing engine from these primitives. FSDP uses the same hook points to trigger the reduce-scatter and to free resharded parameters. For the debugging use, a `register_hook` that checks `torch.isfinite(g).all()` per layer is the cheap always-on complement to the anomaly detector at the end of this chapter.
 
 ---
 
@@ -278,7 +281,7 @@ The `ctx` object is the bridge: `ctx.save_for_backward(...)` stashes tensors (on
 
 ### Example: Numerically Stable Sigmoid with Custom Backward
 
-The naive sigmoid $\sigma(x) = 1/(1+e^{-x})$ can overflow for large negative $x$ (exp of large positive becomes inf) or lose precision for large positive $x$. The stable version clips large magnitudes and uses `torch.sigmoid` in practice, but here we implement it from scratch with a custom backward to illustrate the interface:
+The naive expression $\sigma(x) = 1/(1+e^{-x})$ has a well-behaved *forward*: for large negative $x$, $e^{-x}$ overflows to `inf` and `1/(1+inf)` rounds to exactly `0.0`; for large positive $x$, $e^{-x}$ underflows to `0` and the result is exactly `1.0`. Both are correctly rounded. The damage shows up elsewhere. First, if you let autograd differentiate that expression, the overflowed intermediate poisons the *backward*: `torch.tensor([-1000.], requires_grad=True)` run through `1/(1+torch.exp(-x))` yields a `nan` gradient (the chain rule multiplies a $0$ by an $\infty$), whereas `torch.sigmoid` returns $0$. Second, saturating to exactly $0$ or $1$ destroys every downstream bit of $\log \sigma(x)$ — the reason PyTorch ships `logsigmoid` and `binary_cross_entropy_with_logits`. So in practice you call `torch.sigmoid`, which is what we do inside the forward below; the point of the example is the custom-backward interface, and a hand-written analytic backward that reads the *output* is also what keeps the gradient finite in the saturated regime:
 
 ```python
 import torch
@@ -569,7 +572,7 @@ $$
 (B, 1, H, W) + (C, H, W) \to (B, C, H, W)
 $$
 
-PyTorch implements this via the stride-0 trick above: a size-1 dimension that gets broadcast is assigned stride 0. No data is copied. However, when autograd differentiates through a broadcast, the backward must **sum** the gradient over the broadcast dimensions to match the original tensor's shape. This is done automatically by `torch.Tensor.expand`'s backward and by `SumBackward`.
+PyTorch implements this via the stride-0 trick above: a size-1 dimension that gets broadcast is assigned stride 0. No data is copied. However, when autograd differentiates through a broadcast, the backward must **sum** the gradient over the broadcast dimensions to match the original tensor's shape. An *implicit* broadcast inside an elementwise op does not insert any node to do this — inspect `c.grad_fn` below and you will find a bare `AddBackward0` whose `next_functions` points straight at `a`'s `AccumulateGrad`. The reduction is performed by the engine itself: `validate_outputs` in `torch/csrc/autograd/engine.cpp` compares each produced gradient against the recorded shape of the input edge and calls `at::sum_to` when they differ but are expandable. (An *explicit* `x.expand(...)` does get an `ExpandBackward0` node, whose backward performs the same summation.)
 
 ```python
 a = torch.ones(3, 1, requires_grad=True)   # shape (3, 1)
@@ -589,7 +592,7 @@ print(a.grad)   # tensor([[4.], [4.], [4.]])  -- sum over 4 columns
 !!! interview "Interview Corner"
     **Q:** Walk me through what happens when you call `loss.backward()` in PyTorch. What data structures are involved, and what does the engine actually execute?
 
-    **A:** When you called forward operations on tensors with `requires_grad=True`, PyTorch built a DAG of `Function` nodes connected via `next_functions` pointers, with each node holding a `forward` closure and a `backward` implementation. `loss.backward()` seeds the process by setting the gradient of `loss` to 1.0, then it calls `torch.autograd.Engine`, which runs a topological sort of the DAG and processes nodes in reverse order using a thread pool. At each node it calls the node's `backward()` method, passing in the accumulated upstream gradient, and receives gradients for the node's inputs, which it accumulates into those tensors' `.grad` fields (for leaves) or pushes onto the work queue (for non-leaves). The key implementation detail is that gradients are *accumulated* (added), not assigned, which is what allows gradient accumulation across micro-batches. After the traversal completes, leaf tensors with `requires_grad=True` hold the full gradient in `.grad`. Non-leaf gradients are discarded unless you called `retain_grad()` on them. The graph itself is freed after `backward()` by default (`retain_graph=False`), releasing the stored intermediate activations.
+    **A:** When you called forward operations on tensors with `requires_grad=True`, PyTorch built a DAG of `Function` nodes connected via `next_functions` pointers, with each node holding its saved tensors, any scalar metadata, its `next_functions` edges, and a `backward` (VJP) implementation — but *not* the forward code. Nothing on the tape can re-run the forward, which is exactly why gradient checkpointing needs its own recompute machinery. `loss.backward()` seeds the process by setting the gradient of `loss` to 1.0, then it calls `torch.autograd.Engine`, which runs a topological sort of the DAG and processes nodes in reverse order using a thread pool. At each node it calls the node's `backward()` method, passing in the accumulated upstream gradient, and receives gradients for the node's inputs, which it accumulates into those tensors' `.grad` fields (for leaves) or pushes onto the work queue (for non-leaves). The key implementation detail is that gradients are *accumulated* (added), not assigned, which is what allows gradient accumulation across micro-batches. After the traversal completes, leaf tensors with `requires_grad=True` hold the full gradient in `.grad`. Non-leaf gradients are discarded unless you called `retain_grad()` on them. The graph itself is freed after `backward()` by default (`retain_graph=False`), releasing the stored intermediate activations.
 
 !!! tip "Practitioner tip: retain_graph for multi-task losses"
     If you need to call `backward()` multiple times on the same graph (e.g., computing separate gradients for a shared encoder with two losses applied sequentially), use `loss1.backward(retain_graph=True)` for all but the last call. Without `retain_graph=True`, the graph is freed after the first `backward()` and subsequent calls raise `RuntimeError: Trying to backward through the graph a second time`.
@@ -645,7 +648,11 @@ print(grad_f(torch.tensor([1.0, 2.0, 3.0])))  # tensor([2., 4., 6.])
 def model(params, x):
     return params @ x
 
+params_batch = torch.randn(8, 3, 4)   # 8 examples, each a (3, 4) weight
+x_batch      = torch.randn(8, 4)      # 8 inputs of size 4
+
 J = vmap(jacrev(model, argnums=1))(params_batch, x_batch)
+print(J.shape)   # torch.Size([8, 3, 4]) -- one (3, 4) Jacobian d(out)/dx per example
 ```
 
 These transforms work at the dispatcher level, inserting themselves as dispatch keys. They compose: `vmap(grad(f))` gives a batched gradient function. This is the correct modern approach to Hessian-vector products and per-sample gradients (rather than looping or using `create_graph`).

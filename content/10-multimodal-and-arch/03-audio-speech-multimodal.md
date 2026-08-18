@@ -193,7 +193,7 @@ Those integers are the whole trick: from here on, `audio_codes` is just a `(K, T
 
     The codec produces **200× more tokens than the transcript**. This is the core engineering tension: faithful audio reconstruction demands high token density, but LLM context windows are finite. Real systems use one of three mitigations:
     1. Use only the coarsest 1–2 RVQ levels for modeling semantics (the rest are predicted in parallel or recovered by a separate decoder).
-    2. Use a **low-frame-rate codec**. This is where the field moved after 2024: Kyutai's Mimi (the codec inside Moshi) runs at **12.5 frames/s** rather than 75, so 8 quantizers cost 100 tokens/s instead of 600 — a 6$\times$ reduction with speech quality preserved by distilling semantic features into the first codebook. Descript's DAC, SNAC's multi-scale hierarchy, and single-codebook designs like WavTokenizer push in the same direction, typically landing on the order of 40–100 tokens/s for speech.
+    2. Use a **low-frame-rate codec**. This is where the field moved after 2024: Kyutai's Mimi (the codec inside Moshi) runs at **12.5 frames/s** rather than 75, so 8 quantizers cost 100 tokens/s instead of 600 — a 6$\times$ reduction with speech quality preserved by distilling semantic features into the first codebook. SNAC's multi-scale hierarchy and single-codebook designs like WavTokenizer push in the same direction, typically landing on the order of 40–100 tokens/s for speech. (Descript's DAC is *not* in this family: it optimizes reconstruction quality per bit, and its 44.1 kHz model still emits 9 codebooks at ~86 frames/s ≈ 775 tokens/s.)
     3. Encode audio as a continuous vector sequence (Whisper-style) instead of discrete tokens, and quantize only for generation.
 
     Redo the arithmetic with Mimi: 30 s $\times$ 100 tokens/s $= 3{,}000$ tokens, roughly 33$\times$ the transcript instead of 200$\times$. That single change is what made real-time full-duplex dialogue affordable on one GPU.
@@ -283,7 +283,7 @@ $$
 p(y \mid x) = \sum_{a \in \mathcal{B}^{-1}(y)} \prod_{t=1}^{T} p(a_t \mid x)
 $$
 
-where $\mathcal{B}$ deletes blanks and merges repeated symbols ("h h $\varnothing$ i" $\to$ "hi"). The sum has exponentially many terms but is computed in $O(T \cdot |y|)$ by a forward–backward dynamic program — the same algorithm as an HMM forward pass. PyTorch ships it as `torch.nn.functional.ctc_loss`, so fine-tuning `Wav2Vec2ForCTC` on your own labelled audio is a handful of lines.
+where $\mathcal{B}$ first merges runs of repeated symbols and *then* deletes blanks ("h h $\varnothing$ i" $\to$ "h $\varnothing$ i" $\to$ "hi"). The order is load-bearing: the blank is exactly what lets a genuine doubled letter survive, since "h $\varnothing$ h" collapses to "hh" rather than "h". The sum has exponentially many terms but is computed in $O(T \cdot |y|)$ by a forward–backward dynamic program — the same algorithm as an HMM forward pass. PyTorch ships it as `torch.nn.functional.ctc_loss`, so fine-tuning `Wav2Vec2ForCTC` on your own labelled audio is a handful of lines.
 
 CTC's conditional independence across frames (no autoregressive decoder) is exactly why it is fast, streamable, and immune to the hallucinated-text failure mode that seq2seq decoders like Whisper exhibit on silence or music; it is also why plain CTC has no language model and needs an external one (beam search with a KenLM n-gram, or a shallow-fused neural LM) to reach competitive accuracy.
 
@@ -374,7 +374,7 @@ $$
 \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{reconstruct}} + \lambda \cdot \mathcal{L}_{\text{semantic}}
 $$
 
-where $\mathcal{L}_{\text{semantic}}$ encourages VQ level-1 outputs to match HuBERT's discrete pseudo-labels. This disentanglement makes level-1 tokens a drop-in replacement for text tokens in a speech LM.
+where $\mathcal{L}_{\text{semantic}}$ is a cosine-similarity distillation loss pulling the VQ level-1 output toward HuBERT's *continuous* representations. (The paper ablates the obvious alternative — a cross-entropy loss predicting HuBERT's discrete k-means cluster labels — and finds continuous distillation works better, so that is what the released model uses.) This disentanglement makes level-1 tokens a drop-in replacement for text tokens in a speech LM.
 
 ### HuBERT: Self-Supervised Acoustic Units
 
@@ -385,7 +385,7 @@ HuBERT (Hsu et al., Facebook AI Research, 2021) is a BERT-style masked predictio
 
 ### The AudioPaLM and Moshi Architectures
 
-**AudioPaLM** (Rubenstein et al., Google, 2023) interleaves audio tokens and text tokens in the same token stream fed to a pre-trained PaLM language model. Audio tokens use a separate embedding table; text and audio share the same positional encoding and transformer blocks. This enables a single model to perform ASR, TTS, and speech-to-speech translation in a unified framework.
+**AudioPaLM** (Rubenstein et al., Google, 2023) interleaves audio tokens and text tokens in the same token stream fed to a pre-trained PaLM language model. Audio tokens *extend* the pretrained model's existing embedding matrix with new rows — the $t \times m$ text embedding becomes $(t+a) \times m$, one unified vocabulary — so text and audio share the same positional encoding, transformer blocks, and (weight-tied) output softmax. This enables a single model to perform ASR, TTS, and speech-to-speech translation in a unified framework.
 
 **Moshi** (Défossez et al., Kyutai, 2024) goes further: it is designed for real-time full-duplex spoken dialogue, meaning the model continuously emits audio while simultaneously listening. Three ideas make it work:
 
@@ -395,7 +395,7 @@ HuBERT (Hsu et al., Facebook AI Research, 2021) is a BERT-style masked predictio
 
 {{fig:moshi-temporal-hierarchy}}
 
-The crucial engineering decision in Moshi: **the temporal transformer runs causally over frames** — it only attends to past codec frames, enabling true streaming with no lookahead. The depth transformer runs $K$ tiny steps inside each frame, keeping per-step latency bounded; the reported theoretical latency is around 160 ms (one 80 ms frame of codec delay plus one frame of compute).
+The crucial engineering decision in Moshi: **the temporal transformer runs causally over frames** — it only attends to past codec frames, enabling true streaming with no lookahead. The depth transformer runs $K$ tiny steps inside each frame, keeping per-step latency bounded; the reported theoretical latency is around 160 ms (one 80 ms Mimi frame plus 80 ms of acoustic delay between the text/semantic and acoustic streams). Compute is on top of that: the paper measures ~200 ms end to end on an L4.
 
 By 2025–2026 this native-audio approach scaled into full any-to-any "omni" backbones. Qwen3-Omni (Alibaba, 2025), for instance, ingests text, audio, image, and video and emits text plus streaming speech from a single model — using a Thinker–Talker split and time-aligned position embeddings — reaching open-source SOTA on most audio benchmarks. Speech dialogue is increasingly a capability folded into one multimodal model rather than a standalone speech LM (see [Unified & Any-to-Any Models](../10-multimodal-and-arch/05-unified-any-to-any.html)).
 
@@ -679,9 +679,9 @@ def generate_music(
 AudioLM (Borsos et al., Google, 2022) pioneered the hierarchical two-stage approach specifically for long-form audio generation:
 
 1. **Semantic modeling:** An autoregressive LM over k-means clusters of w2v-BERT features (semantic tokens). w2v-BERT emits one embedding every 40 ms, so this captures long-range structure — melody, prosody, content — at a compact ~25 token/s rate (half the 50 Hz frame rate of the SoundStream acoustic side).
-2. **Acoustic modeling:** Two coarse-to-fine codec LMs that condition on semantic tokens and progressively generate EnCodec tokens at increasing bitrate.
+2. **Acoustic modeling:** Two coarse-to-fine codec LMs that condition on semantic tokens and progressively generate SoundStream tokens at increasing bitrate. (AudioLM predates EnCodec; its acoustic stack is SoundStream at 50 Hz with 12 quantizers.)
 
-The key insight: semantic tokens are far more compressible than acoustic tokens. A 30-second clip requires only ~750 semantic tokens but ~18,000 EnCodec tokens. By modeling semantics first, the LM can plan global structure before committing to acoustic details.
+The key insight: semantic tokens are far more compressible than acoustic tokens. A 30-second clip requires only ~750 semantic tokens but ~18,000 SoundStream acoustic tokens. By modeling semantics first, the LM can plan global structure before committing to acoustic details.
 
 !!! note "Connection to language modeling"
 
@@ -824,14 +824,14 @@ High-quality paired audio-text data (e.g., studio-recorded audiobooks) is scarce
 
     (c) A 40-second clip is *trimmed* to the first 30 seconds. The final 10 seconds are simply discarded, so any speech there is never transcribed. Because the API returns a fluent transcript for the portion it did see, the truncation is silent — there is no error, just missing words. The chapter's remedy is dynamic chunking: split long audio into overlapping 30-second windows, encode each, and concatenate.
 
-**4.** AudioLM and SpeechTokenizer both hinge on separating *semantic* from *acoustic* information. (a) Using the chapter's figures, contrast the token rate of semantic tokens versus EnCodec acoustic tokens for a 30-second clip. (b) Explain why AudioLM models semantic tokens *first* and only then generates acoustic tokens. (c) SpeechTokenizer reaches a similar goal differently — how, and what practical property does that give its level-1 tokens?
+**4.** AudioLM and SpeechTokenizer both hinge on separating *semantic* from *acoustic* information. (a) Using the chapter's figures, contrast the token rate of semantic tokens versus SoundStream acoustic tokens for a 30-second clip. (b) Explain why AudioLM models semantic tokens *first* and only then generates acoustic tokens. (c) SpeechTokenizer reaches a similar goal differently — how, and what practical property does that give its level-1 tokens?
 
 ??? note "Solution"
-    (a) The chapter states a 30-second clip needs only about $750$ semantic tokens (roughly $25$ tokens/s, one w2v-BERT unit per 40 ms) but about $18{,}000$ EnCodec acoustic tokens ($600$ tokens/s across 8 RVQ levels). Semantic tokens are therefore about $24\times$ more compact.
+    (a) The chapter states a 30-second clip needs only about $750$ semantic tokens (roughly $25$ tokens/s, one w2v-BERT unit per 40 ms) but about $18{,}000$ SoundStream acoustic tokens ($600$ tokens/s $= 50$ Hz $\times$ $12$ quantizers). Semantic tokens are therefore about $24\times$ more compact.
 
     (b) Semantic tokens capture long-range structure — content, melody, prosody — in a compact stream, so an autoregressive LM can plan the *global* shape of the audio over a short, tractable sequence before committing to detail. Acoustic tokens are far denser and mostly encode surface fidelity; generating them first would force the model to decide fine acoustic detail before it has settled what is even being said. Modeling semantics first, then conditioning acoustic generation on those tokens, mirrors the coarse-to-fine intuition the chapter draws to BPE merges and RVQ levels.
 
-    (c) SpeechTokenizer keeps a single RVQ codec but adds a distillation loss $\mathcal{L}_{\text{semantic}}$ that forces VQ level-1 outputs to match HuBERT's discrete pseudo-labels, so
+    (c) SpeechTokenizer keeps a single RVQ codec but adds a cosine-similarity distillation loss $\mathcal{L}_{\text{semantic}}$ that pulls VQ level-1 outputs toward HuBERT's continuous representations, so
     $$
     \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{reconstruct}} + \lambda \cdot \mathcal{L}_{\text{semantic}}.
     $$

@@ -147,10 +147,12 @@ if __name__ == "__main__":
     **CLS token**: $D = 768$ parameters.
 
     **Each Transformer block** (QKV projections + output proj + two LayerNorms + MLP):
-    $$4 \times D^2 + 2 \times 4D^2 + 4D = 4 \times 768^2 + 8 \times 768^2 = 12 \times 768^2 \approx 7.08\text{M}$$
+    $$4 \times D^2 + 2 \times 4D^2 + 4D \;\approx\; 12 D^2 = 12 \times 768^2 \approx 7.08\text{M}$$
 
-    12 layers × 7.08M = 84.9M, plus ~0.85M for embeddings and the final norm/head.
-    Total: roughly **86M parameters**, or about **344 MB in fp32**, **172 MB in bf16**.
+    (the $4D$ LayerNorm term is dropped in the last step — it is only 3,072 of the 7.08M.)
+
+    12 layers × 7.08M ≈ 85.0M. Outside the blocks: the three items above sum to 741,888, the patch projection's bias adds 768, and the final LayerNorm plus the 1000-way head add another $2D + (D \times 1000 + 1000) = 770{,}536$ — **1,513,192** in total, i.e. ~1.51M.
+    Grand total: **86,567,656 parameters** — roughly **86M**, matching the count the code below prints — or about **346 MB in fp32**, **173 MB in bf16**.
 
     **Sequence length**: 196 image patches + 1 CLS = **197 tokens**.
     Attention is $O(N^2 D)$ per layer, not unbearably long for this patch size — but dynamic high-resolution inputs (e.g., 1024×1024 with 16-pixel patches) give $N=4096$, which is where [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html) becomes critical.
@@ -184,7 +186,10 @@ class MultiHeadSelfAttention(nn.Module):
         assert embed_dim % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
-        self.scale = math.sqrt(self.head_dim)  # 1/√d_k scaling factor
+        # NOTE: this holds √d_k, and the logits are DIVIDED by it below. Most
+        # libraries (timm, HF, F.scaled_dot_product_attention's `scale=`) store
+        # d_k**-0.5 and MULTIPLY instead — same math, opposite convention.
+        self.scale = math.sqrt(self.head_dim)
 
         # Fused QKV projection: one matrix, split afterward
         self.qkv = nn.Linear(embed_dim, 3 * embed_dim, bias=True)
@@ -356,7 +361,7 @@ Three architectural pieces do most of the stabilization work and are present in 
 
 - **Stochastic depth (drop-path)** — randomly drop an entire residual branch for a sample, with the drop probability ramped linearly from 0 at the first block to ~0.1–0.4 at the last. This is the highest-value regularizer for deep ViTs; without it, ViT-L and deeper overfit or diverge.
 - **LayerScale** (CaiT, Touvron et al., 2021) — a per-channel learnable gain $\gamma$ on each residual branch, initialized to something tiny like $10^{-5}$ (or $10^{-6}$ for very deep models). At init, every block is nearly the identity, so the residual stream starts well-conditioned and depth costs nothing; the model then "switches on" the branches it needs.
-- **QK-norm** — LayerNorm (or RMSNorm) applied to $Q$ and $K$ before the dot product, introduced for ViT-22B to stop attention-logit blow-up. See [Modern Architecture Improvements & Design Choices](../02-transformer/10-modern-arch-improvements.html) for the same trick in LLMs.
+- **QK-norm** — LayerNorm (or RMSNorm) applied to $Q$ and $K$ before the dot product, popularized at scale by ViT-22B to stop attention-logit blow-up. See [Modern Architecture Improvements & Design Choices](../02-transformer/10-modern-arch-improvements.html) for the same trick in LLMs.
 
 ```python
 import torch
@@ -568,7 +573,7 @@ $$
 S_{ij} = \tau \cdot \mathbf{i}_i \cdot \mathbf{t}_j^\top
 $$
 
-where $\tau$ is a learnable temperature parameter (initialized around $1/0.07 \approx 14.3$). The loss is symmetric cross-entropy applied both row-wise (each image's text should rank first) and column-wise (each text's image should rank first):
+where $\tau$ is a learnable **logit scale** — an *inverse* temperature, since it multiplies the similarities. CLIP initializes the temperature $T$ at $0.07$, i.e. $\tau = 1/T \approx 14.3$, and stores $\log \tau$ so the learned quantity stays positive. The loss is symmetric cross-entropy applied both row-wise (each image's text should rank first) and column-wise (each text's image should rank first):
 
 $$
 \mathcal{L}_\text{CLIP} = -\frac{1}{2N} \left( \sum_{k=1}^N \log \frac{e^{S_{kk}}}{\sum_j e^{S_{kj}}} + \sum_{k=1}^N \log \frac{e^{S_{kk}}}{\sum_i e^{S_{ik}}} \right)
@@ -1055,7 +1060,7 @@ $$
 \end{bmatrix}
 $$
 
-with the temperature $\tau = 10$ (so logits are $10\times$ the entries above). Compute the **image-to-text** InfoNCE loss term $-\frac{1}{N}\sum_k \log \frac{e^{S_{kk}}}{\sum_j e^{S_{kj}}}$ (the first of the two symmetric terms). Work row 1 in full and give the final averaged value.
+with the logit scale (inverse temperature) $\tau = 10$ — i.e. temperature $T = 0.1$, so logits are $10\times$ the entries above. Compute the **image-to-text** InfoNCE loss term $-\frac{1}{N}\sum_k \log \frac{e^{S_{kk}}}{\sum_j e^{S_{kj}}}$ (the first of the two symmetric terms). Work row 1 in full and give the final averaged value.
 
 ??? note "Solution"
     After scaling by $\tau = 10$, row $k$ of the logit matrix is $10 \times$ the given entries; we need the softmax probability of the *diagonal* entry in each row, then $-\log$ of it, averaged.
@@ -1074,7 +1079,7 @@ with the temperature $\tau = 10$ (so logits are $10\times$ the entries above). C
     $$\mathcal{L}_{\text{img}\to\text{txt}} = \tfrac{1}{4}(0.00137 + 0.00216 + 0.03129 + 0.02717) = \tfrac{1}{4}(0.06199) \approx \mathbf{0.0155}.$$
     The loss is small because the diagonal (correct) pair dominates each row after the $\tau = 10$ scaling sharpens the softmax — this is what a well-trained CLIP model looks like on an easy batch. The full symmetric CLIP loss would average this with the analogous text-to-image term computed down the columns.
 
-**5.** (Implementation) The chapter's `VisionTransformer` classifies using only the CLS token (`cls_out = x[:, 0]`). The Key Takeaways note an alternative: **patch-average (mean) pooling** over the patch tokens, which several encoders (e.g., SigLIP) prefer. Write a subclass `MeanPoolViT` that reuses the parent's `patch_embed`, `pos_embed`, `blocks`, and `norm`, but (a) does **not** prepend a CLS token, and (b) produces the classification logits by mean-pooling the final patch tokens. Keep the chapter's Pre-LN style and shapes. Note one consequence for the `pos_embed` shape.
+**5.** (Implementation) The chapter's `VisionTransformer` classifies using only the CLS token (`cls_out = x[:, 0]`). The Key Takeaways note an alternative: **patch-average (mean) pooling** over the patch tokens — the ViT paper's own GAP ablation, and what MAE uses when fine-tuning with `global_pool`. (Several modern encoders also drop the CLS token but pool with something *learned* rather than an unweighted mean: SigLIP's tower has no CLS token and uses an attention-pooling (MAP) head instead.) Write a subclass `MeanPoolViT` that reuses the parent's `patch_embed`, `pos_embed`, `blocks`, and `norm`, but (a) does **not** prepend a CLS token, and (b) produces the classification logits by mean-pooling the final patch tokens. Keep the chapter's Pre-LN style and shapes. Note one consequence for the `pos_embed` shape.
 
 ??? note "Solution"
     Without a CLS token the sequence length is exactly $N$ (not $N+1$), so `pos_embed` must have shape $(1, N, D)$ instead of $(1, N+1, D)$. We rebuild it in the subclass rather than reuse the parent's, and we skip the `cls_token` entirely. Everything else — patch embedding, blocks, final norm — is reused unchanged.

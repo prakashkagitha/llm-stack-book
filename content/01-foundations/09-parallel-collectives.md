@@ -300,7 +300,7 @@ The bandwidth term is constant in $n$ — adding more GPUs doesn't change the ba
     **Cross-node scenario:** If instead the 8 GPUs span 2 nodes connected by 200 Gb/s InfiniBand ($\beta \approx 25$ GB/s):
     $$T_{\text{comm}} \approx \frac{2 \times 2.6}{25} \approx 208 \text{ ms}$$
 
-    Now communication *matches or exceeds* the entire compute time (208 ms vs ~160–210 ms) — the step roughly doubles, and communication goes from ~10% of compute to ~100% of it. The only remedies are gradient compression, ZeRO with reduce-scatter/all-gather split, or tensor/pipeline parallelism to reduce the communicated volume.
+    Now communication *matches or exceeds* the entire compute time (208 ms vs ~160–210 ms) — the step roughly doubles, and communication goes from ~10% of compute to ~100% of it. The usual remedies are overlapping the all-reduce with the backward pass (which hides part of it), raising the compute-to-communication ratio with a larger per-GPU batch or gradient accumulation, gradient compression, or tensor/pipeline parallelism to reduce the communicated volume. Note what is *not* a remedy: splitting the all-reduce into ZeRO's reduce-scatter + all-gather moves the same total bytes ($\frac{n-1}{n}M$ each, summing to $\frac{2(n-1)}{n}M$), so it buys memory, not bandwidth.
 
 ## Network Topology: NVLink, NVSwitch, and InfiniBand
 
@@ -636,7 +636,11 @@ with profile(
 
     **A:** Gradient buffer size = $70 \times 10^9 \times 2$ bytes $= 140$ GB. For a ring all-reduce across $n = 64$ ranks, the bandwidth term is approximately $\frac{2(n-1)}{n} M \approx 2 \times 140 = 280$ GB of data per rank moved through the slowest link (IB). At 400 Gb/s = 50 GB/s effective, that's $\frac{280}{50} \approx 5.6$ seconds of communication — more than 5× the compute time, so yes, badly communication-bound.
 
-    Remedies in priority order — the goal is to cut communication *volume* on the slow inter-node hop, not just memory: (1) adopt **tensor parallelism** (TP-4 within node, over fast NVLink): each data-parallel rank then holds only 1/4 of the parameters, so its gradient buffer shrinks from 140 GB to ~35 GB and the inter-node all-reduce moves ~4x less data per rank (~70 GB instead of ~280 GB), while TP's own all-reduces stay on-node where bandwidth is 10-50x higher; (2) use **hierarchical / hybrid sharding** (e.g., FSDP `HYBRID_SHARD` / HSDP): shard within a node and replicate across nodes, keeping the heavy reduce-scatter and all-gather on NVLink and sending only reduced gradient shards over InfiniBand; (3) apply **gradient compression** (PowerSGD, Top-K sparsification) if convergence is acceptable; (4) **increase per-GPU batch size or use gradient accumulation** to raise the compute-to-communication ratio (more compute per all-reduce). Note that plain **ZeRO Stage 1/2** does *not* fix this bottleneck: its reduce-scatter + all-gather sums to essentially the same total volume as DDP's all-reduce (see [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html)) — it removes the memory redundancy of replicated optimizer and gradient state, not the communication.
+    Remedies in priority order — the goal is to cut communication *volume* on the slow inter-node hop, not just memory: (1) adopt **pipeline parallelism** across nodes (PP-8, one stage per node): each node then owns only 1/8 of the parameters (~17.5 GB of gradients), the eight data-parallel replicas of a stage all sit *inside* one node so their gradient all-reduce runs entirely on NVLink, and the only inter-node traffic left is the small point-to-point activation/gradient exchange between adjacent stages; (2) use **hierarchical / hybrid sharding** (e.g., FSDP `HYBRID_SHARD` / HSDP): shard within a node and replicate across nodes, keeping the heavy reduce-scatter and all-gather on NVLink and sending only reduced gradient shards over InfiniBand; (3) apply **gradient compression** (PowerSGD, Top-K sparsification) if convergence is acceptable; (4) **increase per-GPU batch size or use gradient accumulation** to raise the compute-to-communication ratio (more compute per all-reduce).
+
+    Note also what does *not* help here: **tensor parallelism on its own**. TP-4 inside a node shrinks each rank's gradient shard from 140 GB to ~35 GB, but the node as a whole still holds gradient information for all 140 GB of parameters, and the node still has exactly one 50 GB/s IB link. The world becomes four DP rings of 16 ranks; each ring crosses the node boundary once, carrying $2\frac{15}{16}\times 35 \approx 66$ GB, and all four share that one link — ~262 GB per node versus ~276 GB for flat DDP, i.e. 5.25 s instead of 5.6 s. The floor for all-reducing 140 GB across $k=8$ nodes is $2\frac{k-1}{k}\times 140 = 245$ GB of egress per node, no matter how you shard *within* a node; only removing parameters from a node (pipeline parallelism), cutting bytes (compression), or buying more compute per all-reduce (bigger batch) moves it. TP's real jobs are fitting the model in memory and keeping its own activation collectives on NVLink — not shrinking the DP all-reduce.
+
+    Likewise, plain **ZeRO Stage 1/2** does *not* fix this bottleneck: its reduce-scatter + all-gather sums to essentially the same total volume as DDP's all-reduce (see [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html)) — it removes the memory redundancy of replicated optimizer and gradient state, not the communication.
 
 ## All-to-All and Expert Parallelism
 
@@ -710,7 +714,7 @@ Different distributed training strategies use different collectives as their com
 | Expert Parallelism | All-to-All | Route tokens to their expert GPUs |
 | Pipeline Parallelism | Point-to-Point (send/recv) | Pass activations between pipeline stages |
 
-Understanding this table is what separates an engineer who can debug a distributed training job from one who cannot. If your profiler shows an all-gather is slow, you know FSDP is materializing parameters and the bottleneck is memory bandwidth for the parameter gather, not compute. If all-to-all is slow, you have an MoE routing or load-imbalance problem.
+Understanding this table is what separates an engineer who can debug a distributed training job from one who cannot. If your profiler shows an all-gather is slow, you know FSDP is materializing parameters and the bottleneck is interconnect bandwidth (NVLink intra-node, InfiniBand inter-node) for the parameter gather, not compute. If all-to-all is slow, you have an MoE routing or load-imbalance problem.
 
 !!! warning "Common Pitfall: Collective Deadlock"
 
@@ -779,7 +783,7 @@ Understanding this table is what separates an engineer who can debug a distribut
 - **Li et al. (2020):** "PyTorch Distributed: Experiences on Accelerating Data Parallel Training" — covers DDP bucketing, hook-based gradient compression, and the design choices in `torch.distributed`.
 - **NVIDIA NCCL Documentation and Source** (github.com/NVIDIA/nccl) — the authoritative reference for NCCL algorithm selection, topology detection, and tuning knobs.
 - **Rajbhandari et al. (2020):** "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models" (DeepSpeed) — explains how reduce-scatter + all-gather enables full optimizer/gradient/parameter sharding.
-- **Jiang et al. (2022):** "Megascale: Scaling Large Language Model Training to More Than 10,000 GPUs" — describes hierarchical collectives, network topology design, and reliability engineering at cluster scale.
+- **Jiang et al. (2024):** "MegaScale: Scaling Large Language Model Training to More Than 10,000 GPUs" — describes hierarchical collectives, network topology design, and reliability engineering at cluster scale.
 - **Shoeybi et al. (2019):** "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism" — the canonical reference for tensor-parallel all-reduce patterns within a transformer layer.
 
 ## Exercises

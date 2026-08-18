@@ -380,7 +380,12 @@ def judge_response(
             result["overall"] = round(overall, 2)
             return result
         
-        except (json.JSONDecodeError, KeyError, AssertionError) as e:
+        # ValueError subsumes json.JSONDecodeError; it (and TypeError) also
+        # catches a syntactically valid object whose score is unusable —
+        # "score": "4/5" (ValueError), "score": null or a non-dict criterion
+        # value (TypeError). Those are exactly the malformed outputs the
+        # retry loop exists to absorb.
+        except (ValueError, TypeError, KeyError, AssertionError) as e:
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)  # Exponential backoff
             else:
@@ -461,7 +466,7 @@ def judge_local(question: str, response: str, model: str) -> dict:
 
 !!! warning "Common pitfall"
 
-    Grammar-constrained decoding guarantees the *shape* of the output, not its *semantics*. Backends enforce the JSON grammar and the enumerated keys reliably, but numeric bounds like `"minimum": 1, "maximum": 5` are not all expressible in a context-free grammar and may be ignored. Keep the range assertions from `judge_response` — you have deleted the parse-failure retry loop, not the validation. And note the second-order effect: masking logits changes the distribution the judge samples from, so a schema-constrained judge must be re-calibrated against your gold set, exactly as if you had swapped judge models.
+    Grammar-constrained decoding guarantees the *shape* of the output, not its *semantics*. Backends enforce the JSON grammar and the enumerated keys reliably, but numeric bounds like `"minimum": 1, "maximum": 5` are keywords the JSON-Schema-to-grammar compilers do not all implement, so they may silently have no effect. (Nothing formal stops them — an integer restricted to 1–5 is just the regular language `[1-5]` — it is an implementation gap in the backend, so check yours rather than assuming the bound is enforced.) Keep the range assertions from `judge_response` — you have deleted the parse-failure retry loop, not the validation. And note the second-order effect: masking logits changes the distribution the judge samples from, so a schema-constrained judge must be re-calibrated against your gold set, exactly as if you had swapped judge models.
 
 ---
 
@@ -1083,7 +1088,7 @@ Compute the `overall` score for each. Does the aggregation reward the concise an
     $$
     \theta_B' = 1000 + 32(0 - 0.5) = 1000 - 16 = 984
     $$
-    A rises to **1016**, B falls to **984**. Equal ratings give $E_A = E_B = 0.5$, so a decisive result moves each rating by exactly $K/2 = \pm 16$ — and because $|K(s_A - E_A)|$ shrinks as the expected score approaches the realized one, this is the *smallest* decisive update, not the largest. Upsets move ratings further (the worked example above gives 19.2 for an unexpected win), approaching the ceiling of $K = 32$ as the winner's expected score goes to 0.
+    A rises to **1016**, B falls to **984**. Equal ratings give $E_A = E_B = 0.5$, so a decisive result moves each rating by exactly $K/2 = \pm 16$ — the *mid-range* decisive update, neither extreme. Because $|K(s_A - E_A)|$ shrinks as the expected score approaches the realized one, a favorite winning as expected moves less: the worked example above (A at 1050 beating B at 980) gives only 12.8, and the update tends to 0 as the winner's expected score goes to 1. Upsets move ratings further (that same example gives 19.2 for an unexpected win), approaching the ceiling of $K = 32$ as the winner's expected score goes to 0.
 
     **(b)** Gap $= \theta_A - \theta_B = 200$:
     $$

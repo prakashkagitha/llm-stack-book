@@ -569,9 +569,13 @@ The variance argument has a dynamic consequence. In a deep chain, the gradient a
 
 $$
 \frac{\partial L}{\partial \mathbf{a}^{(1)}}
-= \frac{\partial L}{\partial \mathbf{a}^{(L)}}
-\prod_{\ell=2}^{L} \underbrace{\operatorname{diag}\!\big(\phi'(\mathbf{z}^{(\ell)})\big)\,W^{(\ell)}}_{\text{Jacobian of layer } \ell}.
+= \frac{\partial L}{\partial \mathbf{a}^{(L)}}\;
+J^{(L)} J^{(L-1)} \cdots J^{(2)},
+\qquad
+J^{(\ell)} \;=\; \underbrace{\operatorname{diag}\!\big(\phi'(\mathbf{z}^{(\ell)})\big)\,W^{(\ell)}}_{\text{Jacobian of layer } \ell} \;=\; \frac{\partial \mathbf{a}^{(\ell)}}{\partial \mathbf{a}^{(\ell-1)}}.
 $$
+
+The factors must be multiplied in order of *decreasing* $\ell$ — matrix products do not commute, and only that order is shape-conformable (each $J^{(\ell)}$ is $d_\ell \times d_{\ell-1}$).
 
 If the typical singular value of each Jacobian factor is below 1, the product shrinks geometrically — **vanishing gradients**: early layers receive almost no signal and barely update. If it is above 1, the product grows geometrically — **exploding gradients**: updates blow up, losses go to NaN. This is the deep-learning version of "raising a number to the 50th power": anything not exactly 1 runs away.
 

@@ -196,7 +196,7 @@ The reason `torch.set_float32_matmul_precision("high")` and BF16 autocast exist 
 
 ## The Memory Hierarchy: Registers, SMEM, L2, and HBM
 
-Compute is cheap; moving data is expensive. The GPU memory hierarchy is a series of tiers, each roughly an order of magnitude larger and an order of magnitude slower than the one above it. The art of GPU kernel writing is keeping data in the fast tiers and minimizing trips to the slow ones.
+Compute is cheap; moving data is expensive. The GPU memory hierarchy is a series of tiers that grow in capacity and shrink in bandwidth as you descend — but the steps are wildly uneven. Registers and SMEM hold the *same* 256 KB per SM yet differ by roughly an order of magnitude in bandwidth; L2 and HBM differ by ~1000× in capacity but only ~2× in bandwidth. Latency, by contrast, does climb a fairly regular staircase (~1 → ~30 → ~200 → ~500 cycles). The art of GPU kernel writing is keeping data in the fast tiers and minimizing trips to the slow ones.
 
 {{fig:memory-hierarchy}}
 
@@ -554,7 +554,7 @@ print("LayerNorm:", ln)   # -> memory-bound: the reason norms get fused into mat
     - The GPU is a **throughput** machine that hides memory latency with massive parallelism. It runs fast only when fed tens of thousands of independent units of work; single-stream, serialized, or branchy workloads waste it.
     - The execution hierarchy is **thread → warp (32, lockstep SIMT) → block/CTA (one SM, shares SMEM) → grid**. Warp divergence and uncoalesced memory access are the two most common silent throughput killers.
     - **CUDA cores** do scalar FP32/INT math; **Tensor Cores** do tile-shaped reduced-precision matmul-accumulate and are ~16× faster — but only for matmuls in BF16/FP16/FP8/FP4. Everything else (norms, activations, softmax) runs on CUDA cores and is usually memory-bound.
-    - The memory hierarchy — **registers → SMEM/L1 → L2 → HBM** — drops roughly an order of magnitude in speed and rises an order of magnitude in size at each step. Kernel performance is largely the art of keeping reused data in the fast tiers (SMEM tiling, the FlashAttention insight).
+    - The memory hierarchy — **registers → SMEM/L1 → L2 → HBM** — gets bigger and slower at every step, but unevenly: registers and SMEM are the same 256 KB per SM yet ~10× apart in bandwidth, while L2 → HBM is ~1000× in capacity for only ~2× in bandwidth (latency, though, roughly steps ~1 → ~30 → ~200 → ~500 cycles). Kernel performance is largely the art of keeping reused data in the fast tiers (SMEM tiling, the FlashAttention insight).
     - **Occupancy** is the ratio of resident warps to the SM maximum, bounded by registers, shared memory, and slot limits. More occupancy buys latency-hiding, but **maximum occupancy is not the goal** — high-register, low-occupancy GEMM/attention kernels often win.
     - **Arithmetic intensity** $I = \text{FLOPs}/\text{HBM bytes}$ versus the **ridge point** $\pi/\beta$ decides compute- vs memory-bound. Large matmuls are compute-bound ($I \sim 10^3$); single-token decode is memory-bound ($I \sim 1$). Total FLOPs alone tells you nothing.
     - Across **A100 → H100 → H200 → B200**, compute (and low precision: FP8, then FP4) grew faster than bandwidth, so the **ridge point keeps rising** and more workloads become memory-bound. H200/B200's big HBM3e capacity and bandwidth target inference's two limits: fitting the model+KV cache, and bandwidth-bound decode.

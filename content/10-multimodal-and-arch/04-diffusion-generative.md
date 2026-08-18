@@ -48,7 +48,7 @@ Three common schedules:
 
 | Schedule | $\bar{\alpha}_t$ | Notes |
 |---|---|---|
-| Linear | Linear from 1 to $\approx 0$ | DDPM default; can be too aggressive for high-res |
+| Linear | It is $\beta_t$ that is linear (from $10^{-4}$ to $0.02$); hence $\bar\alpha_t=\prod_{s\le t}(1-\beta_s)\approx\exp(-\sum_{s\le t}\beta_s)$ — an exponential-like fall, *not* a linear one | DDPM default; can be too aggressive for high-res |
 | Cosine (Nichol & Dhariwal) | $\cos^2\!\left(\frac{t/T + s}{1+s}\cdot\frac{\pi}{2}\right)$ | Smoother; stays noisy less at end |
 | Flow matching (linear interpolant) | Not variance-preserving, so there is no $\bar\alpha_t$: the path is $\mathbf{x}_t=(1-t/T)\,\mathbf{x}_0 + (t/T)\,\boldsymbol\epsilon$, i.e. the *signal coefficient itself* is $1-t/T$ | Used in rectified flow; simpler |
 
@@ -110,7 +110,7 @@ $$
 \boldsymbol{\mu}_\theta(\mathbf{x}_t, t) = \frac{1}{\sqrt{\alpha_t}}\!\left(\mathbf{x}_t - \frac{\beta_t}{\sqrt{1-\bar{\alpha}_t}}\boldsymbol{\epsilon}_\theta(\mathbf{x}_t, t)\right)
 $$
 
-Alternatively, the network can be parameterized to predict $\mathbf{x}_0$ directly ($\mathbf{x}$-prediction), the score function $\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t)$, or the *velocity* $\mathbf{v} = \sqrt{\bar\alpha_t}\,\boldsymbol\epsilon - \sqrt{1-\bar\alpha_t}\,\mathbf{x}_0$ (Salimans & Ho, *Progressive Distillation*). All four are related by invertible linear maps at fixed $t$, so they parameterize the *same* model — but they are *not* the same objective, because a plain MSE in each output space implies a different implicit per-timestep weighting (Exercise 5 works this out for $\mathbf{x}_0$-prediction). $\mathbf{v}$-prediction is the practical default for high-resolution and distilled models: it stays well-conditioned at both $t\to0$ (where $\boldsymbol\epsilon$-prediction is nearly information-free) and $t\to T$ (where $\mathbf{x}_0$-prediction is), which is why SD 2.x, progressive distillation, and most video models use it.
+Alternatively, the network can be parameterized to predict $\mathbf{x}_0$ directly ($\mathbf{x}$-prediction), the score function $\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t)$, or the *velocity* $\mathbf{v} = \sqrt{\bar\alpha_t}\,\boldsymbol\epsilon - \sqrt{1-\bar\alpha_t}\,\mathbf{x}_0$ (Salimans & Ho, *Progressive Distillation*). All four are related by invertible linear maps at fixed $t$, so they parameterize the *same* model — but they are *not* the same objective, because a plain MSE in each output space implies a different implicit per-timestep weighting (Exercise 5 works this out for $\mathbf{x}_0$-prediction). $\mathbf{v}$-prediction is the practical default for high-resolution and distilled models: it stays well-conditioned at both ends because it *interpolates* between the other two parameterizations, picking the non-degenerate one at each extreme. As $t\to0$ ($\bar\alpha_t\to1$) $\mathbf{v}\to\boldsymbol\epsilon$, exactly where $\mathbf{x}_0$-prediction degenerates into copying the input and its implied $\hat{\boldsymbol\epsilon}=(\mathbf{x}_t-\sqrt{\bar\alpha_t}\hat{\mathbf{x}}_0)/\sqrt{1-\bar\alpha_t}$ blows up; and as $t\to T$ ($\bar\alpha_t\to0$) $\mathbf{v}\to-\mathbf{x}_0$, exactly where $\boldsymbol\epsilon$-prediction degenerates into copying the input and its implied $\hat{\mathbf{x}}_0=(\mathbf{x}_t-\sqrt{1-\bar\alpha_t}\hat{\boldsymbol\epsilon})/\sqrt{\bar\alpha_t}$ blows up. That is why SD 2.x, progressive distillation, and most video models use it.
 
 !!! warning "Common pitfall: non-zero terminal SNR"
     The standard linear/cosine schedules do not actually reach $\bar\alpha_T = 0$ — DDPM's linear schedule leaves $\bar\alpha_T \approx 4\times10^{-5}$, i.e. a small but non-zero terminal SNR. Training therefore never shows the network a *truly* pure-noise input, yet sampling always starts from one. Under $\boldsymbol\epsilon$-prediction the leak is mild; it becomes visible as a *mean-brightness bias* — such models struggle to generate very dark or very bright images and drift toward medium grey, regardless of the prompt. Lin et al. (*Common Diffusion Noise Schedules and Sample Steps Are Flawed*, WACV 2024) diagnosed this and prescribe the fix: rescale the schedule to enforce $\bar\alpha_T = 0$ exactly, switch to $\mathbf{v}$-prediction (which stays defined at zero SNR), and start sampling at the true last timestep. In `diffusers` this is the `rescale_betas_zero_snr=True` scheduler flag paired with `prediction_type="v_prediction"`. Flow-matching models get this for free: the path *starts* at pure noise by construction.
@@ -259,9 +259,14 @@ def ddim_sample(model: nn.Module, shape: tuple, alphas_bar: torch.Tensor,
     Uses a uniform sub-sequence of timesteps.
     """
     T = alphas_bar.shape[0]
-    # Select a uniform subsequence: e.g., [980, 960, ..., 20, 0]
+    # Uniform subsequence with *trailing* spacing, so the grid starts at the
+    # true last timestep T-1 (the noise level sampling actually begins from).
+    # T=1000, num_steps=50 -> [999, 979, ..., 39, 19].  "Leading" spacing,
+    # list(reversed(range(0, T, step_size))) = [980, ..., 20, 0], would query
+    # the model at 980 on an x that is really x_T -- the mismatch flagged in
+    # the zero-terminal-SNR pitfall above (diffusers: timestep_spacing).
     step_size = T // num_steps
-    timesteps = list(reversed(range(0, T, step_size)))  # [T-1, ..., 0]
+    timesteps = list(range(T - 1, -1, -step_size))
 
     x = torch.randn(shape, device=device)
 
@@ -606,7 +611,7 @@ Why should an engineer focused on language models care about diffusion?
 |---|---|---|
 | Forward marginal | $q(\mathbf{x}_t\mid\mathbf{x}_0) = \mathcal{N}(\sqrt{\bar\alpha_t}\mathbf{x}_0, (1-\bar\alpha_t)\mathbf{I})$ | Jump to any noise level in one shot |
 | Training loss | $\mathbb{E}\|\boldsymbol\epsilon - \boldsymbol\epsilon_\theta(\mathbf{x}_t,t)\|^2$ | Just regression on the added noise |
-| Score | $\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t) = -\boldsymbol\epsilon/\sqrt{1-\bar\alpha_t}$ | Score and noise predictor are the same thing |
+| Score | $\nabla_{\mathbf{x}_t}\log q(\mathbf{x}_t) = -\mathbb{E}[\boldsymbol\epsilon\mid\mathbf{x}_t]/\sqrt{1-\bar\alpha_t} \approx -\boldsymbol\epsilon_\theta(\mathbf{x}_t,t)/\sqrt{1-\bar\alpha_t}$ | Score and noise predictor are the same thing |
 | CFG formula | $(1-w)\boldsymbol\epsilon_\emptyset + w\,\boldsymbol\epsilon_\mathbf{c}$ (with $w>1$ extrapolating) | Steering toward condition |
 | DDIM ODE step | Euler step on probability flow ODE | Makes sampling deterministic and subsampable |
 | Flow matching loss | $\mathbb{E}\|\mathbf{v}_\theta(\mathbf{x}_t,t) - (\mathbf{x}_1-\mathbf{x}_0)\|^2$ | Predict straight-line velocity |
@@ -710,7 +715,7 @@ Why should an engineer focused on language models care about diffusion?
 
     (b) $w=0$: $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\emptyset=(0.20,-0.10)$ — the purely *unconditional* prediction. $w=1$: $\tilde{\boldsymbol\epsilon}=\boldsymbol\epsilon_\mathbf{c}=(0.50,0.30)$ — the pure *conditional* model, no guidance.
 
-    (c) $\|\tilde{\boldsymbol\epsilon}\|_{w=7.5}=\sqrt{2.45^2+2.90^2}=\sqrt{6.00+8.41}=\sqrt{14.41}\approx3.80$, versus $\|\boldsymbol\epsilon_\mathbf{c}\|=\sqrt{0.25+0.09}=\sqrt{0.34}\approx0.58$. The guided vector is $\sim6.6\times$ longer and points well past the conditional point along the direction $\mathbf{d}$ — the model is pushed *further* than the conditional prediction itself, i.e. outside the region the conditional model would ever output, which is exactly the extrapolation that sharpens prompt adherence but risks over-saturation at large $w$.
+    (c) $\|\tilde{\boldsymbol\epsilon}\|_{w=7.5}=\sqrt{2.45^2+2.90^2}=\sqrt{6.00+8.41}=\sqrt{14.41}\approx3.80$, versus $\|\boldsymbol\epsilon_\mathbf{c}\|=\sqrt{0.25+0.09}=\sqrt{0.34}\approx0.58$. The guided vector is $\sim6.5\times$ longer and points well past the conditional point along the direction $\mathbf{d}$ — the model is pushed *further* than the conditional prediction itself, i.e. outside the region the conditional model would ever output, which is exactly the extrapolation that sharpens prompt adherence but risks over-saturation at large $w$.
 
 **4.** (Implementation) The chapter's `ddim_sample` is unconditional. Modify it into a `ddim_sample_cfg` that accepts a conditioning tensor `c`, a null embedding `null_c`, and a guidance scale `w`, applying classifier-free guidance at every step. Assume the model signature is now `model(x_t, t, c)`. Keep everything else (the $\mathbf{x}_0$ prediction, the deterministic $\eta=0$ path) intact.
 
@@ -725,7 +730,7 @@ Why should an engineer focused on language models care about diffusion?
         """DDIM sampler with classifier-free guidance. model(x_t, t, c)."""
         T = alphas_bar.shape[0]
         step_size = T // num_steps
-        timesteps = list(reversed(range(0, T, step_size)))
+        timesteps = list(range(T - 1, -1, -step_size))   # trailing spacing
 
         x = torch.randn(shape, device=device)
 
