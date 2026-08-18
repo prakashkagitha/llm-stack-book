@@ -17,7 +17,7 @@ Before diving into formats, it helps to fix terminology.
 - **Weight-only quantization (W-only):** Weights are stored in low precision; activations remain in BF16/FP16 at runtime. The kernel dequantizes weights on-the-fly and performs the GEMM in FP16. Memory footprint shrinks; the FLOP count and the compute precision are unchanged, but the *arithmetic intensity* rises (roughly 4× for INT4) because you move 4× fewer weight bytes from HBM for the same math — which is exactly the roofline shift that buys the speedup.
 - **Weight + activation quantization (W+A):** Both weights and activations are quantized, usually to INT8 or INT8+INT4. The entire matrix multiply happens in low-precision integer arithmetic on hardware integer units, which can deliver higher TFLOP/s than FP16 on some GPU generations. The tradeoff is that activation distributions are much more dynamic and harder to quantize accurately.
 
-**Symmetric vs. asymmetric:** Symmetric quantization maps $[-\alpha, +\alpha]$ linearly to $[-2^{b-1}, 2^{b-1}-1]$ — the zero-point is always 0, which simplifies dequantization math. Asymmetric allows a nonzero zero-point $z$ to shift the representable range, accommodating one-sided activation distributions (e.g., post-ReLU activations that are all positive).
+**Symmetric vs. asymmetric:** Symmetric quantization maps $[-\alpha, +\alpha]$ linearly to $[-(2^{b-1}-1),\, 2^{b-1}-1]$ with $s = \alpha / (2^{b-1}-1)$ — the zero-point is always 0, which simplifies dequantization math; the most-negative code $-2^{b-1}$ is simply left unused. (This is the convention every snippet in this chapter follows.) Asymmetric allows a nonzero zero-point $z$ to shift the representable range, accommodating one-sided activation distributions (e.g., post-ReLU activations that are all positive).
 
 The linear quantize-dequantize pair for a weight $w$ with scale $s$ and zero-point $z$ is:
 
@@ -57,7 +57,8 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 
-# The model is now ~8 GB instead of ~16 GB for BF16
+# The model is now ~9 GB instead of ~16 GB for BF16 (only nn.Linear layers are
+# quantized — the embedding table and lm_head stay in 16-bit, ~2.1 GB together)
 # Linear layers become bitsandbytes.nn.Linear8bitLt modules
 for name, module in model.named_modules():
     if "Linear8bitLt" in type(module).__name__:
@@ -121,7 +122,8 @@ from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
-    bnb_4bit_quant_type="nf4",       # vs "fp4" (less accurate but faster unpacking)
+    bnb_4bit_quant_type="nf4",       # vs "fp4" (uniform 4-bit float; same speed,
+                                     # generally worse accuracy on LLM weights)
     bnb_4bit_compute_dtype=torch.bfloat16,  # dtype for the dequantized compute
     bnb_4bit_use_double_quant=True,  # double quantization (see below)
 )
@@ -131,7 +133,10 @@ model = AutoModelForCausalLM.from_pretrained(
     quantization_config=bnb_config,
     device_map="auto",
 )
-# Model is now ~4 GB instead of ~16 GB
+# Model is now ~5.7 GB instead of ~16 GB: ~7.0 B params of nn.Linear weight go to
+# NF4 (~3.6 GB), while the 128k-row embedding table and lm_head are never
+# converted and stay in 16-bit (~2.1 GB). The 4-bit figure applies to the
+# Linear layers, not to the whole checkpoint.
 ```
 
 ### Double Quantization
@@ -142,7 +147,7 @@ $$
 \frac{8}{64} + \frac{32}{64 \times 256} = 0.125 + 0.002 = 0.127 \text{ bits/weight},
 $$
 
-a saving of about $0.373$ bits/weight — which the QLoRA paper reports as roughly 3 GB on a 65 B model. Note the metadata is quantized to 8-bit *integers*, not FP8; FP8 hardware types are not involved here at all.
+a saving of about $0.373$ bits/weight — which the QLoRA paper reports as roughly 3 GB on a 65 B model. Note the metadata is stored in bitsandbytes' software 8-bit *dynamic-exponent* code — what the QLoRA paper calls "8-bit Floats" — and not in an FP8 hardware type; E4M3/E5M2 Tensor Core formats are not involved here at all.
 
 !!! example "Worked example: memory budget for a 70 B model"
     Consider a 70B-parameter dense model (e.g., Llama 3.3 70B or a similarly sized open-weight model). Let's compute memory under different quantization schemes.
@@ -327,10 +332,11 @@ python convert_hf_to_gguf.py \
     -m llama3-8b-Q4_K_M.gguf \
     -n 256 \
     -p "Explain quantization to a 5 year old:" \
-    --n-gpu-layers 33   # offload 33 layers to GPU; rest runs on CPU RAM
+    --n-gpu-layers 20   # offload the LAST 20 blocks to GPU; earlier ones stay
+                        # on CPU RAM. (-ngl 99 offloads everything.)
 ```
 
-The `--n-gpu-layers` flag enables **GPU+CPU split inference**: the first $n$ layers run on the GPU (fast), remaining layers on the CPU (using system RAM). This allows running a 70 B model with 24 GB VRAM + 32 GB system RAM — unthinkable with any other stack.
+The `--n-gpu-layers` flag enables **GPU+CPU split inference**: the *last* $n$ blocks run on the GPU (fast), and the remaining earlier blocks run on the CPU (using system RAM). llama.cpp computes the split as `i_gpu_start = max(n_layer - n_gpu_layers, 0)` and assigns every block with index $\ge$ `i_gpu_start` to the GPU — so with `-ngl 10` on a 32-block model, blocks 0–21 stay on CPU and blocks 22–31 are offloaded. Setting $n$ at or above the block count offloads the whole model (which is why you often see `-ngl 99`). This allows running a 70 B model with 24 GB VRAM + 32 GB system RAM — unthinkable with any other stack.
 
 ### Why GGUF for Edge Deployment?
 
@@ -355,7 +361,7 @@ bitsandbytes (bnb) provides drop-in quantized linear layers for PyTorch. It is t
 
 {{fig:quant-bnb-linear-dataflow}}
 
-`Linear4bit` is genuinely weight-only: the NF4/FP4 weights are dequantized on-chip to the compute dtype and the GEMM runs in FP16/BF16. The bandwidth saving is in loading weights from HBM; once on-chip (in L2 or registers), the weights are converted before multiply-accumulate. `Linear8bitLt` is *not* weight-only — LLM.int8() also quantizes the activations row-wise to INT8 and runs a real INT8 GEMM (cuBLASLt's `igemmlt`) for the non-outlier subspace, keeping only the extracted outlier columns in FP16.
+`Linear4bit` is weight-only: the NF4/FP4 weights are always stored 4-bit and the GEMM always runs in FP16/BF16. *How* they reach the multiply-accumulate depends on the shape, and it is worth knowing which path you are on. At batch size 1 (`MatMul4Bit` dispatches to the fused `gemv_4bit` kernel when the input is effectively a single token and needs no gradient) the weights are dequantized *on-chip* and the saving is real HBM bandwidth — which is exactly the decode case quantization exists for. For every other shape — prefill, and crucially QLoRA *training* — bitsandbytes currently takes the fallback `F.linear(A, dequantize_4bit(B, quant_state).to(A.dtype).t(), bias)`, materializing the full dequantized BF16 weight matrix in HBM and calling a stock cuBLAS GEMM. There the win is *storage* (the resident checkpoint stays 4-bit), not bandwidth. `Linear8bitLt` is *not* weight-only — LLM.int8() also quantizes the activations row-wise to INT8 and runs a real INT8 GEMM (cuBLASLt's `igemmlt`) for the non-outlier subspace, keeping only the extracted outlier columns in FP16.
 
 ### Implementing a Minimal NF4 Layer From Scratch
 
@@ -451,11 +457,13 @@ Post-training quantization (PTQ) is cheap — no training required — but QAT c
 
 The core challenge is that the rounding operation $\operatorname{round}(\cdot)$ has zero gradient almost everywhere. QAT works by using a **straight-through estimator (STE)** in the backward pass: the forward pass rounds normally, but the backward pass pretends the rounding did not happen and passes gradients through unchanged.
 
-For a quantized weight $q = \operatorname{round}(w/s)$, the forward pass uses $q$, and the backward pass computes:
+Write the integer code as $q = \operatorname{round}(w/s)$ and the *fake-quantized* weight actually used in the forward pass as $\hat{w} = s \cdot q$ (quantize then immediately dequantize, in the same dtype — this is what `STEQuantize.forward` below returns). The backward pass then substitutes $\partial \hat{w}/\partial w \approx 1$, giving:
 
 $$
-\frac{\partial \mathcal{L}}{\partial w} \approx \frac{\partial \mathcal{L}}{\partial q}
+\frac{\partial \mathcal{L}}{\partial w} \approx \frac{\partial \mathcal{L}}{\partial \hat{w}}
 $$
+
+(Equivalently, in terms of the integer code, $\partial\mathcal{L}/\partial w \approx \frac{1}{s}\,\partial\mathcal{L}/\partial q$ — the factor of $s$ matters, which is why it is cleaner to state the rule on the dequantized value that the forward pass actually multiplies with.)
 
 This is a biased estimator, but empirically it works well and allows the model to adjust its weights so that rounding hurts less.
 
@@ -733,7 +741,7 @@ The large spread in INT4 throughput reflects kernel quality, not format: hand-tu
     - Weight-only quantization (W-only) reduces memory bandwidth and footprint without changing arithmetic type; weight+activation quantization (W+A) additionally uses lower-precision integer arithmetic units for higher compute throughput.
     - Absmax scaling is never MSE-optimal: one outlier inflates the scale for a whole group. Real PTQ grid-searches a clipping ratio and minimizes *output* error on calibration activations, not weight error.
     - NF4 places its 16 code points at equal-probability quantiles of $\mathcal{N}(0,1)$ (asymmetric, with an exact zero, tails clipped at $p=0.9677$) — an entropy-maximizing rather than strictly MSE-optimal design, but a clear win over uniform INT4 because it spends resolution where weights actually live.
-    - Double quantization compresses the per-block scale factors themselves (FP32 → 8-bit integers, in second-level blocks of 256), cutting scale overhead from 0.5 to 0.127 bits/weight at NF4's block size of 64 — about 3 GB on a 65 B model.
+    - Double quantization compresses the per-block scale factors themselves (FP32 → bitsandbytes' software 8-bit dynamic-exponent code, in second-level blocks of 256), cutting scale overhead from 0.5 to 0.127 bits/weight at NF4's block size of 64 — about 3 GB on a 65 B model.
     - QLoRA combines NF4 base model storage with BF16 LoRA adapters and paged optimizers, enabling adapter fine-tuning of a 65 B model on a single 48 GB GPU; gradients never need to pass through the NF4 rounding because the base model weights are frozen.
     - llama.cpp's GGUF k-quants use two-level block scaling (fp16 super-block scales over cheap 6-bit sub-block scales); the `_S`/`_M`/`_L` suffixes are *tensor-level mixes* that promote sensitive tensors like `attn_v` and `ffn_down` to a higher k-quant, not different block layouts. Below 4 bits, build an importance matrix with `llama-imatrix` first.
     - Quantization damage scales *inversely* with model size: a 100 M model has far less redundancy than a 7 B one, so prefer Q8_0/Q6_K there and always re-run your eval battery after quantizing — it is a model edit, and therefore a hypothesis.
@@ -900,7 +908,7 @@ The large spread in INT4 throughput reflects kernel quality, not format: hand-tu
 **6.** The Interview Corner argues that QLoRA does **not** need a straight-through estimator, even though its base weights are stored in 4-bit NF4 — yet the QAT section insists the STE is essential precisely because $\operatorname{round}(\cdot)$ has zero gradient. Reconcile these two claims: under what condition is an STE required, and why does QLoRA escape it while plain INT4 QAT does not?
 
 ??? note "Solution"
-    The STE is required exactly when **you need a gradient with respect to a quantity that passes through the rounding operation.** Rounding is piecewise-constant, so $\partial q / \partial w = 0$ almost everywhere; if $w$ is a parameter you intend to *update*, the true gradient vanishes and training stalls. The STE fabricates a usable gradient by pretending $\partial q/\partial w \approx 1$ in the backward pass — a biased but effective surrogate.
+    The STE is required exactly when **you need a gradient with respect to a quantity that passes through the rounding operation.** Rounding is piecewise-constant, so $\partial q / \partial w = 0$ almost everywhere; if $w$ is a parameter you intend to *update*, the true gradient vanishes and training stalls. The STE fabricates a usable gradient by pretending $\partial \hat{w}/\partial w \approx 1$ for the fake-quantized $\hat{w} = s\cdot\operatorname{round}(w/s)$ in the backward pass — a biased but effective surrogate.
 
     - **Plain INT4 QAT** trains the model's *own weights* through fake-quantization: $w$ is both quantized and updated. The update $w \leftarrow w - \eta\, \partial\mathcal{L}/\partial w$ needs a gradient that flows *through* $\operatorname{round}(w/s)$. Without the STE that gradient is zero, so QAT genuinely depends on it.
 

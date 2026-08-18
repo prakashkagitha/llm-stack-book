@@ -220,9 +220,12 @@ try:
     native = True
 except (TypeError, RuntimeError):
     # Older PyTorch: fall back to the explicit (copying) broadcast.
+    # repeat_interleave along the head axis is exactly what repeat_kv() above
+    # does, spelled without a helper so this block stands on its own.
     n_rep = Hq // Hkv
     out = F.scaled_dot_product_attention(
-        q, repeat_kv(k, n_rep), repeat_kv(v, n_rep), is_causal=True)
+        q, k.repeat_interleave(n_rep, dim=1), v.repeat_interleave(n_rep, dim=1),
+        is_causal=True)
     native = False
 
 print(f"native GQA kernel: {native}, out {tuple(out.shape)}")   # (2, 8, 7, 16)

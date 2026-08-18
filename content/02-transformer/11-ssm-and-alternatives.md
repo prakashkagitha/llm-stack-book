@@ -31,7 +31,7 @@ At inference, the autoregressive KV cache grows as $O(N \cdot d)$ per layer, whi
 
     - At $N = 2048$ (typical pretraining): attention FLOPs per layer count *both* matmuls — $QK^\top$ ($\approx 2 \times 32 \times 2048^2 \times 128 \approx 34$ GFLOPs) and the $PV$ aggregation (another $\approx 34$ GFLOPs), for $\approx 69$ GFLOPs total.
       Feed-forward FLOPs per layer likewise count both projections — up ($\approx 2 \times 2048 \times 4096 \times 16384 \approx 275$ GFLOPs) and down (another $\approx 275$ GFLOPs), for $\approx 550$ GFLOPs total.
-      So attention is ~11% of compute at this length ($69 / (69 + 550)$).
+      So the two *quadratic* attention matmuls are ~11% of those two blocks' matmuls at this length ($69 / (69 + 550)$). Fold in attention's own Q/K/V/O projections — $4 \times 2 \times 2048 \times 4096^2 \approx 275$ GFLOPs per layer, as much as one FFN projection — and the quadratic part is $69 / (69 + 275 + 550) \approx 8\%$ of per-layer matmul FLOPs. Either way it is a small slice at 2 K.
 
     - At $N = 131072$ (128 K context): attention scales as $N^2$, reaching $\approx 69 \times (131072/2048)^2 \approx 281$ TFLOPs per layer, while the MLP grows only linearly to $\approx 550 \times (131072/2048) \approx 35$ TFLOPs per layer.
       Compared *at the same 128 K length*, attention now costs about **8x** the MLP per layer — and that ratio keeps widening as $N$ grows.
@@ -700,7 +700,7 @@ if __name__ == "__main__":
     print("parallel associative scan matches sequential loop: OK")
 ```
 
-To drive the selective SSM with it, set `a = dA` and `b = dB * x[..., None]` (both shaped `(L, B, D, N)`), call `associative_scan` over the time axis to get every `h_t` at once, then read out `y_t = (h_t * C_t).sum(-1)`.
+To drive the selective SSM with it, first move time to dim 0 — `SelectiveSSM.forward` produces `dA`, `dB` as `(B, L, D, N)`, but this scan reduces over dim 0. So set `a = dA.transpose(0, 1)` and `b = (dB * x[..., None]).transpose(0, 1)`, both `(L, B, D, N)`; call `associative_scan(a, b)` to get every `h_t` at once; transpose the result back to `(B, L, D, N)`; then read out `y = (h * C.unsqueeze(2)).sum(-1)`. Passing `(B, L, D, N)` tensors in directly would silently scan the *batch* axis and return garbage.
 
 **Route 2: the chunkwise (intra-chunk parallel + inter-chunk recurrent) algorithm.** This is what Mamba-2 (SSD) and GLA actually ship, because it maps onto tensor-core matmuls rather than a scalar scan. Split the sequence into chunks of length $C$. *Within* a chunk, materialize the $C \times C$ decay-weighted score matrix and multiply by the chunk's values — a dense masked matmul, identical in shape to `linear_attention_chunked` above but with the data-dependent decay mask $L_{ij} = \prod_{k=j+1}^{i} a_k$ in place of the plain causal mask. *Between* chunks, carry the low-rank state $S \in \mathbb{R}^{d \times N_s}$ ($N_s$ = state dimension) and pass it forward. Intra-chunk work is $O((N/C) \cdot C^2 \cdot d) = O(N C d)$ of tensor-core matmul; inter-chunk work is $O((N/C) \cdot d\, N_s)$ of state passing — both linear in the sequence length $N$. See `state-spaces/mamba` (`mamba_chunk_scan_combined`) and `fla-org/flash-linear-attention` (`chunk_gla`, `chunk_simple_gla`) for the fused Triton/CUDA implementations.
 
@@ -732,7 +732,7 @@ $$
 
 Here $w \in \mathbb{R}^d$ is a *learned decay* vector (one per channel), $u \in \mathbb{R}^d$ is a *bonus* for the current token, and $k_t, v_t \in \mathbb{R}^d$ are per-token key and value vectors. This is essentially exponentially-decayed attention, where older tokens get exponentially down-weighted by a channel-wise learned rate.
 
-The recurrent form has a scalar state per channel and can be written as:
+The recurrent form carries a fixed pair of scalar accumulators per channel and can be written as:
 
 $$
 a_t = e^{-w} a_{t-1} + e^{k_t} v_t, \quad b_t = e^{-w} b_{t-1} + e^{k_t}
@@ -1123,7 +1123,9 @@ def init_dt_bias(dt_proj: nn.Linear, dt_min: float = 1e-3, dt_max: float = 1e-1)
     return dt_proj
 
 def ssm_param_groups(model: nn.Module, weight_decay: float = 0.1):
-    """No weight decay on A_log, D, biases, or norm/conv-1d parameters."""
+    """No weight decay on A_log, D, or any 1-D tensor (norm gains, all biases
+    including the conv-1d and dt biases). Note the depthwise conv *kernel* is
+    3-D and does get decayed, as in the reference Mamba recipe."""
     no_decay = [p for n, p in model.named_parameters()
                 if p.ndim <= 1 or n.endswith(("A_log", "D"))]
     decay    = [p for n, p in model.named_parameters()
@@ -1143,7 +1145,7 @@ if __name__ == "__main__":
           "| undecayed (A_log, D, biases):", len(groups[1]["params"]))
 ```
 
-At 100M parameters and a 2048–8192-token context, note honestly that a hybrid buys you very little: the KV cache of a 100M transformer at 8K context is only tens of megabytes, so the memory argument that motivates Nemotron-H does not bite. Build one to *measure* the tradeoff — a real ablation you can run in an afternoon — not because it is the better model at this scale.
+At 100M parameters and a 2048–8192-token context, note honestly that a hybrid buys you very little: the KV cache of a 100M transformer at 8K context is only about a hundred megabytes (Stack-100M's GQA cache is 15,360 B/token, so $8192 \times 15{,}360 = 120$ MiB), so the memory argument that motivates Nemotron-H does not bite. Build one to *measure* the tradeoff — a real ablation you can run in an afternoon — not because it is the better model at this scale.
 
 ---
 

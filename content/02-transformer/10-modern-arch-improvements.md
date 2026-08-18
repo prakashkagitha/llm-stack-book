@@ -177,7 +177,7 @@ Rotary Position Embedding (RoPE), introduced by Su et al. ("RoFormer: Enhanced T
 
 ### Why RoPE won
 
-RoPE encodes position by rotating query and key vectors in 2D subspaces. The critical insight is that the dot product $q_m^\top k_n$ naturally becomes a function of the *relative offset* $(m - n)$, not of absolute positions — this is the **relative position** property that matters for generalization. Unlike sinusoidal encodings, RoPE requires no separate embedding table and requires no modification to the value vectors. Unlike learned absolute position embeddings, it generalizes beyond training context length (with appropriate scaling, see below).
+RoPE encodes position by rotating query and key vectors in 2D subspaces. The critical insight is that the dot product $q_m^\top k_n$ naturally becomes a function of the *relative offset* $(m - n)$, not of absolute positions — this is the **relative position** property that matters for generalization. Unlike sinusoidal encodings — which are *added* to the input and therefore propagate into the residual stream and the value vectors — RoPE acts only inside the attention dot product, rotating $Q$ and $K$ and leaving $V$ and the residual stream untouched. Unlike learned absolute position embeddings, it requires no embedding table and generalizes beyond training context length (with appropriate scaling, see below).
 
 The rotation for position $m$ applied to a 2D subspace of the query vector:
 
@@ -372,7 +372,7 @@ class GroupedQueryAttention(nn.Module):
 
 ### The problem: logit explosion
 
-In deep, wide models trained for many tokens, the dot products $q_i \cdot k_j$ can grow to very large values. Once the logits are large in magnitude, the softmax saturates: one token gets weight ~1 and all others get weight ~0. This "attention collapse" degrades the model's ability to attend to multiple positions, and the large pre-softmax logits create numerical instability in low precision. The failure mode differs by format: fp16 tops out at 65504, so large logits genuinely overflow; bf16 has the same exponent range as fp32 and does *not* overflow, but its 8-bit mantissa represents large values so coarsely that the differences between competing logits get quantized away. See also [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) for the range-versus-precision trade-off behind both failures.
+In deep, wide models trained for many tokens, the dot products $q_i \cdot k_j$ can grow to very large values. Once the logits are large in magnitude, the softmax saturates: one token gets weight ~1 and all others get weight ~0. This "attention collapse" degrades the model's ability to attend to multiple positions, and the large pre-softmax logits create numerical instability in low precision. The failure mode differs by format: fp16 tops out at 65504, so large logits genuinely overflow; bf16 has the same exponent range as fp32 and does *not* overflow, but its 7-bit mantissa represents large values so coarsely that the differences between competing logits get quantized away. See also [Numerical Computing, Floating Point & Precision](../01-foundations/04-numerics-precision.html) for the range-versus-precision trade-off behind both failures.
 
 {{fig:modarch-logit-taming}}
 
@@ -386,12 +386,13 @@ $$
 
 After normalization each head's query and key have RMS $\approx \gamma$, so $\|q\| \approx \|k\| \approx \sqrt{d_k}\,\gamma$ and by Cauchy–Schwarz $|q \cdot k| \le d_k \gamma_q \gamma_k$; after the $1/\sqrt{d_k}$ scale the logits are $O(\sqrt{d_k}\,\gamma_q\gamma_k)$ — bounded by the *learned* scales rather than by whatever magnitude the projections happened to drift to over a trillion tokens. Because $\gamma$ is learned per channel, expressivity is largely retained; only the unbounded growth is removed.
 
-Two implementation details matter. First, **order versus RoPE**: the convention (and what HuggingFace's `Qwen3Attention` and `Gemma3Attention` do) is *project → normalize → rotate*. Either order gives the same bound, since rotation preserves vector norms, but the two are not the same function once $\gamma$ is per-channel — rotation mixes channel pairs — so a converter that swaps them will silently produce a different model. Second, the norm is over `head_dim`, not `d_model`: one tiny $\gamma \in \mathbb{R}^{d_k}$ shared across heads (Qwen3, Gemma 3) or one per head (some variants). The shared version is what the code below implements, and it adds only $2 d_k$ parameters per layer.
+Two implementation details matter. First, **order versus RoPE**: the convention (and what HuggingFace's `Qwen3Attention` and `Gemma3Attention` do) is *project → normalize → rotate*. Either order gives the same bound, since rotation preserves vector norms, but the two are not the same function once $\gamma$ is per-channel — rotation mixes channel pairs — so a converter that swaps them will silently produce a different model. Second, **what the norm spans** is not uniform across models. Qwen3 and Gemma 3 normalize over `head_dim`, with one tiny $\gamma \in \mathbb{R}^{d_k}$ shared across heads (a few variants keep one $\gamma$ per head instead); OLMo 2 instead applies a single RMSNorm across the *entire* projection output — $\gamma \in \mathbb{R}^{H_q d_k}$ for $Q$ and $\gamma \in \mathbb{R}^{H_{kv} d_k}$ for $K$, applied before the reshape into heads, so the magnitude statistic is global rather than per-head. HuggingFace's `Qwen3Attention` even carries the comment "unlike olmo, only on the head dim!". The per-head convention is what the code below implements, and it adds only $2 d_k$ parameters per layer; the bound argument above ($\|q\| \approx \sqrt{d_k}\,\gamma$) is stated for that convention, and holds only approximately under the whole-projection variant.
 
 ```python
 class QKNormAttention(nn.Module):
     """
-    Attention with per-head QK normalization, as in Gemma 3, OLMo 2 and Qwen3.
+    Attention with per-head QK normalization, as in Gemma 3 and Qwen3.
+    (OLMo 2 uses the same idea but norms the whole projection, not each head.)
     (Gemma 2 used logit soft-capping instead; Gemma 3 replaced it with this.)
     In HuggingFace these modules are literally named `q_norm` / `k_norm`.
     Prevents logit explosion during long training runs.
@@ -535,7 +536,7 @@ Why does this happen? Attention weights must sum to 1 via softmax. When no other
 
 ### Implications for model design and inference
 
-The attention sink phenomenon has two practical consequences:
+The attention sink phenomenon has three practical consequences:
 
 1. **Long-context window extension via StreamingLLM**: if you want to process infinite-length streams, you can evict old KV cache entries safely — *as long as you keep the first few tokens' KV cache* (the sinks). Dropping the sink tokens causes catastrophic loss spikes.
 
@@ -580,7 +581,7 @@ The ratio $L / d_{\text{model}}$ tends to be consistent across generations:
 | Qwen 2.5 72B | 80 | 8192 | 0.0098 |
 | DeepSeek-V3 (dense equiv.) | 61 | 7168 | 0.0085 |
 
-Modern 7B-class models favor roughly 32 layers with $d=4096$, yielding an attention head dimension of 128 (with 32 heads). Larger models scale $d$ and $L$ roughly in proportion, holding $d_k = 128$ fixed and adding heads: $d_k$ below 64 wastes tensor-core tiles (which want $\ge 64$ along the contraction dimension) and starves each head of capacity, while $d_k$ above 256 is unsupported by most FlashAttention builds. So the practical knobs are $L$, $H_q$ and $H_{kv}$, with $d = H_q \cdot d_k$ falling out.
+Modern 7B-class models favor roughly 32 layers with $d=4096$, yielding an attention head dimension of 128 (with 32 heads). Larger models scale $d$ and $L$ roughly in proportion, holding $d_k = 128$ fixed and adding heads: $d_k$ below 64 starves each head of capacity and wastes work in fused attention kernels, which are compiled for a fixed menu of head dimensions (32, 64, 96, 128, …) and pad up to the nearest one, while $d_k$ above 256 is unsupported by most FlashAttention builds. So the practical knobs are $L$, $H_q$ and $H_{kv}$, with $d = H_q \cdot d_k$ falling out.
 
 Below ~1B parameters the trade-off tilts noticeably toward depth: MobileLLM (Liu et al., 2024) ablated shape at fixed parameter count for sub-billion models and found deeper-and-thinner consistently wins, which is why the capstone's Stack-100M chooses $d=512$ with 30 layers ($L/d \approx 0.059$, about seven and a half times "deeper" by this metric than the 0.0078 of a Llama 2 7B). See [The Stack-100M Architecture](../14-capstone/04-architecture.html) for that derivation in full.
 
@@ -923,7 +924,7 @@ When you need a correct, complete, *trainable* version of this recipe rather tha
     - **SwiGLU** provides multiplicative gating that consistently outperforms ReLU/GELU FFNs at equal parameter cost; the three-weight design requires scaling the intermediate dimension to $\frac{8}{3}d$ to stay iso-parameter.
     - **RoPE** enables relative positional encoding without a separate embedding table, generalizes beyond training context length, and is the universal choice for decoder-only models. The `rope_theta` base should be set high (100k–500k) for long-context models.
     - **GQA** (Grouped Query Attention) reduces KV cache memory by a factor equal to the grouping ratio (commonly 4–8x) with minimal quality degradation; this is the key architectural enabler for long-context inference.
-    - **QK-norm** (normalizing Q and K per head before computing attention scores) prevents attention logit explosion in large or long-training models; originating in ViT-22B and now used in Gemma 3, OLMo 2 and Qwen3, it is increasingly a default rather than a large-scale-only trick.
+    - **QK-norm** (RMSNorm on Q and K before computing attention scores — over `head_dim` in Gemma 3 and Qwen3, over the whole projection in OLMo 2) prevents attention logit explosion in large or long-training models; originating in ViT-22B, it is increasingly a default rather than a large-scale-only trick.
     - **No biases** in linear layers is almost universal at the frontier; biases add optimizer memory overhead and negligible quality benefit, especially with pre-RMSNorm, and they drive activation outliers that later hurt quantization. Qwen3 dropped the last common holdout (QKV bias) in favor of QK-norm.
     - **Logit soft-capping** ($z \to c \cdot \tanh(z/c)$) is a differentiable alternative to hard clipping, but on attention logits it needs explicit support from whichever fused kernel you use (`flash-attn` $\ge$ 2.6 has it, PyTorch SDPA does not); Gemma 3 replaced it with QK-norm, which needs no kernel support at all, and the training-time **z-loss** is the standard guard on final logits.
     - **Attention sinks** (typically the BOS token) must be preserved in the KV cache for streaming/long-context inference; evicting them causes catastrophic attention pattern collapse. The 2025 refinement is a learned per-head sink *logit* with no token and no value vector (gpt-oss).
@@ -989,7 +990,7 @@ When you need a correct, complete, *trainable* version of this recipe rather tha
 
     (b) Their ablation of LayerNorm into its components found that the **re-scaling invariance — division by a per-vector magnitude statistic — drives almost all of LayerNorm's benefit**, while **re-centering (mean subtraction) contributes little to final performance** yet costs roughly a third of LayerNorm's compute (a second reduction pass plus a subtraction kernel). Dropping it is therefore near-free in quality but ~10-30% faster.
 
-    (c) The normalization involves squaring every element, summing, and taking a reciprocal square root. In low-precision formats like bf16 the squared sum loses precision badly — bf16 keeps only 8 mantissa bits, so squaring and accumulating $d$ terms compounds rounding error — and the reciprocal-square-root is sensitive to that error. (In fp16 the squares can additionally overflow the 65504 ceiling; bf16 shares fp32's exponent range, so its problem is precision, not range.) Computing `x.float().pow(2).mean(...)` in float32 keeps the reduction accurate; the result is then cast back with `.type_as(x)` so the rest of the network still runs in the model's working precision. This is exactly the pattern used in the Llama reference code.
+    (c) The normalization involves squaring every element, summing, and taking a reciprocal square root. In low-precision formats like bf16 the squared sum loses precision badly — bf16 keeps only 7 mantissa bits ($\varepsilon_{\text{mach}} = 2^{-7} \approx 7.8\times10^{-3}$), so squaring and accumulating $d$ terms compounds rounding error — and the reciprocal-square-root is sensitive to that error. (In fp16 the squares can additionally overflow the 65504 ceiling; bf16 shares fp32's exponent range, so its problem is precision, not range.) Computing `x.float().pow(2).mean(...)` in float32 keeps the reduction accurate; the result is then cast back with `.type_as(x)` so the rest of the network still runs in the model's working precision. This is exactly the pattern used in the Llama reference code.
 
 **2.** (Quantitative) You are configuring a SwiGLU FFN for a model with hidden dimension $d = 4096$. A vanilla two-matrix FFN would use a 4x expansion (intermediate $= 4d$). (a) Compute the parameter count of that vanilla FFN. (b) Using the iso-parameter rule for SwiGLU's three matrices, compute the target intermediate dimension, then round it to the nearest multiple of 256. (c) Compute the SwiGLU FFN's parameter count at that rounded dimension and confirm it is close to the vanilla count.
 

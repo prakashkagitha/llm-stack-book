@@ -601,6 +601,7 @@ def attn_bwd_preprocess(
 
     o_base = O_ptr + off_b * stride_ob + off_h * stride_oh
     do_base = dO_ptr + off_b * stride_ob + off_h * stride_oh   # dO shares O's layout
+                                                               # (driver forces it)
     ptrs = offs_m[:, None] * stride_om + offs_d[None, :] * stride_od
 
     o = tl.load(o_base + ptrs, mask=m_mask[:, None], other=0.0)
@@ -638,6 +639,7 @@ def attn_bwd_dkdv_dq(
     k_base = K_ptr + off_b * stride_kb + off_h * stride_kh
     v_base = V_ptr + off_b * stride_vb + off_h * stride_vh
     do_base = dO_ptr + off_b * stride_qb + off_h * stride_qh   # dO shares Q's layout
+                                                               # (driver forces it)
     dq_base = dQ_ptr + off_b * stride_qb + off_h * stride_qh
 
     offs_n = start_n * BLOCK_N + tl.arange(0, BLOCK_N)   # this program's key rows
@@ -701,6 +703,14 @@ Note the dtype discipline: `tl.dot`'s operands are cast down to the working dtyp
 
 ```python
 def flash_attn_backward(q, k, v, o, L, do, sm_scale, causal=False):
+    # The kernels below index dO with Q's strides (and, in the preprocess kernel,
+    # with O's), so every tensor must actually share that layout. Autograd makes
+    # no such promise: in the usual transformer pattern the attention output is
+    # `.transpose(1, 2).reshape(...)`-ed, so the incoming `do` is a non-contiguous
+    # view with a different stride order. Normalize first -- this is the same job
+    # flash-attention's `maybe_contiguous()` helper does.
+    q, k, v, o, do = (t.contiguous() for t in (q, k, v, o, do))
+
     B, H, N_CTX, HEAD_DIM = q.shape
     BLOCK_M, BLOCK_N = 64, 64
 
@@ -799,7 +809,7 @@ Run the same test with `q, k, v` in fp32 and you should see errors tighten to ro
 
 **Full-spectrum hardware notes.** On a laptop or CPU-only box, set `TRITON_INTERPRET=1` and shrink the problem (`B=1, H=1, N=64, D=16`) to check correctness only — the interpreter is very slow, so this is a debugging mode, not a benchmark. On a single A100, H100, or B200, use realistic sizes (`N = 1024` to `8192`) for real timing; the backward does roughly 2.5x the forward's FLOPs (five tile matmuls — recompute `S`, then `dV`, `dP`, `dK`, `dQ` — against the forward's two), so expect the backward to cost about 2–2.5x the forward's latency at matched shapes. On AMD (ROCm) the same source compiles through Triton's AMD backend, but the tuning constants do not transfer: a CDNA wavefront is 64 lanes wide rather than NVIDIA's 32, so `num_warps=4` is 256 threads there and 128 here — re-run `@triton.autotune` per vendor instead of shipping one config table. Multi-GPU is orthogonal here — this is a per-`(batch, head)` kernel; sharding across devices is handled by the training framework (data/tensor/context parallelism), not by anything inside the kernel.
 
-**Library mapping.** The official Triton tutorial `06-fused-attention.py` implements exactly this structure: the forward stores `M` (the running max) and `L`-equivalent statistics, `_attn_bwd_preprocess` computes `delta = sum(o * do)`, and the `_attn_bwd_dkdv` / `_attn_bwd_dq` phases of `_attn_bwd` split the backward the atomics-free way described above. [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) is the reference implementation to read once this kernel makes sense.
+**Library mapping.** The official Triton tutorial `06-fused-attention.py` implements exactly this structure, with one deliberate difference in the saved statistic: its forward stores a *single* per-row tensor `M = m_i + log2(l_i)` — the logsumexp in **base 2**, since its epilogue does `m_i += tl.math.log2(l_i)` before the store — and its backward correspondingly rebuilds `P` with `tl.math.exp2` against a QK scale that still has `log2(e)` folded in. We instead convert `L` to natural log in the forward so the backward can use a plain `tl.exp`; either convention is fine, mixing them is not. Otherwise the mapping is one-to-one: `_attn_bwd_preprocess` computes `delta = sum(o * do)`, and the `_attn_bwd_dkdv` / `_attn_bwd_dq` phases of `_attn_bwd` split the backward the atomics-free way described above. [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) is the reference implementation to read once this kernel makes sense.
 
 
 ## Autotuning, Debugging, and Performance Practice
@@ -854,7 +864,7 @@ print(f"{ms:.3f} ms,  {flops / (ms * 1e-3) / 1e12:.1f} TFLOP/s")
 
 **Where Triton fits in the stack.** TorchInductor — the backend of `torch.compile` — *generates Triton code* for fused pointwise and reduction kernels automatically. So even if you never write a `@triton.jit` function, you are running Triton when you `torch.compile` a model on an NVIDIA GPU. Writing kernels by hand is for the cases the compiler can't fuse well: novel attention variants, quantized matmuls, MoE dispatch, custom losses. See [Kernel Fusion, torch.compile, CUDA Graphs & Compilers](../04-kernels-efficiency/09-compilers-fusion.html).
 
-**Making your kernel `torch.compile`-safe.** A `@triton.jit` launch is opaque Python as far as TorchDynamo is concerned, so dropping one into a `torch.compile`d model risks a **graph break** — the compiled region splits in two around your kernel and you lose the surrounding fusions. The supported fix (PyTorch ≥ 2.6) is to register the launch as a real **custom operator** with `torch.library.triton_op`, marking the launch itself with `torch.library.wrap_triton`:
+**Making your kernel `torch.compile`-safe.** Since PyTorch 2.3, TorchDynamo can trace a bare `@triton.jit` launch directly — it is captured into the graph (Inductor lowers it through a `triton_kernel_wrapper` higher-order op) rather than treated as opaque Python, so the launch by itself does not force a **graph break**. What it still isn't is a *real operator*: it is invisible to `torch.export`/AOTInductor, it has no autograd rule, and its mutation/aliasing semantics are unknown to functionalization. The supported fix (PyTorch ≥ 2.6) is to register the launch as a genuine **custom operator** with `torch.library.triton_op`, marking the launch itself with `torch.library.wrap_triton`:
 
 ```python
 import torch
@@ -863,7 +873,8 @@ from torch.library import triton_op, wrap_triton
 
 
 # Registers a genuine PyTorch operator, "stackbook::add", implemented by a
-# Triton kernel. Dynamo now sees a known op instead of untraceable Python.
+# Triton kernel. `mutates_args={}` tells functionalization nothing is mutated
+# in place, and the op is now nameable by torch.export / AOTInductor.
 @triton_op("stackbook::add", mutates_args={})
 def add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     out = torch.empty_like(x)
@@ -876,8 +887,8 @@ def add(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return out
 
 
-# Composes with the rest of the graph — no break, and Inductor can still fuse
-# the surrounding pointwise ops.
+# Composes with the rest of the graph: unlike a plain `custom_op`, which is a
+# black box, Inductor can look inside a triton_op and still fuse around it.
 compiled = torch.compile(lambda a, b: torch.sin(add(a, b)))
 ```
 
@@ -899,7 +910,7 @@ Because `triton_op` lets the tracer walk the wrapper body (that is exactly what 
     - **Matmul is about reuse:** tile the `M`,`N`,`K` dims, accumulate `tl.dot` results in **fp32**, and use the **GROUP_M swizzle** for L2 locality; `num_stages` software-pipelines the K-loop to hide load latency.
     - **FlashAttention = online softmax over streamed K/V tiles:** keep running `m`, `ℓ`, and `O`; rescale **both** `ℓ` and `O` by `α = exp(m_old − m_new)` on every block; normalize once at the end. Materialized memory per head drops from $O(N^2)$ to $O(Nd)$, and HBM traffic from $\Theta(N^2)$ to $\Theta(N^2 d^2/M)$ — smaller by the tile factor, not linear in $N$.
     - Always **write an eager-PyTorch reference first** and diff with `torch.allclose`; debug with `TRITON_INTERPRET=1`; benchmark with `triton.testing.do_bench`; and check the compiled kernel's `n_spills` before believing any tile size — spilled registers live in HBM.
-    - To live inside a `torch.compile`d or exported model without a **graph break**, wrap the launch as a custom op with `torch.library.triton_op` + `wrap_triton` (plus `register_autograd` for gradients); plain `autograd.Function` is fine only for eager code.
+    - Dynamo has traced bare `@triton.jit` launches since PyTorch 2.3, but a launch is not an **operator**: to be exportable, differentiable, and safe for functionalization, wrap it as a custom op with `torch.library.triton_op` + `wrap_triton` (plus `register_autograd` for gradients); plain `autograd.Function` is fine only for eager code.
     - Let `@triton.autotune` search `BLOCK_*`, `num_warps`, `num_stages`, `GROUP_M`; the best config depends on GPU, dtype, and problem shape — and bigger tiles can *lower* occupancy.
     - You usually don't beat cuBLAS/cuDNN with hand Triton; you write Triton to **fuse** what they can't (quantized GEMMs, custom attention, MoE), and TorchInductor already emits Triton under `torch.compile`.
 

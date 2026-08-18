@@ -774,7 +774,7 @@ Byte-level fallback guarantees *coverage* (nothing is unrepresentable) but not *
 
 Code is brutal on naive tokenizers. Two issues dominate:
 
-- **Whitespace.** Python's significant indentation means long runs of spaces. GPT-2's tokenizer encoded each space (or pair) inefficiently, bloating code. Modern tokenizers (GPT-4's `cl100k_base`, Llama-3) add **dedicated multi-space tokens** (a token for 4 spaces, 8 spaces, etc.) and a tab token, dramatically improving code density and indentation fidelity.
+- **Whitespace.** Python's significant indentation means long runs of spaces. GPT-2's tokenizer has no multi-space token at all, so it spends one token per space, bloating code (`enc.encode("        pass")` is 8 tokens under `gpt2`). Modern tokenizers (GPT-4's `cl100k_base`, `o200k_base`, Llama-3) add **dedicated multi-space and multi-tab tokens** (a token for 4 spaces, 8 spaces, etc.), dramatically improving code density and indentation fidelity — the same string is 2 tokens under `cl100k_base`.
 - **Identifiers.** `getUserById` may split as `get`, `User`, `By`, `Id` — fine — but inconsistent splitting of similar identifiers makes it harder for the model to treat them uniformly. Tokenizers tuned on code (with the byte-level regex handling `camelCase` and `snake_case` boundaries) help.
 
 ### The digit and arithmetic problem

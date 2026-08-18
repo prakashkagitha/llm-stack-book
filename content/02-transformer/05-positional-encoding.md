@@ -43,7 +43,7 @@ PE_{\text{pos},\,2k} = \sin\!\left(\frac{\text{pos}}{10000^{\,2k/d}}\right), \qq
 PE_{\text{pos},\,2k+1} = \cos\!\left(\frac{\text{pos}}{10000^{\,2k/d}}\right).
 $$
 
-Each *pair* of dimensions $(2k, 2k+1)$ is a sine/cosine at its own frequency. The frequencies form a geometric progression: dimension pair $k=0$ oscillates fastest (wavelength $2\pi$), and the wavelengths grow geometrically up to $2\pi \cdot 10000$ for the last pair. The intuition is a **binary-clock for continuous space**: just as the bits of an integer toggle with periods $1, 2, 4, 8, \dots$ (each successive bit toggling half as fast as the last), the dimensions of $PE_{\text{pos}}$ oscillate at a spectrum of frequencies, so the full vector encodes the position with high resolution (fast dims) and long range (slow dims) simultaneously.
+Each *pair* of dimensions $(2k, 2k+1)$ is a sine/cosine at its own frequency. The frequencies form a geometric progression: dimension pair $k=0$ oscillates fastest (wavelength $2\pi$), and the wavelengths grow geometrically up to nearly $2\pi \cdot 10000$ for the last pair (exactly $2\pi \cdot 10000^{(d-2)/d}$, since the largest divisor is $10000^{2k/d}$ at $k = d/2 - 1$). The intuition is a **binary-clock for continuous space**: just as the bits of an integer toggle with periods $1, 2, 4, 8, \dots$ (each successive bit toggling half as fast as the last), the dimensions of $PE_{\text{pos}}$ oscillate at a spectrum of frequencies, so the full vector encodes the position with high resolution (fast dims) and long range (slow dims) simultaneously.
 
 The clever part is *why sinusoids specifically*. For any fixed offset $\Delta$, $PE_{\text{pos}+\Delta}$ is a **linear function** of $PE_{\text{pos}}$ — a rotation, in fact. Using the angle-addition formulas,
 
@@ -345,7 +345,7 @@ Every scaling method in the next section is therefore a *config edit*, not a cod
     - **Fastest pair, $k=0$:** $\theta_0 = 1$ radian/token. Its wavelength is $2\pi \approx 6.28$ tokens — it completes a full rotation every $\approx 6$ tokens. This pair encodes very local position.
     - **Slowest pair, $k=63$:** $\theta_{63} = 10000^{-63/64} \approx 10000^{-0.984} \approx 1.16 \times 10^{-4}$ radian/token. Its wavelength is $2\pi / \theta_{63} \approx 5.4 \times 10^{4} \approx 54{,}000$ tokens — it barely turns across the whole context. This pair encodes coarse, long-range position.
 
-    Now the key extrapolation observation: at the *original* training length 4096, the slow pairs never complete even a fraction of a turn (4096 / 54000 ≈ 0.076 of a cycle), so the model has only ever seen them in a narrow angular range. Push the context to 100,000 tokens and those slow dimensions suddenly rotate into angles the model has *never observed during training* — which is precisely why naive RoPE degrades past the training length, and exactly what NTK/YaRN scaling (next section) repairs by adjusting the frequency ladder.
+    Now the key extrapolation observation: at the *original* training length 4096, the slow pairs never complete even a tenth of a turn (4096 / 54000 ≈ 0.076 of a cycle), so the model has only ever seen them in a narrow angular range. Push the context to 100,000 tokens and those slow dimensions suddenly rotate into angles the model has *never observed during training* — which is precisely why naive RoPE degrades past the training length, and exactly what NTK/YaRN scaling (next section) repairs by adjusting the frequency ladder.
 
 {{fig:rope-frequency-ladder}}
 

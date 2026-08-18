@@ -14,7 +14,7 @@ Every kernel is launched with a **grid** of **blocks**, each block containing a 
 
 {{fig:cuda-grid-block-thread-hierarchy}}
 
-Each block executes on a single **Streaming Multiprocessor (SM)**. An A100 has 108 SMs; an H100 has 132. Threads within a block can share on-chip **shared memory** and can synchronize with `__syncthreads()`. Threads in *different* blocks cannot directly communicate — they must go through global (DRAM) memory.
+Each block executes on a single **Streaming Multiprocessor (SM)**. An A100 has 108 SMs; an H100 has 132. Threads within a block can share on-chip **shared memory** and can synchronize with `__syncthreads()`. Threads in *different* blocks cannot share on-chip storage or synchronize with each other in the baseline model — they must communicate through the global address space, which is usually served by the on-chip L2 cache rather than a full round trip to DRAM. Hopper's thread block clusters relax this restriction; see the Hopper section below.
 
 ```cpp
 // CUDA kernel: each thread computes one element of C = A + B
@@ -65,7 +65,7 @@ Bandwidth numbers are order-of-magnitude illustrations; see NVIDIA's official ar
 
 ### Global Memory Coalescing
 
-When threads in a warp access global memory, the hardware tries to *coalesce* the accesses into as few 128-byte cache-line transactions as possible. If warp lane $i$ reads the `float` element $A[i]$, the warp touches 128 contiguous bytes and one transaction serves all 32 threads — perfect coalescing. If lane $i$ reads element $A[i \cdot 64]$ — a 256-byte stride, so every lane lands in its own 128-byte line — you get 32 separate transactions and a 32× bandwidth penalty.
+When threads in a warp access global memory, the hardware tries to *coalesce* the accesses into as few 128-byte cache-line transactions as possible. If warp lane $i$ reads the `float` element $A[i]$, the warp touches 128 contiguous bytes and one transaction serves all 32 threads — perfect coalescing. If lane $i$ reads element $A[i \cdot 64]$ — a 256-byte stride, so every lane lands in its own 128-byte line — you get 32 separate transactions instead of one. On Maxwell and later (including A100 and H100) global memory is actually serviced in 32-byte **sectors**, four to a 128-byte line, so count the damage in sectors: the coalesced warp touches 4 sectors (128 bytes moved for 128 useful bytes), while the scattered warp touches 32 sectors — $32 \times 32 = 1024$ bytes moved for the same 128 useful bytes, an **8× overfetch** in bytes, on top of a **32×** increase in the number of requests the load/store unit must issue. Nsight Compute makes this directly visible: `l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum` counts the sectors, and dividing by the request count gives 4 when coalesced against 32 when scattered.
 
 **Pattern to prefer**: threads in a warp should access consecutive (strided-by-1) memory addresses.
 
@@ -797,7 +797,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
 
     **(b) Why only lane 0, and why 5 steps.** `__shfl_down_sync` only moves data *downward* (from higher lane to lower lane). At each step lane 0 accumulates the sum of a doubling window of lanes above it ($1, 2, 4, \ldots$), so after the last step lane 0 holds the total. Other lanes hold partial sums of *their* upward windows, and lanes near the top read past the warp boundary — the intrinsic simply returns the calling lane's own value unchanged when $\text{lane} + \delta \ge 32$, so those partial sums are well-defined but are not the total. Only lane 0 is guaranteed correct. A tree reduction halves the number of unreduced partial sums each step, so summing 32 values needs $\log_2 32 = 5$ halvings, hence `delta = 16, 8, 4, 2, 1`.
 
-**5.** Reproduce the chapter's memory-traffic worked example for a *non-square* projection: an FFN up-projection with $M = 8192$ (tokens), $K = 4096$ (hidden), $N = 16384$ ($4\times$ expansion). Compute (a) total FLOPs, (b) global-memory read traffic in bytes for the tiled kernel (each element of $A$ and $B$ read once, FP32), and (c) the arithmetic intensity. Using the A100 roofline crossover of ~156 FLOP/byte given in the chapter, is this kernel compute-bound?
+**5.** Reproduce the chapter's memory-traffic worked example for a *non-square* projection: an FFN up-projection with $M = 8192$ (tokens), $K = 4096$ (hidden), $N = 16384$ ($4\times$ expansion). Compute (a) total FLOPs, (b) global-memory read traffic in bytes for the tiled kernel (each element of $A$ and $B$ read once, FP32), and (c) the arithmetic intensity. Using the A100 crossovers given in the chapter — ~10 FLOP/byte for the FP32 CUDA cores that this FP32 accounting actually implies, and ~156 FLOP/byte for the highest roof on the chip (BF16 Tensor Cores) — is this kernel compute-bound?
 
 ??? note "Solution"
 
@@ -811,7 +811,7 @@ Connection to quantization: fused kernels are essential for INT8/FP8 inference b
 
     **(c) Arithmetic intensity.** $\dfrac{1.10 \times 10^{12}\ \text{FLOP}}{4.03 \times 10^{8}\ \text{bytes}} \approx 2.73 \times 10^{3} \approx 2731$ FLOP/byte.
 
-    **Compute-bound?** $2731 \gg 156$, so yes — under this idealized accounting, firmly compute-bound. Intuitively, the larger $N$ and $M$ raise the FLOPs (which scale with $MNK$) faster than the read traffic (which scales with $MK + KN$), pushing arithmetic intensity higher.
+    **Compute-bound?** The roof that binds an FP32 byte count is the FP32 CUDA-core crossover, ~10 FLOP/byte, and $2731 \gg 10$. It also clears ~156 FLOP/byte, the BF16 Tensor Core crossover and the highest roof on the chip, so the verdict holds under *any* A100 roofline. Yes — under this idealized accounting, firmly compute-bound. Intuitively, the larger $N$ and $M$ raise the FLOPs (which scale with $MNK$) faster than the read traffic (which scales with $MK + KN$), pushing arithmetic intensity higher.
 
     **Important caveat.** "Each element read once" is the *lower bound*, achievable only with unlimited on-chip capacity (plus L2 reuse). The concrete 32×32 shared-memory kernel in this chapter actually reads $2MNK/T = 2 \cdot 8192 \cdot 16384 \cdot 4096 / 32 \approx 3.44 \times 10^{10}$ floats $\approx 137$ GB, giving $T/4 = 8$ FLOP/byte — the same value as the square case, because the tiled kernel's arithmetic intensity depends only on $T$ and the element size, not on $M, N, K$. Closing the gap between 8 and 2731 FLOP/byte is precisely the job of register blocking, larger tiles, and L2-aware scheduling.
 

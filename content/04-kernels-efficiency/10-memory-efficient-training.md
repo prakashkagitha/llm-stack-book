@@ -78,10 +78,11 @@ so in fp16/bf16 (2 bytes per element) this is $M_{\text{act}} \approx 24\,B\,T\,
     matrices per layer (each $4096\times4096$) over $L=32$ layers:
     $$|\theta_{\text{LoRA}}| = 16 \times (4096 + 4096) \times 4 \times 32 \approx 16.8\text{M params}$$
     Adapter weights (bf16, 2 bytes/param): $2 \times 16.8\text{M} \approx 34\,\text{MB} \approx 0.03\,\text{GB}$.
+    Adapter gradients (bf16, 2 bytes/param): another $\approx 0.03\,\text{GB}$.
     Frozen quantized base: $\approx 3.5\,\text{GB (4-bit)}$.
     Adam optimizer states on the adapters only (8 bytes/param):
     $$8 \times 16.8\text{M} \approx 0.13\,\text{GB}$$
-    Total: $3.5 + 0.03 + 0.13 \approx$ **3.7 GB** of *static* state. Activations are untouched by LoRA ($\approx 6.4$ GB at $B=1$, $T=2048$ from above), so a 6 GB consumer GPU fits this only with gradient checkpointing (which brings the activation term under $\approx 1$ GB) and/or a shorter sequence — which is exactly why QLoRA is always paired with checkpointing.
+    Total: $3.5 + 0.03 + 0.03 + 0.13 \approx$ **3.7 GB** of *static* state. Activations are untouched by LoRA ($\approx 6.4$ GB at $B=1$, $T=2048$ from above), so a 6 GB consumer GPU fits this only with gradient checkpointing (which brings the activation term under $\approx 1$ GB) and/or a shorter sequence — which is exactly why QLoRA is always paired with checkpointing.
 
 The 7B numbers make optimizer state look like the whole story. Run the same accounting at the scale you can actually afford to pretrain — a ~100M-parameter model — and the ranking *inverts*: $16P = 1.6$ GB of static state disappears into a corner of any GPU, while a micro-batch of 32 sequences at $T=2048$ puts tens of GB into activations. Two consequences follow, and both are why the capstone run is engineered the way it is. First, at 100M the memory levers that matter are micro-batch size, activation checkpointing, and the *loss head* — the $B \times T \times V$ logits tensor, which lives outside the transformer blocks and is therefore untouched by block-level checkpointing, and which for $B\,T = 65{,}536$ and $V = 32{,}768$ is $65{,}536 \times 32{,}768 \times 4 \approx 8.6$ GB in fp32 before you have counted a single block. Second, PEFT is the wrong tool here: you are training *from scratch*, so there is no pretrained base to freeze. [The Pretraining Run: A Complete Single-GPU Training Loop](../14-capstone/07-pretraining-run.html) does this budget line by line for Stack-100M, including the chunked cross-entropy head that shrinks the logits term ~14–30×.
 
@@ -124,7 +125,17 @@ from torch.utils.checkpoint import checkpoint, checkpoint_sequential
 # -----------------------------------------------------------------------
 
 class TransformerBlock(nn.Module):
-    """A minimal causal transformer block (MHA + FFN + layer norms)."""
+    """A minimal transformer block (MHA + FFN + layer norms).
+
+    NOTE: attention here is *unmasked* — this block exists to measure memory,
+    not to train a language model.  For causal LM use you must pass the mask
+    explicitly (`is_causal=True` alone is only a hint to nn.MultiheadAttention):
+        mask = nn.Transformer.generate_square_subsequent_mask(
+            x.size(1), device=x.device)
+        self.attn(normed, normed, normed, attn_mask=mask,
+                  is_causal=True, need_weights=False)
+    Masking does not change the memory accounting this section measures.
+    """
 
     def __init__(self, d_model: int, n_heads: int, ffn_mult: int = 4):
         super().__init__()
@@ -326,7 +337,7 @@ When GPU memory is exhausted even after checkpointing, the next option is to spi
 {{fig:memeff-memory-hierarchy-tiers}}
 
 
-PCIe bandwidth is ~50× slower than HBM bandwidth. This means CPU offloading is only viable if the tensor being offloaded is *not* needed every step, or the compute on GPU is long enough to hide the transfer latency.
+PCIe bandwidth is ~50× slower than HBM bandwidth. This means CPU offloading is only viable if the offloaded tensor is touched at most *once* per step — so there is a single PCIe round-trip to amortize over the whole step — or if there is enough GPU compute to overlap with and hide the transfer.
 
 ### DeepSpeed ZeRO-Infinity and Offload
 
@@ -490,10 +501,12 @@ Note the last row carefully, because it is the single most common misconception 
 The frozen base model's weights still occupy $2P$ bytes, but they require no gradient storage. With 4-bit quantization of the base model (QLoRA), these compress further to $\frac{P}{2}$ bytes:
 
 $$
-M_{\text{QLoRA}} = \underbrace{\frac{P}{2}}_{\text{4-bit base}} + \underbrace{2 \cdot |\theta_{\text{LoRA}}|}_{\text{bf16 adapters}} + \underbrace{8 \cdot |\theta_{\text{LoRA}}|}_{\text{Adam states on adapters}}
+M_{\text{QLoRA}} = \underbrace{\frac{P}{2}}_{\text{4-bit base}} + \underbrace{2 \cdot |\theta_{\text{LoRA}}|}_{\text{bf16 adapters}} + \underbrace{2 \cdot |\theta_{\text{LoRA}}|}_{\text{adapter grads}} + \underbrace{8 \cdot |\theta_{\text{LoRA}}|}_{\text{Adam states on adapters}} = \frac{P}{2} + 12 \cdot |\theta_{\text{LoRA}}|
 $$
 
-For LLaMA-7B with rank 16 covering all four attention projections (q, k, v, o), $|\theta_{\text{LoRA}}| \approx 16.8$M: approximately $3.5 + 0.03 + 0.13 \approx 3.7$ GB of static state — fitting in a 6 GB GPU *once the activation term is also checkpointed*, since $M_{\text{act}}$ is unchanged by LoRA.
+(The gradient term is the same $2\cdot|\theta_{\text{LoRA}}|$ row as in the table above: PyTorch allocates a persistent `.grad` buffer for every *trainable* adapter parameter, and none for the frozen base.)
+
+For LLaMA-7B with rank 16 covering all four attention projections (q, k, v, o), $|\theta_{\text{LoRA}}| \approx 16.8$M: approximately $3.5 + 0.03 + 0.03 + 0.13 \approx 3.7$ GB of static state — fitting in a 6 GB GPU *once the activation term is also checkpointed*, since $M_{\text{act}}$ is unchanged by LoRA.
 
 ### LoRA From Scratch: A Full Implementation
 
@@ -914,10 +927,20 @@ A common confusion: `torch.no_grad()` prevents creation of the autograd graph bu
 
 ```python
 # Correct: save only the input, discard intermediate activations
-saved_input = input.detach()  # Severs autograd graph; no grad fn stored
+saved_input = input.detach().requires_grad_(True)   # sever the old graph,
+#                                                     but stay differentiable
 # ... run forward normally (intermediates are freed) ...
-# In backward: rerun from saved_input (now re-attaches to the graph)
+# In backward: rerun from saved_input under torch.enable_grad(), which rebuilds
+# the segment's graph so the recomputed output carries a grad_fn.
 ```
+
+The `.requires_grad_(True)` is not optional. A bare `input.detach()` returns a
+tensor with `requires_grad=False`, so re-running the forward from it builds *no*
+graph at all: the recomputed output has `grad_fn=None` and the segment silently
+produces zero gradients — exactly the failure mode described in the pitfall box
+above. `torch.utils.checkpoint` handles both halves for you (it preserves each
+input's `requires_grad` when detaching, and recomputes inside `enable_grad`),
+which is the main reason to use it rather than hand-rolling this.
 
 !!! sota "State of the Art & Resources (2026)"
     Memory-efficient training has matured into a layered stack: activation checkpointing, ZeRO-stage offloading, and LoRA/QLoRA compose cleanly and together enable fine-tuning of 70B+ models on consumer hardware. Weight-decomposed adaptation (DoRA) and gradient low-rank projection (GaLore) — both ICML 2024 orals — are now standard entries in the PEFT toolkit alongside LoRA/QLoRA. The 2025–2026 frontier has extended the stack in two further directions: momentum-only optimizers like Muon cut Adam's optimizer-state overhead directly (rather than only shrinking it via PEFT), and stall-free offload engines like ZenFlow close much of the throughput gap that has historically made CPU offloading a last resort.
@@ -1020,7 +1043,7 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
 
     **(c)** It separates the *memory cost* of a large effective batch from the *peak memory* of one forward-backward pass. Instead of materializing activations for the full batch $B$ at once, it processes $A$ micro-batches of size $B/A$ sequentially, accumulating gradients into a single persistent $2P$-byte buffer. The large batch's activation footprint is "offloaded" onto **time** (extra sequential passes) rather than onto a slower memory tier.
 
-**5.** *(Implementation.)* Write a function `training_memory_gb(P, r, d, n_adapted, mode)` that returns the approximate static training memory in GB for `mode` in `{"full", "lora", "qlora"}`, using only the chapter's formulas. Full training is $16P$ bytes. LoRA keeps the base in bf16 ($2P$) with no base gradients/optimizer state, plus bf16 adapters ($2|\theta|$) and fp32 Adam on adapters ($8|\theta|$). QLoRA replaces the bf16 base with a 4-bit base ($P/2$ bytes). Assume each adapted matrix is $d \times d$ so $|\theta| = r \cdot 2d \cdot n_{\text{adapted}}$. Verify it reproduces the chapter's LLaMA-7B QLoRA figure ($\approx 3.7$ GB) for $P = 7\times10^9$, $r = 16$, $d = 4096$, $n_{\text{adapted}} = 128$.
+**5.** *(Implementation.)* Write a function `training_memory_gb(P, r, d, n_adapted, mode)` that returns the approximate static training memory in GB for `mode` in `{"full", "lora", "qlora"}`, using only the chapter's formulas. Full training is $16P$ bytes. LoRA keeps the base in bf16 ($2P$) with no base gradients/optimizer state, plus bf16 adapters ($2|\theta|$), bf16 adapter gradients ($2|\theta|$) and fp32 Adam on adapters ($8|\theta|$). QLoRA replaces the bf16 base with a 4-bit base ($P/2$ bytes). Assume each adapted matrix is $d \times d$ so $|\theta| = r \cdot 2d \cdot n_{\text{adapted}}$. Verify it reproduces the chapter's LLaMA-7B QLoRA figure ($\approx 3.7$ GB) for $P = 7\times10^9$, $r = 16$, $d = 4096$, $n_{\text{adapted}} = 128$.
 
 ??? note "Solution"
     ```python
@@ -1042,6 +1065,7 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
         # LoRA adapter parameter count: r*(d_in+d_out) per matrix, d_in=d_out=d
         theta = r * 2 * d * n_adapted
         adapters = 2 * theta                        # bf16 adapter weights
+        grads    = 2 * theta                        # bf16 adapter gradients
         adam     = 8 * theta                        # fp32 Adam m,v on adapters
 
         if mode == "lora":
@@ -1051,7 +1075,7 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
         else:
             raise ValueError(mode)
 
-        return (base + adapters + adam) / GB
+        return (base + adapters + grads + adam) / GB
 
 
     if __name__ == "__main__":
@@ -1064,6 +1088,7 @@ saved_input = input.detach()  # Severs autograd graph; no grad fn stored
 
     - 4-bit base: $P/2 = 3.5\times10^9$ bytes $= 3.5\,\text{GB}$
     - bf16 adapters: $2 \times 16.8\text{M} \approx 0.034\,\text{GB}$
+    - bf16 adapter gradients: $2 \times 16.8\text{M} \approx 0.034\,\text{GB}$
     - Adam on adapters: $8 \times 16.8\text{M} \approx 0.134\,\text{GB}$
 
-    Total $\approx 3.5 + 0.03 + 0.13 = 3.67 \approx 3.7\,\text{GB}$, reproducing the chapter's LLaMA-7B QLoRA figure. For reference the function also returns $112\,\text{GB}$ for `"full"` and $\approx 14.2\,\text{GB}$ for `"lora"` (the $2P$ bf16 base dominates the LoRA case), matching the chapter's narrative that quantizing the base is what takes QLoRA from $\sim14\,\text{GB}$ down to $\sim4\,\text{GB}$.
+    Total $\approx 3.5 + 0.03 + 0.03 + 0.13 = 3.70 \approx 3.7\,\text{GB}$, reproducing the chapter's LLaMA-7B QLoRA figure. For reference the function also returns $112\,\text{GB}$ for `"full"` and $\approx 14.2\,\text{GB}$ for `"lora"` (the $2P$ bf16 base dominates the LoRA case), matching the chapter's narrative that quantizing the base is what takes QLoRA from $\sim14\,\text{GB}$ down to $\sim4\,\text{GB}$.

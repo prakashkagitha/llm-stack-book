@@ -500,7 +500,7 @@ torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)   # clip the FULL 
 optimizer.step()
 ```
 
-Two orderings in that snippet are load-bearing. Dividing each micro-batch loss by `grad_accum_steps` is what makes the accumulated gradient the *mean* rather than the sum. Under plain SGD, forgetting it would multiply your effective learning rate by `grad_accum_steps`; under **AdamW it does not**, because the update $\hat m/(\sqrt{\hat v} + \epsilon)$ is invariant to a constant rescaling of the gradient (scale $g$ by $G$ and $m$ scales by $G$, $v$ by $G^2$, so the ratio is unchanged). What the missing divide *does* break is the clipping and the logging: `clip_grad_norm_` compares a $G$-times-larger norm against the same fixed threshold, so it clips far more aggressively and your update ends up *smaller*, not larger — and the logged loss stops being comparable across different `grad_accum_steps`. Keep the divide. Second, `clip_grad_norm_` runs **once, after the last micro-batch**, so the norm is taken over the complete gradient — clipping inside the accumulation loop clips each partial gradient and changes the update. This is exactly the loop the capstone scales up to spend ~20 GPU-hours training a real ~100M model in [The Pretraining Run](../14-capstone/07-pretraining-run.html).
+Two orderings in that snippet are load-bearing. Dividing each micro-batch loss by `grad_accum_steps` is what makes the accumulated gradient the *mean* rather than the sum. Under plain SGD, forgetting it would multiply your effective learning rate by `grad_accum_steps`; under **AdamW it does not**, because the update $\hat m/(\sqrt{\hat v} + \epsilon)$ is invariant to a constant rescaling of the gradient (scale $g$ by $G$ and $m$ scales by $G$, $v$ by $G^2$, so the ratio is unchanged). What the missing divide *does* break is the clipping and the logging: `clip_grad_norm_` compares a $G$-times-larger norm against the same fixed threshold, so it fires on essentially *every* step, pinning the gradient norm at exactly `grad_clip` instead of letting it float and only intervening on spikes. Note which way that cuts — it is not a safety brake. Writing $g$ for the correctly-averaged gradient and $c$ for `grad_clip`, the post-clip norm becomes $\min(G\lVert g\rVert, c)$ instead of $\min(\lVert g\rVert, c)$ — which for $G > 1$ is never *smaller*, and is strictly larger whenever $\lVert g\rVert < c$ (the common case mid-training): clipping normalizes the gradient back *up* to the threshold. So you lose the adaptive character of clipping and silently change the effective step size — and the logged loss stops being comparable across different `grad_accum_steps`. Keep the divide. Second, `clip_grad_norm_` runs **once, after the last micro-batch**, so the norm is taken over the complete gradient — clipping inside the accumulation loop clips each partial gradient and changes the update. This is exactly the loop the capstone scales up to spend ~20 GPU-hours training a real ~100M model in [The Pretraining Run](../14-capstone/07-pretraining-run.html).
 
 ### Checkpointing: save and resume
 
@@ -533,7 +533,7 @@ def load_checkpoint(path, model, optimizer, device):
     torch.set_rng_state(ckpt["torch_rng_state"].cpu())
     if ckpt["cuda_rng_state"] is not None and torch.cuda.is_available():
         torch.cuda.set_rng_state_all(ckpt["cuda_rng_state"])
-    return ckpt["iter_num"] + 1   # resume at the NEXT step, not the saved one
+    return ckpt["iter_num"]   # resume AT the saved step: it had not been taken yet
 
 # --- Wire it into the loop ---
 resume   = False               # flip to True to resume from ckpt_path
@@ -551,6 +551,11 @@ for it in range(start_it, max_iters):
         losses = estimate_loss()
         print(f"step {it:5d} | train {losses['train']:.4f} | val {losses['val']:.4f} | lr {lr:.2e}")
         save_checkpoint(ckpt_path, model, optimizer, it, config)   # checkpoint on eval steps
+        # NOTE: this runs BEFORE iteration `it`'s forward/backward/step, so the
+        # saved state reflects steps 0..it-1. That is why load_checkpoint returns
+        # `iter_num` unchanged (no +1) — resuming re-runs step `it`, which is
+        # exactly the one that was never taken. (nanoGPT stores and restores
+        # iter_num at this same pre-step point.)
 
     X, Y = get_batch("train", config.block_size, batch_size, device)
     logits, loss = model(X, Y)
@@ -775,9 +780,12 @@ class ModernCausalSelfAttention(nn.Module):
         # v is never rotated: it carries content, not position.
         q = apply_rope(q, cos, sin)
         k = apply_rope(k, cos, sin)
-        # Under bf16/autocast, cos/sin must match q/k's dtype. Either build the
-        # cache directly in the model's working dtype, or do the safer:
-        #   q = apply_rope(q.float(), cos, sin).to(q.dtype)
+        # cos/sin are kept in fp32 here. Under bf16 autocast that is fine (and
+        # slightly more accurate): `q * cos` type-promotes q to fp32, and SDPA is
+        # itself autocast-registered, so it casts q/k/v back to a common bf16
+        # before dispatch. If you would rather make the dtype explicit than rely
+        # on promotion, write q = apply_rope(q.float(), cos, sin).to(q.dtype);
+        # to skip the promotion entirely, build the cache in the working dtype.
 
         y = F.scaled_dot_product_attention(
             q, k, v, attn_mask=None,

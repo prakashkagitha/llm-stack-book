@@ -41,7 +41,7 @@ Here $t_{\text{step}}'$ is somewhat larger than $t_{\text{step}}$ because each s
     $$
 
     - **Autoregressive**, 512 output tokens: $T \approx 512 \times 4.7\ \text{ms} \approx 2.4\ \text{s}$, i.e. about **213 tokens/s** for a single sequence.
-    - **Diffusion**, 512 tokens in $N = 32$ steps: each step reads the weights once *and* processes all 512 positions, so it is compute-heavier; say $t_{\text{step}}' \approx 12\ \text{ms}$. Then $T \approx 32 \times 12\ \text{ms} \approx 0.38\ \text{s}$ — about **1340 tokens/s** for the same single sequence.
+    - **Diffusion**, 512 tokens in $N = 32$ steps: each step reads the weights once *and* processes all 512 positions, so it is compute-heavier; say $t_{\text{step}}' \approx 12\ \text{ms}$. Then $T \approx 32 \times 12\ \text{ms} \approx 0.38\ \text{s}$ — about **1330 tokens/s** for the same single sequence.
 
     The diffusion model is ~6× faster *for one sequence* here, precisely because its serial depth (32) is far below the output length (512). The catch, which we will keep returning to, is whether 32 steps is enough to hit the quality the AR model gets "for free" by conditioning each token on exact predecessors. These magnitudes are illustrative; real numbers depend heavily on batch size, where AR throughput catches up because continuous batching ([Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)) fills the compute units across many concurrent requests.
 

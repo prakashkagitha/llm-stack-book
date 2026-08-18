@@ -248,7 +248,7 @@ $$
 \text{capacity} = \left\lceil C_f \cdot \frac{N\,k}{E} \right\rceil.
 $$
 
-Why does capacity exist at all? Because GPUs want **static, rectangular tensors**. To run expert $e$ as one efficient matmul, you need a fixed-size buffer of tokens for it. Capacity is that buffer size. If more than `capacity` tokens route to an expert, the overflow is **dropped** (skips the FFN, passes through on the residual). If fewer arrive, the buffer is **padded** with zeros (wasted FLOPs). So $C_f$ trades two evils: too low and you drop many tokens (hurting quality); too high and you waste compute and memory on padding. Typical training values are $C_f \in [1.0, 2.0]$; Switch used around 1.0–1.25, GShard often 2.0. Modern systems increasingly use **dropless** MoE (Megablocks) with grouped/block-sparse GEMMs that handle ragged sizes directly, eliminating both dropping and padding — but the capacity concept is essential for understanding the classics and most serving paths.
+Why does capacity exist at all? Because GPUs want **static, rectangular tensors**. To run expert $e$ as one efficient matmul, you need a fixed-size buffer of tokens for it. Capacity is that buffer size. If more than `capacity` tokens route to an expert, the overflow is **dropped** — those (token, expert-slot) assignments skip *that expert's* FFN, so at $k = 1$ the token passes through on the residual alone while at $k > 1$ it keeps only the experts that accepted it. If fewer arrive, the buffer is **padded** with zeros (wasted FLOPs). So $C_f$ trades two evils: too low and you drop many tokens (hurting quality); too high and you waste compute and memory on padding. Typical training values are $C_f \in [1.0, 2.0]$; Switch used around 1.0–1.25, GShard often 2.0. Modern systems increasingly use **dropless** MoE (Megablocks) with grouped/block-sparse GEMMs that handle ragged sizes directly, eliminating both dropping and padding — but the capacity concept is essential for understanding the classics and most serving paths.
 
 {{fig:moe-capacity-buffer-drop-pad}}
 
@@ -259,7 +259,7 @@ Why does capacity exist at all? Because GPUs want **static, rectangular tensors*
 
     **Capacity per expert:** $\lceil 1.25 \times 2048 \rceil = 2560$ tokens. Each expert's dispatch buffer holds 2560 token-slots; the layer reserves $8 \times 2560 = 20480$ slots for $8192 \times 2 = 16384$ routed token-instances — about 25% headroom for imbalance.
 
-    **What if one expert is hot?** Suppose the router (mid-training, imperfectly balanced) sends 3000 tokens to expert 3. Capacity is 2560, so $3000 - 2560 = 440$ tokens are **dropped** at this layer — they get no FFN update and pass through on the residual. Across 32 MoE layers, a token has many chances to be dropped somewhere; this is why a too-tight capacity factor visibly hurts loss.
+    **What if one expert is hot?** Suppose the router (mid-training, imperfectly balanced) assigns 3000 of the layer's 16384 routed token-instances to expert 3. Capacity is 2560, so $3000 - 2560 = 440$ of those (token, expert-slot) assignments are **dropped** at this layer. Because $k = 2$, each affected token still receives its *other* expert's output — but its gate weights no longer sum to 1, so its FFN contribution is systematically shrunk (at $k = 1$ it would instead get no FFN update at all and pass through on the residual alone). Across 32 MoE layers, a token has many chances to lose a slot somewhere; this is why a too-tight capacity factor visibly hurts loss.
 
     **Parameter count.** Each expert FFN (SwiGLU has 3 matrices; use 2 here for simplicity) holds $2 \times d_\text{model} \times d_\text{ff} = 2 \times 4096 \times 14336 \approx 1.17 \times 10^{8}$ params. Eight experts: $\approx 9.4 \times 10^{8}$ params in this one MoE layer. A dense FFN would be just $1.17 \times 10^{8}$. So the MoE layer holds **8× the parameters** of a dense FFN.
 
@@ -388,8 +388,11 @@ def upcycle_ffn_to_moe(dense_ffn, d_model, d_ff, n_experts, k=2, jitter=1e-2):
                 p.add_(jitter * p.std() * torch.randn_like(p))
         # (2) Small -- NOT zero -- router weights. Near-uniform routing preserves the
         #     dense function; nonzero weights break per-token ties so every expert is
-        #     selected sometimes and therefore receives gradient. A zero router would
-        #     always pick experts 0..k-1 and starve the rest permanently.
+        #     selected sometimes and therefore receives gradient. A zero router gives
+        #     every token the same all-zero logits, so top-k degenerates into an
+        #     arbitrary, implementation-defined tie-break (torch.topk on ties does NOT
+        #     return 0..k-1) that hands the SAME k experts to every token: routing
+        #     carries no input-dependent signal and only those k get gradient at step 0.
         moe.router.weight.normal_(mean=0.0, std=1e-3)
     return moe
 
@@ -605,7 +608,7 @@ Expected output: `layer0.healthy` reports `router_entropy ~= 0.83`, `max_load_ra
 
     (b) **Capacity:** $\lceil C_f \cdot Nk/E \rceil = \lceil 1.5 \times 512 \rceil = 768$ token-slots per expert.
 
-    (c) **Dropping:** the hot expert wants 900 tokens but its buffer holds 768, so $900 - 768 = 132$ tokens are dropped at this layer (they skip the FFN and pass through on the residual).
+    (c) **Dropping:** the hot expert is assigned 900 token-slots but its buffer holds 768, so $900 - 768 = 132$ of those (token, expert-slot) assignments are dropped at this layer. Since $k = 2$, each affected token still keeps its *other* expert's contribution, but with gate weights that no longer sum to 1, so its FFN output is attenuated rather than skipped entirely — only at $k = 1$ would a dropped token bypass the FFN completely and ride the residual alone.
 
     (d) **Total expert parameters:** one expert FFN holds $2 \, d_\text{model} d_\text{ff} = 2 \times 2048 \times 8192 = 33{,}554{,}432 \approx 3.36 \times 10^{7}$. Sixteen experts: $16 \times 33{,}554{,}432 = 536{,}870{,}912 \approx 5.37 \times 10^{8}$ parameters.
 

@@ -516,7 +516,9 @@ In practice, most modern LLM training uses **sequence packing** to avoid padding
 
 You will hit this the first time you take a base model to SFT. Your chat template needs control tokens (`<|im_start|>`, `<|im_end|>`, a tool-call delimiter) that the pretrained tokenizer does not have. Adding them to the tokenizer grows $V$, so both the embedding table and the LM head must grow to match — and the new rows need sensible values.
 
-The naive move is to let HuggingFace default-initialize the new rows from $\mathcal{N}(0, \sigma^2)$ with the config's `initializer_range`. That is a real footgun: a randomly initialized row sits at an arbitrary direction in a residual stream whose learned embeddings have long since settled into a particular norm and mean. Because the head is usually tied, that random row is also a random *logit direction*, which can produce large spurious logits for the new token and a loss spike in the first few hundred steps. The standard fix is to initialize each new row to the **mean of the existing rows** (equivalently, a small perturbation around it), which places the new token at the center of the learned distribution where it is maximally neutral:
+The naive move is to initialize the new rows from $\mathcal{N}(0, \sigma^2)$ with the config's `initializer_range`. That is a real footgun: a randomly initialized row sits at an arbitrary direction in a residual stream whose learned embeddings have long since settled into a particular norm and mean. Because the head is usually tied, that random row is also a random *logit direction*, which can produce large spurious logits for the new token and a loss spike in the first few hundred steps. The fix is to place the new rows at the **center of the learned distribution**, where they are maximally neutral: the mean of the existing rows, or a small perturbation around it.
+
+HuggingFace now does this for you. Since `transformers` 4.46 the signature is `resize_token_embeddings(new_num_tokens=None, pad_to_multiple_of=None, mean_resizing=True)`, and the default `mean_resizing=True` samples the new rows from a multivariate normal fitted to the **mean and covariance** of the existing table — a covariance-aware version of the mean init, and strictly better than assigning every new token the same constant row. Passing `mean_resizing=False` restores the old $\mathcal{N}(0, \texttt{initializer\_range}^2)$ behaviour, which is the footgun. It is still worth knowing the mechanism by hand: you need it on older versions, and you need it for the *output* head whenever the model is untied, since `resize_token_embeddings` only covers the head automatically when it is tied to the input table. The snippet below disables `mean_resizing` so the manual path is the one actually setting the values:
 
 ```python
 import torch
@@ -526,13 +528,21 @@ model_id = "HuggingFaceTB/SmolLM2-135M"          # any small base model
 tok = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(model_id)
 
-new_tokens = ["<|im_start|>", "<|im_end|>"]
+# NOTE: pick tokens the base tokenizer genuinely lacks. SmolLM2's *base*
+# tokenizer already ships <|im_start|> / <|im_end|> (IDs 1 and 2), so asking
+# for those would add nothing and the resize would be a silent no-op.
+new_tokens = ["<|tool_call|>", "<|tool_result|>"]
 n_added = tok.add_special_tokens({"additional_special_tokens": new_tokens})
+assert n_added == len(new_tokens), "tokens already in the vocab; resize is a no-op"
 
-old_V = model.get_input_embeddings().weight.shape[0]
+old_V = model.get_input_embeddings().weight.shape[0]   # 49152
 
 # pad_to_multiple_of keeps the vocab dimension tensor-core / TP friendly.
-model.resize_token_embeddings(len(tok), pad_to_multiple_of=64)
+# mean_resizing=False turns OFF HF's built-in mean/covariance init (the default
+# since transformers 4.46) so the manual init below is what fills the new rows.
+model.resize_token_embeddings(len(tok), pad_to_multiple_of=64,
+                              mean_resizing=False)
+assert model.get_input_embeddings().weight.shape[0] > old_V
 
 with torch.no_grad():
     inp = model.get_input_embeddings().weight
@@ -564,7 +574,8 @@ Different architecture families make different choices:
 
 - **GPT-2** (Radford et al., 2019): learned positional embeddings, added to token embeddings, then dropout. Pre-layer-norm.
 - **BERT** (Devlin et al., 2018): token + positional + segment type embeddings, then layer norm, then dropout. Post-layer-norm.
-- **Llama / Mistral / Gemma**: no positional addition at input; RoPE is applied inside each attention layer. The embedding is just `W_E[ids]` followed directly by the first RMSNorm inside the block.
+- **Llama / Mistral**: no positional addition at input; RoPE is applied inside each attention layer. The embedding is just `W_E[ids]` followed directly by the first RMSNorm inside the block.
+- **Gemma** (all of Gemma 1/2/3): same minimal design — no positional addition, RoPE inside attention — *except* that the embedding output is multiplied by a fixed scalar $\sqrt{d_{\text{model}}}$ before the first block (`normalizer = config.hidden_size ** 0.5` in HF's `GemmaModel.forward` / `Gemma3TextModel.forward`). This is the one common "Scale" step in the modern stack: for Gemma 2 9B ($d = 3584$) it rescales the initial residual stream by $\approx 59.9$, which matters because Gemma ties its LM head at every size — the same table that is scaled up on the way in is used unscaled to produce logits on the way out.
 
 Here is the Llama-style input pipeline:
 
@@ -581,6 +592,7 @@ class LlamaInputPipeline(nn.Module):
     """
     def __init__(self, vocab_size: int, d_model: int):
         super().__init__()
+        self.d_model = d_model
         # Simple lookup; no padding_idx by default in Llama
         self.embed_tokens = nn.Embedding(vocab_size, d_model)
         # Llama's HF configs use a flat `initializer_range = 0.02`, inherited
@@ -592,6 +604,9 @@ class LlamaInputPipeline(nn.Module):
     def forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
         """input_ids: [B, T]  ->  hidden_states: [B, T, d_model]"""
         return self.embed_tokens(input_ids)
+        # Gemma variant: the only difference is a constant rescale of the
+        # residual stream at entry --
+        #   return self.embed_tokens(input_ids) * (self.d_model ** 0.5)
 ```
 
 For details on the RoPE step that follows, see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html).

@@ -145,7 +145,7 @@ Each subgraph between graph breaks is independently compiled and cached. The gua
 
 ### AOTAutograd: Differentiation Before Compilation
 
-For training, we need not just the forward pass but also the backward pass to be compiled and fused. AOTAutograd ("Ahead-Of-Time Autograd") uses the `functorch` dispatcher to *trace through the autograd engine itself* at compile time, producing a single joint FX graph representing both forward and backward. That joint graph is then *partitioned* (by default `min_cut_rematerialization_partition`) into a forward graph and a backward graph, handed to `fw_compiler` and `bw_compiler` respectively. Two wins follow, neither available in eager mode: the partitioner chooses which intermediates to save versus recompute in backward (a cheap, automatic form of rematerialization), and the backend sees the *whole* backward graph at once, so gradient formulas fuse with their neighbours instead of each running as its own `*Backward` kernel.
+For training, we need not just the forward pass but also the backward pass to be compiled and fused. AOTAutograd ("Ahead-Of-Time Autograd") uses the `functorch` dispatcher to *trace through the autograd engine itself* at compile time, producing a single joint FX graph representing both forward and backward. That joint graph is then *partitioned* into a forward graph and a backward graph, handed to `fw_compiler` and `bw_compiler` respectively. Which partitioner runs depends on how you enter: the `torch.compile`/Inductor path explicitly passes `min_cut_rematerialization_partition`, while the lower-level `aot_function` API defaults to `default_partition`, which saves every boundary tensor and rematerializes nothing — pass `partition_fn=` yourself if you call it directly. Two wins follow, neither available in eager mode: the partitioner chooses which intermediates to save versus recompute in backward (a cheap, automatic form of rematerialization), and the backend sees the *whole* backward graph at once, so gradient formulas fuse with their neighbours instead of each running as its own `*Backward` kernel.
 
 ```python
 import torch
@@ -167,13 +167,13 @@ compiled_fn = aot_function(fn, fw_compiler=lambda g, _: g, bw_compiler=lambda g,
 
 TorchInductor is the default lowering backend. It takes the fused FX graph and generates either Triton (for CUDA/ROCm GPUs) or C++ (for CPU). Its key optimizations:
 
-**Loop fusion and tiling.** Inductor represents computation as loops over tensor elements and applies polyhedral-style analysis to identify which loops can be fused and tiled for cache locality.
+**Loop fusion and tiling.** Inductor represents computation as loops over tensor elements. Its scheduler fuses two nodes when their iteration ranges match after index normalization and their read/write dependency sets permit it, ranking candidates by an estimated memory-traffic saving (`can_fuse` / `score_fusion` in `torch/_inductor/scheduler.py`); tiling is chosen from a small set of candidate loop splits. It is dependency-and-heuristic driven, not an affine/polyhedral scheduler.
 
 **Pointwise fusion.** Sequences of elementwise ops are automatically merged into a single Triton kernel. A transformer block's bias-add, GELU, and dropout might collapse into one kernel.
 
 **Reduction scheduling.** Reductions (softmax, LayerNorm, mean) are split into a tile-wise pass followed by a global reduction, matching the two-pass structure that fits GPU occupancy constraints.
 
-**Epilogue fusion.** Many cuBLAS/cuDNN kernels support an "epilogue" — a post-matmul elementwise op applied inside the same kernel. Inductor exploits this to fuse bias-add into gemm calls for free.
+**Epilogue fusion.** A GEMM kernel can apply an "epilogue" — a post-matmul elementwise op — to each output tile before it leaves the SM, saving a full write-then-read of the matmul result. Inductor gets this two ways, and neither is automatic on the default mode. When it lowers a matmul to `extern_kernels.mm`, the cuBLAS kernel is opaque and nothing can be scheduled into it; the one exception is a bias, which is folded into `aten.addmm` and handled inside cuBLASLt. General elementwise epilogues fuse only into Inductor's *own* Triton (or CUTLASS) GEMM templates, which are candidates only when template autotuning is enabled (`mode="max-autotune"`, or `max_autotune_gemm`) and the autotuner actually picks a template over cuBLAS. This is a large part of why `max-autotune` beats the default mode on GEMM-heavy blocks.
 
 ```python
 import torch
@@ -288,19 +288,21 @@ Two things that are commonly *assumed* to break the graph but do not: a shape-de
     - Batch: 4 sequences of length 2048, bfloat16
     - Input tensor shape: `[4, 2048, 4096]` ≈ 33.6 M elements × 2 bytes = **64 MiB (~67 MB)**
 
-    **Eager forward pass time:** ~14 ms (measured with `torch.utils.benchmark`)
+    **Eager forward pass time:** ~7.4 ms (measured with `torch.utils.benchmark`)
 
-    **`torch.compile(mode="reduce-overhead")` forward pass time:** ~9 ms
+    **`torch.compile(mode="reduce-overhead")` forward pass time:** ~6.6 ms
 
-    That is roughly a 1.55× speedup from compilation alone, coming from:
-    - Fusing QKV projection bias-add with the projection matmul epilogue
-    - Fusing the GeLU into the up-projection matmul epilogue in the FFN
+    That is roughly a 1.12× speedup from compilation alone, coming from:
+    - Folding the projection bias-adds into the projection matmuls
+    - Fusing the GeLU into the FFN's pointwise group so the wide `[4, 2048, 16384]` intermediate is not written and re-read
     - Eliminating ~40 separate kernel launches via CUDA graph capture in reduce-overhead mode
+
+    Do the arithmetic and the modest ratio is exactly what you should expect. The layer is $\approx 3.6$ TFLOP of work at these dimensions, of which over 92% is dense GEMM that eager already hands straight to cuBLAS — there is nothing for the compiler to win there. What it *can* win is the pointwise traffic: the GeLU round-trip is $2 \times 268\,\text{MB}$ and the four bias-adds another $\approx 537\,\text{MB}$, so at 3.35 TB/s the fusions are worth roughly 0.3 ms, and 40 launches at 8 µs are worth another 0.3 ms. **Fusion speedups are bounded by the fraction of time that is *not* already in big GEMMs.** The runnable benchmark later in this chapter reaches ~1.6× on a smaller layer ($d_{\text{model}} = 2048$, $S = 1024$, `nn.MultiheadAttention`) precisely because its GEMMs are small enough that pointwise and launch overhead are a much larger share of the total.
 
     **For training** (forward + backward), the gain is typically somewhat larger because AOTAutograd hands Inductor the entire backward graph, so the pointwise gradient formulas fuse into their neighbours instead of running as one `*Backward` kernel each.
 
     A rough breakdown of where time goes in the compiled version:
-    - ~55% FFN (the two $4096 \leftrightarrow 16384$ matmuls, with fused epilogues) — at these dimensions the FFN alone is about 60% of the layer's FLOPs
+    - ~55% FFN (the two $4096 \leftrightarrow 16384$ matmuls, plus the fused GeLU pointwise group) — at these dimensions the FFN alone is about 60% of the layer's FLOPs
     - ~35% attention *block* — dominated by the QKV and output projections; the FlashAttention kernel itself is under 10% of the layer's FLOPs at $S = 2048$, because the attention core costs $S / (2 d_{\text{model}}) = 0.25\times$ what the four projections cost at these dimensions
     - ~10% overhead (LayerNorm, residual add, kernel launches)
 
@@ -351,7 +353,7 @@ Below is a complete, runnable before/after comparison. We profile a small GPT-li
 """
 torch_compile_demo.py — Measure eager vs compiled transformer block.
 
-Requirements: PyTorch >= 2.0, CUDA GPU
+Requirements: PyTorch >= 2.4 (for nn.RMSNorm), CUDA GPU
 Run: python torch_compile_demo.py
 """
 import torch
@@ -435,8 +437,8 @@ torch.cuda.synchronize()
 
 # ─── Benchmark ────────────────────────────────────────────────────────────────
 
-def bench(fn, label: str, n: int = 200):
-    """Run fn n times, return median latency in ms."""
+def bench(fn, label: str):
+    """Time fn(x) with blocked_autorange; return median latency in ms."""
     with torch.inference_mode():
         t = Timer(
             stmt="fn(x)",
@@ -553,13 +555,18 @@ def forward_good(x):
 def forward_costly(tensors: list):
     return [t * 2 for t in tensors]  # every new list length → a full recompile
 
-# BETTER: stack into a single tensor
+# FEWER KERNELS (but still one trace per list length):
 def forward_better(tensors: list):
     stacked = torch.stack(tensors)   # note: returns a Tensor, not a list
     return stacked * 2
+
+# THE ACTUAL RECOMPILE FIX: stack OUTSIDE the compiled region, so the
+# compiled function only ever sees a Tensor whose leading dim can be dynamic.
+def forward_best(stacked: torch.Tensor):   # caller does torch.stack(tensors)
+    return stacked * 2
 ```
 
-This is a recompilation trap rather than a break: a list of 8 tensors and a list of 9 tensors are two different traces, so a loop whose list length varies will exhaust the recompile budget. Stacking also replaces N tiny kernels with one large one — but it changes the return type, so a caller that expects `list[Tensor]` needs `torch.unbind` on the way out.
+This is a recompilation trap rather than a break: a list of 8 tensors and a list of 9 tensors are two different traces, so a loop whose list length varies will exhaust the recompile budget. Note that stacking *inside* the compiled function does not fix that — Dynamo still unrolls the Python container and guards on `len(tensors)`, so the trace count is unchanged; what it buys is kernel count, N tiny multiplies collapsing into one large one. To actually stop the recompiles you have to move `torch.stack` outside the compiled region and pass the stacked tensor in, marking its leading dimension dynamic (`torch._dynamo.mark_dynamic(stacked, 0)`). Either rewrite changes the return type, so a caller that expects `list[Tensor]` needs `torch.unbind` on the way out.
 
 ### Shape Guards and Recompilation
 
@@ -797,7 +804,7 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
     print(f"total (reduce vs eager):    {t_eager / t_reduce:.2f}x")
     ```
 
-    Reading the results: `t_eager / t_noCG` is the pure **fusion / memory-traffic** speedup (Inductor merging the SiLU + gate multiply and fusing bias/epilogues), and `t_noCG / t_reduce` is the **incremental CUDA-graph** speedup from eliminating per-kernel CPU launch overhead. On a memory-bound FFN at small batch the CUDA-graph increment is usually the smaller of the two, but it grows as the kernels get shorter and more numerous — the regime the chapter flags for batch-1 serving.
+    Reading the results: `t_eager / t_noCG` is the pure **fusion / memory-traffic** speedup (Inductor merging the SiLU with the gate/up multiply into one pointwise kernel; these `Linear`s are `bias=False`, so there is no bias to fold), and `t_noCG / t_reduce` is the **incremental CUDA-graph** speedup from eliminating per-kernel CPU launch overhead. On a memory-bound FFN at small batch the CUDA-graph increment is usually the smaller of the two, but it grows as the kernels get shorter and more numerous — the regime the chapter flags for batch-1 serving.
 
 **6.** The chapter claims AOTAutograd's joint forward+backward graph enables optimizations "unavailable in eager mode". Take `y = sigmoid(z)`. (a) Derive $\partial y / \partial z$ and show it can be written using only the forward output `y`, not `z`. (b) Explain concretely, in terms of memory traffic and kernel count, what compiling the *backward graph as a whole* saves here versus eager mode, and why eager mode cannot do it. (c) Why can the compiler *not* simply fuse the forward `sigmoid` with its own backward kernel?
 
@@ -812,6 +819,6 @@ With `dynamic=True`, Dynamo emits *symbolic shapes* rather than concrete values 
 
     **(b)** In **eager mode** the backward pass is a chain of independent, dynamically dispatched nodes. `SigmoidBackward` runs as its own kernel: it reads `y` and the incoming gradient `g` from DRAM, computes `g * y * (1 - y)`, and writes `dz` back to DRAM — where the *next* backward node (here the `dx = dz @ w.T` matmul, or whatever pointwise op precedes it) immediately reads it again. Every gradient formula in the network pays that same launch-plus-round-trip tax, and eager autograd cannot avoid it because it discovers each node only when it pops it off the ready queue.
 
-    **AOTAutograd** traces through the autograd engine *at compile time*, so `bw_compiler` receives the whole backward graph as one FX graph. Inductor can then merge `g * y * (1 - y)` with its neighbours *inside that graph* — folding it into an adjacent pointwise group, or into the matmul's prologue/epilogue — so `dz` never round-trips DRAM and one fewer kernel is launched. The joint graph buys a second thing as well: the `min_cut_rematerialization_partition` pass decides whether `y` is worth saving at all, and may instead keep the cheaper `z` and recompute `sigmoid(z)` inside the backward kernel, trading a few flops for one less saved activation.
+    **AOTAutograd** traces through the autograd engine *at compile time*, so `bw_compiler` receives the whole backward graph as one FX graph. Inductor can then merge `g * y * (1 - y)` with its neighbours *inside that graph* — folding it into an adjacent pointwise group, or into the matmul's prologue/epilogue — so `dz` never round-trips DRAM and one fewer kernel is launched. The joint graph buys a second thing as well: the `min_cut_rematerialization_partition` pass gets to choose *what* crosses the forward/backward boundary. In this particular graph that choice is a wash — `y` and `z` have identical shape and dtype, so saving `z` and recomputing `sigmoid(z)` in backward would cost flops and save zero bytes (and `y` is a graph output here anyway, so it is materialized regardless). Rematerialization pays only when the saved tensor is genuinely larger than the inputs needed to recompute it — e.g. saving a narrow pre-broadcast or pre-cast operand and regenerating the wide activation from it in the backward kernel.
 
     **(c)** Because the partitioner splits the joint graph into two GraphModules that *run at different times* — the forward at `model(x)`, the backward at `loss.backward()`, separated by the entire rest of the network. No kernel can hold `y` live in registers or shared memory across that gap, so whatever the partitioner decides to save (`y` or `z`) is still written to DRAM in forward and read back in backward. The compiler's leverage is over *what* crosses the boundary and how the backward graph is scheduled, not over erasing the boundary itself.

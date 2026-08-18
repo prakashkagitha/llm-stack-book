@@ -45,7 +45,7 @@ Define the **per-token KV footprint** $\beta = 2 \cdot L \cdot H_{kv} \cdot d_h 
     \beta = 2 \cdot 40 \cdot 40 \cdot 128 \cdot 2 = 819{,}200 \text{ bytes/token} \approx 0.78\ \text{MiB/token}.
     $$
 
-    A single 2048-token sequence costs $0.78 \times 2048 \approx 1.6$ GiB. On an 80 GiB A100 holding the ~26 GiB of fp16 weights, you have ~54 GiB for cache — about **34** such sequences. A decode step at that batch size is bandwidth-bound — sweeping ~80 GiB of weights plus cache at ~2 TB/s takes tens of milliseconds, during which the GPU could have executed *teraFLOPs* of arithmetic it has no work for — so you run out of *memory* at a few dozen sequences long before you run out of FLOPs. That ceiling is the throughput ceiling.
+    A single 2048-token sequence costs $0.78 \times 2048 \approx 1.6$ GiB. On an 80 GiB A100 holding the model's ~24 GiB of fp16 weights (13.0B parameters $\times$ 2 bytes = 26.0 GB = 24.2 GiB — mind the GB/GiB distinction), you have ~56 GiB for cache — about **35** such sequences. A decode step at that batch size is bandwidth-bound — sweeping ~80 GiB of weights plus cache at ~2 TB/s takes tens of milliseconds, during which the GPU could have executed *teraFLOPs* of arithmetic it has no work for — so you run out of *memory* at a few dozen sequences long before you run out of FLOPs. That ceiling is the throughput ceiling.
 
     **Llama-2-70B with GQA** ($H_{kv}=8$): $L=80$, $d_h=128$, fp16.
 
@@ -79,7 +79,7 @@ print(f"{beta/2**20:.3f} MiB/token")  # ~0.781 MiB/token
 
 ## The Fragmentation Problem
 
-The naive serving system allocates one **contiguous** chunk of GPU memory per request, sized for the maximum sequence length the request could reach. This is how early systems (and a straightforward HuggingFace `generate` loop) work. It is also catastrophically wasteful. The vLLM authors named three sources of waste precisely — **internal fragmentation**, **external fragmentation**, and **reservation** — and separately noted a fourth, missed opportunity: such a system cannot *share* memory between requests at all.
+The naive serving system allocates one **contiguous** chunk of GPU memory per request, sized for the maximum sequence length the request could reach. This is how early systems (and a HuggingFace `generate` loop configured with `StaticCache`) work. It is also catastrophically wasteful. The vLLM authors named three sources of waste precisely — **internal fragmentation**, **external fragmentation**, and **reservation** — and separately noted a fourth, missed opportunity: such a system cannot *share* memory between requests at all.
 
 ### Internal fragmentation: reserving for the worst case
 
@@ -421,7 +421,7 @@ Two neighbours are worth knowing. **FlashInfer** (`flashinfer-ai/flashinfer`) pa
 
 Paging is not just a memory optimization in isolation; it is the substrate that makes the rest of modern serving work.
 
-**It enables large, dynamic batches.** Because each sequence grows block-by-block and reclaims blocks on completion, the system can pack many sequences into the freed space. This is the storage layer beneath **continuous batching** (also called in-flight batching), where finished sequences are evicted from the running batch and new ones admitted every step rather than waiting for the whole batch to finish — see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html). Continuous batching needs to add and remove sequences at *token* granularity; only a block allocator can give back a finished sequence's memory cheaply enough for that to pay off.
+**It enables large, dynamic batches.** Because each sequence grows block-by-block and reclaims blocks on completion, the system can pack many sequences into the freed space. This is the storage layer beneath **continuous batching** (also called in-flight batching), where finished sequences are evicted from the running batch and new ones admitted every step rather than waiting for the whole batch to finish — see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html). Continuous batching predates paging — Orca (Yu et al., OSDI 2022) introduced iteration-level scheduling on top of a contiguous, max-length allocator, and it is the baseline vLLM's $2\text{--}4\times$ is measured *against*. What paging adds is headroom: with no max-length reservation, far more sequences fit in the running batch at once, and the blocks a finished sequence returns are immediately fungible for whichever request the scheduler admits in its place.
 
 **It enables prefix sharing at scale.** COW blocks let a fixed system prompt, a RAG context, or a few-shot template be stored once and reused across thousands of requests, slashing both memory and prefill compute (the shared prefix need not be recomputed). This is the foundation of [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html).
 

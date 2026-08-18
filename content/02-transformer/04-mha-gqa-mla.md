@@ -309,7 +309,7 @@ A hand-written `repeat_kv` like the one above is the *fallback* path, not the fa
 
 - **PyTorch.** `F.scaled_dot_product_attention` takes an `enable_gqa=True` flag (added in PyTorch 2.5), which performs the head broadcast *inside* the kernel, so you hand it the narrow `(B, n_kv, L, d_h)` K/V straight out of the cache with no materialized copy.
 - **FlashAttention.** `flash_attn_func(q, k, v, causal=True)` in [Dao-AILab/flash-attention](https://github.com/Dao-AILab/flash-attention) accepts `nheads_k` different from `nheads_q` natively (it requires only that `nheads_q % nheads_k == 0`) and does the group mapping in-register — see [FlashAttention 2 & 3](../04-kernels-efficiency/03-flash-attention-2-3.html).
-- **HuggingFace `transformers`.** GQA is a single config field. `num_key_value_heads` equal to `num_attention_heads` gives MHA, `1` gives MQA, anything in between gives GQA, and `LlamaAttention` derives the group size from the ratio. `transformers` ships its own `repeat_kv` for the eager path, but with `attn_implementation="flash_attention_2"` (or `"sdpa"`) it hands the narrow tensors to the kernel instead.
+- **HuggingFace `transformers`.** GQA is a single config field. `num_key_value_heads` equal to `num_attention_heads` gives MHA, `1` gives MQA, anything in between gives GQA, and `LlamaAttention` derives the group size from the ratio. `transformers` ships its own `repeat_kv` for the eager path, but with `attn_implementation="flash_attention_2"` it hands the narrow tensors to the kernel instead; the `"sdpa"` path does the same only when its `use_gqa_in_sdpa` gate holds (torch ≥ 2.5, no explicit attention mask, head dim ≤ 256) and otherwise falls back to `repeat_kv`.
 - **Serving engines.** vLLM and SGLang size their paged KV blocks from `num_key_value_heads`, so that one number determines how much cache a token costs and therefore how many concurrent sequences fit — see [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
 
 Concretely, this is the entire GQA specification of Llama-3-8B, as it appears in its `config.json` — 32 query heads over 8 KV heads, i.e. $g=8$ with 4 query heads per group:
@@ -342,9 +342,12 @@ try:
     native = True
 except (TypeError, RuntimeError):
     # Older PyTorch: fall back to the explicit (copying) broadcast.
+    # repeat_interleave along the head axis is exactly what repeat_kv() above
+    # does, spelled without a helper so this block stands on its own.
     n_rep = Hq // Hkv
     out = F.scaled_dot_product_attention(
-        q, repeat_kv(k, n_rep), repeat_kv(v, n_rep), is_causal=True)
+        q, k.repeat_interleave(n_rep, dim=1), v.repeat_interleave(n_rep, dim=1),
+        is_causal=True)
     native = False
 
 print(f"native GQA kernel: {native}, out {tuple(out.shape)}")   # (2, 8, 7, 16)
@@ -655,7 +658,7 @@ From here, the cache reappears everywhere downstream: the serving systems that *
     print("cache stores n_kv_heads, not n_heads -> that is the saving.")
     ```
 
-    The assertions make the point precise: after 4 steps the cache holds `(B, 2, 4, 8)`, i.e. `n_kv_heads = 2` heads, not `n_heads = 8`. Had we cached the post-`repeat_kv` tensors, we would have stored `(B, 8, 4, 8)` — 4x larger — throwing away the entire benefit of GQA. Setting `n_kv_heads=1` (MQA) or `n_kv_heads=n_heads` (MHA) exercises the same code with a $1\times$ or $8\times$ cache respectively.
+    The assertions make the point precise: after 4 steps the cache holds `(B, 2, 4, 8)`, i.e. `n_kv_heads = 2` heads, not `n_heads = 8`. Had we cached the post-`repeat_kv` tensors, we would have stored `(B, 8, 4, 8)` — 4x larger — throwing away the entire benefit of GQA. Setting `n_kv_heads=1` (MQA) or `n_kv_heads=n_heads` (MHA) exercises the same code with a cache $2\times$ smaller or $4\times$ larger than the $g=2$ configuration shown here.
 
 **5.** DeepSeek-V2's MLA is quoted in the chapter as giving "a KV cache comparable to GQA with 2.25 KV groups." Derive that number. Assume the *content* latent has dimension $d_c = 512$ and the *decoupled RoPE* key adds a single shared per-token key of dimension $d_h^R = 64$; the GQA baseline uses $d_h = 128$. Then explain conceptually why MLA needs that separate RoPE key at all — i.e., why the position information cannot simply ride inside the compressed latent.
 

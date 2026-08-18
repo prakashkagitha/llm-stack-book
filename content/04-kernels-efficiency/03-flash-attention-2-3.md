@@ -477,7 +477,7 @@ FP8 `e4m3` has 1 sign bit, 4 exponent bits, 3 mantissa bits — about 3–4 bits
 
 ### Incoherent processing: rotate away the outliers
 
-FA3's accuracy fix for the outlier problem is **incoherent processing**, an idea from the QuIP quantization work (Chee et al.). The insight: multiply $Q$ and $K$ by a random orthogonal matrix $M$ before quantizing. Because $M$ is orthogonal, $M^\top M = I$, so
+FA3's accuracy fix for the outlier problem is **incoherent processing**, an idea from the QuIP quantization work (Chee et al.). The insight: multiply $Q$ and $K$ by a random orthogonal matrix $M$ before quantizing. Because $M$ is orthogonal, $M M^\top = M^\top M = I$, so
 
 $$
 (Q M)(K M)^\top = Q M M^\top K^\top = Q K^\top,
