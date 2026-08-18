@@ -15,7 +15,7 @@ The challenge is not just volume. It is *quality heterogeneity*: the web contain
 Three design axes frame every data decision:
 
 1. **Breadth vs. depth.** Web crawls offer unmatched breadth but noisy quality. Curated corpora (books, arXiv, Wikipedia) offer depth but limited scale.
-2. **Compute efficiency.** The Chinchilla scaling law (covered in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)) shows that for a fixed compute budget, it is usually better to train on *more* tokens from a *smaller* model than to over-train a giant model. Data becomes the binding constraint.
+2. **Compute efficiency.** The Chinchilla scaling law (covered in [Scaling Laws: Kaplan, Chinchilla & Beyond](../03-pretraining/04-scaling-laws.html)) shows that for a fixed compute budget, it is usually better to train a *smaller* model on *more* tokens than to under-train a giant model on fewer tokens. Data becomes the binding constraint.
 3. **Legal exposure.** Copyright, license compliance, and the emerging regulatory landscape around training data consent are real engineering constraints, not afterthoughts.
 
 ---
@@ -34,7 +34,7 @@ Each monthly crawl is published in three complementary formats:
 | **WET** (WARC Encapsulated Text) | Extracted plain text only | Language model training |
 | **WAT** (Web Archive Transformation) | Metadata JSON only (links, language tags, etc.) | Filtering, graph analysis |
 
-For LLM pretraining, WET files are the convenient starting point — but with an important caveat. WET text is produced by Common Crawl's *own* basic built-in extractor (historically based on Apache Tika / jsoup, via the `ia-web-commons` library), **not** by a modern main-content extractor like `trafilatura`. That built-in extractor dumps nearly all visible text — including navigation menus, footers, cookie banners, and other boilerplate — and its quality is noticeably lower than modern extractors. This is exactly why the highest-quality pipelines (RefinedWeb, FineWeb, Dolma) *re-extract* text from the raw WARC HTML rather than trusting WET, as the *Extracting Text from WARC* section below shows. Each monthly dump produces roughly 9 TB of WET files compressed with gzip (the raw WARC set for the same crawl is about 90 TB).
+For LLM pretraining, WET files are the convenient starting point — but with an important caveat. WET text is produced by Common Crawl's *own* basic built-in extractor (historically based on Apache Tika / jsoup, via the `ia-web-commons` library), **not** by a modern main-content extractor like `trafilatura`. That built-in extractor dumps nearly all visible text — including navigation menus, footers, cookie banners, and other boilerplate — and its quality is noticeably lower than modern extractors. This is exactly why the highest-quality pipelines (RefinedWeb, FineWeb, DCLM) *re-extract* text from the raw WARC HTML rather than trusting WET, as the *Extracting Text from WARC* section below shows. Each monthly dump produces roughly 9 TB of WET files compressed with gzip (the raw WARC set for the same crawl is about 90 TB).
 
 A WET record looks like this:
 
@@ -107,7 +107,7 @@ This is exactly the acquisition path the capstone takes: [Data: Sourcing, Filter
 
 ### Extracting Text from WARC
 
-WET is convenient, but as noted above its built-in extractor keeps boilerplate and is lower quality than modern tools. The modern pipelines — RefinedWeb, FineWeb, and Dolma — therefore skip WET and re-extract text straight from the raw **WARC** HTML. This is also the first stage of the CS336 data assignment. The recipe: iterate the WARC's HTTP *response* records, decode the HTML payload with the right charset, and run a main-content extractor (`trafilatura` or `resiliparse`) to drop navigation, sidebars, and footers.
+WET is convenient, but as noted above its built-in extractor keeps boilerplate and is lower quality than modern tools. The modern pipelines — RefinedWeb, FineWeb, and DCLM — therefore skip WET and re-extract text straight from the raw **WARC** HTML (RefinedWeb and FineWeb with `trafilatura`, DCLM with `resiliparse`). This is also the first stage of the CS336 data assignment. The recipe: iterate the WARC's HTTP *response* records, decode the HTML payload with the right charset, and run a main-content extractor (`trafilatura` or `resiliparse`) to drop navigation, sidebars, and footers.
 
 ```python
 """
@@ -266,6 +266,8 @@ Dolma is a 3 trillion token open corpus assembled by the Allen Institute for AI 
 - **Extreme documentation**: every filtering step, model card, and design decision is described in the accompanying paper.
 - **Legal care**: documents are tagged with license information; Books3 is excluded.
 - **Taggers**: Dolma attaches Gopher-quality signals, language identification scores, and toxicity scores to every document without removing them — allowing users to filter at different thresholds.
+
+One caveat worth knowing, since it is a common misreading: Dolma's *web* subset was built by running the **CCNet** pipeline over 24 Common Crawl snapshots, and CCNet reads the ready-made **WET** text rather than re-extracting from WARC HTML. Dolma is therefore the exemplar of documentation and provenance, not of WARC re-extraction — that role belongs to RefinedWeb, FineWeb, and DCLM. (The separate Dolma *toolkit* can read either format; see below.)
 
 The Dolma toolkit (a separate open-source tool) supports streaming processing of WARC/WET files, deduplication, and mixing — making it one of the most production-ready open data pipelines available.
 
@@ -804,7 +806,7 @@ Beyond static mixture weights, researchers have explored *dynamic* data curricul
 
 **Skill-It! (Chen et al., 2023)** infers a graph of *skill prerequisites* from per-skill validation losses, then dynamically up-weights the prerequisite skills of whatever the model is currently failing at, instead of sampling domains at fixed proportions. The result is a learned, loss-driven ordering over skills rather than a hand-specified difficulty curriculum.
 
-**DoReMi (Xie et al., 2023)** framed mixture weight selection as a distributionally robust optimization (DRO) problem: train a small proxy model and a domain weight learner simultaneously, with the weight learner trying to equalize worst-case domain loss. The resulting weights outperform human-tuned weights on average across downstream tasks.
+**DoReMi (Xie et al., 2023)** framed mixture weight selection as a distributionally robust optimization (DRO) problem, in three stages: (1) train a small *reference* model on baseline domain weights; (2) train a small *proxy* model with Group DRO, whose domain weights are continually pushed toward the domains with the largest *excess* loss (proxy loss minus reference loss on that domain); (3) average the proxy's domain weights over training and use them to train the full-size model. Subtracting the reference loss is the crucial detail — optimizing raw worst-case loss would permanently up-weight intrinsically high-entropy domains (noisy web text, non-English, some code) whose loss is irreducible no matter how often they are sampled. The resulting weights outperform human-tuned weights on average across downstream tasks.
 
 **Online data mixing** is used by some teams to re-weight domains mid-training based on validation loss trends — domains where validation loss plateaus early get down-weighted. This requires periodic synchronization with a validation loop but can squeeze meaningful quality improvements from a fixed corpus.
 
@@ -822,7 +824,7 @@ Training data sources fall into a rough hierarchy of legal clarity:
 
 | Tier | Examples | Risk level |
 |------|---------|-----------|
-| Public domain | Project Gutenberg, US government works, pre-1928 texts | Lowest |
+| Public domain | Project Gutenberg, US government works, US works published in 1930 or earlier (a rolling 95-year boundary — recheck it each January) | Lowest |
 | Permissive open licenses | Apache 2.0, MIT, CC-BY code/text | Low |
 | Share-alike licenses | CC BY-SA, GPL | Medium (copyleft may propagate) |
 | Unclear / no license | Most of the web, Common Crawl | High — jurisdiction-dependent |
@@ -876,7 +878,7 @@ The obvious weakness is that this is a per-crawler allow/deny list with no way t
 !!! key "Key Takeaways"
 
     - Common Crawl is the raw material for most open LLM training corpora: each monthly dump ships `warc/wet/wat.paths.gz` manifests over ~90k files, and that manifest *is* the work queue for an embarrassingly parallel pipeline.
-    - The top pipelines (RefinedWeb, FineWeb, Dolma) do *not* train on the ready-made WET text — they re-extract main content from raw WARC HTML with `trafilatura`/`resiliparse`, because WET keeps nav bars, footers, and cookie banners.
+    - The top web pipelines (RefinedWeb, FineWeb, DCLM) do *not* train on the ready-made WET text — they re-extract main content from raw WARC HTML with `trafilatura`/`resiliparse`, because WET keeps nav bars, footers, and cookie banners.
     - No one trains on raw crawl data. Every serious corpus applies at minimum: URL blocklisting, language filtering, Gopher/C4-style quality heuristics, and MinHash deduplication.
     - Learn the mechanism from scratch, then use the library: `datatrove` (the pipeline FineWeb was built with), the Dolma toolkit, and NeMo Curator implement every stage of that funnel with resumability, per-filter statistics, and a one-line local→SLURM switch.
     - The data recipe — the mixture weights across domains — matters as much as total token count. Up-weighting Wikipedia, code, and curated scientific text is standard practice even though they are a tiny fraction of raw volume.
@@ -934,7 +936,7 @@ The obvious weakness is that this is a per-crawler allow/deny list with no way t
 
 ## Exercises
 
-**1.** The chapter argues that the highest-quality pipelines (RefinedWeb, FineWeb, Dolma) *re-extract* text from raw WARC HTML with `trafilatura` instead of training on Common Crawl's ready-made WET files, even though reading WET is "nearly free." State the concrete quality problem with WET text, explain why it costs so much more compute to avoid it, and describe the empirical evidence the chapter cites for the trade-off being worth it.
+**1.** The chapter argues that the highest-quality web pipelines (RefinedWeb, FineWeb, DCLM) *re-extract* text from raw WARC HTML with `trafilatura`/`resiliparse` instead of training on Common Crawl's ready-made WET files, even though reading WET is "nearly free." State the concrete quality problem with WET text, explain why it costs so much more compute to avoid it, and describe the empirical evidence the chapter cites for the trade-off being worth it.
 
 ??? note "Solution"
 

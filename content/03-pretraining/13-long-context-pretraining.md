@@ -36,7 +36,7 @@ $$
 2 \times 8 \times 128{,}000 \times d_{\text{kv}} \times \text{bytes/value}
 $$
 
-With $d_{\text{kv}} = 128$ and bf16 (2 bytes): $2 \times 8 \times 128{,}000 \times 128 \times 2 \approx 524\;\text{MB}$ per layer. With 80 layers that is around 42 GB — comparable to the model weights themselves. Managing this is the focus of [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
+With $d_{\text{kv}} = 128$ and bf16 (2 bytes): $2 \times 8 \times 128{,}000 \times 128 \times 2 \approx 524\;\text{MB}$ per layer. With 80 layers that is around 42 GB — roughly 30% of the 140 GB of bf16 weights, i.e. a third 80 GB GPU's worth of memory on top of the two the weights already fill, for a *single* request. Managing this is the focus of [PagedAttention & KV-Cache Memory Management](../04-kernels-efficiency/06-paged-attention-kv.html).
 
 ---
 
@@ -74,7 +74,7 @@ $$
 b' = b \cdot \left(\frac{T_{\text{target}}}{T_{\text{train}}}\right)^{d/(d-2)}
 $$
 
-This increases the base (e.g. from 10 000 to ~83 000 for an 8x extension with $d = 128$), making each $\theta_i$ smaller and thus each dimension rotate more slowly — effectively stretching the rope. High-frequency dimensions retain their resolution for local dependencies while low-frequency dimensions stretch to cover global distances. NTK-aware interpolation often works *without any fine-tuning*, giving it a zero-shot extension property.
+This increases the base (e.g. from 10 000 to ~83 000 for an 8x extension with $d = 128$), which shrinks $\theta_i$ by a factor $s^{-2i/(d-2)}$ where $s = T_{\text{target}}/T_{\text{train}}$: exactly $1$ at the highest-frequency pair ($i = 0$, where $\theta_0 = b^0 = 1$ for *any* base) and exactly $1/s$ — i.e. full PI — at the lowest-frequency pair ($i = d/2 - 1$). Dimensions therefore rotate progressively more slowly the lower their frequency, effectively stretching the rope. High-frequency dimensions retain their resolution for local dependencies while low-frequency dimensions stretch to cover global distances. NTK-aware interpolation often works *without any fine-tuning*, giving it a zero-shot extension property.
 
 ### YaRN
 
@@ -321,11 +321,11 @@ The varlen interface ensures that attention computations never cross document bo
 
 Masking is only half of document-aware packing. If the second document in a packed window still receives positions $5000, 5001, \ldots$, then RoPE encodes it as though it began five thousand tokens into a document — and worse, a packed window at 32 K exercises positions up to 32 K *only if some single document is that long*. With per-document position resets, the largest position the model ever sees is the length of the longest **document**, not the length of the packed window. This is the single most common way a context-extension run silently trains nothing: you rescale RoPE for 32 K, spend 10 B tokens, and every position the model saw was below 4 K. Always assert on your repacked shards that `position_ids.max()` actually reaches into the newly extended range before launching.
 
-The two conventions therefore pair up: reset positions per document *and* mask attention per document (what varlen does), or keep global positions *and* allow cross-document attention (the naive scheme). Mixing them — global positions with document masking — wastes the long-range positions you paid to train.
+In practice the two conventions travel together — varlen resets positions per document *and* masks attention per document — but it is worth being precise about why. For RoPE the reset is redundant *given* the mask: scores depend only on $m - n$, so adding a constant offset to a masked document's positions changes every logit not at all, and the mask alone already bounds the relative offsets the model ever trains on by the document length. (It stops being redundant the moment anything absolute enters — learned position embeddings, or a `position_ids`-driven varlen path that infers document boundaries from the resets.) The genuinely broken combination is the reverse: resetting positions *without* masking, which lets tokens carrying identical position ids attend to one another. And note that the naive scheme — global positions *and* cross-document attention — is the only one of these that exercises relative offsets out to the packed window, which it does on token pairs that have nothing to do with each other.
 
 ### Loss Masking
 
-The cross-entropy loss should also exclude the first token of each document's continuation *from* predicting the last token of the previous document. A simple `loss_mask` tensor of 0/1 per token accomplishes this — set the first token of each document to 0 (do not compute loss for it). See also [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) for how the same principle applies to fine-tuning packing.
+The cross-entropy loss should also drop the boundary term in which the last token of one document is trained to predict the first token of the next — in a causal LM the logits at position $i$ predict token $i+1$, so that is the only term that straddles a packing boundary. Indexing the mask by *target* token, a simple `loss_mask` tensor of 0/1 per token accomplishes this — set the first token of each document to 0 (do not compute loss for it). See also [Chat Templates, Data Formatting & Sequence Packing](../05-posttraining-alignment/02-chat-templates-packing.html) for how the same principle applies to fine-tuning packing.
 
 ---
 
@@ -812,7 +812,7 @@ def plot_niah_heatmap(results: dict, context_lengths: list, depths: list):
     $$b' = 10{,}000 \times 8^{1.01587}.$$
     Compute the power: $\log_{10} 8 = 0.90309$, times $1.01587$ gives $0.91743$, so $8^{1.01587} = 10^{0.91743} \approx 8.267$. Therefore
     $$b' \approx 10{,}000 \times 8.267 \approx 8.27 \times 10^{4} \;\;(\approx 82{,}700).$$
-    Raising the base makes every $\theta_i = b'^{-2i/d}$ smaller, so each dimension rotates more slowly and effectively "stretches" the rope to cover the longer window.
+    Raising the base rescales $\theta_i = b'^{-2i/d}$ by $(b'/b)^{-2i/d} = s^{-2i/(d-2)}$ — no change at $i = 0$, and a full $1/s = 1/8$ at the last pair $i = 63$ — so the *low*-frequency dimensions rotate more slowly and effectively "stretch" the rope to cover the longer window, while the fast dimensions are left alone.
 
     (c) For $i = 0$, $\theta_0 = b^{0} = 1$ under any base, so NTK-aware scaling leaves the highest-frequency dimension essentially unchanged (it keeps its short-range resolution), whereas PI compresses *every* dimension uniformly — including $i=0$ — dividing its effective angular spacing by 8 and blurring local structure.
 

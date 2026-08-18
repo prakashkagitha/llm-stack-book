@@ -254,6 +254,12 @@ def build_packed_loss_mask(
     mask[:, :-1][new_doc_at_next] = 0  # mask positions t where next token is a new doc
     mask[:, -1] = 0   # entry T-1 scores token T, which doc_ids does not cover
 
+    # Padding is not a document: a *run* of padding has a constant doc_id, so the
+    # change detector above never fires inside it. Mask it explicitly, both as the
+    # target (t+1 is padding) and as the context (t is padding).
+    mask[doc_ids < 0] = 0                 # context token t is padding
+    mask[:, :-1][doc_ids[:, 1:] < 0] = 0  # target token t+1 is padding
+
     return mask   # (B, T): 1 = train on this position, 0 = ignore
 
 
@@ -270,6 +276,12 @@ print(f"build_packed_loss_mask:\n{_mask5}")
 assert _mask5[0, 2].item() == 0 and _mask5[0, 6].item() == 0
 # two boundaries per row plus the undeterminable last entry per row, two rows
 assert _mask5.sum().item() == _doc_ids5.numel() - 6
+# Padding (doc_id < 0) is masked too, both as target and as context: a run of
+# padding has a constant doc_id, so the change detector alone would miss it.
+_doc_ids5b = torch.tensor([[0] * 21 + [1] * 40 + [-1] * 3])
+_mask5b = build_packed_loss_mask(_doc_ids5b)
+assert _mask5b[0, 60:].tolist() == [0, 0, 0, 0]
+assert _mask5b.sum().item() == 59  # matches loss_mask_from_doc_ids on the same layout
 
 
 # ============================================================================
@@ -445,8 +457,11 @@ loss  = compute_causal_lm_loss(model, tokens_batch, mask_batch)
 
 print(f"Loss:       {loss.item():.4f} nats/token")
 print(f"Perplexity: {loss.exp().item():.2f}")
-# Expected: loss ≈ log(256) ≈ 5.55 for a random initialized model over 256-token vocab
+# Expected: a little above log(256) ≈ 5.55 for a randomly initialized model over
+# this 256-token vocab — the logit-variance term adds to log V.
+# With this seed it prints 5.8403 nats/token (perplexity 343.87).
 assert torch.isfinite(loss)
+assert math.log(256) < loss.item() < 6.5  # above log V by the logit-variance term
 assert tokens_1d.shape == (CONTEXT,)
 
 

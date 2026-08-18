@@ -118,7 +118,7 @@ The pipeline:
 
 1. Render each PDF page to an image (e.g., at ~150 DPI). **No OCR.**
 2. Feed the image through the VLM's **full** stack, not just its vision tower. The original ColPali used PaliGemma (a SigLIP vision tower feeding a Gemma language model): SigLIP turns the page into a sequence of patch tokens — a $32\times 32$ grid, i.e. **1024 patch embeddings** per page — which are projected into Gemma's embedding space and run through the **language model**. The LM forward pass is the whole point: it is what contextualizes each patch against the rest of the page.
-3. Take the language model's final hidden state at each of the 1024 image positions and project it down to a low dimension $d$ (ColPali uses $d = 128$, matching ColBERT) with a linear layer, then L2-normalize. Store these 1024 vectors as the page's representation.
+3. Take the language model's final hidden state at each of the 1024 image positions and project it down to a low dimension $d$ (ColPali uses $d = 128$, matching ColBERT) with a linear layer, then L2-normalize. Store these vectors as the page's representation. (The projection is applied to *every* output position, and `ColPaliProcessor.process_images` appends a six-token instruction prompt — `"Describe the image."` — after the 1024 `<image>` tokens, so ColPali actually stores 1030 vectors per page. We use the round 1024 for the cost arithmetic below; the 0.6% is noise at this level.)
 4. The text query is tokenized and run through the **same model's** language tower to produce one $d$-vector per query token. Following ColBERT, the query is also *augmented*: `colpali-engine`'s `process_queries` prepends a short instruction-style prefix and appends a handful of padding tokens that are **not** masked out of the MaxSim. Those extra slots behave as learned query-expansion vectors — they can latch onto page evidence the literal query words never mention — and removing them typically costs a little recall.
 5. Score with MaxSim, identical to ColBERT.
 
@@ -511,7 +511,7 @@ This chapter closes Part IX. The retrieval mechanisms here — dual encoders, la
 
     - [Faysse et al., *ColPali: Efficient Document Retrieval with Vision Language Models* (2024)](https://arxiv.org/abs/2407.01449) — the central paper of this chapter; VLM patch embeddings + MaxSim + the ViDoRe benchmark.
     - [Santhanam et al., *PLAID: An Efficient Engine for Late Interaction Retrieval* (2022)](https://arxiv.org/abs/2205.09707) — residual compression and centroid pruning for production multi-vector indexing.
-    - [Jayaram et al., *MUVERA: Multi-Vector Retrieval via Fixed Dimensional Encodings* (2024)](https://arxiv.org/abs/2405.19504) — collapses multi-vector sets into single vectors so standard ANN indexes can do candidate generation.
+    - [Dhulipala et al., *MUVERA: Multi-Vector Retrieval via Fixed Dimensional Encodings* (2024)](https://arxiv.org/abs/2405.19504) — collapses multi-vector sets into single vectors so standard ANN indexes can do candidate generation.
 
     **Current models & leaderboards (2026)**
 
@@ -535,7 +535,7 @@ This chapter closes Part IX. The retrieval mechanisms here — dual encoders, la
 - Radford et al., *Learning Transferable Visual Models From Natural Language Supervision (CLIP)*, ICML 2021.
 - Zhai et al., *Sigmoid Loss for Language Image Pre-Training (SigLIP)*, ICCV 2023.
 - Beyer et al., *PaliGemma: A versatile 3B VLM for transfer*, 2024 — the backbone of the original ColPali.
-- Jayaram et al., *MUVERA: Multi-Vector Retrieval via Fixed Dimensional Encodings*, 2024.
+- Dhulipala et al., *MUVERA: Multi-Vector Retrieval via Fixed Dimensional Encodings*, 2024.
 - The `colpali-engine` and `ColBERT` open-source repositories for reference implementations.
 
 ## Exercises

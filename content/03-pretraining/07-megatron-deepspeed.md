@@ -417,8 +417,8 @@ def compute_mfu(
     flops_per_token = 6 * model_params
 
     # Attention cost (forward + backward): 12 * n_layers * d_model * seq_len per token.
-    # Forward is 4 * d * S per layer (QK^T and AV, each 2 * d * S); x3 for the
-    # backward pass, matching the fwd+bwd convention of the 6P base term.
+    # Forward is 4 * d * S per layer (QK^T and AV, each 2 * d * S); x3 for
+    # forward+backward together, matching the convention of the 6P base term.
     if all(v is not None for v in [n_layers, d_model, seq_len]):
         attn_flops = 12 * n_layers * d_model * seq_len
         flops_per_token += attn_flops

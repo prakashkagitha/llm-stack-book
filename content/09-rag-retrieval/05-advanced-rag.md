@@ -34,9 +34,9 @@ GraphRAG, introduced by Edge et al. (Microsoft Research, 2024), replaces the fla
 At query time, two modes are offered:
 
 - **Local search**: query → entity match in graph → expand neighborhood → fetch related source chunks and community reports → generate.
-- **Global search**: query → fetch top community reports at the right granularity → generate a synthesis across many communities.
+- **Global search**: query → map-reduce over *all* community reports at the chosen community level → generate a synthesis across many communities. The map step asks the LLM for partial answers from each batch of reports and has it rate their helpfulness; the reduce step merges the highest-rated points into one answer.
 
-Global search is uniquely powerful for questions like "What are the major themes in this corpus?" that have no single-document answer and are completely intractable for flat retrieval.
+Global search is uniquely powerful for questions like "What are the major themes in this corpus?" that have no single-document answer and are completely intractable for flat retrieval. Note that it deliberately does *not* rank community reports by embedding similarity to the query: a corpus-wide question is not embedding-close to any one theme's report, so a relevance top-$k$ would reintroduce exactly the recall failure global search exists to avoid. That is why it pays for a sweep over the whole level.
 
 ### Building a Minimal GraphRAG Pipeline
 
@@ -206,7 +206,14 @@ def global_search(
     community_records: List[Dict],
     top_k: int = 5,
 ) -> str:
-    """Embed query, find nearest community summaries, synthesise."""
+    """
+    Embed query, find nearest community summaries, synthesise.
+
+    SIMPLIFICATION: real GraphRAG global search maps over *every* community
+    report at the level and reduces the rated partial answers. The cosine
+    top-k below is a cheap stand-in for that map step — it keeps the fence
+    short, at the cost of the recall the full sweep buys you (see above).
+    """
     q_emb = embedder.encode(query)
     # cosine similarity
     sims = [
@@ -260,7 +267,7 @@ $$
 q_0 \xrightarrow{\text{LLM decompose}} \{q_1, q_2, \ldots\} \xrightarrow{\text{retrieve}} \{D_1, D_2, \ldots\} \xrightarrow{\text{LLM reason}} q_{1}^{(2)}, q_{2}^{(2)}, \ldots
 $$
 
-Each round of retrieval produces evidence that informs the next query. The depth of the chain is bounded by a maximum step count or by the LLM deciding it has enough information. This architecture was formalised in IRCoT (Trivedi et al., 2022), with closely related formulations in Self-Ask (Press et al., 2022) and ITER-RETGEN (Shao et al., 2023), and it is the shape of most production multi-hop pipelines today.
+Each round of retrieval produces evidence that informs the next query. The depth of the chain is bounded by a maximum step count or by the LLM deciding it has enough information. Explicit decomposition into answerable sub-questions is Self-Ask's contribution (Press et al., 2022), whose prompt makes the model emit "Follow up: …" questions and answers them one at a time. IRCoT (Trivedi et al., 2022) is the closely related variant that skips explicit sub-questions and instead interleaves chain-of-thought with retrieval, using each newly generated CoT sentence verbatim as the next retrieval query; ITER-RETGEN (Shao et al., 2023) alternates whole generate-then-retrieve rounds. Between them these are the shape of most production multi-hop pipelines today.
 
 ```python
 """
@@ -377,7 +384,7 @@ Asai et al. (*Self-RAG*, 2023) fine-tune an LLM to generate four types of **refl
 
 The model learns to insert these tokens at appropriate positions. During inference, if the model generates `[Retrieve]`, the system fetches passages and feeds them back. If it generates `[Irrelevant]`, it continues generating without that passage. This creates a feedback loop where retrieval is demand-driven rather than always-on.
 
-A simpler variant is **Corrective RAG (CRAG)** (Yan et al., 2024): after the initial retrieval, a lightweight evaluator scores the retrieved documents and triggers one of three actions. **Correct** (high score) runs *knowledge refinement* — the document is decomposed into fine-grained knowledge strips, each strip is scored, the irrelevant ones are dropped, and the survivors are recomposed. **Incorrect** (low score) discards the retrieved documents entirely and falls back to a web search. **Ambiguous** (in between) is the soft middle: it does both. Note the direction here, which is easy to get backwards — refinement is applied to the documents the evaluator *believes*, because it is the mechanism for stripping noise out of a document that is genuinely relevant; web search is the remedy for the ones it does not.
+A simpler variant is **Corrective RAG (CRAG)** (Yan et al., 2024): after the initial retrieval, a lightweight evaluator scores each retrieved document, and the *set* of scores triggers one of three actions for the query as a whole. **Correct** (at least one document above the upper threshold) runs *knowledge refinement* — the document is decomposed into fine-grained knowledge strips, each strip is scored, the irrelevant ones are dropped, and the survivors are recomposed. **Incorrect** (all documents below the lower threshold) discards the retrieved documents entirely and falls back to a web search. **Ambiguous** (anything else) is the soft middle: it does both. The branch is chosen once per query from the aggregate, not once per document — a per-document branch would let a single junk result drag a well-retrieved query out to the web. Note also the direction here, which is easy to get backwards — refinement is applied to the documents the evaluator *believes*, because it is the mechanism for stripping noise out of a document that is genuinely relevant; web search is the remedy for the ones it does not.
 
 ```python
 """
@@ -434,28 +441,38 @@ def corrective_rag(
     low_threshold: float = 0.3,
 ) -> List[str]:
     """
-    CRAG algorithm (Yan et al., 2024) — one of three actions per document:
-      - relevance >= high_threshold → Correct:   refine (decompose into knowledge
-                                                 strips, filter, recompose)
-      - relevance <= low_threshold  → Incorrect: discard, trigger web search
-      - in between                  → Ambiguous: do both
+    CRAG algorithm (Yan et al., 2024). The evaluator scores every document, but
+    the three actions are chosen ONCE for the whole query from the aggregate —
+    not per document. Getting this wrong is the classic misreading:
+      - some doc >= high_threshold → Correct:   refine the believed documents
+                                                (decompose into knowledge strips,
+                                                filter, recompose); no web search
+      - all docs <= low_threshold  → Incorrect: discard everything, web search
+      - otherwise                  → Ambiguous: do both
+    Branching per document instead would let one junk document among nine good
+    ones force a web search — exactly the case the Correct action exists to avoid.
     Returns a final list of text passages for the generator.
     """
+    scored = [(doc, evaluate_relevance(query, doc.text, llm)) for doc in initial_docs]
+    best = max((rel for _, rel in scored), default=0.0)
+
     final_passages: List[str] = []
-    need_web = False
 
-    for doc in initial_docs:
-        rel = evaluate_relevance(query, doc.text, llm)
-
-        if rel >= high_threshold:
-            # Correct: the document is believed, but still carries noise.
+    if best >= high_threshold:
+        # Correct: at least one document cleared the bar. Keep the documents the
+        # evaluator believes and strip their noise; stay off the web.
+        need_web = False
+        for doc, rel in scored:
+            if rel >= high_threshold:
+                final_passages.extend(refine(query, doc.text, llm, high_threshold))
+    elif best <= low_threshold:
+        # Incorrect: every document scored below the floor. Discard them all.
+        need_web = True
+    else:
+        # Ambiguous: the soft middle — refine what we have *and* go to the web.
+        need_web = True
+        for doc, _ in scored:
             final_passages.extend(refine(query, doc.text, llm, high_threshold))
-        elif rel <= low_threshold:
-            need_web = True  # Incorrect: discard this doc
-        else:
-            # Ambiguous: the soft middle — refine *and* go to the web.
-            final_passages.extend(refine(query, doc.text, llm, high_threshold))
-            need_web = True
 
     if need_web or not final_passages:
         web_results = web_search(query)
@@ -762,6 +779,9 @@ import ast
 from pathlib import Path
 from typing import List, Dict
 
+# Statement types that get their own chunk, so a class skeleton must skip them.
+DEF_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
 
 def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
     """
@@ -774,8 +794,9 @@ def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
     addition to its enclosing class, so each method's source would be indexed
     twice — once inside the ClassDef chunk and once on its own — inflating the
     index and letting duplicate text occupy several top-k slots. And it does not
-    emit the class body verbatim: the class chunk is a *skeleton* (header +
-    docstring) and the methods are the leaf chunks, so no line is indexed twice.
+    emit the class body verbatim: the class chunk is a *skeleton* (header,
+    docstring, and the class-level fields/constants) while the methods are the
+    leaf chunks, so no line is indexed twice and no line goes unindexed.
     """
     try:
         tree = ast.parse(source)
@@ -797,13 +818,21 @@ def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
 
     def start_line(node) -> int:
         """
-        First source line of a definition, decorators included. Since Python 3.8
+        First source line of a statement, decorators included. Since Python 3.8
         `node.lineno` points at the `def`/`class` keyword, NOT at the first
         decorator (those live in `node.decorator_list`), so slicing from
         `node.lineno` silently drops `@property`, `@staticmethod`, `@dataclass`,
         `@app.route("/x")` — exactly the tokens a code query keys on.
+
+        The `getattr` is load-bearing: this is also called on ordinary body
+        statements, and only FunctionDef/AsyncFunctionDef/ClassDef carry a
+        `decorator_list`. Reading the attribute directly raises AttributeError
+        on the first `lr: float = 1e-3` it meets — and `index_repository`'s
+        `except Exception: continue` would swallow it, silently dropping every
+        dataclass/config/Enum file from the index.
         """
-        return min([node.lineno] + [d.lineno for d in node.decorator_list])
+        return min([node.lineno]
+                   + [d.lineno for d in getattr(node, "decorator_list", [])])
 
     def emit(node, qualname: str, code_text: str) -> None:
         context = (
@@ -821,17 +850,24 @@ def extract_python_chunks(source: str, filepath: str) -> List[Dict]:
         })
 
     def class_skeleton(node: ast.ClassDef) -> str:
-        """The `class ...:` header plus its docstring — no method bodies."""
-        if ast.get_docstring(node) is not None:
-            end = node.body[0].end_lineno
-        elif node.body:
-            # Last line of a (possibly multi-line) header. Use start_line so a
-            # decorated first method's decorators land in the method's chunk,
-            # not smeared into the class skeleton.
-            end = start_line(node.body[0]) - 1
-        else:
-            end = node.end_lineno
-        return "\n".join(lines[start_line(node) - 1:max(end, node.lineno)])
+        """
+        The `class ...:` header plus every body statement that is *not* a nested
+        def/class: the docstring, dataclass fields, class constants, `__slots__`,
+        Pydantic/SQLAlchemy column declarations. Do not stop at the docstring —
+        those field lines are the most-queried content of a schema or config
+        file, and since `visit` only ever emits defs, anything the skeleton skips
+        lands in no chunk at all. The nested defs are emitted as their own leaf
+        chunks, so nothing here is indexed twice.
+        """
+        # Header: from the first decorator up to the line before the first body
+        # statement. Use start_line so a decorated first method's decorators land
+        # in the method's chunk, not smeared into the class skeleton.
+        header_end = start_line(node.body[0]) - 1 if node.body else node.end_lineno
+        keep = set(range(start_line(node), max(header_end, node.lineno) + 1))
+        for stmt in node.body:
+            if not isinstance(stmt, DEF_NODES):
+                keep.update(range(start_line(stmt), stmt.end_lineno + 1))
+        return "\n".join(lines[i - 1] for i in sorted(keep))
 
     def visit(body: List[ast.stmt], prefix: str) -> None:
         """Recursive descent with an explicit parent stack (the `prefix`)."""

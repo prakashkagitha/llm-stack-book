@@ -2,7 +2,7 @@
 
 In [Distributed Training I](../03-pretraining/05-distributed-data-parallel.html) we learned to *replicate* a model across many GPUs and split the **data**. That strategy — data parallelism (DP), and its memory-sharded cousins ZeRO and FSDP — has one non-negotiable requirement: a single replica's *worth of state* (parameters, gradients, optimizer states, and at least one microbatch of activations) must fit on the device, or be shardable into something that fits. When that breaks, you must split the **model itself**.
 
-A 70B-parameter model in bf16 is 140 GB of weights alone. Add fp32 optimizer states (Adam's two moments plus an fp32 master copy) and you are well over half a terabyte before a single token of activation memory. No single GPU — not an 80 GB H100, not a 192 GB MI300X — holds that. You have no choice but to *carve the model up* and spread the pieces across devices. This chapter is about the three orthogonal axes for doing so:
+A 70B-parameter model in bf16 is 140 GB of weights alone. Add fp32 optimizer states (Adam's two moments plus an fp32 master copy) and you are well over half a terabyte before a single token of activation memory. No single GPU — not an 80 GB H100, not a 192 GB MI300X — holds that. You have no choice but to *carve the model up* and spread the pieces across devices. This chapter is about the four orthogonal axes for doing so:
 
 - **Tensor parallelism (TP)** — split *within* a layer (each matmul is shared across GPUs).
 - **Pipeline parallelism (PP)** — split *across* layers (each GPU owns a contiguous block of layers).
@@ -11,7 +11,7 @@ A 70B-parameter model in bf16 is 140 GB of weights alone. Add fp32 optimizer sta
 
 These compose with data parallelism into what practitioners call **3D, 4D, or 5D parallelism**. Getting the composition right — and understanding exactly *where the communication lives* — is the single highest-leverage systems skill in large-scale pretraining. It is also a favorite interview topic precisely because it forces you to reason about the [memory hierarchy](../01-foundations/08-gpu-architecture.html), [collective communication](../01-foundations/09-parallel-collectives.html), and the [transformer block](../02-transformer/06-transformer-block.html) all at once.
 
-## The Memory Wall and the Three Axes of Splitting
+## The Memory Wall and the Four Axes of Splitting
 
 Let us first quantify *why* we split. Consider a dense decoder-only transformer with $L$ layers, hidden size $h$, and FFN expansion factor 4. The parameter count is dominated by
 
@@ -114,7 +114,8 @@ reduce_from_region = _ReduceFromTPRegion.apply
 
 class ColumnParallelLinear(nn.Module):
     """Y = X A, with A split along output columns across `tp` ranks.
-    Output is sharded along the feature dim (gather_output=False)."""
+    The output is always left sharded along the feature dim — Megatron spells this
+    `gather_output=False`; Exercise 5(b) adds the optional gathering variant."""
     def __init__(self, in_f, out_f, tp, rank, bias=True):
         super().__init__()
         assert out_f % tp == 0
@@ -202,7 +203,7 @@ class VocabParallelEmbedding(nn.Module):
 
 The backward is the identity on the local rows — gradients flow only into the rows a rank actually owns — mirroring the $g$/$f$ forward-all-reduce, backward-identity (and vice versa) operator pairing used for the MLP/attention sharding above.
 
-**Vocab-parallel cross-entropy.** The mirror image on the output side: a column-parallel LM head (`ColumnParallelLinear` with `gather_output=False`) leaves logits sharded along vocab as `logits_local` of shape `[N, V_loc]` (with $N = b \cdot s$ flattened). Computing the loss *without ever gathering the full `[N, V]` logits* is the whole point — $V$ is exactly the dimension we sharded to avoid materializing.
+**Vocab-parallel cross-entropy.** The mirror image on the output side: a column-parallel LM head (the chapter's `ColumnParallelLinear`, which leaves its output sharded — Megatron's `gather_output=False`) leaves logits sharded along vocab as `logits_local` of shape `[N, V_loc]` (with $N = b \cdot s$ flattened). Computing the loss *without ever gathering the full `[N, V]` logits* is the whole point — $V$ is exactly the dimension we sharded to avoid materializing.
 
 ```python
 def vocab_parallel_cross_entropy(logits_local, target, tp_group, vocab_start, vocab_end):
@@ -440,30 +441,36 @@ The online-softmax running statistics (the running max $m$ and running sum $\ell
 ```python
 # Ring Attention: each of c devices owns a contiguous query/key/value block.
 # We rotate K,V around the ring; online softmax accumulates the result.
-# `send_recv_ring(t)` sends t to rank+1 and returns the tensor from rank-1.
+# `ring_isend_irecv(t)` posts an *async* send of t to rank+1 and an async recv of
+# rank-1's block (e.g. via `dist.batch_isend_irecv`). It returns `(recv_buf, req)`
+# immediately and does NOT block, so the transfer overlaps the matmul below;
+# `req.wait()` must complete before `recv_buf` is read.
 import torch, math
 
 def ring_attention(q, k, v, cp_group_size, head_dim):
     # q,k,v: local blocks, shape [b, heads, s_local, d]
     scale = 1.0 / math.sqrt(head_dim)
-    # running online-softmax state, FlashAttention-style
-    out   = torch.zeros_like(q)                      # accumulated output
-    l_run = torch.zeros(*q.shape[:-1], 1, device=q.device)   # running sum of exp
-    m_run = torch.full((*q.shape[:-1], 1), -1e30, device=q.device)  # running max
+    # Running online-softmax state, FlashAttention-style. Keep it in fp32 even when
+    # q/k/v are bf16: the accumulators need the range, and it also avoids a
+    # mixed-dtype `torch.matmul`, which does NOT type-promote and would raise.
+    out   = torch.zeros_like(q, dtype=torch.float32)         # accumulated output
+    l_run = torch.zeros(*q.shape[:-1], 1, device=q.device, dtype=torch.float32)   # running sum of exp
+    m_run = torch.full((*q.shape[:-1], 1), -1e30, device=q.device, dtype=torch.float32)  # running max
     k_cur, v_cur = k, v
     for step in range(cp_group_size):
-        # Begin sending current K,V to the next rank; overlaps with the matmul.
-        k_next, v_next = send_recv_ring(k_cur), send_recv_ring(v_cur)
-        s = torch.matmul(q, k_cur.transpose(-1, -2)) * scale   # [b,h,s_loc,s_loc]
+        # Start the exchange for the NEXT step; it proceeds during the matmul.
+        (k_next, k_req), (v_next, v_req) = ring_isend_irecv(k_cur), ring_isend_irecv(v_cur)
+        s = torch.matmul(q, k_cur.transpose(-1, -2)).float() * scale   # [b,h,s_loc,s_loc]
         # (apply causal mask here if needed, accounting for block offsets)
         m_new = torch.maximum(m_run, s.max(dim=-1, keepdim=True).values)
-        p = torch.exp(s - m_new)                     # rescaled exp
+        p = torch.exp(s - m_new)                     # rescaled exp, fp32
         corr = torch.exp(m_run - m_new)              # correction for old terms
         l_run = corr * l_run + p.sum(dim=-1, keepdim=True)
-        out   = corr * out + torch.matmul(p, v_cur)  # fold this block's V
+        out   = corr * out + torch.matmul(p, v_cur.to(p.dtype))  # fold this block's V
         m_run = m_new
+        k_req.wait(); v_req.wait()                   # comm is already done if it overlapped
         k_cur, v_cur = k_next, v_next                # rotate to next block
-    return out / l_run                               # normalize at the very end
+    return (out / l_run).to(q.dtype)                 # normalize at the very end
 ```
 
 The communication per step is one $K$ and one $V$ block ($\approx 2 \cdot \frac{s}{c} \cdot h \cdot 2$ bytes), and there are $c$ steps — so total volume per device is $O(s \cdot h)$, independent of $c$, and it overlaps with the $O(s^2/c)$ local compute. As $s$ grows, compute dominates communication and Ring Attention scales to arbitrarily long sequences as long as you add devices.
@@ -645,7 +652,7 @@ The visualizer below puts all four of the load-bearing axes side by side on one 
 ## Key Takeaways
 
 !!! key "Key Takeaways"
-    - **Three orthogonal model-parallel axes** plus DP: TP splits *within* a layer (matmuls), PP splits *across* layers, CP/SP splits *along the sequence*, EP splits *across MoE experts*. They compose multiplicatively into 3D/4D/5D parallelism, with total GPUs $= d \cdot t \cdot p \cdot c$; EP is not a fifth factor in that product but a re-slicing of the DP group ($e \mid d$, leaving $d/e$ replicas of each expert).
+    - **Four orthogonal model-parallel axes** plus DP: TP splits *within* a layer (matmuls), PP splits *across* layers, CP/SP splits *along the sequence*, EP splits *across MoE experts*. They compose multiplicatively into 3D/4D/5D parallelism, with total GPUs $= d \cdot t \cdot p \cdot c$; EP is not a fifth factor in that product but a re-slicing of the DP group ($e \mid d$, leaving $d/e$ replicas of each expert).
     - **Tensor parallelism = column-then-row matmul partitioning.** A column-parallel layer feeding a row-parallel layer needs exactly one all-reduce per region (two per transformer block forward), with the nonlinearity acting on sharded features in between. It is bandwidth-heavy and *must stay inside the NVLink domain* ($t \le 8$).
     - **Pipeline parallelism trades the bubble for cheap point-to-point comms.** GPipe streams $m$ microbatches; 1F1B keeps the same $\frac{p-1}{m+p-1}$ bubble but bounds activation memory; interleaving with $v$ virtual stages takes it to $\frac{p-1}{vm+p-1}$ (nearly a factor $v$); zero-bubble schedules push it toward zero. Keep $m \gg p$ and load-balance the stages.
     - **Context parallelism (Ring Attention)** shards the token sequence and rotates K/V around a ring, using the FlashAttention online softmax to fold in remote blocks while overlapping communication with compute — the key to million-token context. Mind causal-mask load imbalance.
@@ -783,8 +790,12 @@ The visualizer below puts all four of the load-bearing axes side by side on one 
     class ColumnParallelLinear(nn.Module):
         """Y = X A, A split along output columns across `tp` ranks.
         If gather_output=True, all-gather the shards to return the full [*, out_f]."""
-        def __init__(self, in_f, out_f, tp, rank, tp_group, bias=True,
-                     gather_output=False):
+        # Both new arguments have defaults and are appended AFTER the chapter's
+        # existing signature, so earlier call sites such as
+        # `ColumnParallelLinear(h, 4 * h, tp, rank)` in ParallelMLP still work.
+        # tp_group=None falls back to the default process group.
+        def __init__(self, in_f, out_f, tp, rank, bias=True,
+                     gather_output=False, tp_group=None):
             super().__init__()
             assert out_f % tp == 0
             self.tp = tp

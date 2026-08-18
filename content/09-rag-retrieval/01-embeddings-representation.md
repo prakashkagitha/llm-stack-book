@@ -493,7 +493,11 @@ q_emb = model.encode(queries, normalize_embeddings=True)
 d_emb = model.encode(docs,    normalize_embeddings=True)
 
 scores = q_emb @ d_emb.T
-print(scores)  # [[0.73, 0.41]] — first document correctly ranked higher
+print(scores)  # [[0.84, 0.76]] — first document correctly ranked higher
+
+# Like BGE, E5's absolute scores are compressed toward the high end: an
+# unrelated passage still lands around 0.7-0.8. Read the *ranking*, never an
+# absolute threshold borrowed from another model.
 ```
 
 The instruction mechanism gives the same frozen backbone very different behaviors for different retrieval tasks without any fine-tuning, a form of lightweight task specification.

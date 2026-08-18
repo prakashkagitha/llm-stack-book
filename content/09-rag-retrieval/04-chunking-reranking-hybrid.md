@@ -998,7 +998,7 @@ Metadata filtering applies these constraints **before** or **during** the ANN se
 
 ### 6.1 Pre-filtering vs Post-filtering
 
-**Pre-filter** (filter before ANN search): restrict the index to only documents matching the metadata predicate, then run ANN on that subset. This is exact but slow if the filter is selective (you need an efficient inverted index on metadata fields, not just vectors).
+**Pre-filter** (filter before ANN search): restrict the index to only documents matching the metadata predicate, then search that subset. This is exact, but it gives up the prebuilt ANN graph over the surviving set, so its cost scales with how many documents pass the filter: it is cheapest when the predicate is *highly* selective (a handful of vectors can simply be scored exactly) and slowest when the predicate is *weakly* selective (a large surviving set must be scanned, or traversed with most graph edges leading outside the allowed set). Either way you need an efficient inverted/payload index on the metadata fields, not just vectors.
 
 **Post-filter** (retrieve top-k, then filter): fast, but you may need to retrieve a large k to guarantee that filtered results cover the top-k meaningful hits. Risk: if the filter is very selective, you waste most of your retrieval budget.
 

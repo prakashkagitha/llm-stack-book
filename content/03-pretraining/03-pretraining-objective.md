@@ -390,6 +390,9 @@ def build_packed_loss_mask(
     new document, in which case that prediction is contaminated by the previous
     document's context and should be excluded.
 
+    Padding is marked with doc_id < 0 (the convention `pack_documents` below
+    emits) and is always masked, both as target and as context.
+
     doc_ids example for one sequence:
        [0, 0, 0, 1, 1, 1, 1, 2, 2]
     Entries 2 and 6 get mask=0 — these are exactly the entries that score the
@@ -409,6 +412,12 @@ def build_packed_loss_mask(
     new_doc_at_next = doc_ids[:, 1:] != doc_ids[:, :-1]  # (B, T-1): True when t+1 starts new doc
     mask[:, :-1][new_doc_at_next] = 0  # mask positions t where next token is a new doc
     mask[:, -1] = 0   # entry T-1 scores token T, which doc_ids does not cover
+
+    # Padding is not a document: a *run* of padding has a constant doc_id, so the
+    # change detector above never fires inside it. Mask it explicitly, both as the
+    # target (t+1 is padding) and as the context (t is padding).
+    mask[doc_ids < 0] = 0                 # context token t is padding
+    mask[:, :-1][doc_ids[:, 1:] < 0] = 0  # target token t+1 is padding
 
     return mask   # (B, T): 1 = train on this position, 0 = ignore
 ```
@@ -589,7 +598,9 @@ if __name__ == "__main__":
 
     print(f"Loss:       {loss.item():.4f} nats/token")
     print(f"Perplexity: {loss.exp().item():.2f}")
-    # Expected: loss ≈ log(256) ≈ 5.55 for a random initialized model over 256-token vocab
+    # Expected: a little above log(256) ≈ 5.55 for a randomly initialized model over
+    # this 256-token vocab — the logit-variance term discussed earlier adds to log V.
+    # With this seed it prints 5.8403 nats/token (perplexity 343.87).
 ```
 
 ---
@@ -797,6 +808,8 @@ $$
 where $z_v$ are the pre-softmax logits. With a small coefficient $\alpha$ (e.g., $10^{-4}$), this penalizes large log-partition values without significantly affecting the primary loss. It dramatically reduces loss spikes during training, as documented in the PaLM technical report.
 
 ```python
+import torch
+
 def z_loss(logits: torch.Tensor, alpha: float = 1e-4) -> torch.Tensor:
     """
     Z-loss regularizer for softmax stability (PaLM / Chowdhery et al. 2022).

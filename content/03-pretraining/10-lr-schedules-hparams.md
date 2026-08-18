@@ -1020,7 +1020,7 @@ print(f"Scaled LR (sqrt): {new_lr:.2e}")  # 6.00e-04
 
 A useful rule of thumb: warm up for at least $T_w = \max(1000, 0.02 \times T_{\text{total}})$ steps — that is, at least 1000 steps or 2% of the total budget, whichever is larger. Shorter warmups are fine for fine-tuning (where the model is already initialized near a good basin) but dangerous for pretraining from scratch.
 
-State it in **tokens** when you compare across runs, since that is the quantity that is actually invariant: 2% of a 38,147-step run at 524,288 tokens/step is 763 steps ≈ 0.40B warmup tokens, and the `max(1000, ·)` floor lifts that to 1,000 steps ≈ 0.52B — the bottom of the ~0.5–2B band used by open pretraining recipes at every scale from 100M to 70B. The capstone deliberately over-warms: [Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html) budgets 2,000 steps ≈ 1.05B tokens, which is 5.2% of that run rather than 2%. Warmup is cheap insurance: over-warming costs you a fraction of a percent of final loss, while under-warming can cost you the run. When a run diverges early, **lengthen warmup before you lower the peak LR** — it preserves the peak you tuned.
+Quote it in **both steps and tokens** when you compare across runs, since two runs with the same warmup *step* count can differ tenfold in warmup *tokens*: 2% of a 38,147-step run at 524,288 tokens/step is 763 steps ≈ 0.40B warmup tokens, and the `max(1000, ·)` floor lifts that to 1,000 steps ≈ 0.52B — the ~0.5–1B range typical of small-model recipes. Note which of the two is the scale-invariant one: warmup *steps* stay roughly fixed as you scale (the recipe table above holds 2,000 steps from 125M through 7B), while warmup *tokens* grow with the batch, so that same 2,000-step warmup is ~1B tokens at 125M, ~8B at 7B scale (Llama-2's 4M-token batch), and ~32B at 70B. The capstone deliberately over-warms: [Optimizer & Schedule](../14-capstone/06-optimizer-and-schedule.html) budgets 2,000 steps ≈ 1.05B tokens, which is 5.2% of that run rather than 2%. Warmup is cheap insurance: over-warming costs you a fraction of a percent of final loss, while under-warming can cost you the run. When a run diverges early, **lengthen warmup before you lower the peak LR** — it preserves the peak you tuned.
 
 For continued pretraining (e.g., domain adaptation starting from a released checkpoint), a short warmup of 100–500 steps is usually sufficient — the parameters are already in a well-behaved regime. See [Continual & Domain-Adaptive Pretraining](../03-pretraining/16-continual-pretraining.html).
 
@@ -1226,8 +1226,11 @@ Hyperparameter Launch Checklist
         # Peak is 3e-4. Decay midpoint is step 550 (progress = 0.5):
         # multiplier = 1 - 0.9 * 0.5 = 0.55  ->  1.65e-4.
         assert abs(lrs[550] - 3e-4 * 0.55) < 1e-9, "decay midpoint wrong"
-        # Step 999 (progress = 899/900 ~ 0.999) is just above the 3e-5 floor.
-        assert lrs[-1] < 3e-4 * 0.101, "floor not reached"
+        # Step 999 (progress = 899/900) gives multiplier exactly
+        # 1 - 0.9*(899/900) = 0.101 -- one step above the 0.1 floor, which is
+        # reached at step 1000. Bound the check loosely: asserting strictly
+        # below 0.101 would be asserting x < x and only "pass" by float luck.
+        assert lrs[-1] < 3e-4 * 0.1011, "floor not reached"
         print(f"Peak LR: {max(lrs):.2e}, Step 550 LR: {lrs[550]:.2e}, "
               f"Final LR: {lrs[-1]:.2e}")
         # Output: Peak LR: 3.00e-04, Step 550 LR: 1.65e-04, Final LR: 3.03e-05

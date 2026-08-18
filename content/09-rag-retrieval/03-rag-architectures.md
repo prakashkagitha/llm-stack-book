@@ -550,6 +550,7 @@ Dependencies: rank_bm25, sentence-transformers, faiss-cpu, transformers
   pip install rank_bm25 sentence-transformers faiss-cpu transformers
 """
 
+import re
 import numpy as np
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, CrossEncoder
@@ -677,12 +678,28 @@ class FaithfulnessChecker:
     is entailed by the retrieved context.
     Returns a float in [0, 1]; <0.5 suggests hallucination.
     """
-    def __init__(self):
+    # The NLI model's limit is 512 tokens for the WHOLE pair, and HF's default
+    # truncation strategy ("longest_first") chops the longer member — i.e. the
+    # premise. Handing it the concatenation of several full parent documents
+    # would therefore score the answer against a silent first fragment of the
+    # evidence, so we window the premise instead. ~250 words stays well inside
+    # 512 tokens even after the hypothesis is appended.
+    def __init__(self, max_premise_words: int = 250):
         # mnli model: entailment, neutral, contradiction
         self.nli = hf_pipeline(
             "text-classification",
             model="cross-encoder/nli-deberta-v3-small",
         )
+        self.max_premise_words = max_premise_words
+
+    def _premise_windows(self, context: str) -> List[str]:
+        """Split the joined context into premise windows that fit the model."""
+        windows = []
+        for part in context.split("\n\n---\n\n"):   # one entry per parent doc
+            words = part.split()
+            for start in range(0, len(words), self.max_premise_words):
+                windows.append(" ".join(words[start:start + self.max_premise_words]))
+        return windows
 
     def score(self, premise: str, hypothesis: str) -> float:
         """Returns probability of entailment."""
@@ -701,8 +718,23 @@ class FaithfulnessChecker:
         return label_score.get("entailment", 0.0)
 
     def check_answer(self, answer: str, context: str, threshold: float = 0.5) -> bool:
-        """Return True if answer appears to be grounded in context."""
-        return self.score(premise=context, hypothesis=answer) >= threshold
+        """
+        Return True if EVERY sentence of the answer is entailed by at least one
+        window of the context. Two reasons not to score one (context, answer)
+        pair directly: the premise would be truncated (see __init__), and a
+        single hallucinated sentence would be averaged away among grounded ones.
+        """
+        sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", answer) if s.strip()]
+        windows = self._premise_windows(context)
+        if not sentences or not windows:
+            return False
+        # max over windows: the sentence only needs support somewhere in the
+        # evidence; min over sentences: the weakest claim sets the verdict.
+        worst = min(
+            max(self.score(premise=w, hypothesis=s) for w in windows)
+            for s in sentences
+        )
+        return worst >= threshold
 
 
 # ─────────────────────────────────────────────
@@ -766,7 +798,7 @@ The honest answer is: it depends.
 | Inference cost | Very high (attention is $O(N^2)$ in prefill) | Cheap: only top-$k$ docs injected |
 | Retrieval recall | Perfect — nothing is missed | Depends on retriever quality |
 | Retrieval precision | Very low — the whole corpus is supplied, most of it irrelevant | High after reranking; only top-$k'$ chunks reach the prompt |
-| Lost-in-middle | Significant beyond ~32 k tokens | Controlled; inject 1–5 k tokens |
+| Lost-in-middle | Already significant at a few thousand tokens (Liu et al. saw it with 10–30 passages); worsens as context grows | Controlled; inject 1–5 k tokens |
 
 For corpora that fit in a long context (e.g., a single legal contract, a codebase under 100 k tokens), long-context prompting is simpler and more reliable. For large, dynamic, multi-document corpora (knowledge bases, enterprise wikis, customer support databases), RAG is the right tool. See [Advanced RAG: GraphRAG, Agentic RAG & Long-Context vs RAG](../09-rag-retrieval/05-advanced-rag.html) for a detailed comparison.
 

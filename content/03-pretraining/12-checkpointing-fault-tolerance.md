@@ -362,8 +362,11 @@ class TrainState(Stateful):
         }
 
     def load_state_dict(self, sd: dict) -> None:
-        # set_state_dict() reshards the loaded tensors onto the CURRENT
-        # topology — this is what makes a 512-GPU checkpoint loadable on 256.
+        # The resharding already happened: state_dict() above handed DCP
+        # DTensors laid out for the CURRENT topology, and dcp.load resolved
+        # the saved (offset, length) chunks into them in place — that is what
+        # makes a 512-GPU checkpoint loadable on 256. set_state_dict() just
+        # writes those tensors back into the module and the optimizer.
         set_state_dict(
             self.model, self.optimizer,
             model_state_dict=sd["model"], optim_state_dict=sd["optim"],
@@ -432,16 +435,20 @@ class AsyncCheckpointer:
     Async checkpointing: copies state to CPU, then writes in a background
     thread so training can continue immediately.
 
+    It writes its own per-rank `torch.save` files and per-rank
+    `COMPLETE_rank{N}` sentinels, so it needs a matching loader — the
+    `load_checkpoint` of Section 3.12.3 reads a DCP directory and asserts on a
+    single shared `COMPLETE` file, and will not resume from this layout.
+
     Usage:
-        checkpointer = AsyncCheckpointer(save_fn=save_checkpoint, ...)
+        checkpointer = AsyncCheckpointer(checkpoint_interval=1000, root_dir=...)
         # In training loop:
         checkpointer.save_if_due(step, model, optimizer, ...)
         # At the end of training:
         checkpointer.wait()
     """
 
-    def __init__(self, save_fn, checkpoint_interval: int, root_dir: str):
-        self.save_fn = save_fn
+    def __init__(self, checkpoint_interval: int, root_dir: str):
         self.interval = checkpoint_interval
         self.root_dir = root_dir
         self._distributed = dist.is_available() and dist.is_initialized()
@@ -530,7 +537,8 @@ class AsyncCheckpointer:
         t0 = time.time()
         model_state, optim_state = self._snapshot_to_cpu(model, optimizer)
         if self._distributed:
-            # All ranks finish their snapshot before any continues. Guarded:
+            # Optional: bounds inter-rank skew (staging is rank-local, so
+            # this is not needed for correctness). Guarded, because
             # a bare dist.barrier() in the single-process case raises
             # "Default process group has not been initialized".
             dist.barrier()
@@ -552,7 +560,7 @@ class AsyncCheckpointer:
         self._check_for_errors()
 ```
 
-We wrote this out longhand because the mechanism is worth owning, but in real code you call `dcp.async_save(state, checkpoint_id=...)` from the previous section and get all of it — staging, background write, future — in one line. Modern training frameworks (PyTorch's async DCP path, DeepSpeed's `async_checkpoint_engine`) implement variations of this pattern. PyTorch DCP can run the write in a *separate process* rather than a background thread (`AsyncCheckpointerType.PROCESS`), which removes the Python GIL contention that otherwise slows the training steps overlapping the write. The `dist.barrier()` inside the snapshot step ensures all ranks have finished their CPU copy before training resumes, which is critical — you cannot have rank 0 already on step $N+1$ while rank 3 is still copying rank-$N$ tensors.
+We wrote this out longhand because the mechanism is worth owning, but in real code you call `dcp.async_save(state, checkpoint_id=...)` from the previous section and get all of it — staging, background write, future — in one line. Modern training frameworks (PyTorch's async DCP path, DeepSpeed's `async_checkpoint_engine`) implement variations of this pattern. PyTorch DCP can run the write in a *separate process* rather than a background thread (`AsyncCheckpointerType.PROCESS`), which removes the Python GIL contention that otherwise slows the training steps overlapping the write. The `dist.barrier()` inside the snapshot step is a skew limiter, not a correctness requirement: staging is entirely rank-local, so rank 0 running ahead to step $N+1$ only overwrites *its own* buffers — the ones it has already copied — and never touches the tensors rank 3 is still reading. What makes the snapshot safe is the per-rank copy, not the barrier. Keeping it bounds how far ranks drift apart and makes the timing logs interpretable; dropping it is legitimate and takes the slowest rank's staging time off every other rank's critical path.
 
 Two correctness rules govern any async checkpointer, hand-rolled or not. First, **do not mutate the staged tensors**: the snapshot must be a copy, because `optimizer.step()` on step $N+1$ writes in place over the very moment buffers the background thread is serialising. Second, **join the previous save before starting the next one** (as `save_if_due` does), or two writers race for the same directory and you can end up with a `COMPLETE` sentinel over a mixture of two steps' bytes.
 
@@ -825,13 +833,18 @@ class ShardedTextDataset(IterableDataset):
         # Fresh start: this reader begins at shard `slot` and steps by
         # `stride`. Resume: the restored cursor already names one of its
         # own shards, so we continue from there with the same stride.
-        first_shard = slot if self.start_shard is None else self.start_shard
+        # The restored cursor is ONE-SHOT — copy it into locals and clear the
+        # fields, or a second `iter(dl)` would start at `start_shard` again
+        # and permanently skip shards `slot, slot+stride, ..., start_shard-stride`.
+        resume_shard, resume_offset = self.start_shard, self.start_offset
+        self.start_shard, self.start_offset = None, 0
+        first_shard = slot if resume_shard is None else resume_shard
         self._current_shard = first_shard
-        self._current_offset = self.start_offset
+        self._current_offset = resume_offset
 
         for shard_idx in range(first_shard, len(self.shard_paths), stride):
             tokens = torch.load(self.shard_paths[shard_idx])  # 1D tensor
-            start = self.start_offset if shard_idx == first_shard else 0
+            start = resume_offset if shard_idx == first_shard else 0
             self._current_shard = shard_idx
 
             pos = start
@@ -844,12 +857,9 @@ class ShardedTextDataset(IterableDataset):
                 # resume replay one already-trained-on batch per reader.
                 self._current_offset = pos
                 yield x, y
-
-            # Move to next shard
-            self.start_offset = 0  # only use start_offset for first shard
 ```
 
-This hand-rolled cursor is honest but incomplete in one important way: with `num_workers > 0`, PyTorch's `DataLoader` forks worker processes that each hold their *own* copy of the dataset object and prefetch several batches ahead. The cursor you read on the main process is therefore stale by up to `num_workers × prefetch_factor` batches, and `dataset.get_state()` in the parent may not even reflect a live iterator at all.
+This hand-rolled cursor is honest but incomplete in one important way: with `num_workers > 0`, PyTorch's `DataLoader` forks worker processes that each hold their *own* copy of the dataset object and prefetch several batches ahead. `__iter__` — the only thing that ever advances `_current_shard` / `_current_offset` — runs exclusively inside those workers, and their mutations never propagate back. The parent's `dataset.get_state()` therefore returns the constructor values forever, no matter how many millions of batches have been consumed: the failure is not a bounded staleness, it is total. And even if you could read a worker's cursor, it would *over*-count, because up to `num_workers × prefetch_factor` batches sit in the prefetch queue — produced by the workers, never yet consumed by the training loop.
 
 The library that solves this is **`torchdata`**: `torchdata.stateful_dataloader.StatefulDataLoader` is a drop-in replacement for `torch.utils.data.DataLoader` that adds `state_dict()` / `load_state_dict()` and correctly aggregates the state of every worker, including in-flight prefetched batches. It works with map-style datasets (it records sampler position) and with iterable datasets that themselves expose `state_dict()`/`load_state_dict()`. It is what `torchtitan` uses for resumable pretraining data, and it satisfies the `Stateful` protocol, so it slots straight into the DCP `TrainState` above.
 
@@ -1310,7 +1320,7 @@ if __name__ == "__main__":
 
     First, apply Daly's formula for optimal checkpoint interval: $T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}} = \sqrt{2 \times 8 \times 90} \approx 38$ minutes. So checkpoint every ~38 minutes, not every 90.
 
-    Second, switch to asynchronous checkpointing. The critical path is then only the GPU-to-CPU tensor snapshot, and that is *fast*, because the ~980 GB of weights plus optimizer state is sharded: each of the 2048 ranks stages roughly 0.5 GB, and a pinned device-to-host copy runs at tens of GB/s per GPU, so the staging itself is well under a second per rank. Once on CPU, the disk write happens in the background while training continues. Budget a second or two of hard blocking rather than 8 minutes — torchtitan reports under 2 s of end-to-end checkpoint overhead on Llama-3 405B at 432 H200s. If your measured staging time is tens of seconds, you are copying into *pageable* memory, or serialising the snapshot through rank 0.
+    Second, switch to asynchronous checkpointing. The critical path is then only the GPU-to-CPU tensor snapshot, and that is *fast*, because the ~980 GB of weights plus optimizer state is sharded: each of the 2048 ranks stages roughly 0.5 GB, and a pinned device-to-host copy runs at tens of GB/s per GPU, so the staging itself is well under a second per rank. Once on CPU, the disk write happens in the background while training continues. Budget a second or two of hard blocking rather than 8 minutes — the PyTorch DCP team measured checkpointing overhead of 1.5 s (down from 18.5 s for baseline async) on Llama 3 405B across 432 H200s, with process-based async plus pinned-memory staging. Note that this is the *training-blocking* overhead, not the total save time, which remained around 135 s in the background. If your measured staging time is tens of seconds, you are copying into *pageable* memory, or serialising the snapshot through rank 0.
 
     Third, use PyTorch DCP sharded checkpoints: all 2048 ranks write in parallel to a distributed filesystem, achieving near-linear I/O scaling versus serialised saves through rank 0.
 
@@ -1319,7 +1329,7 @@ if __name__ == "__main__":
 ---
 
 !!! key "Key Takeaways"
-    - A complete checkpoint contains four components: model weights, optimizer state (including moments), per-rank RNG states, and training metadata (step, scheduler, data cursor). Omitting any one causes silent divergence or incorrect resumption. Use `torchdata`'s `StatefulDataLoader` for the cursor — a hand-rolled one is stale by `num_workers × prefetch_factor` batches.
+    - A complete checkpoint contains four components: model weights, optimizer state (including moments), per-rank RNG states, and training metadata (step, scheduler, data cursor). Omitting any one causes silent divergence or incorrect resumption. Use `torchdata`'s `StatefulDataLoader` for the cursor — with `num_workers > 0` a hand-rolled one advances only inside the worker processes, so the cursor the parent reads never moves at all, and the worker's own cursor over-counts by the `num_workers × prefetch_factor` batches still sitting in the prefetch queue.
     - At scale (1000+ GPUs), expect a hardware failure somewhere in the cluster every hour or less. Fault tolerance is not optional.
     - Daly's formula gives the optimal checkpoint interval: $T^* \approx \sqrt{2 \cdot T_{\text{save}} \cdot T_{\text{MTBF}}}$. More frequent, faster checkpoints reduce wasted work better than infrequent saves.
     - Async checkpointing decouples the GPU-to-CPU snapshot (fast, ~seconds) from the CPU-to-disk write (slow, minutes), dramatically reducing dead compute time.
@@ -1344,7 +1354,7 @@ if __name__ == "__main__":
     - [Wang et al., *Fault-Tolerant Hybrid-Parallel Training at Scale with Reliable and Efficient In-memory Checkpointing* (2023)](https://arxiv.org/abs/2310.12670) — hierarchical async snapshotting and intra-node redundancy for near-zero checkpoint overhead on 512-GPU Llama-2-34B runs.
     - [Lian et al., *Universal Checkpointing: A Flexible and Efficient Distributed Checkpointing System for Large-Scale DNN Training* (2024)](https://arxiv.org/abs/2406.18820) — decouples checkpoint structure from parallelism topology, enabling resume on arbitrary GPU counts; basis for DeepSpeed Universal Checkpoint.
     - [Maurya et al., *DataStates-LLM: Lazy Asynchronous Checkpointing for Large Language Models* (2024)](https://arxiv.org/abs/2406.10707) — exploits tensor immutability between optimizer steps for up to 48× faster checkpointing with minimal training interference.
-    - [Liang et al., *TorchTitan: One-stop PyTorch Native Solution for Production-Ready LLM Pre-Training* (2024)](https://arxiv.org/abs/2410.06511) — describes the full production checkpointing pipeline (DCP + async + local storage) achieving <2 s overhead on Llama-3 405B at 432 H200 GPUs.
+    - [Liang et al., *TorchTitan: One-stop PyTorch Native Solution for Production-Ready LLM Pre-Training* (2024)](https://arxiv.org/abs/2410.06511) — the reference PyTorch-native pretraining stack that wires DCP checkpointing, async saves and elastic resume into a composable 4-D-parallel trainer; evaluated on Llama 3.1 8B/70B/405B at 128/256/512 H100 GPUs.
 
     **Open-source & tools**
 
@@ -1353,7 +1363,7 @@ if __name__ == "__main__":
 
     **Go deeper**
 
-    - [*Distributed Checkpoint: Efficient Checkpointing in Large-Scale Jobs* (PyTorch Blog, 2025)](https://pytorch.org/blog/distributed-checkpoint-efficient-checkpointing-in-large-scale-jobs/) — official write-up of DCP optimizations (process-based async, pinned-memory staging, local checkpointing) with measured badput results on H200 clusters.
+    - [*Distributed Checkpoint: Efficient Checkpointing in Large-Scale Jobs* (PyTorch Blog, 2025)](https://pytorch.org/blog/distributed-checkpoint-efficient-checkpointing-in-large-scale-jobs/) — official write-up of DCP optimizations (process-based async, pinned-memory staging, local checkpointing) with measured badput results on Llama 3 405B across 54 A3 Ultra VMs (432 NVIDIA H200 SXM GPUs): checkpointing overhead 18.5 s → 5.5 s → 1.5 s, and total save time ~135 s → ~47 s with local checkpointing.
 
 ## Further Reading
 

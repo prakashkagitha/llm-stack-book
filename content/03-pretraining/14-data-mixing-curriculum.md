@@ -148,7 +148,13 @@ $$
 \text{excess}_i(\theta) = \underbrace{\ell_i(\theta)}_{\text{proxy loss on domain } i} - \underbrace{\ell_i(\theta_{\text{ref}})}_{\text{reference loss on domain } i}.
 $$
 
-Excess loss answers a sharper question: *"On which domain is the proxy still far from what's achievable?"* A domain with high irreducible entropy will have high loss for *both* proxy and reference, so its excess is small once the proxy catches up — the adversary stops over-investing in it. A domain where the proxy lags the reference (lots of headroom) gets upweighted. DoReMi clamps excess at zero (you cannot do better than reference "for free") and uses it to drive the weights.
+Excess loss answers a sharper question: *"On which domain is the proxy still far from what's achievable?"* A domain with high irreducible entropy will have high loss for *both* proxy and reference, so its excess is small once the proxy catches up — the adversary stops over-investing in it. A domain where the proxy lags the reference (lots of headroom) gets upweighted. DoReMi clamps excess at zero (you cannot do better than reference "for free") and uses it to drive the weights. One detail worth getting right: the clamp is applied **per token** and only then averaged over the domain's tokens in the batch,
+
+$$
+\lambda_i = \frac{1}{T_i} \sum_{\text{tokens } j \,\in\, \text{domain } i} \max\!\big\{ \ell_{\theta,j} - \ell_{\text{ref},j},\; 0 \big\},
+$$
+
+which is strictly more forgiving than clamping the domain *average*: the signal stays alive as long as *some* tokens in a domain still lag the reference, even after the domain's mean loss has dipped below it. (The toy below uses the coarser domain-level clamp, which is why its "silent signal" failure mode is sharper than the real algorithm's.)
 
 {{fig:mixing-excess-loss-decomposition}}
 
@@ -157,7 +163,7 @@ Excess loss answers a sharper question: *"On which domain is the proxy still far
 DoReMi runs three steps:
 
 1. **Train a reference model** $\theta_{\text{ref}}$ (small, e.g. 280 M) on the natural mixture $w^{\text{nat}}$. Record its per-domain losses $\ell_i(\theta_{\text{ref}})$. (Used only to define the excess-loss baseline.)
-2. **Train a proxy model** $\theta$ of the *same small size* with **online Group-DRO**: at each step, evaluate the proxy's per-domain excess loss, multiplicatively update domain weights toward high-excess domains, and use those weights to **reweight the per-domain loss** in the proxy's next gradient step. (The minibatches themselves are drawn from the fixed reference mixture, so every domain is observed — and its excess loss estimable — at every step.) Average the weights over all steps to get $\bar{w}$.
+2. **Train a proxy model** $\theta$ of the *same small size* with **online Group-DRO**: at each step, evaluate the proxy's per-domain excess loss, multiplicatively update domain weights toward high-excess domains, and use those weights to **reweight the per-domain loss** in the proxy's next gradient step. (The minibatches themselves are drawn *uniformly over domains* — $u = (1/k)\mathbf{1}$, independent of the current $w$ — so every domain is observed, and its excess loss estimable, at every step; $w$ enters only as the reweighting of the per-domain loss.) Average the weights over all steps to get $\bar{w}$.
 3. **Train the large target model** on the *fixed* averaged mixture $\bar{w}$ from step 2. The expensive run uses a static mixture; all the adaptivity happened cheaply in the proxy.
 
 The online update in step 2 is **exponentiated gradient ascent** on the weights (multiplicative weights / Hedge). Let $\lambda_i^{(t)}$ be the clamped excess loss of domain $i$ at step $t$. The weight update with step size $\eta$ is
@@ -243,7 +249,7 @@ print("reference loss   :", np.round(ref_loss, 3))
 #    Each step we split a batch by w, accumulate tokens, recompute the
 #    proxy's per-domain loss, form CLAMPED excess loss vs the reference, and
 #    apply an exponentiated-gradient (multiplicative-weights) update to w.
-#    Simplification: real DoReMi samples from a FIXED mixture and uses w to
+#    Simplification: real DoReMi samples UNIFORMLY over domains and uses w to
 #    weight the per-domain loss; with no real parameters here, letting w decide
 #    how much each domain "absorbs" per step plays the same role.
 # -----------------------------------------------------------------------------
@@ -417,7 +423,7 @@ Training directly at long context (e.g., 128 K tokens) from step one is wasteful
 The single most impactful scheduling idea in modern pretraining is the **high-quality annealing phase** (sometimes called *mid-training* or the *cooldown* phase). The recipe, popularized by the MiniCPM team's analysis and adopted widely (Llama 3, OLMo, and others describe variants):
 
 1. Train the vast majority of tokens on a broad, web-heavy mixture with a roughly constant (or slowly decaying) learning rate.
-2. In the **final fraction** of training (often the last ~10–20% of tokens), simultaneously **(a) decay the learning rate sharply toward zero** and **(b) shift the data mixture toward the highest-quality, most target-relevant data** — curated math, code, textbooks, instruction-formatted and reasoning-heavy data.
+2. In the **final fraction** of training (the size of that slice varies by an order of magnitude across recipes: MiniCPM's WSD decay phase is ~10% of steps, while the frontier runs anneal on much smaller tails — Llama 3 over its last tens of billions of tokens out of 15 T, OLMo 2/3 over a 50–100 B-token mid-training stage out of multi-trillion-token budgets), simultaneously **(a) decay the learning rate sharply toward zero** and **(b) shift the data mixture toward the highest-quality, most target-relevant data** — curated math, code, textbooks, instruction-formatted and reasoning-heavy data.
 
 The interaction between the two is the whole point. **Data seen while the learning rate is high and falling fastest has the largest, most lasting effect on the final weights**, because those late steps with a decaying LR are where the model settles into its final basin. Putting your best, most capability-dense data exactly there — when each gradient step still moves the weights but the model is no longer being yanked around — imprints those capabilities most strongly. The MiniCPM "Warmup-Stable-Decay" (WSD) schedule makes this explicit: a long stable-LR phase on the broad mixture, then a short decay phase on upweighted high-quality data. It also has a delicious practical benefit: because the stable phase uses a constant LR, you can *branch* multiple annealing experiments from a single stable checkpoint and try different final mixtures cheaply, instead of re-running from scratch. This is exactly how the book's capstone model is built: Stack-100M runs ~18 B tokens on a broad web/code/math mix at constant LR, then branches a short decay phase on an upweighted high-quality mix — see [Capstone 14.8: Mid-Training — Quality Annealing, Long-Context Extension & Capability Injection](../14-capstone/08-mid-training.html), with the mixture weights themselves set in [Capstone 14.2](../14-capstone/02-data-pipeline.html).
 
@@ -468,7 +474,7 @@ Get these right and you buy capability gains that would otherwise cost a substan
     - **Manual ablations** at a proxy scale are the robust workhorse; **DoReMi** automates this with a reference + proxy run using **Group-DRO on excess loss** (closeable loss, not raw loss) to avoid over-investing in intrinsically hard domains, while **RegMix** fits a regression surrogate over many tiny proxy runs and optimizes it over the simplex.
     - **Online/adaptive mixing** computes its reward during the real run with no reference model — ODM feeds the *raw per-domain loss* (an information-gain proxy) to EXP3, while learning-progress schemes use loss *velocity* ("ride what's improving") — in contrast to DoReMi's *excess*-loss level ("fix what's broken *and* fixable") measured on a proxy; all use multiplicative-weights updates with smoothing to avoid starving any domain.
     - The optimal mixture **drifts with model scale and with training progress** — always validate proxy-derived weights at an intermediate scale before the full run.
-    - **Annealing / mid-training** is the highest-impact schedule trick: in the final ~10–20% of tokens, decay the LR sharply *and* shift the mixture to the best, most target-relevant data — late, low-LR steps imprint capabilities most strongly (the WSD recipe).
+    - **Annealing / mid-training** is the highest-impact schedule trick: in a final slice of training (~10% of steps in MiniCPM's WSD, far less in frontier runs — tens to a few hundred billion tokens out of trillions), decay the LR sharply *and* shift the mixture to the best, most target-relevant data — late, low-LR steps imprint capabilities most strongly (the WSD recipe).
     - **Context-length ramps** are a near-universal curriculum over sequence length; the mixture upweights long documents in the long-context phase.
     - Count epochs **including the annealing contribution** — annealing can dominate a small domain's total exposure and silently push it into the over-repetition zone.
 

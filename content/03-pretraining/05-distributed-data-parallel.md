@@ -299,15 +299,15 @@ if __name__ == "__main__":
     print("OK: TinyDDP reproduces single-process training on the concatenated batch.")
 ```
 
-The two asserts encode the two invariants from earlier. The `all_gather` + `torch.equal` check is **exact** (`atol=0`): all replicas apply the same averaged gradient and the same SGD step, so their parameters must agree bit-for-bit — any drift means a gradient escaped the buckets. The reference comparison uses a small tolerance (`atol=1e-5`): the toy's per-rank mean gradients are all-reduced (summed across ranks in NCCL/gloo ring order) whereas the reference sums the full batch in one pass, and fp32 addition is not associative, so the two agree only up to rounding — this residual is *summation order*, not a logic error. With SGD the trajectory is linear and the difference stays at the `1e-5` floor; had we used Adam the tiny gradient differences would be amplified by the adaptive denominator, so SGD is the right choice for an exactness check. Swap the loss for cross-entropy on token ids and the same harness validates a real training step.
+The two asserts encode the two invariants from earlier. The `all_gather` + `torch.equal` check is **exact** (`atol=0`): all replicas apply the same averaged gradient and the same SGD step, so their parameters must agree bit-for-bit — any drift means a gradient escaped the buckets. The reference comparison uses a small tolerance (`atol=1e-5`): the toy's per-rank mean gradients are all-reduced (summed across ranks in NCCL/gloo ring order) whereas the reference sums the full batch in one pass, and fp32 addition is not associative, so the two agree only up to rounding — this residual is *summation order*, not a logic error. `1e-5` is a safety margin, not the observed residual: with SGD the trajectory is linear, so the rounding never compounds and the script actually prints `max grad diff (step 0) = 9.31e-10 | max param diff (5 steps) = 1.49e-08` — three orders of magnitude inside the assertion. Had we used Adam the tiny gradient differences would be amplified by the adaptive denominator, so SGD is the right choice for an exactness check. Swap the loss for cross-entropy on token ids and the same harness validates a real training step.
 
 !!! tip "Practitioner tip: the no_sync() context for gradient accumulation"
 
     When doing gradient accumulation (several micro-batches per optimizer step), you do **not** want an all-reduce after every micro-batch — only after the last one. Real DDP provides `model.no_sync()`, a context manager that suppresses the hooks' communication, letting `.grad` accumulate locally. Run the first $k-1$ micro-batches under `no_sync()` and the last one normally. This cuts communication volume by a factor of $k$ at the cost of holding the accumulated gradient locally. Forgetting it is a classic "why is my 4-step accumulation 4× slower than expected" bug.
 
-!!! warning "The toy communicates on every backward (no gradient accumulation)"
+!!! warning "The toy has no gradient-accumulation path (and fails silently if you add one)"
 
-    Our `TinyDDP` all-reduces a bucket the instant its gradients are ready, so under gradient accumulation it fires communication on *every* micro-batch — and worse, `_ready_counts` keeps climbing across micro-batches instead of resetting per optimizer step, so a bucket "completes" on micro-batch 1 and its counter then over-increments. Production DDP's `no_sync()` (above) exists precisely to suppress this. The toy equivalent is two lines: add a `self.require_sync = True` flag in `__init__`, and early-return from the hook when it is off so gradients merely accumulate in `.grad`:
+    Our `TinyDDP` all-reduces a bucket the instant its gradients are ready, which is correct only when every backward is a whole optimizer step. Drop it into a gradient-accumulation loop that calls `finish_gradient_synchronization()` once per step and it breaks in a subtler way than "communicates too often": `_ready_counts` is reset *only* inside `finish_gradient_synchronization()`, so each bucket hits `== len(bucket)` on micro-batch 1, fires its all-reduce on that **partial** gradient, and then its counter climbs past the threshold and never fires again. Worse, `_all_reduce_bucket` snapshots the grads into a flat copy at that moment, so `finish_gradient_synchronization()` later *overwrites* the fully accumulated `.grad` with the reduced micro-batch-1 gradient — the other micro-batches are silently discarded. (Running 3 micro-batches on 2 gloo ranks: one all-reduce total, `_ready_counts` ending at `[6]` for a 2-parameter bucket, and a post-sync gradient that matches micro-batch 1 alone rather than the accumulation.) Production DDP's `no_sync()` (above) exists precisely to make this pattern safe. The toy equivalent is two lines: add a `self.require_sync = True` flag in `__init__`, and early-return from the hook when it is off so gradients merely accumulate in `.grad`:
 
     ```python
     def hook(p):
@@ -711,7 +711,7 @@ if __name__ == "__main__":
 A few load-bearing details in that script:
 
 - **`ShardingStrategy.FULL_SHARD`** is ZeRO-3. FSDP also offers `SHARD_GRAD_OP` (ZeRO-2: shard grads + optimizer state but keep params resident — less communication, more memory) and `NO_SHARD` (plain DDP). `HYBRID_SHARD` shards *within* a node and replicates *across* nodes, which avoids slow inter-node all-gathers for the parameter reconstruction — a critical optimization on clusters where intra-node NVLink is far faster than inter-node InfiniBand.
-- **`reduce_dtype=torch.float32`** keeps the gradient reduce-scatter in fp32 even though params are bf16 — bf16 gradient summation across many ranks loses precision (bf16 has only 7 mantissa bits), so reducing in fp32 protects convergence at negligible cost.
+- **`reduce_dtype=torch.float32`** keeps the gradient reduce-scatter in fp32 even though params are bf16 — bf16 gradient summation across many ranks loses precision (bf16 has only 7 mantissa bits), so reducing in fp32 protects convergence. It is not free: `reduce_dtype` is the dtype gradients are cast to *before* the collective, so the reduce-scatter ships 4 B/param instead of 2, which under the $3\Psi$ cost model used later in this chapter turns 3 "$\Psi$ worth" of traffic into 4 — about **33% more FSDP communication per step**. Keep it on by default (convergence first); drop it to bf16 only if profiling shows you are communication-bound and the run stays stable.
 - **`use_orig_params=True`** exposes the original parameter tensors (not just the opaque FlatParameter), which is required for `torch.compile`, parameter-group-specific learning rates, and selective freezing.
 - **Checkpointing is genuinely different under sharding.** No rank has the whole model, so saving requires either an all-gather to materialize a full state dict on rank 0 (simple, but a memory spike and a bottleneck for huge models) or a *sharded* state dict where each rank writes its own slice (scalable). This is covered in depth in [Checkpointing, Fault Tolerance & Long-Running Jobs](../03-pretraining/12-checkpointing-fault-tolerance.html).
 
@@ -892,6 +892,17 @@ class GPT(nn.Module):
         self.head = nn.Linear(d, vocab, bias=False)
         self.head.weight = self.tok.weight       # weight tying (Press & Wolf): head shares the embedding
                                                   # -> 124M at these dims, not ~163M untied
+        self.apply(self._init)                   # REQUIRED, and doubly so under tying: nn.Embedding's
+                                                 # default init is N(0,1), so a tied head would emit
+                                                 # logits with std ~28 and a step-0 loss of ~500
+                                                 # instead of ln(vocab) ~= 10.8.
+
+    @staticmethod
+    def _init(m):                                # nanoGPT-style init; LayerNorms keep torch defaults
+        if isinstance(m, (nn.Linear, nn.Embedding)):
+            nn.init.normal_(m.weight, mean=0.0, std=0.02)
+            if getattr(m, "bias", None) is not None:
+                nn.init.zeros_(m.bias)
 
     def forward(self, idx):
         B, T = idx.shape
