@@ -92,7 +92,7 @@ Each iteration, the scheduler answers: *which requests run this step, and do I n
 2. **Per-iteration token budget.** To bound iteration latency you cap the number of tokens processed per step, `max_num_batched_tokens` (and often a separate `max_num_seqs`, a cap on the number of concurrent requests). Prefill tokens are the expensive ones; a 4000-token prompt arriving in one shot would blow a latency target, which is exactly why chunked prefill exists — it splits that prefill across several iterations so each step stays under budget. The scheduler decides how much prefill work to admit per iteration against this budget.
 
 !!! tip "Practitioner tip: at 100M parameters the binding constraint flips"
-    "KV memory always binds" is a large-model statement. Run the arithmetic for the capstone's Stack-100M (30 layers, GQA with 2 KV heads, `head_dim` 64, bf16): KV per token is $2 \times 30 \times 2 \times 64 \times 2\ \text{B} = 15{,}360$ B $= 15$ KiB. Weights are only $101.4\text{M} \times 2\ \text{B} \approx 0.2$ GB, so on a 24 GB card roughly 20 GiB is free for KV — about **1.4 million cached tokens**, or ~1,300 concurrent 1k-token conversations. Long before you get there you hit `max_num_seqs` and the per-iteration token budget, and at $B$ in the high hundreds decode has stopped being memory-bound at all: you are on the flat part of the curve, limited by compute and by per-iteration CPU overhead. So when you serve the capstone model ([Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)), raise `max_num_seqs` aggressively and stop worrying about preemption — the failure mode that dominates a 70B deployment barely exists at 100M.
+    "KV memory always binds" is a large-model statement. Run the arithmetic for the capstone's Stack-100M (30 layers, GQA with 2 KV heads, `head_dim` 64, bf16): KV per token is $2 \times 30 \times 2 \times 64 \times 2\ \text{B} = 15{,}360$ B $= 15$ KiB. Weights are only $101.4\text{M} \times 2\ \text{B} \approx 0.2$ GB, so on a 24 GB card roughly 20 GiB is free for KV — about **1.4 million cached tokens**, or ~1,400 concurrent 1k-token conversations. Long before you get there you hit `max_num_seqs` and the per-iteration token budget, and at $B$ in the high hundreds the weight stream is fully amortized: you are on the flat part of the curve, where the marginal cost of a request is its own KV-cache traffic, its GEMM compute, and per-iteration CPU overhead rather than a share of the fixed 0.2 GB weight load. (Decode is still bandwidth-hungry there — KV reads are per-request and grow linearly with $B$, so they never amortize — but the fixed cost that batching exists to amortize is already paid off.) So when you serve the capstone model ([Evaluation & Serving: Honest Benchmarks, int4 Quantization, and Running on a Laptop](../14-capstone/11-evaluation-and-serving.html)), raise `max_num_seqs` aggressively and stop worrying about preemption — the failure mode that dominates a 70B deployment barely exists at 100M.
 
 ### A throughput model for the scheduler
 
@@ -102,7 +102,7 @@ $$
 \text{tokens/sec} = \frac{B}{\tau_{\text{dec}}(B)} = \frac{B}{\tau_0 + \beta B} \xrightarrow[B \to \infty]{} \frac{1}{\beta}.
 $$
 
-The curve rises steeply with $B$ at first (you are amortizing the fixed $\tau_0$ over more requests) and then flattens toward the compute roofline $1/\beta$ (see [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)). The scheduler's job is to keep $B$ as large as the KV-cache budget allows, so you operate on the flat, high-throughput part of the curve rather than the starved low-$B$ part. Static batching keeps $B$ *high on average but low at the tail* (the batch drains down to one straggler running at $B=1$); continuous batching keeps $B$ pinned near the maximum continuously by backfilling. That gap is where the throughput multiplier comes from.
+The curve rises steeply with $B$ at first (you are amortizing the fixed $\tau_0$ over more requests) and then flattens toward the compute roofline $1/\beta$ (see [The Roofline Model & Performance Engineering](../04-kernels-efficiency/01-roofline-performance.html)). The scheduler's job is to keep $B$ as large as the KV-cache budget allows, so you operate on the flat, high-throughput part of the curve rather than the starved low-$B$ part. Static batching keeps $B$ *high only just after a batch forms and low for most of that batch's life* (it drains toward a single straggler running at $B=1$), so its **time-average** $B$ ends up far below $B_{\max}$ — the worked example below computes $\approx 6.4$ out of $64$; continuous batching keeps $B$ pinned near the maximum continuously by backfilling. That gap is where the throughput multiplier comes from.
 
 {{fig:contbatch-throughput-vs-batchsize}}
 
@@ -216,8 +216,10 @@ class Scheduler:
             # because arrival is the tiebreaker)
             return sorted(reqs, key=lambda r: (r.priority, r.arrival))
         if self.policy == "shortest":
-            # shortest-remaining-output first: great for mean latency, risks starvation
-            return sorted(reqs, key=lambda r: r.output_len)
+            # shortest-remaining-output first: great for mean latency, risks starvation.
+            # Use REMAINING output, not total: a preempted request keeps its
+            # `generated` count, so it should be ordered by the work it has left.
+            return sorted(reqs, key=lambda r: r.output_len - r.generated)
         raise ValueError(self.policy)
 
     # ---- preemption -------------------------------------------------------
@@ -614,7 +616,7 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
 **5.** The chapter says `MAX_BATCHED_TOKENS` is "exactly the knob that would enforce chunking," and sketches the change: track `prefilled_tokens` per request instead of the `prefilled` boolean so a prompt whose `remaining_prompt > token_budget` runs a *chunk* this iteration and finishes prefilling over several iterations. Implement it. Decode tokens of running requests must be admitted first (so their inter-token latency stays smooth), then prefill chunks backfill the remaining budget.
 
 ??? note "Solution"
-    The change has three parts: (i) replace the `prefilled` boolean with an integer `prefilled_tokens` and derive `prefilled` from it; (ii) in step (1), only *fully* prefilled requests emit a decode token, and partially-prefilled running requests are carried over untouched; (iii) in step (2), give budget to partially-prefilled running requests *and* waiting requests, advancing each by a chunk bounded by the remaining token budget.
+    The change has three parts: (i) replace the `prefilled` boolean with an integer `prefilled_tokens` and derive `prefilled` from it; (ii) in step (1), only *fully* prefilled requests emit a decode token, and partially-prefilled running requests are carried over untouched; (iii) in step (2), give budget to partially-prefilled running requests *and* waiting requests, advancing each by a chunk bounded by the remaining token budget **and** by free KV memory (with a rollback path for a partial prefill that cannot grow at all).
 
     First, the `Request` changes:
 
@@ -688,16 +690,41 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
             is_new = req.status is Status.WAITING
             if is_new and len(self.running) >= MAX_NUM_SEQS:
                 break
+            if token_budget <= 0:
+                break                      # budget spent; the rest waits a turn
+            if is_new and req.blocks_needed(extra_tokens=req.prompt_len + 1) > TOTAL_BLOCKS:
+                # `max_model_len` guard, which every real engine has: this prompt
+                # cannot fit even on a completely empty device, so admitting it
+                # would strand blocks in a request that can never finish. Reject.
+                self.waiting.remove(req)
+                req.status = Status.FINISHED
+                self.rejected.append(req)  # add `self.rejected = []` to __init__
+                continue
             remaining_prompt = req.prompt_len - req.prefilled_tokens
-            chunk = min(remaining_prompt, token_budget)
-            if chunk <= 0:
-                break                      # no budget (or nothing left to prefill)
+            # Bound the chunk by MEMORY as well as by the token budget. The blocks
+            # this request already holds have `slack` unused token slots, and each
+            # free block adds BLOCK_SIZE more; keep one slot for the token it emits
+            # if this chunk finishes the prompt.
+            slack = req.blocks * BLOCK_SIZE - req.cur_len
+            chunk = min(remaining_prompt, token_budget,
+                        max(0, slack + self.free_blocks * BLOCK_SIZE - 1))
             # blocks to hold prefilled_tokens + chunk (generated == 0 during prefill),
             # plus one slot for the token this request emits if the chunk finishes it
             emits = 1 if chunk == remaining_prompt else 0
-            want = req.blocks_needed(extra_tokens=chunk + emits)
-            if not self._alloc(req, want):
-                continue                   # not enough KV to grow this one; try next
+            if chunk <= 0 or not self._alloc(req, req.blocks_needed(extra_tokens=chunk + emits)):
+                if is_new:
+                    continue               # not enough KV to start it; try next
+                # A partially-prefilled RUNNING request is skipped by step (1), so
+                # without this branch it would sit in RUNNING forever holding blocks
+                # it can never grow — no decode token, no preemption, no retirement.
+                # Roll it back to WAITING (dropping its KV, exactly like a
+                # preemption) so the memory is recycled and someone can finish.
+                self._free(req)
+                self.running.remove(req)
+                req.prefilled_tokens = 0
+                req.status = Status.WAITING
+                self.waiting.appendleft(req)
+                continue
             if is_new:
                 req.status = Status.RUNNING
                 self.waiting.remove(req)
@@ -722,4 +749,4 @@ The common skeleton is identical to our toy: a per-iteration `schedule()` that (
         # ... retirement + logging unchanged ...
     ```
 
-    Key properties this gives you, straight from the chapter: (1) a 4000-token prompt no longer blows the budget in one iteration — with `MAX_BATCHED_TOKENS = 512` it is spread over $\lceil 4000/512 \rceil = 8$ iterations; (2) because step (1) subtracts decode tokens from `token_budget` *before* step (2) hands out prefill chunks, ongoing decodes always get their slice first and their inter-token latency stays smooth, with prefill chunks merely backfilling whatever budget is left. That "decodes first, then prefill chunks" ordering is precisely what keeps ITL smooth while the big prefill still completes in a few steps.
+    Key properties this gives you, straight from the chapter: (1) a 4000-token prompt no longer blows the budget in one iteration — with `MAX_BATCHED_TOKENS = 512` it is spread over $\lceil 4000/512 \rceil = 8$ iterations; (2) because step (1) subtracts decode tokens from `token_budget` *before* step (2) hands out prefill chunks, ongoing decodes always get their slice first and their inter-token latency stays smooth, with prefill chunks merely backfilling whatever budget is left; and (3) a half-prefilled request can never strand KV memory — the chunk is capped by the free-block pool, a request that still cannot grow is rolled back to WAITING, and a prompt too large for the whole device is rejected at admission. That "decodes first, then prefill chunks" ordering is precisely what keeps ITL smooth while the big prefill still completes in a few steps.

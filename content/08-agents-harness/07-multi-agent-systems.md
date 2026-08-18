@@ -764,7 +764,7 @@ boundary — which is the entire point of a structured handoff.
 
 **Message bus** — agents subscribe to topics (e.g. "findings", "code_output") rather than passing messages directly. This decouples the topology and makes it easy to add new agents without rewiring the graph. Apache Kafka or even Redis pub/sub serve as the bus in production systems; for local development a simple Python `queue.Queue` suffices.
 
-**Context forwarding** is the mechanism used by most LLM-native systems: each agent's context window includes a summary or verbatim copy of the preceding step's output. Per-call context grows linearly with the step index, so the *total* forwarded-token cost is quadratic in chain length: an $L$-step chain forwarding $s$ tokens per step pays $s \cdot L(L-1)/2$ in forwarded context overall, and the last call of a 10-step pipeline may carry up to 9 prior summaries. Managing this is the subject of [Context Engineering & Management](../08-agents-harness/04-context-engineering.html).
+**Context forwarding** is the mechanism used by most LLM-native systems: each agent's context window includes a summary or verbatim copy of *every* preceding step's output. Per-call context therefore grows linearly with the step index, so the *total* forwarded-token cost is quadratic in chain length: an $L$-step chain forwarding $s$ tokens per step pays $s \cdot L(L-1)/2$ in forwarded context overall, and the last call of a 10-step pipeline may carry up to 9 prior summaries. Managing this is the subject of [Context Engineering & Management](../08-agents-harness/04-context-engineering.html).
 
 ## When Multi-Agent Hurts: Costs, Anti-Patterns, and Failure Modes
 
@@ -783,9 +783,9 @@ Adding agents is not free. Before designing a multi-agent system, run through th
 - **Agent soup** — spawning many agents without clear role boundaries. If two agents' instructions overlap, they produce contradictory outputs and the synthesiser cannot reconcile them.
 - **Infinite loops** — without a hard iteration cap, debate and reflection loops can cycle indefinitely (and rack up large bills). Always set `max_turns` or `max_iterations`.
 - **Blind trust** — an orchestrator that passes a worker's output to the next stage without validation. A worker that returns malformed JSON or a code snippet containing an injection should fail loudly, not silently corrupt downstream agents.
-- **Over-parallelism** — spawning 20 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled. Always model the rate-limit as a resource constraint on your thread pool.
+- **Over-parallelism** — spawning 200 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled. Always model the rate-limit as a resource constraint on your thread pool.
 
-These are not folk wisdom. Cemri et al.'s *Why Do Multi-Agent LLM Systems Fail?* (2025) hand-annotated hundreds of execution traces across seven popular frameworks and distilled the **MAST** taxonomy: fourteen recurring failure modes in three families — **specification issues** (an agent disobeys its role, forgets the task constraints, or the termination condition is wrong), **inter-agent misalignment** (agents withhold information, reset context, or talk past each other), and **task verification** (no one checks the output, or the checker is too shallow to catch the error). The striking headline is that most of these are *organisational*, not capability failures: the individual model calls are fine, and the system still fails. The practical reading is that your engineering effort belongs in role specification, handoff validation, and a genuine verification stage — not in adding another agent.
+These are not folk wisdom. Cemri et al.'s *Why Do Multi-Agent LLM Systems Fail?* (2025) hand-annotated over 1,600 execution traces across seven popular frameworks and distilled the **MAST** taxonomy: fourteen recurring failure modes in three families — **specification issues** (an agent disobeys its role, forgets the task constraints, or the termination condition is wrong), **inter-agent misalignment** (agents withhold information, reset context, or talk past each other), and **task verification** (no one checks the output, or the checker is too shallow to catch the error). The striking headline is that most of these are *organisational*, not capability failures: the individual model calls are fine, and the system still fails. The practical reading is that your engineering effort belongs in role specification, handoff validation, and a genuine verification stage — not in adding another agent.
 
 !!! warning "The multi-agent tax"
     Every inter-agent boundary costs tokens and latency. A task that takes 500 tokens and 1 s as a single call may cost 3,000 tokens and 5 s when decomposed into a 3-agent pipeline with context forwarding. Anthropic reported that their production multi-agent research system consumes roughly 15× the tokens of an ordinary chat interaction — which is why they reserve it for open-ended breadth-first research where that premium buys real coverage. Benchmark the single-agent baseline before reaching for multi-agent decomposition.
@@ -836,6 +836,7 @@ def self_critique_loop(
     Run a worker, score its output, and retry with critique if below threshold.
     scoring_fn: (task, output) -> float in [0, 1]
     """
+    output = ""   # bound before the loop so max_retries=0 cannot NameError
     for attempt in range(max_retries):
         output = worker_fn(task)
         score = scoring_fn(task, output)
@@ -895,9 +896,9 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
     **Recent advances (2023–2026)**
 
     - [Liang et al., *Encouraging Divergent Thinking in Large Language Models through Multi-Agent Debate* (2023)](https://arxiv.org/abs/2305.19118) — empirical study showing structured debate between agents reduces degeneration-of-thought and improves factual accuracy over single-model self-reflection.
-    - [Chen et al., *A Survey on LLM-based Multi-Agent System: Recent Advances and New Frontiers* (2024)](https://arxiv.org/abs/2412.17481) — comprehensive survey covering topologies, communication patterns, and open challenges across 200+ recent papers.
+    - [Chen et al., *A Survey on LLM-based Multi-Agent System: Recent Advances and New Frontiers in Application* (2024)](https://arxiv.org/abs/2412.17481) — comprehensive survey organised by application area — solving complex tasks, simulating specific scenarios, and evaluating generative agents — plus open challenges and future directions.
     - [Anthropic, *Building Effective Agents* (2024)](https://www.anthropic.com/research/building-effective-agents) — practitioner guide distinguishing workflows from agents, advocating simple composable patterns before complex frameworks; widely referenced in production teams.
-    - [Cemri et al., *Why Do Multi-Agent LLM Systems Fail?* (2025)](https://arxiv.org/abs/2503.13657) — NeurIPS 2025 Datasets & Benchmarks paper introducing the MAST taxonomy: 14 failure modes across specification, inter-agent misalignment, and verification, annotated over traces from seven frameworks. Read this before designing your topology.
+    - [Cemri et al., *Why Do Multi-Agent LLM Systems Fail?* (2025)](https://arxiv.org/abs/2503.13657) — NeurIPS 2025 Datasets & Benchmarks paper introducing the MAST taxonomy: 14 failure modes across specification, inter-agent misalignment, and verification, annotated over 1,600 traces from seven frameworks. Read this before designing your topology.
     - [Anthropic, *How we built our multi-agent research system* (2025)](https://www.anthropic.com/engineering/built-multi-agent-research-system) — engineering account of a production orchestrator-worker research agent: subagent prompting, parallel tool calls, and the honest token accounting (roughly 15× a chat interaction).
 
     **Open-source & tools**
@@ -995,9 +996,9 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
 
     (b) Monthly cost: $0.001395 \times 10{,}000 \times 30 = \$418.5 \approx$ **USD 419/month**.
 
-    The 5-stage pipeline cost about USD 800/month (USD 0.0027/run). Savings $\approx 800 - 419 = \$381$, i.e. roughly **48%** cheaper. The reduction is more than linear in stage count because dropping the last two stages removes both their fixed system-prompt overhead *and* the largest forwarded-context blocks (the 1,500- and 2,000-token injections), which is the compounding "multi-agent tax" the chapter warns about.
+    The 5-stage pipeline cost about USD 800/month (USD 0.0027/run). Savings $\approx 800 - 419 = \$381$, i.e. roughly **48%** cheaper. The reduction is more than linear in stage count *because of the forwarded-context term alone*: the per-stage fixed costs scale exactly linearly (system prompts 5,000 → 3,000 tokens, outputs 2,000 → 1,200, both a factor 1.67), but forwarded context falls quadratically, 5,000 → 1,500 tokens (a factor 3.33), because dropping the last two stages removes the largest injections (1,500 and 2,000 tokens). That super-linear context term is the compounding "multi-agent tax" the chapter warns about.
 
-**4.** The chapter lists **over-parallelism** as an anti-pattern: "spawning 20 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled." The `orchestrate` function submits *every* work item to the `ThreadPoolExecutor` at once. Modify the worker layer so that no more than `rate_limit` model calls start per 60-second window, while still running workers concurrently up to that bound. Keep the chapter's `WorkItem` / `WorkResult` types and `call_model` unchanged.
+**4.** The chapter lists **over-parallelism** as an anti-pattern: "spawning 200 workers in parallel when the rate limit is 60 requests/minute will cause most to fail or be throttled." The `orchestrate` function submits *every* work item to the `ThreadPoolExecutor` at once. Modify the worker layer so that no more than `rate_limit` model calls start per 60-second window, while still running workers concurrently up to that bound. Keep the chapter's `WorkItem` / `WorkResult` types and `call_model` unchanged.
 
 ??? note "Solution"
     A simple, correct approach is a rolling-window (sliding-log) throttle enforced by a shared, thread-safe gate that every worker must pass before it calls the model. We block a worker until a slot in the current 60-second window is free.

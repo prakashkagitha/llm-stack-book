@@ -120,7 +120,7 @@ The signature S-LoRA idea is **Unified Paging**. The KV cache (see [PagedAttenti
 {{fig:lora-serving-unified-paged-pool}}
 
 
-Because adapters are of heterogeneous rank, S-LoRA pads them to a common rank for the kernel or, better, uses rank-aware tiling so a rank-8 adapter does not waste a rank-64 slot. Its custom kernels (an evolution of Punica's MBGMV/SGMV) handle the non-uniform ranks directly.
+Because adapters are of heterogeneous rank, the naïve kernel pads them all to a common rank; S-LoRA instead uses rank-aware tiling so a rank-8 adapter does not waste a rank-64 slot. Its own custom kernels — MBGMM (prefill) and MBGMV (decode), "multi-size batched gather" extensions of Punica's SGMV/BGMV to non-contiguous memory and mixed ranks — handle the non-uniform ranks directly, without padding every adapter up to the maximum rank.
 
 ### Tiered storage: GPU → CPU → disk/object store
 
@@ -147,15 +147,24 @@ def prefetch_adapters(needed_ids, registry, gpu_pool):
         for aid in needed_ids:
             if aid in gpu_pool:                  # already resident -> skip
                 continue
-            cpu_weights = registry.fetch_to_cpu(aid)   # CPU/SSD/object store
-            slot = gpu_pool.alloc(aid)                  # may evict an LRU adapter
+            # MUST be page-locked (pinned) CPU memory: with a pageable source,
+            # `non_blocking=True` silently degrades to a staged copy that is
+            # synchronous w.r.t. the host, and you get zero overlap.
+            cpu_weights = registry.fetch_to_cpu(aid)    # pinned warm pool (SSD/obj on miss)
+            slot = gpu_pool.alloc(aid)                  # evicts only ref_count == 0 adapters
             slot.copy_(cpu_weights, non_blocking=True)  # async H2D into the slot
 
-# Each scheduler step:
+# Each scheduler step N:
 #   1. pick the batch (requests + their adapter IDs)
-#   2. prefetch_adapters(...) on copy_stream
-#   3. run base+LoRA forward on compute_stream
-#   4. compute_stream.wait_stream(copy_stream)  before the LoRA kernel reads weights
+#   2. compute_stream.wait_stream(copy_stream)  # step N-1's prefetch has landed
+#   3. run base+LoRA forward for step N on compute_stream
+#   4. prefetch_adapters(step N+1's adapter IDs) on copy_stream  -> overlaps step N
+# The wait must precede the forward: two CUDA streams are unordered unless you
+# say otherwise, so a LoRA kernel launched before the wait can read a slot whose
+# H2D copy has not landed. And because eviction happens on the copy stream while
+# step N is still in flight, `gpu_pool.alloc` must honour the same ref-count
+# invariant as `ensure_resident` below -- never recycle a slot whose index is
+# already baked into the in-flight batch's `lora_idx`.
 ```
 
 !!! warning "The cold-adapter SLO cliff"
@@ -188,14 +197,14 @@ When the GPU pool is full and a new adapter must be loaded, the registry evicts 
 A naïve "first-come-first-served, sort by adapter" scheduler is throughput-optimal but unfair: one tenant who floods the queue can starve everyone else, and a popular adapter that is always resident gets a latency advantage over a cold one. Production servers add fairness controls:
 
 - **Per-tenant token-bucket rate limits** to cap any single tenant's share of the batch.
-- **Max-adapters-per-batch** so a single step's LoRA kernel does not degenerate into thousands of tiny segments (each segment has fixed launch overhead; too many tanks efficiency).
+- **Max-adapters-per-batch** so a single step's LoRA kernel does not degenerate into thousands of tiny segments. (The cost is *not* extra kernel launches — SGMV is one fused launch and segments are grid blocks. It is that each additional distinct adapter adds another $2rd$ weights to stream — the $N_\text{adapters}\cdot 2r/d$ tax of §7.14.2 — while leaving that segment's GEMM tile mostly empty, so arithmetic intensity and occupancy collapse.)
 - **Weighted fair queuing** across tenants so batch slots are allocated proportionally to entitlements, not arrival order.
 - **Reserved/pinned adapters** for premium tenants guaranteed GPU residency (a latency SLO), traded against shared pool capacity.
 
 There is a genuine tension here: sorting the batch by adapter maximizes kernel efficiency (few, large segments) but can violate per-request latency fairness; honoring strict FCFS order maximizes fairness but can produce a batch with many tiny adapter segments. Real schedulers interpolate — they sort *within* a fairness-bounded window.
 
 !!! tip "Cap the adapters-per-step, not just the batch size"
-    The dominant inefficiency in multi-LoRA decode is not batch size — it is *adapter cardinality* in the batch. A batch of 128 tokens over 4 adapters runs a tight SGMV; the same 128 tokens over 128 adapters runs 128 microscopic segments dominated by launch and gather overhead. Configure `max_loras` (vLLM) / max concurrent adapters per step, and let the scheduler defer overflow adapters to the next step. This single knob often moves throughput more than any kernel tuning.
+    The dominant inefficiency in multi-LoRA decode is not batch size — it is *adapter cardinality* in the batch. A batch of 128 tokens over 4 adapters runs a tight SGMV; the same 128 tokens over 128 adapters runs 128 microscopic single-row segments — 32× more adapter bytes streamed, each segment's GEMM tile almost entirely padding. Configure `max_loras` (vLLM) / max concurrent adapters per step, and let the scheduler defer overflow adapters to the next step. This single knob often moves throughput more than any kernel tuning.
 
 ---
 
@@ -269,7 +278,7 @@ Every major open-source engine now ships production multi-LoRA support built on 
 
 **vLLM** exposes LoRA as a first-class serving feature. You launch with `--enable-lora`, set `--max-loras` (max distinct adapters per *batch/step*) and `--max-cpu-loras` (the CPU warm-pool size), and bound rank with `--max-lora-rank`. Adapters can be registered statically at launch (`--lora-modules name=path ...`) or **loaded dynamically at runtime** via the API, which is what makes a true multi-tenant platform possible — tenants upload adapters and route to them by name without restarting the server. Internally vLLM uses Punica-style SGMV/BGMV kernels (and Triton variants), preallocates a fixed set of stacked adapter slots sized by `--max-loras`/`--max-lora-rank` — a pool *separate* from the KV block allocator, unlike S-LoRA's unified paging — and an LRU manager handles GPU↔CPU residency. Requests carry a `LoRARequest(name, id, path)` so the scheduler knows which adapter each belongs to.
 
-**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the per-adapter prefix-cache keying of §7.14.5 is native — adapters get their own subtrees). You launch with `--lora-paths name=path ...`, cap adapter cardinality with `--max-loras-per-batch` (the knob of §7.14.4), bound rank with `--max-lora-rank`, and select the kernel backend with `--lora-backend` (a Triton SGMV implementation is the default). Adapters can also be added and removed at runtime through `/load_lora_adapter` and `/unload_lora_adapter` HTTP endpoints. Recent releases add an opt-in **overlapped adapter loading** mode that streams adapter weights on a side CUDA stream to hide cold-adapter transfer behind compute (§7.14.3), reported to cut median TTFT substantially on large-adapter workloads at the cost of occasionally fragmenting multi-adapter prefill batches — check `python -m sglang.launch_server --help` for the current flag name, since these LoRA server args are still moving. Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
+**SGLang** similarly supports multi-LoRA, sorting requests by adapter to form efficient SGMV segments and integrating adapter residency with its RadixAttention KV cache (so the per-adapter prefix-cache keying of §7.14.5 is native — adapters get their own subtrees). You launch with `--lora-paths name=path ...`, cap adapter cardinality with `--max-loras-per-batch` (the knob of §7.14.4), bound rank with `--max-lora-rank`, and select the kernel backend with `--lora-backend` (the chunked-SGMV backend `csgmv` is the default, reported 20–80% faster at high concurrency than the older `triton` backend). Adapters can also be added and removed at runtime through `/load_lora_adapter` and `/unload_lora_adapter` HTTP endpoints. Recent releases add an opt-in **overlapped adapter loading** mode that streams adapter weights on a side CUDA stream to hide cold-adapter transfer behind compute (§7.14.3), reported to cut median TTFT substantially on large-adapter workloads at the cost of occasionally fragmenting multi-adapter prefill batches — check `python -m sglang.launch_server --help` for the current flag name, since these LoRA server args are still moving. Its structured-program model means a single program can fan out across adapters, and its scheduler co-optimizes the LoRA batch with prefix sharing.
 
 **TensorRT-LLM** supports multi-LoRA too, but with an ahead-of-time twist worth internalizing: because the engine is *compiled*, the LoRA plugin, the set of target modules, and the **maximum rank** must be declared at `trtllm-build` time and are baked into the engine. Adapter *weights* are still dynamic at runtime (its LoRA manager keeps GPU and CPU adapter caches, sized like vLLM's `max_loras`/`max_cpu_loras`), but a tenant who trains a rank-128 adapter for an engine built at rank 64, or who adapts the MLP when only attention modules were compiled in, cannot be served without rebuilding. If you run a fine-tuning SaaS on TensorRT-LLM, publish the supported rank ceiling and target-module set as part of your product contract. See [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html).
 
@@ -585,7 +594,15 @@ def load_peft_adapter(path, max_rank=64, allowed_modules=("q_proj", "k_proj",
     r, alpha = int(cfg["r"]), float(cfg["lora_alpha"])
     if r > max_rank:
         raise ValueError(f"rank {r} exceeds engine ceiling {max_rank}")
-    bad = set(cfg["target_modules"]) - set(allowed_modules)
+    # PEFT's target_modules is list[str] *or* a bare str (a regex, or the
+    # literal "all-linear"). `set("all-linear")` would iterate characters and
+    # reject a valid adapter with a nonsense message, so normalize first.
+    tm = cfg["target_modules"]
+    if isinstance(tm, str):
+        raise ValueError(f"target_modules must be an explicit list, got {tm!r}; "
+                         "resolve regex/'all-linear' forms against the base model "
+                         "before upload")
+    bad = set(tm) - set(allowed_modules)
     if bad:
         raise ValueError(f"adapter adapts unsupported modules: {sorted(bad)}")
 
@@ -736,7 +753,12 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
 
     So the LoRA correction adds only about 1.6% to the FLOPs of this projection — the essence of why LoRA is cheap to *compute*.
 
-    **If you materialize $\Delta W = \frac{\alpha}{r}BA$ instead:** building $\Delta W$ costs a $d_\text{out}\times d_\text{in}$ full matrix, and adding it produces a dense weight, so the effective per-token cost becomes another full $d_\text{in} d_\text{out} = 16{,}777{,}216$ MACs — a **100%** overhead, $64\times$ more than the parenthesized path ($16{,}777{,}216 / 262{,}144 = 64$). This is exactly why we never materialize $BA$: the parenthesization is the entire point.
+    **If you materialize $\Delta W = \frac{\alpha}{r}BA$ instead:** be careful, because the answer splits in two.
+
+    - **Merged into $W_0$ (single-tenant).** Once $\Delta W$ is folded in you hold one dense matrix, so the per-token cost is exactly $d_\text{in}d_\text{out} = 16{,}777{,}216$ MACs — **0%** per-token overhead. That is precisely why merging is FLOP-optimal for a single tenant (§7.14.1). What you pay instead is a *one-time* construction cost of $r\,d_\text{in} d_\text{out} = 32 \times 4096 \times 4096 \approx 5.37\times10^8$ MACs (32 tokens' worth of base GEMM), an extra $d_\text{in}d_\text{out}$ of weight memory per adapter, and — fatally — the loss of multi-tenancy.
+    - **Kept as a separate dense matrix (the only option over a shared base).** Now you compute $y = W_0 x + \Delta W x$, and the correction alone costs another full $d_\text{in}d_\text{out} = 16{,}777{,}216$ MACs — a **100%** overhead, $64\times$ more than the parenthesized path ($16{,}777{,}216 / 262{,}144 = 64$).
+
+    So in a multi-tenant server, where merging is off the table, materializing $BA$ costs you a clean 64× on the adapter path. This is exactly why we never materialize $BA$: the parenthesization is the entire point.
 
 **3.** You run a decode step on a shared 7B-shaped model. LoRA is applied to the four attention projections $q,k,v,o$, each with $d_\text{in}=d_\text{out}=4096$ and rank $r=16$, weights in fp16 (2 bytes). The decode batch has 48 tokens drawn from **24 distinct adapters**. Because decode is memory-bandwidth bound, estimate the "bandwidth tax" the LoRA weights impose: the bytes of LoRA weights that must be streamed, as a fraction of the base attention-projection weights streamed. Contrast this with the FLOP fraction of the same correction.
 

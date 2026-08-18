@@ -137,7 +137,7 @@ where BW is HBM bandwidth. The first term is the bandwidth-bound floor (weight s
 
 ### Latency SLOs in Practice
 
-Typical production SLOs take two forms:
+Typical production SLOs take three forms:
 - **TTFT (time-to-first-token)**: often 200–500 ms for interactive chat.
 - **TBT (time-between-tokens)**: often 30–80 ms/token for a streaming UX that feels "fast" (roughly 12–33 tokens/second perceived).
 - **P99 end-to-end latency** for a fixed-length response.
@@ -228,6 +228,8 @@ H100 arithmetic intensity breakeven batch size: 295
 
 Below $B^* \approx 295$ the decode step time is flat at ~42 ms per step (bandwidth-bound floor). Each new request added below this threshold contributes zero extra latency but produces one more output token — a pure win. Above this, each additional request adds proportional latency.
 
+One bookkeeping caveat before taking these figures literally: 140 GB of BF16 weights does not fit on one 80 GB H100 — a real deployment needs TP=2 (see the quantization table later in this chapter). The single-GPU numbers here are a *per-GPU-bandwidth idealization*, used to isolate the batching effect. Sharding across a TP=2 pair divides weight bytes and FLOPs by the same factor, so $B^\ast$ and the *shape* of the curve are unchanged; only the absolute floor moves, halving to $\approx 20.9$ ms against the pair's 6.7 TB/s aggregate bandwidth (at $\$10$/hour rather than $\$5$).
+
 {{fig:econ-decode-step-time-knee}}
 
 The practical lesson: on an H100-class bandwidth budget serving a 70B BF16 model *at negligible context length*, you can pack up to ~295 concurrent decoding sequences before latency starts climbing. That is the regime where `tokens/s/GPU` is maximized. But this model has a missing term, and at realistic context lengths that term dominates everything else in this chapter.
@@ -252,7 +254,7 @@ For Llama-3 70B ($n_q = 64$ query heads, $n_{\text{kv}} = 8$ GQA key/value heads
 
 Three consequences follow, and they overturn the naive picture:
 
-1. **The compute-bound knee never arrives.** Setting the two branches equal and solving for $B$ yields a *negative* root for any $S > 0$ on H100/70B: the KV term in the bandwidth branch grows faster in $B$ than the compute branch does. Decode does not transition from bandwidth-bound to compute-bound; it transitions from *weight*-bandwidth-bound to *KV*-bandwidth-bound.
+1. **The compute-bound knee stops arriving.** Setting the two branches equal and solving for $B$ gives $B^\ast(S) = 2P\,\text{FLOP/s} \big/ \left[\text{BW}\,(2P + F_{\text{attn}}(S)) - \text{kv}(S)\,\text{FLOP/s}\right]$, and that denominator is positive only while $B_{1/2} + n_q/n_{\text{kv}} > \text{AI}^\ast$ — on H100/70B, only while $S \lesssim 1{,}500$ tokens (and even at $S = 1{,}024$ the knee has already receded to $B^\ast \approx 950$). Beyond that the root goes *negative*: the KV term in the bandwidth branch grows faster in $B$ than the compute branch does, so at every context length people actually serve there is no knee at all. Decode does not transition from bandwidth-bound to compute-bound; it transitions from *weight*-bandwidth-bound to *KV*-bandwidth-bound.
 2. **Batching stops being free at $B_{1/2} = 2P / \text{kv}(S)$** — the batch size at which KV reads equal weight reads and step time has already doubled. This, not $B^\ast$, is the number your scheduler actually collides with.
 3. **Per-node decode throughput has a hard ceiling of $\text{BW} / \text{kv}(S)$ tokens/s** as $B \to \infty$. No amount of batching beats it, because in the limit every step is pure KV streaming.
 
@@ -423,7 +425,7 @@ For prefill-heavy workloads, a similar formula applies based on TTFT SLO and pre
 
     Suppose your API sees peak traffic of 50 requests/second, each generating an average of 400 output tokens. You are using A100 80GB GPUs with TP=1 serving a 13B model. The 13B model fits on one GPU with plenty of KV cache headroom.
 
-    Sustained decode throughput at batch≈110 (all bandwidth-bound): roughly 8,000 tokens/s per A100 (illustrative). Sanity-check it against the roofline before trusting it: 13B in BF16 is 26 GB of weights, so the streaming floor on a 2.0 TB/s A100 is $26/2000 \approx 13$ ms per step, and 110 sequences at a ~13.7 ms step is indeed ~8,000 tokens/s. A number like 8,000 tokens/s at batch 50 would have been *below* the bandwidth floor, i.e. impossible.
+    Sustained decode throughput at batch≈160 (bandwidth-bound): roughly 8,000 tokens/s per A100 (illustrative). Sanity-check it against the *honest* roofline — weights **and** KV — before trusting it. 13B in BF16 is 26 GB of weights, so the weights-only streaming floor on a 2.0 TB/s A100 is $26/2000 = 13$ ms per step. With GQA ($n_{\text{kv}} = 8$, $d = 128$, $L = 40$) each cached token costs $2 \times 8 \times 128 \times 40 \times 2 = 163{,}840$ bytes, so a sequence averaging $S \approx 512$ tokens of context carries $\text{kv}(S) \approx 0.084$ GB. At $B = 160$ a step moves $26 + 160 \times 0.084 \approx 39.4$ GB, i.e. ~19.7 ms, for $160 / 0.0197 \approx 8{,}100$ tokens/s. Two guardrails hold: the hard ceiling $\text{BW}/\text{kv}(S) \approx 23{,}800$ tok/s is comfortably above, and the 13.4 GB of KV cache fits in the ~54 GB left after weights. A number like 8,000 tokens/s at batch 50 would have been *below* even the weights-only floor, i.e. impossible. Note how fast this erodes with context: at $S = 4{,}096$ the ceiling drops to ~3,000 tok/s and batch 160 would need 107 GB of KV, so the plan below is only valid for the short-context workload assumed here.
 
     Target utilization = 0.70 (30% headroom for traffic spikes and cold starts).
 
@@ -824,7 +826,7 @@ Alert thresholds to set:
 
 ## Exercises
 
-**1.** (Conceptual) On a single H100 serving a 70B BF16 model, the chapter shows the decode step time is a flat ~42 ms per step for any batch size from 1 up to $B^* \approx 295$. Explain *why* adding a 50th concurrent decoding sequence to a batch that already has 49 adds zero extra latency, yet adding a sequence to a batch that already has 295 adds proportional latency. In one sentence, what physical resource is the system waiting on in each regime?
+**1.** (Conceptual) Using the chapter's per-GPU-bandwidth idealization for a 70B BF16 model on an H100 (a real 140 GB deployment is TP=2; the idealization keeps $2P/\text{BW}$ against one GPU's bandwidth so the batching effect is isolated), the decode step time is a flat ~42 ms per step for any batch size from 1 up to $B^* \approx 295$. Explain *why* adding a 50th concurrent decoding sequence to a batch that already has 49 adds zero extra latency, yet adding a sequence to a batch that already has 295 adds proportional latency. In one sentence, what physical resource is the system waiting on in each regime?
 
 ??? note "Solution"
     Below $B^*$, decode is **bandwidth-bound**. Each decode step must stream the full set of model weights ($2P$ bytes for BF16) from HBM exactly once, and that streaming time is fixed regardless of how many sequences are in the batch:
@@ -924,7 +926,7 @@ Alert thresholds to set:
 
     Off-peak the same formula with a lower $\lambda$ lets you scale down; at 10% load ($\lambda = 3$) you would need only $\lceil 1500 / 4200 \rceil = 1$ GPU, roughly a 75% cost reduction versus peak.
 
-**6.** (Implementation) Extend the chapter's `decode_step_time_ms` model to answer the economic question directly: write a function `dollars_per_1m_tokens(...)` that returns the cost per 1M output tokens for a given batch size, GPU rental rate, and weight precision. It should reuse `decode_step_time_ms` (converting one decode step into a sustained tokens/second rate) and the chapter's `$/1M` formula. Then use it to compare BF16 (`bytes_per_param=2`) against INT8 (`bytes_per_param=1`) for a 70B model on a single H100 at \$5.00/hour with batch size 64, and confirm the speedup matches the bandwidth-ratio prediction.
+**6.** (Implementation) Extend the chapter's `decode_step_time_ms` model to answer the economic question directly: write a function `dollars_per_1m_tokens(...)` that returns the cost per 1M output tokens for a given batch size, GPU rental rate, and weight precision. It should reuse `decode_step_time_ms` (converting one decode step into a sustained tokens/second rate) and the chapter's `$/1M` formula. Then use it to compare BF16 (`bytes_per_param=2`) against INT8 (`bytes_per_param=1`) for a 70B model on the chapter's single-H100 bandwidth idealization at \$5.00/hour with batch size 64, and confirm the speedup matches the bandwidth-ratio prediction.
 
 ??? note "Solution"
     One decode step produces exactly one new token per sequence, so a batch of $B$ produces $B$ tokens in `step_time` seconds; sustained throughput is $B / t_{\text{step}}$. Feed that into the chapter's cost formula.

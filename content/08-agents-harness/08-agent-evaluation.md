@@ -144,7 +144,7 @@ WebArena (Zhou et al., 2023) measures whether an agent can complete realistic we
 
 **Scoring.** Each task is binary (success/failure). The success criterion is verified by an automated checker that queries application state. Success rate across all tasks is the primary metric.
 
-**Running it.** You self-host the app containers (GitLab, a shopping site, a Reddit clone, a wiki) and point the benchmark at them through `WA_*` base-URL environment variables; the agent drives a real browser through Playwright. In practice most 2026 work does not use the original repo's runner directly but **BrowserGym** (ServiceNow), which wraps WebArena, VisualWebArena, WorkArena, MiniWoB and others behind one Gymnasium interface — `gym.make("browsergym/webarena.0")` returns an observation containing the accessibility tree, DOM, and screenshot, and accepts Python action strings like `click("a42")`. Its companion **AgentLab** handles parallel rollouts, reproducible experiment records, and trace viewing. Standardizing on one observation/action space is what makes cross-benchmark web-agent comparisons meaningful at all.
+**Running it.** You self-host the app containers (GitLab, a shopping site, a Reddit clone, a wiki) and point the benchmark at them through `WA_*` base-URL environment variables; the agent drives a real browser through Playwright. In practice most 2026 work does not use the original repo's runner directly but **BrowserGym** (ServiceNow), which wraps WebArena, VisualWebArena, WorkArena, MiniWoB and others behind one Gymnasium interface — `env = gym.make("browsergym/webarena.0")` gives you an `Env` whose `obs, info = env.reset()` yields an observation containing the accessibility tree, DOM, and screenshot, and whose `env.step(action)` accepts Python action strings like `click("a42")`. Its companion **AgentLab** handles parallel rollouts, reproducible experiment records, and trace viewing. Standardizing on one observation/action space is what makes cross-benchmark web-agent comparisons meaningful at all.
 
 WebArena scores for frontier models have grown substantially as agents learned to reason about HTML structure and leverage screenshots. It tests a different capability than SWE-bench: navigation and form-filling under real UI constraints rather than code editing.
 
@@ -172,7 +172,7 @@ tau-bench (Yao et al., 2024) evaluates tool-augmented agents in *realistic custo
 
 - *Simulated user.* The "customer" is another LLM instructed to behave realistically, including asking follow-up questions and providing information in pieces. This tests turn-level conversation management.
 - *Policy compliance.* Many tasks have explicit policy rules (e.g., "refunds are only allowed within 30 days"). The agent must follow policy while still satisfying the user, creating a tension that tests instruction-following under constraint.
-- *Multi-turn scoring.* tau-bench records whether the agent correctly resolves the issue AND whether it violates any policy, producing a two-dimensional score.
+- *State-based binary reward.* A task scores 1 only if the final database state matches the annotated goal state (compared by hash) and every piece of required information was actually communicated back to the user; otherwise 0. Policy violations are caught *implicitly*: an out-of-window refund mutates the database into a state that no longer matches the goal, zeroing the same single reward. Results are reported as pass@1 and pass^k over that binary reward.
 
 tau-bench is particularly relevant for production deployments of service agents. Its simulated-user design avoids the need for human annotators during evaluation while keeping the dynamics realistic. Its 2025 successor, τ²-bench (Sierra Research), extends this to a *dual-control* setting where the simulated user also holds tools and must act in a shared state, exposing coordination failures that the original single-control design could not.
 
@@ -194,7 +194,7 @@ terminal-bench is newer and smaller than SWE-bench or WebArena, but it isolates 
 
 | Benchmark | Domain | Key Feature |
 |-----------|--------|-------------|
-| AgentBench (Liu et al., 2023) | Multi-domain | 8 environments: OS, DB, code, web |
+| AgentBench (Liu et al., 2023) | Multi-domain | 8 environments: OS, DB, knowledge graph, card game, puzzles, household, web shopping, web browsing |
 | OSWorld | Desktop GUI | Screenshot-based computer use |
 | InterCode | Bash/SQL | Interactive code execution |
 | AppAgent / ScreenAgent | Mobile/Desktop | Vision-based GUI interaction |
@@ -338,7 +338,7 @@ def compare_trajectories(
 
 ## The pass@k Estimator
 
-For stochastic agents, running a single sample per task produces an unreliable estimate. The **pass@k** metric, originally introduced for code generation in the Codex paper (Chen et al., 2021), addresses this by measuring whether *at least one* of $k$ independent samples solves the task.
+For stochastic agents, running a single sample per task produces an unreliable estimate. The **pass@k** metric — introduced for code generation as "success rate at budget $k$" by Kulal et al. (SPoC, 2019) and given its now-standard *unbiased* estimator in the Codex paper (Chen et al., 2021) — addresses this by measuring whether *at least one* of $k$ independent samples solves the task.
 
 ### Definition
 
@@ -611,10 +611,12 @@ Data contamination — the presence of benchmark tasks or solutions in pretraini
 
 **Detection methods and their limits.**
 
-1. *N-gram overlap detection* (Membership Inference, Min-K% Prob): Check whether the test instances appear verbatim in training. Works for exact matches, fails for paraphrased or semantically equivalent content.
-2. *Temporal splits*: Only use issues filed and resolved after a model's training cutoff. This is what SWE-bench Verified does *not* give you — its curation targets specification clarity and test validity, not task dates — so reach for a successor with a genuinely held-out or recency-filtered split (SWE-bench Pro) if contamination is the concern.
-3. *Differential perturbation*: Create modified versions of the task (rename variables, change error message) and check if the model's solve rate drops. A large drop suggests memorization; robustness suggests generalization.
-4. *Canary insertion*: Insert synthetic "planted" tasks into the benchmark and check if any model exhibits disproportionately high solve rates on them.
+1. *N-gram / substring overlap*: search the training corpus for verbatim matches of the test instances. Requires corpus access, and fails for paraphrased or semantically equivalent content.
+2. *Probability-based membership inference* (Min-K% Prob, Min-K%++): score a candidate text by the average log-probability of its $k\%$ *lowest-probability* tokens — unseen text tends to contain a few very-low-probability outlier tokens, memorized text does not. Needs only token logprobs, never the training corpus, but is noisy at the single-instance level.
+3. *Temporal splits*: Only use issues filed and resolved after a model's training cutoff. This is what SWE-bench Verified does *not* give you — its curation targets specification clarity and test validity, not task dates — so reach for a successor with a genuinely held-out or recency-filtered split (SWE-bench Pro) if contamination is the concern.
+4. *Differential perturbation*: Create modified versions of the task (rename variables, change error message) and check if the model's solve rate drops. A large drop suggests memorization; robustness suggests generalization.
+5. *Canary strings*: embed a unique GUID in the distributed benchmark files (the BIG-bench canary GUID is the canonical example) and later probe whether a model can reproduce it — evidence that the benchmark file itself was crawled.
+6. *Matched fresh tasks*: author new tasks of the same difficulty that post-date every model's cutoff. Because they cannot have been crawled, they act as controls: contamination is indicated when solve rate on the *original* tasks is markedly higher than on the fresh ones.
 
 **Practical guidance.** For any claimed state-of-the-art result on an agent benchmark:
 - Check the model's knowledge cutoff against the benchmark's task date range.
@@ -629,7 +631,7 @@ Data contamination — the presence of benchmark tasks or solutions in pretraini
 
 Stepping back, what does the trajectory of agent benchmark scores tell us about real progress?
 
-**SWE-bench as a case study.** In late 2023, the original SWE-bench paper's headline result was a best resolve rate of **1.96%** on the full test set (Claude 2) — and that was *with* retrieval feeding the model candidate files, not without it. By early 2025, leaderboard-leading entries were already reporting resolve rates past 60% on SWE-bench Verified, and by 2026 frontier systems cluster near saturation — on the order of 90% — so attention has shifted to harder, contamination-resistant successors such as SWE-bench Pro, where resolve rates remain below 25%. That is a genuine capability jump — the tasks are real software engineering problems and the evaluation is objective.
+**SWE-bench as a case study.** In late 2023, the original SWE-bench paper's headline result was a best resolve rate of **1.96%** on the full test set (Claude 2) — and that was *with* retrieval feeding the model candidate files, not without it. By early 2025, leaderboard-leading entries were already reporting resolve rates past 60% on SWE-bench Verified, and by 2026 frontier systems cluster in the low-to-mid 80s and the benchmark's remaining headroom is largely noise and ambiguous instances — so attention has shifted to harder, contamination-resistant successors such as SWE-bench Pro, where resolve rates remain below 25%. That is a genuine capability jump — the tasks are real software engineering problems and the evaluation is objective.
 
 But much of the improvement came from scaffolding, not just the base model. The signal is real, but it is a *system* signal: (model + harness + compute budget) rather than model-in-isolation.
 
@@ -732,7 +734,7 @@ def run_eval(
     fp = config.fingerprint()
     results_path = output_dir / f"eval_{fp}.jsonl"
 
-    all_per_task = []  # list of (n_correct, n_total) per task
+    all_per_task = []  # list of (n_total, n_correct) per task — the (n, c) order pass_at_k wants
 
     with open(results_path, "w") as out_f:
         for task in tasks:
@@ -783,7 +785,7 @@ def run_eval(
 │   Verified     │              │                  │ (≈500 tasks)            │
 │ WebArena       │ Web browsing │ success rate     │ Sandboxed web apps      │
 │ GAIA           │ General AI   │ exact-match acc  │ 3 difficulty levels     │
-│ tau-bench      │ Customer svc │ resolve + policy │ Simulated user partner  │
+│ tau-bench      │ Customer svc │ pass@1 / pass^k  │ Simulated user partner  │
 │ terminal-bench │ Bash/Linux   │ success rate     │ Docker-isolated shell   │
 │ AgentBench     │ Multi-domain │ mean success     │ 8 environments          │
 │ OSWorld        │ Desktop GUI  │ success rate     │ Screenshot-based        │
@@ -807,7 +809,7 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
     - In production, augment pass@k with cost-normalized metrics (tasks solved per dollar) and ablation studies that separate model contribution from scaffold contribution.
 
 !!! sota "State of the Art & Resources (2026)"
-    Agent evaluation has matured rapidly: SWE-bench Verified scores rose from under 2% in late 2023 to roughly 90% by 2026 — near saturation for frontier systems — driven by both stronger base models and scaffold engineering. That saturation has pushed the field toward harder, contamination-resistant successors (SWE-bench Pro, Terminal-Bench 2.0, τ²-bench) and toward richer metrics — cost-normalized solve rates, harness-ablated comparisons, and pass^k reliability — to separate genuine capability gains from scaffolding and contamination effects.
+    Agent evaluation has matured rapidly: SWE-bench Verified scores rose from under 2% in late 2023 to the low-to-mid 80s by 2026 — near saturation for frontier systems — driven by both stronger base models and scaffold engineering. That saturation has pushed the field toward harder, contamination-resistant successors (SWE-bench Pro, Terminal-Bench 2.0, τ²-bench) and toward richer metrics — cost-normalized solve rates, harness-ablated comparisons, and pass^k reliability — to separate genuine capability gains from scaffolding and contamination effects.
 
     **Foundational work**
 
@@ -845,7 +847,8 @@ For how these evaluations connect to training, see [Agentic & Multi-Turn RL](../
 - Zhou et al., "WebArena: A Realistic Web Environment for Building Autonomous Agents" (2023).
 - Mialon et al., "GAIA: A Benchmark for General AI Assistants" (2023).
 - Yao et al., "tau-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains" (2024).
-- Chen et al., "Evaluating Large Language Models Trained on Code" (Codex, 2021) — introduced the pass@k estimator.
+- Kulal et al., "SPoC: Search-based Pseudocode to Code" (NeurIPS 2019) — introduced the pass@k / "success rate at budget $k$" metric.
+- Chen et al., "Evaluating Large Language Models Trained on Code" (Codex, 2021) — introduced the unbiased pass@k estimator.
 - Liu et al., "AgentBench: Evaluating LLMs as Agents" (2023) — multi-environment benchmark.
 - Xie et al., "OSWorld: Benchmarking Multimodal Agents for Open-Ended Tasks in Real Computer Environments" (2024).
 - Yehudai et al., "Survey on Evaluation of LLM-based Agents" (2025) — the broadest map of the agent-eval literature.

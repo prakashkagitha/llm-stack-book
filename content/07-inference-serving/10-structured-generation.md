@@ -75,8 +75,10 @@ The loop continues until an EOS token is sampled *and* the FSM is in an acceptin
     Suppose the model is at $q_0$ with logits $\ell$.  We need to allow only tokens
     whose decoded text is a run of 1–4 decimal digits. With a tokenizer that splits
     every digit into its own token (Llama-2 / Mistral SentencePiece does exactly
-    this), those are exactly the 10 single-digit tokens (often at indices like
-    15, 16, ..., 24 — exact positions depend on the tokenizer).
+    this), those are exactly the 10 single-digit tokens. Their ids are
+    tokenizer-specific: in GPT-2-style byte-level BPE `"0"`–`"9"` land at ids
+    15–24, whereas in the Llama-2 / Mistral SentencePiece vocabulary ids 15–24
+    are byte tokens (`<0x0C>` …) and the digits live far up in the vocabulary.
 
     Out of 32,000 tokens, at most 10 are allowed: masking ratio ≈ 99.97%.
     After one digit token, we're in $q_1$; after two more we're in $q_3$.
@@ -99,7 +101,7 @@ For a regex with $s$ states and vocabulary size $V$:
 
 - **Naive per-step mask computation:** For each token $v$, simulate the FSM over `decode(v)` starting from the current state. Cost is $O(V \cdot L_{\max})$ per step, where $L_{\max}$ is the *longest* token in bytes — a few dozen for a 128k BPE vocabulary, though the *average* token is only 4–8 bytes and the simulation short-circuits at the first dead transition. Taking 8 bytes as the practical average, $V = 128{,}000$ gives roughly 1M operations per step — acceptable for a single sequence but a bottleneck for batched serving.
 
-- **Pre-compiled transition table:** Pre-compute the full $|Q| \times V$ mask matrix once at load time. Lookup is $O(1)$ per step. Memory cost is $|Q| \cdot V$ bits. For 50 states and $V = 128{,}000$, this is about 800 KB — completely negligible. Outlines and XGrammar both take this approach.
+- **Pre-compiled transition table:** Pre-compute the full $|Q| \times V$ mask matrix once at load time. Lookup is $O(1)$ per step. Memory cost is $|Q| \cdot V$ bits. For 50 states and $V = 128{,}000$, this is about 800 KB — completely negligible. Outlines takes exactly this approach for regular (regex/DFA) constraints. XGrammar cannot do it wholesale for context-free grammars — a pushdown automaton has no finite state set to enumerate, since the configuration is (stack contents × sub-state) — so it precomputes masks only for the *context-independent* part, keyed by grammar-rule position, and evaluates the rest against the live stack each step (see below).
 
 ## Beyond Regular Languages: Pushdown Automata and CFGs
 
@@ -158,7 +160,8 @@ def build_fsm_index(
     Pre-computes the full transition table for constrained decoding.
     """
     # Step 1: compile regex to NFA, convert to DFA (standard automaton ops)
-    fsm = regex_to_dfa(regex_pattern)  # returns (states, transitions, start, accepts)
+    # Returns an object exposing .states, .transitions, .start, .accepts
+    fsm = regex_to_dfa(regex_pattern)
     
     index: Dict[int, Set[int]] = {}
     dead_state = -1
@@ -318,8 +321,8 @@ The Earley parser operates in $O(n^3)$ time in the worst case for ambiguous gram
 
 Before FSM-based libraries became mature, jsonformer (2023) took a simpler approach: **structural scaffolding**. Rather than computing valid-token masks, jsonformer:
 
-1. Generates the structural tokens of the JSON (`{`, `}`, `[`, `]`, `:`, `,`, `"`, `"`, `true`, `false`, `null`) itself using deterministic rules based on the schema.
-2. Only asks the LLM to generate the *value content* — the actual strings, numbers, and booleans — with minimal structural overhead.
+1. Generates the structural tokens of the JSON (`{`, `}`, `[`, `]`, `:`, `,`, `"`) itself using deterministic rules based on the schema — including the key names, which the schema already fixes.
+2. Only asks the LLM to generate the *value content* — the actual strings, numbers, and booleans (a boolean is chosen by comparing the model's probabilities for the `true` and `false` continuations) — with minimal structural overhead.
 
 This works well for simple flat schemas but fails for deeply nested or recursive structures. It also doesn't generalize beyond JSON. FSM-based approaches are strictly more general, and jsonformer's technique is largely superseded — though it is instructive as a motivation for why the automaton approach is needed.
 
@@ -353,21 +356,22 @@ def can_extend(pattern: str, prefix: str) -> bool:
     Returns True if `prefix` is either a full match or a valid *prefix*
     of a string that could match `pattern`.
 
-    We check prefix validity by attempting a partial match (ANCHORED start,
-    partial end). Python's re module supports this via re.match with a
-    modified pattern that allows trailing content.
+    We need the prefix to be consumed *entirely* by the pattern (no leftover
+    trailing characters) while the pattern is allowed to be only partly
+    satisfied. The stdlib `re` module cannot express this — it has no notion of
+    a partial match — so we use the third-party `regex` library's `partial=True`.
     """
-    # Wrap pattern: the prefix must match the *start* of the pattern.
-    # We check if there exists some completion such that pattern matches.
-    # Approximation: check if `re.match(pattern, prefix)` succeeds OR
-    # if `re.match(pattern + '.*', prefix)` would succeed — but this is tricky.
-    # Robust approach: use regex with partial matching via the `regex` library.
+    # The condition we want: "there exists a completion s such that
+    # prefix + s fully matches the pattern."
     try:
         import regex  # pip install regex
         # `partial=True` is a keyword argument on the match call, not a flag.
         # It returns a match object both for a complete match and for a prefix
         # that could still be completed (check `m.partial` to tell them apart).
-        m = regex.match(pattern, prefix, partial=True)
+        # Use `fullmatch`, NOT `match`: `match` is unanchored at the end, so it
+        # would happily accept "2019-01-01, and then" (the pattern matches a
+        # *prefix* of it) and the constraint would silently dissolve.
+        m = regex.fullmatch(pattern, prefix, partial=True)
         return m is not None
     except ImportError:
         # Fallback: check if the full pattern matches prefix exactly
@@ -758,7 +762,7 @@ A naive mental model suggests that constrained decoding adds latency to every de
 
 ### Overlap With the Model Forward Pass
 
-The model forward pass and the mask computation are on different hardware resources (GPU for the forward pass, CPU or GPU for the automaton logic). XGrammar is designed to run mask computation *concurrently* with the model forward pass using separate CPU threads. While the GPU executes the transformer layers for step $t$, the CPU is computing the mask for step $t+1$ by advancing the automaton from step $t-1$'s sampled token.
+The model forward pass and the mask computation are on different hardware resources (GPU for the forward pass, CPU or GPU for the automaton logic). XGrammar is designed to run mask computation *concurrently* with the model forward pass using separate CPU threads. While the GPU executes the transformer layers for step $t$, the CPU computes the mask for step $t$ by advancing the automaton with step $t-1$'s sampled token — the only input it needs, and one that is already available when the forward pass starts. The mask is therefore ready the instant the logits land.
 
 This overlap means the wall-clock cost of constrained decoding is approximately:
 
@@ -898,7 +902,7 @@ The principled fix is to treat $\prod_t Z_t$ as an importance weight and run man
 
 The most insidious class of bugs in constrained generation arises from tokenization boundaries. Consider the pattern `r"true|false"` applied to a BPE tokenizer. The string `true` might be tokenized as a single token `true` (token ID 1234) or as the pair `tr` + `ue` depending on context. The FSM must be computed over the *decoded* token strings (bytes), not the token IDs directly. Libraries handle this, but custom implementations frequently get it wrong.
 
-A specific failure mode: a regex that allows the character sequence `t-r-u-e` might incorrectly allow token `"truth"` because after consuming `t`, `r`, `u`, the FSM is in a state that also accepts `th` — if the FSM is character-level but the token is `"tr"`, the simulation must verify that `"tr"` leaves the FSM in a live state (it does) *and* that the remaining suffix `"ue"` can continue from that live state.
+A specific failure mode: a checker that only tests whether the token *shares a prefix* with an expected string — `token_str.startswith(...)` — would allow the token `"truth"` under the pattern `r"true|false"`, because `"truth"` and `"true"` share the prefix `tru`. Proper character-by-character simulation rejects it: after consuming `t`, `r`, `u` the DFA state accepts only `e`, so the fourth character `t` of `"truth"` drives it into the dead state. The multi-character token `"tr"`, by contrast, survives — every one of its characters advances the FSM to a live state — and that live state is all the simulation needs to record; the continuation `ue` will be checked when it arrives as a later token.
 
 ```python
 # Bug: naive check that doesn't properly simulate multi-char tokens

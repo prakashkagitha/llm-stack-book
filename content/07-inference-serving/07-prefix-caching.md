@@ -25,7 +25,7 @@ This gives us a strong guarantee: **if two requests share the token-level prefix
 The same logic extends to the *sequence of positions*. Most modern models use relative or rotary (RoPE) positional encodings (see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html)), which embed position information into the key and query vectors. Because both the token IDs *and* the positions are deterministic from the prefix, the KV cache is still reusable as long as the prefix always occupies positions $1 \dots P$ — which is the common case for system prompts that sit at the start of a context.
 
 !!! warning "RoPE and prefix cache correctness"
-    With absolute positional encodings (the original sinusoidal scheme), the position of a token in the overall sequence is baked into the KV vectors. If a prefix is appended mid-conversation rather than placed at position 0, the cached KVs from a prior run at position 0 would be **incorrect**. Most production systems sidestep this by requiring that cached prefixes always start at position 0 — which is naturally satisfied by system-prompt reuse and few-shot headers. Be cautious with implementations that try to insert a cached block at an arbitrary offset with a non-RoPE model.
+    With absolute positional encodings (the original sinusoidal scheme), the position of a token in the overall sequence is baked into the KV vectors. If a prefix is appended mid-conversation rather than placed at position 0, the cached KVs from a prior run at position 0 would be **incorrect**. Most production systems sidestep this by requiring that cached prefixes always start at position 0 — which is naturally satisfied by system-prompt reuse and few-shot headers. Be cautious with *any* implementation that inserts a cached block at an arbitrary offset: RoPE is not the safe case here, because it rotates each key by an angle proportional to its **absolute** position, so a key cached at position $p$ is just as invalid at $p + \delta$ as a sinusoidal one. RoPE is merely the *recoverable* case — rotations compose, so cached keys can be re-rotated by the offset $\delta$ (this is what prompt-module and KV-blending systems do). With learned-absolute encodings there is no such fix-up.
 
 ---
 
@@ -224,7 +224,7 @@ class RadixTree:
         return idx, matched_kv
 ```
 
-The implementation above shows the essential structure. In production (e.g., the SGLang codebase), each `kv` entry is a physical GPU memory block ID rather than a bytes blob (so the per-edge list is per *block*, not per token), and the tree nodes carry reference counts so the memory manager knows which blocks are actively being read by running requests.
+The implementation above shows the essential structure. In production (e.g., the SGLang codebase), each `kv` entry is a physical KV-page reference rather than a bytes blob, and the tree nodes carry reference counts so the memory manager knows which blocks are actively being read by running requests. SGLang's page size (`--page-size`) defaults to **1 token**, so the per-edge list really is per token and a match can stop at any token boundary; raising `--page-size` above 1 trades that fine granularity for cheaper bookkeeping and makes the edge list per *page* instead.
 
 ---
 
@@ -250,6 +250,12 @@ class APCBlockAllocator:
         self.free_blocks: list[int] = list(range(num_blocks))
         # Map from content hash -> physical block id
         self.prefix_cache: dict[int, int] = {}
+        # Reverse map block id -> content hash, so eviction never has to scan
+        # prefix_cache (that linear scan is what V1 removed to get O(1) evict).
+        self.block_to_hash: dict[int, int] = {}
+        # How many *running* requests currently map each block. Section 7.7.6's
+        # invariant: a block with ref_count > 0 is never evicted.
+        self.ref_count: dict[int, int] = {}
         # LRU ordering: block_id -> None, oldest first. An OrderedDict gives
         # O(1) "promote to most-recent" and O(1) "pop the oldest"; a plain
         # append-only timestamp list would NOT be an LRU, because a hot block's
@@ -292,6 +298,7 @@ class APCBlockAllocator:
                 if still_contiguous:
                     num_cached += 1
                 self._touch(phys_id)
+                self._acquire(phys_id)
             else:
                 # Cache miss: allocate a fresh physical block.
                 # Evict if necessary. A later block may still hash-hit (its
@@ -303,6 +310,7 @@ class APCBlockAllocator:
                     self._evict_lru()
                 phys_id = self.free_blocks.pop()
                 self._touch(phys_id)
+                self._acquire(phys_id)
                 block_ids.append(phys_id)
                 # Do NOT publish the hash yet: the block's KV tensors do not
                 # exist until prefill writes them, and a concurrent request
@@ -321,6 +329,7 @@ class APCBlockAllocator:
         """
         for h, phys_id in self.pending_publish:
             self.prefix_cache[h] = phys_id
+            self.block_to_hash[phys_id] = h
             self._touch(phys_id)
         self.pending_publish.clear()
 
@@ -329,16 +338,48 @@ class APCBlockAllocator:
         self.lru_order[block_id] = None
         self.lru_order.move_to_end(block_id)
 
+    def _acquire(self, block_id: int):
+        self.ref_count[block_id] = self.ref_count.get(block_id, 0) + 1
+
+    def release(self, block_ids: list[int]):
+        """
+        Called when a request finishes. Its blocks stay in `prefix_cache` (that
+        is the whole point), but they become evictable again.
+        """
+        for block_id in block_ids:
+            self.ref_count[block_id] = max(0, self.ref_count.get(block_id, 0) - 1)
+
     def _evict_lru(self):
-        """Remove the least-recently-used cached block."""
-        while self.lru_order:
-            block_id, _ = self.lru_order.popitem(last=False)  # oldest first
-            # Remove from prefix cache if it's still there and not pinned.
-            for k, v in list(self.prefix_cache.items()):
-                if v == block_id:
-                    del self.prefix_cache[k]
-                    self.free_blocks.append(block_id)
-                    return
+        """
+        Free the least-recently-used *unreferenced* cached block.
+
+        Two invariants worth spelling out. (1) A block with ref_count > 0 is
+        mapped into a running request's block table, so evicting it would hand
+        that request someone else's KV — skip it and keep its LRU position.
+        (2) A block with no published hash (still in `pending_publish`) is held
+        by its allocating request, so rule (1) already protects it; without the
+        ref-count it would be silently dropped from `lru_order` and leaked.
+        """
+        skipped: list[int] = []
+        try:
+            while self.lru_order:
+                block_id, _ = self.lru_order.popitem(last=False)  # oldest first
+                if self.ref_count.get(block_id, 0) > 0:
+                    skipped.append(block_id)
+                    continue
+                h = self.block_to_hash.pop(block_id, None)
+                if h is not None:
+                    del self.prefix_cache[h]      # O(1): no scan of the cache
+                self.free_blocks.append(block_id)
+                return
+            raise RuntimeError(
+                "out of KV blocks: every block is referenced by a running "
+                "request — the scheduler must preempt or queue instead")
+        finally:
+            # Put the skipped blocks back at the old end, in their original order.
+            for block_id in reversed(skipped):
+                self.lru_order[block_id] = None
+                self.lru_order.move_to_end(block_id, last=False)
 ```
 
 ### RadixAttention vs vLLM APC: a comparison
@@ -347,7 +388,7 @@ class APCBlockAllocator:
 |-----------|-------------------------|----------------------------------|
 | Data structure | Radix trie | Flat hash table + LRU list |
 | Prefix matching | Trie traversal, $O(P)$ | Block-by-block hash lookup, $O(P/B)$ |
-| Partial-block sharing | No (block-granularity) | No (block-granularity) |
+| Partial-block sharing | Yes (token granularity: `--page-size` defaults to 1) | No (block granularity, `--block-size` tokens) |
 | Multi-turn chains | First-class (tree paths) | Supported via block reuse |
 | Implementation complexity | Higher | Lower |
 | Eviction granularity | Node (variable length) | Block (fixed size) |
@@ -399,7 +440,7 @@ On the vLLM V1 engine, APC runs with normal-priority LRU eviction by default (di
 A rough rule of thumb: allocate 15–25 % of the KV cache budget to "warm" cached blocks for a production system that uses a static system prompt. If you have a 40 GB GPU KV budget and a 2,000-token system prompt that accounts for 80 % of traffic, the warm portion for that prompt is a few hundred megabytes — $2000 \times 80 \times 4096 \approx 655$ MB on the 70B model of the worked example below, or $\approx 260$ MB on an 8B model (32 layers, 8 KV heads, head dim 128). That is well under 2 % of the budget for a single prefix. The budget concern arises with many distinct prefixes (e.g., per-user system prompts or a large set of few-shot demonstrations), where the aggregate footprint can run into gigabytes.
 
 !!! tip "Practitioner tip"
-    Monitor the metric `prefix_cache_hit_rate` (exposed by both SGLang and vLLM via their metrics endpoints). A hit rate below 50 % on a workload with a static system prompt usually indicates a configuration error — either prefix caching is not enabled or the system prompt is being varied (e.g., injecting a timestamp into it, which defeats hashing).
+    Monitor the prefix-cache hit rate (both SGLang and vLLM expose it on their metrics endpoints; on vLLM V1 you compute it as `vllm:gpu_prefix_cache_hits_total / vllm:gpu_prefix_cache_queries_total`). A hit rate below 50 % on a workload with a static system prompt usually indicates a configuration error — either prefix caching is not enabled or the system prompt is being varied (e.g., injecting a timestamp into it, which defeats hashing).
 
 ---
 
@@ -436,13 +477,15 @@ For a request with prefix length $P$ (tokens) and new suffix length $S$ (tokens)
 - Without caching: prefill cost $\propto (P + S)^2 / 2$ attention operations (rough $O(N^2)$ scaling) plus $P + S$ weight projections.
 - With a warm cache hit on the full prefix: prefill cost $\propto S \cdot P + S^2/2$ (the suffix attends to the cached prefix) plus $S$ weight projections.
 
-The speedup — the ratio of *uncached* to *cached* prefill work — is
+Treat the two terms separately, because they behave differently. The ratio of *uncached* to *cached* prefill **attention** work is
 
 $$
-\text{speedup} = \frac{P + S}{S + P \cdot \frac{S}{P+S}} = \frac{(P+S)^2}{S\,(2P + S)} \approx \frac{P + S}{2S}\quad \text{for large } P/S
+\text{speedup}_{\text{attn}} = \frac{P + S}{S + P \cdot \frac{S}{P+S}} = \frac{(P+S)^2}{S\,(2P + S)} \approx \frac{P + S}{2S}\quad \text{for large } P/S
 $$
 
-Note the factor of 2 in the limit: as $S/P \to 0$ the dropped term $P\cdot\frac{S}{P+S}$ tends to $S$, not to $0$, so the denominator tends to $2S$. The naive $(P+S)/S$ overestimates the true ratio by very nearly $2\times$ *no matter how small* $S/P$ is.
+Note the factor of 2 in the limit: as $S/P \to 0$ the dropped term $P\cdot\frac{S}{P+S}$ tends to $S$, not to $0$, so the denominator tends to $2S$. The naive $(P+S)/S$ overestimates the true *attention* ratio by very nearly $2\times$ *no matter how small* $S/P$ is.
+
+The weight-projection term has no such correction: it is exactly linear in tokens, so its uncached-to-cached ratio is precisely $(P+S)/S$. Which term dominates depends on context length, and at the lengths where prefix caching is usually deployed it is the projections. For the 70B of the worked example below at $P+S \approx 2{,}050$ tokens, projections cost $2 \times 70\times10^9 \times 2050 \approx 2.9\times10^{14}$ FLOPs against roughly $2\,n_{\text{layers}}(P+S)^2 d_{\text{model}} \approx 5.5\times10^{12}$ FLOPs of attention — attention is under 2 % of prefill. So *total* prefill compute falls by very nearly the full $(P+S)/S \approx 41\times$ (which is the figure quoted in the Interview Corner), and the factor-of-2 haircut only becomes the headline number once the context is long enough for attention to dominate the prefill FLOP budget.
 
 For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): speedup $= 2050^2 / (50 \times 4050) \approx 20.8\times$ in prefill attention FLOPs (the large-$P/S$ approximation gives $2050/100 = 20.5\times$). Real TTFT improvements are smaller due to weight-loading overhead that is shared regardless of cache state, but 5–15× TTFT improvements are commonly observed in practice.
 
@@ -475,7 +518,7 @@ For $P = 2000$, $S = 50$ (a 2,000-token system prompt with a short user query): 
     \text{saved prefill tokens per second} = 200 \times 0.95 \times 1024 = 194{,}560 \text{ tokens/sec}
     $$
 
-    At an LLaMA-3 70B prefill throughput of roughly 5,000–15,000 tokens/sec per A100 (depending on batch size), those saved tokens correspond to freeing up one or more GPUs worth of compute that can be redeployed to serve more requests.
+    The natural unit for that saving is a tensor-parallel *node*, not a single GPU: a 70B model in bfloat16 is 140 GB of weights and does not fit on one A100 at all. Dense prefill costs $2 \times 70 \times 10^9 \approx 1.4 \times 10^{11}$ FLOPs per token, so a single A100 (312 TFLOP/s peak bf16) could not exceed $\approx 2{,}200$ tokens/sec even at a fantasy 100 % MFU; an 8×A100 tensor-parallel node at a realistic ~45 % MFU sustains on the order of **8,000 prefill tokens/sec**. The 194,560 tokens/sec saved therefore correspond to roughly two dozen such nodes' worth of prefill compute, freed to serve more requests.
 
     **TTFT impact.** With a cold cache, prefilling 1,024 + 64 = 1,088 tokens takes on the order of 100–300 ms (depending on batch load). With a warm cache, only 64 tokens are prefilled, cutting TTFT to the order of 10–30 ms — an order-of-magnitude improvement in interactive latency.
 
@@ -503,7 +546,7 @@ The agent use case (see [The Agentic Loop: ReAct, Plan-Execute & Reflection](../
 ```bash
 # Enable APC in vLLM (the flag is per-engine startup)
 python -m vllm.entrypoints.openai.api_server \
-    --model meta-llama/Llama-3-70b-instruct \
+    --model meta-llama/Meta-Llama-3-70B-Instruct \
     --enable-prefix-caching \
     --max-model-len 32768 \
     --gpu-memory-utilization 0.90 \
@@ -517,12 +560,24 @@ The `--block-size` parameter controls the hashing granularity. Larger blocks mea
 import requests
 
 stats = requests.get("http://localhost:8000/metrics").text
-# Look for: vllm:gpu_prefix_cache_hit_rate
-# and:      vllm:gpu_cache_usage_perc
+# On the V1 engine the hit rate is NOT exposed as a gauge — you divide two
+# counters yourself:
+#   vllm:gpu_prefix_cache_hits_total / vllm:gpu_prefix_cache_queries_total
+# (the old V0 `vllm:gpu_prefix_cache_hit_rate` gauge no longer exists).
+# Also useful: vllm:gpu_cache_usage_perc
 
+vals = {}
 for line in stats.splitlines():
+    if line.startswith("#"):
+        continue
     if "prefix_cache" in line or "cache_usage" in line:
         print(line)
+        name, value = line.rsplit(" ", 1)      # "name{labels} value"
+        vals[name.split("{")[0]] = float(value)
+
+queries = vals.get("vllm:gpu_prefix_cache_queries_total", 0.0)
+hits = vals.get("vllm:gpu_prefix_cache_hits_total", 0.0)
+print("prefix cache hit rate:", hits / queries if queries else float("nan"))
 ```
 
 ### SGLang configuration
@@ -530,7 +585,7 @@ for line in stats.splitlines():
 ```bash
 # SGLang enables RadixAttention by default; disable with --disable-radix-cache
 python -m sglang.launch_server \
-    --model-path meta-llama/Llama-3-70b-instruct \
+    --model-path meta-llama/Meta-Llama-3-70B-Instruct \
     --tp 4 \
     --context-length 32768 \
     --mem-fraction-static 0.85
@@ -710,7 +765,7 @@ Content-based hashing is exact-match only: two prompts that differ by a single s
     **Recent advances (2023–2026)**
 
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2023)](https://arxiv.org/abs/2312.07104) — introduces RadixAttention, a trie-based prefix cache enabling automatic KV reuse across multi-turn and multi-call workloads.
-    - [Ye et al., *ChunkAttention: Efficient Self-Attention with Prefix-Aware KV Cache and Two-Phase Partition* (2024)](https://arxiv.org/abs/2402.15220) — cross-instance prefix sharing with a two-phase attention kernel; 1.6–2.3× throughput over vLLM on shared-prefix workloads (ACL 2024).
+    - [Ye et al., *ChunkAttention: Efficient Self-Attention with Prefix-Aware KV Cache and Two-Phase Partition* (2024)](https://arxiv.org/abs/2402.15220) — shares a system prompt's KV across the sequences inside one instance via a prefix-aware KV cache, and splits attention into a shared-prefix phase and a per-sequence phase; reports a 3.2–4.8× self-attention **kernel** speedup for system prompts of 1,024–4,096 tokens (ACL 2024).
     - [Liu et al., *CacheGen: KV Cache Compression and Streaming for Fast Large Language Model Serving* (2023)](https://arxiv.org/abs/2310.07240) — custom encoder compresses KV cache 3.5–4.3× for network-efficient cross-node reuse (SIGCOMM 2024).
     - [Liu et al., *LMCache: An Efficient KV Cache Layer for Enterprise-Scale LLM Inference* (2025)](https://arxiv.org/abs/2510.09665) — production system that stores and shares KV caches across GPU, CPU, disk, and S3; 3–10× TTFT reduction in multi-round and RAG workloads.
 

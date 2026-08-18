@@ -755,7 +755,7 @@ $$
 \;+\; \alpha_{\text{rel}}\,\underbrace{\cos\!\left(\mathbf{e}(q), \mathbf{e}(m)\right)}_{\text{relevance}}
 $$
 
-Here $\Delta t(m)$ is the number of hours since the memory was last *accessed* (not created — retrieving a memory refreshes it, exactly as in an LRU cache), $\gamma$ is a decay factor just below 1, and $I(m)$ is an importance score the LLM assigns once at write time ("on a scale of 1 to 10, how consequential is this?" — the code below stores that rescaled to $[0,1]$, i.e. `importance = llm_score / 10`). Park et al. use $\gamma = 0.995$, so recency weight halves after $\ln 0.5 / \ln 0.995 \approx 138$ hours — a little under six days — and they set all three $\alpha = 1$ after min-max normalising each component to $[0,1]$. The normalisation matters: raw cosine scores for a sentence embedder cluster in a narrow band (often 0.3–0.8), so without rescaling the relevance term would be nearly constant and the ranker would collapse into pure recency.
+Here $\Delta t(m)$ is the number of hours since the memory was last *accessed* (not created — retrieving a memory refreshes it, exactly as in an LRU cache), $\gamma$ is a decay factor just below 1, and $I(m)$ is an importance score the LLM assigns once at write time ("on a scale of 1 to 10, how consequential is this?" — the code below stores that rescaled to $[0,1]$, i.e. `importance = llm_score / 10`). Park et al. use $\gamma = 0.995$, so recency weight halves after $\ln 0.5 / \ln 0.995 \approx 138$ hours — a little under six days — and they set all three $\alpha = 1$ after min-max normalising each component to $[0,1]$. The normalisation matters because the three components live on incomparable scales: $\gamma^{\Delta t}$ sweeps the full $[0,1]$ over a multi-day horizon, importance is a coarse 1-to-10 rating, and the cosine range depends entirely on the embedding model (and, once you re-rank only the top ANN candidates, on how tightly that candidate set clusters). With all $\alpha = 1$ the raw sum is therefore dominated by whichever component happens to have the widest spread on your data, which is an accident of the embedder rather than a design choice. Min-max rescaling each component over the candidate set makes the three weights mean what they say.
 
 ```python
 def recall_ranked(mem: AgentMemory, query: str, top_k: int = 5,
@@ -816,6 +816,7 @@ LangGraph splits memory along exactly the axis of section 8.5.1. A **checkpointe
 
 ```python
 # pip install langgraph langgraph-checkpoint-sqlite sentence-transformers
+import uuid
 from langgraph.checkpoint.memory import InMemorySaver   # swap: SqliteSaver, PostgresSaver
 from langgraph.store.memory import InMemoryStore        # swap: PostgresStore
 from langgraph.store.base import BaseStore
@@ -840,7 +841,10 @@ def agent_node(state: MessagesState, config: RunnableConfig, *, store: BaseStore
     recalled = "\n".join(f"- {i.value['text']}" for i in hits)
     # ... here you would call the model with `recalled` prepended to the system
     #     prompt; we echo it so the example runs without an API key ...
-    store.put(ns, f"mem-{len(state['messages'])}", {"text": last})   # WRITE
+    # The key must be globally unique: `put` upserts, and the namespace is
+    # cross-thread, so a per-thread counter like len(state["messages"]) would
+    # make thread-2's first write clobber thread-1's first memory.
+    store.put(ns, str(uuid.uuid4()), {"text": last})                 # WRITE
 
     return {"messages": [{"role": "assistant",
                           "content": f"recalled:\n{recalled or '(nothing yet)'}"}]}
@@ -857,7 +861,15 @@ app.invoke({"messages": [{"role": "user", "content": "Which spelling do I use?"}
            {"configurable": {"thread_id": "thread-2", "user_id": "alice"}})
 ```
 
-The namespace tuple is the piece most people underuse: `("memories", user_id)` versus `("memories", user_id, "preferences")` gives you the episodic/semantic separation of section 8.5.2 for free, because `search` takes a namespace prefix. Swapping `InMemorySaver` for `SqliteSaver.from_conn_string("checkpoints.sqlite")` and `InMemoryStore` for `PostgresStore` is the only change needed to go from a demo to a durable multi-user service.
+The namespace tuple is the piece most people underuse: `("memories", user_id)` versus `("memories", user_id, "preferences")` gives you the episodic/semantic separation of section 8.5.2 for free, because `search` takes a namespace prefix. Going from this demo to a durable multi-user service is mostly a matter of swapping the two backends, but note the exact usage: `from_conn_string` is a *context manager* on both the SQLite and Postgres classes, not a plain constructor, so you write
+
+```python
+with SqliteSaver.from_conn_string("checkpoints.sqlite") as checkpointer:
+    app = g.compile(checkpointer=checkpointer, store=store)
+    ...                      # the connection is open only inside the block
+```
+
+(or build `SqliteSaver(sqlite3.connect("checkpoints.sqlite", check_same_thread=False))` yourself for a connection you own). The Postgres backends (`PostgresSaver`, `PostgresStore`) work the same way and additionally need a one-time `.setup()` call to create their tables before first use.
 
 ### 8.5.11.2 mem0 and Letta: managed memory layers
 

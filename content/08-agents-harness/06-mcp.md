@@ -131,7 +131,7 @@ Under both transports, MCP uses JSON-RPC 2.0. Every interaction is a message wit
 
 The MCP specification layers its own method namespace on top of JSON-RPC. The full set of methods includes:
 
-- `initialize` / `initialized` — session handshake; the client declares its capabilities, the server declares its own.
+- `initialize` / `notifications/initialized` — session handshake; the client declares its capabilities, the server declares its own, and the client then sends the `notifications/initialized` notification to signal it is ready.
 - `tools/list` — enumerate available tools with their input schemas.
 - `tools/call` — invoke a tool by name.
 - `resources/list` — enumerate available resources (and templates).
@@ -676,18 +676,20 @@ web.router.routes.append(Mount("/mcp", app=session_manager.handle_request))
 # Configure the client to point at http://localhost:8080/mcp
 ```
 
-A conforming host then connects with:
+A host then connects by pointing a client entry at that URL. MCP itself does not standardise a client config file, so the exact keys are host-specific; the `.mcp.json` form used by Claude Code (and, under a different top-level key, VS Code) is:
 
 ```json
 {
   "mcpServers": {
     "csv-analyst-remote": {
-      "url": "http://localhost:8080/mcp",
-      "transport": "http"
+      "type": "http",
+      "url": "http://localhost:8080/mcp"
     }
   }
 }
 ```
+
+The `type` field is what selects the remote transport (`"http"` for Streamable HTTP, `"sse"` for the older SSE transport). Omit it and the entry is interpreted as a stdio server, which then fails for want of a `command`.
 
 For production, add an OAuth 2.1 middleware layer and put a TLS-terminating reverse proxy in front. MCP does not define its own metadata format — it defers to the OAuth RFCs. Since the 2025-06-18 revision an MCP HTTP server acts as an OAuth *resource server*: it publishes `/.well-known/oauth-protected-resource` (RFC 9728), whose `authorization_servers` field points clients at the authorization server, which in turn serves `/.well-known/oauth-authorization-server` (RFC 8414).
 

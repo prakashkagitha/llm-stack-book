@@ -186,7 +186,7 @@ trtllm-build \
     --max_output_len 1024
 ```
 
-Because quantization scales are baked into the engine at build time, there is zero overhead at serving time — the quantized GEMM kernels simply execute with pre-computed scales.
+Because the calibration and weight scales are baked into the engine at build time, there is no calibration cost at serving time — the quantized GEMM kernels execute with pre-computed weight scales. The residual runtime cost is per-GEMM dequantization in the kernel prologue/epilogue (and, for SmoothQuant, per-token *dynamic* activation scaling), which is small relative to the bandwidth saved.
 
 For a deeper treatment of the quantization formats, see [Quantization II: INT4/INT8/FP8, GGUF, bitsandbytes & QAT](../04-kernels-efficiency/08-quantization-formats-qat.html).
 
@@ -248,7 +248,7 @@ TGI exposes a `/generate` endpoint (its native API), a `/v1/chat/completions` Op
 
 ### TGI's Continuous Batching Scheduler
 
-TGI implements a "token budget" scheduler: each request is assigned a `max_total_tokens` budget, and requests are grouped into batches where the total token budget fits within the KV cache. The scheduler preempts requests if memory pressure grows (evicting KV blocks and later recomputing them). The Rust router enforces these constraints before passing requests to the Python runner, which means request validation and queueing happen with very low latency.
+TGI implements a "token budget" scheduler: each request is assigned a `max_total_tokens` budget, and requests are grouped into batches where the total token budget fits within the KV cache. Because that budget is charged at each request's *worst case* up front (against a `max_batch_total_tokens` probed at startup), an admitted request can always run to completion — TGI never evicts a running request; excess load simply waits in the router queue. Contrast vLLM's preempt-and-recompute and TensorRT-LLM's `max_utilization` policy, both discussed elsewhere in this chapter. The Rust router enforces these constraints before passing requests to the Python runner, which means request validation and queueing happen with very low latency.
 
 ```python
 # Simplified pseudocode illustrating TGI's waiting queue logic
@@ -275,8 +275,10 @@ class TGIScheduler:
         """
         # Charge every running request its *reserved* worst case, exactly as
         # new admissions are charged below. Billing running requests only their
-        # current_length would free phantom budget on every decode step and let
-        # the scheduler admit without bound — the OOM this budget exists to stop.
+        # current_length would under-charge by the unreserved tail
+        # (max_total_tokens - current_length), so the scheduler over-admits while
+        # sequences are still short and OOMs later as they grow into their
+        # reservation — the failure this budget exists to stop.
         budget_used = sum(r.max_total_tokens for r in self.running)
         for req in list(self.waiting):
             needed = req.max_total_tokens  # pre-allocated worst case
@@ -294,11 +296,11 @@ class TGIScheduler:
 | Build step | None (model loaded at startup) | Engine must be compiled (30–60 min for large models) |
 | GPU portability | Any CUDA GPU supported by PyTorch | Specific to GPU SKU; must rebuild per SKU |
 | Custom kernels | FlashAttention, custom GEMM from Torch | Full engine compilation, per-op tuning |
-| Peak throughput | ~80–90% of hardware ceiling (typical) | ~95–100% (typical on target hardware) |
+| Peak throughput | ~85–95% of TensorRT-LLM (typical) | Baseline — highest on its target hardware |
 | Model support | Any HF model | Supported architectures only |
 | Quantization | bitsandbytes NF4, GPTQ, AWQ | INT8, FP8, GPTQ, AWQ (baked at build time) |
-| Streaming | Native SSE | Via Triton streaming protocol |
-| OpenAI API | Yes | Via triton proxy |
+| Streaming | Native SSE | Native SSE via `trtllm-serve` (Triton streaming on the Triton path) |
+| OpenAI API | Yes | Yes (`trtllm-serve`); via Triton on the legacy path |
 
 ---
 
@@ -404,15 +406,18 @@ LMDeploy, developed by Shanghai AI Laboratory (the InternLM team), provides a hi
 # Install and convert a model to TurboMind format
 pip install lmdeploy
 
-# Convert HF checkpoint to TurboMind internal format
+# Convert HF checkpoint to TurboMind internal format. Recent releases let
+# TurboMind load an HF checkpoint directly, so this step is usually optional —
+# point `serve` at /path/to/llama-3-8b-hf instead.
 lmdeploy convert llama3 /path/to/llama-3-8b-hf \
-    --dst_path ./llama3-turbomind
+    --dst-path ./llama3-turbomind
 
-# Launch the serving API
+# Launch the serving API (CLI long options are hyphenated; the underscore
+# spellings below are the *dataclass field* names used from Python)
 lmdeploy serve api_server ./llama3-turbomind \
-    --server_port 23333 \
+    --server-port 23333 \
     --tp 1 \
-    --cache_max_entry_count 0.8
+    --cache-max-entry-count 0.8
 
 # Or use the Python API directly
 python -c "
@@ -435,7 +440,7 @@ MLC-LLM (Machine Learning Compilation for LLMs), from the MLC team led by Tianqi
 
 ### How MLC Differs
 
-Where TensorRT-LLM compiles to a TensorRT engine (NVIDIA-specific), MLC compiles to TVM's intermediate representation (TIR), then lowers TIR to hardware-specific code via TVM's code generation backends. The compilation includes automatic schedule search (AutoTIR) that tunes GEMM tile sizes and memory layouts for the target device.
+Where TensorRT-LLM compiles to a TensorRT engine (NVIDIA-specific), MLC compiles to TVM's intermediate representation (TIR), then lowers TIR to hardware-specific code via TVM's code generation backends. The compilation applies TVM's `dlight` rule-based schedules, which pick GEMM/GEMV tile sizes and memory layouts per target; search-based autotuning (MetaSchedule) exists but is opt-in, not part of the default `mlc_llm compile` path shown below.
 
 Compilation is a three-command CLI pipeline (there is no `mlc_llm.build()` Python entry point in current releases): quantize the weights, generate a chat config, then compile a hardware-specific library.
 
@@ -644,7 +649,7 @@ For a full treatment of constrained generation mechanics, see [Structured & Cons
 !!! key "Key Takeaways"
     - TensorRT-LLM achieves peak NVIDIA GPU throughput through AOT compilation: kernels are selected and fused at build time, eliminating runtime dispatch overhead. The cost is hardware-specific engines and 30–60 minute build times — which is why the 1.0 release makes a PyTorch backend the default and ships `LLM`/`trtllm-serve` as a build-free path that keeps the tuned kernels.
     - TGI provides a production-grade HTTP/gRPC server with continuous batching, custom FlashAttention kernels, and wide HuggingFace model support — no build step required. It pioneered the `transformers`-native serving architecture that vLLM and SGLang later adopted; as of 2026 it is in maintenance mode, with Hugging Face pointing new deployments at those successors.
-    - llama.cpp / Ollama democratize LLM inference on commodity hardware. GGUF's block quantization (Q4_K_M, Q5_K_M) trades a small quality loss for 4–8× memory reduction, enabling 70B models to run on a laptop or a single consumer GPU.
+    - llama.cpp / Ollama democratize LLM inference on commodity hardware. GGUF's block quantization trades a small quality loss for roughly a 3× memory reduction versus FP16 (Q4_K_M at ~4.5 bits/weight takes a 70B from 140 GB to ~41 GB; Q5_K_M at ~5.5 bits to ~49 GB) — enough to run a 70B on a large-unified-memory laptop and a 13B-class model on a single consumer GPU.
     - LMDeploy's TurboMind engine is a practical middle ground: custom CUDA kernels and blocked KV cache without the full AOT compilation step of TensorRT-LLM.
     - MLC-LLM uses TVM's compiler infrastructure to target heterogeneous hardware (CUDA, ROCm, Metal, Vulkan, WebGPU) from a single codebase — the right choice for browser deployment via WebLLM or mixed-hardware fleets.
     - The KV cache is the primary memory budget constraint at serving time. INT8 KV quantization roughly doubles the number of concurrent sequences you can hold, often improving throughput more than any single kernel optimization.

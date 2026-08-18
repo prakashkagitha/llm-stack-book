@@ -331,7 +331,7 @@ Two refinements matter, because the "labels don't matter" headline is over-read.
 Not all examples are equal. Best practices:
 
 1. **Diversity over similarity.** Cover the range of inputs the model will see, not just easy cases.
-2. **Put hard examples last.** Models attend more strongly to recent context; the final example is most influential.
+2. **Put hard examples last.** Models attend more strongly to recent context; the final example is most influential. This applies to a *statically* curated set. When examples are retrieved per query by similarity (as in `DynamicFewShotSelector` below), relevance to the current input wins the final slot instead — a near-duplicate of the query is worth more there than a hard case the query does not resemble.
 3. **Balanced labels.** Unbalanced examples bias the prior. For a binary classifier, use equal positive/negative examples.
 4. **Consistent format.** Any inconsistency in example formatting (spacing, punctuation) introduces noise.
 
@@ -478,9 +478,9 @@ Start at Layer 1 and 3. Layer 1 catches regressions quickly and cheaply. Layer 3
 # A minimal evals harness for prompts — the kind you should build
 # before writing your second prompt variant.
 
-import asyncio, json
+import asyncio, inspect, json
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Awaitable, Callable
 from openai import AsyncOpenAI
 
 client = AsyncOpenAI()
@@ -501,14 +501,15 @@ class EvalResult:
 async def run_eval(
     prompt_fn: Callable[[str], list[dict]],  # renders messages from input
     cases: list[EvalCase],
-    score_fn: Callable[[str, str], float],   # score(prediction, expected)
+    score_fn: Callable[[str, str], float | Awaitable[float]],  # score(prediction, expected)
     model: str = "gpt-4o-mini",
     concurrency: int = 10,
 ) -> list[EvalResult]:
     """
     Evaluate a prompt function against a test set.
     prompt_fn   : takes user input string, returns messages list
-    score_fn    : computes 0-1 score given (prediction, expected)
+    score_fn    : computes 0-1 score given (prediction, expected); may be sync
+                  or async — an async scorer (e.g. an LLM judge) is awaited
     concurrency : max simultaneous API calls
     """
     semaphore = asyncio.Semaphore(concurrency)
@@ -524,6 +525,8 @@ async def run_eval(
             )
             prediction = resp.choices[0].message.content.strip()
             score = score_fn(prediction, case.expected)
+            if inspect.isawaitable(score):   # async scorer (LLM judge)
+                score = await score
             return EvalResult(case=case, prediction=prediction, score=score,
                               raw_response=prediction)
 
@@ -552,24 +555,32 @@ def summarize_eval(results: list[EvalResult]) -> dict:
 def exact_match(pred: str, expected: str) -> float:
     return float(pred.strip().lower() == expected.strip().lower())
 
-# LLM-as-judge scorer (useful for open-ended generation)
-async def llm_judge_score(pred: str, expected: str, criteria: str) -> float:
-    """Use GPT-4 to judge whether pred meets criteria relative to expected."""
-    judge_prompt = f"""On a scale of 1-5, rate how well this response meets the criterion.
+# LLM-as-judge scorer (useful for open-ended generation).
+# `criteria` is bound by the factory so the returned scorer has the same
+# (pred, expected) signature as `exact_match` — the two are interchangeable
+# as `run_eval`'s score_fn; run_eval awaits this one.
+def make_llm_judge(criteria: str) -> Callable[[str, str], Awaitable[float]]:
+    async def llm_judge_score(pred: str, expected: str) -> float:
+        """Use a judge model to rate pred against criteria and a reference."""
+        judge_prompt = f"""On a scale of 1-5, rate how well this response meets the criterion.
 Criterion: {criteria}
 Reference answer: {expected}
 Response to judge: {pred}
 Respond with only a single integer 1-5."""
-    resp = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": judge_prompt}],
-        temperature=0.0,
-    )
-    try:
-        rating = int(resp.choices[0].message.content.strip())
-        return (rating - 1) / 4.0  # normalize to [0, 1]
-    except ValueError:
-        return 0.0
+        resp = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": judge_prompt}],
+            temperature=0.0,
+        )
+        try:
+            rating = int(resp.choices[0].message.content.strip())
+            return (rating - 1) / 4.0  # normalize to [0, 1]
+        except ValueError:
+            return 0.0
+
+    return llm_judge_score
+
+# then: run_eval(prompt_fn, cases, make_llm_judge("answers the question factually"))
 ```
 
 ### Running the Loop Against Your Own Model
@@ -650,7 +661,7 @@ The cache is keyed on an exact byte-for-byte prefix match. This has a direct des
 
     The practical implication: order your prompt so the largest static block sits at the top. Even a 1 000-token reordering can unlock substantial savings.
 
-    One caveat this arithmetic hides: the *first* request that populates the cache is charged a write premium (Anthropic bills cache writes above the base input rate) and the entry has a finite TTL — on the order of minutes unless you opt into a longer one. Caching therefore pays only when the prefix is re-used many times before it expires. A low-QPS endpoint with a 10-minute idle gap between requests can pay the write premium on nearly every call and come out *behind*; check `cache_read_input_tokens` versus `cache_creation_input_tokens` in production before assuming the win.
+    Two caveats this arithmetic hides. First, the *first* request that populates the cache is charged a write premium (Anthropic bills cache writes above the base input rate) and the entry has a finite TTL — on the order of minutes unless you opt into a longer one. Caching therefore pays only when the prefix is re-used many times before it expires. A low-QPS endpoint with a 10-minute idle gap between requests can pay the write premium on nearly every call and come out *behind*. Second, caching is silently a no-op below a **model-dependent minimum cacheable prefix** — a few hundred to a few thousand tokens, varying by model and *not* monotonic across generations — and a marker on a shorter prefix produces no error, just `cache_creation_input_tokens: 0` forever. Check `cache_read_input_tokens` versus `cache_creation_input_tokens` in production before assuming the win.
 
 ### Implementing Cache Headers
 
@@ -662,12 +673,14 @@ import anthropic
 client = anthropic.Anthropic()
 
 response = client.messages.create(
-    model="claude-opus-4-5",
+    model="claude-opus-5",
     max_tokens=1024,
     system=[
         {
             "type": "text",
-            "text": LONG_SYSTEM_PROMPT,           # 2000+ tokens, static
+            # 2000+ tokens, static — must clear this model's minimum
+            # cacheable prefix or the marker is silently ignored
+            "text": LONG_SYSTEM_PROMPT,
             "cache_control": {"type": "ephemeral"} # mark as cacheable prefix
         }
     ],
@@ -872,7 +885,7 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
 
     - [DAIR.AI Prompt Engineering Guide](https://www.promptingguide.ai/) — comprehensive living reference covering all major techniques, papers, and model-specific guidance; widely used by practitioners.
     - [Anthropic Interactive Prompt Engineering Tutorial](https://github.com/anthropics/prompt-eng-interactive-tutorial) — Jupyter-notebook course (9 chapters) covering structure, role prompting, few-shot, CoT, and complex pipelines with hands-on exercises.
-    - [Anthropic Prompt Caching Documentation](https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching) — official reference for cache breakpoints, TTLs, pricing, and best-practice prompt ordering to maximize cache hit rate.
+    - [Anthropic Prompt Caching Documentation](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) — official reference for cache breakpoints, TTLs, pricing, and best-practice prompt ordering to maximize cache hit rate.
 
 ## Further Reading
 
@@ -887,7 +900,7 @@ The connection to the rest of the LLM stack is also real. Prompting interacts wi
 - Yao, S. et al. — "ReAct: Synergizing Reasoning and Acting in Language Models" (ICLR 2023)
 - Brown, T. et al. — "Language Models are Few-Shot Learners" (GPT-3; NeurIPS 2020) — the foundational in-context learning result
 - Min, S. et al. — "Rethinking the Role of Demonstrations: What Makes In-Context Learning Work?" (EMNLP 2022) — shows labels matter less than format in few-shot
-- Anthropic prompt caching documentation — `docs.anthropic.com/en/docs/build-with-claude/prompt-caching`
+- Anthropic prompt caching documentation — `platform.claude.com/docs/en/build-with-claude/prompt-caching`
 
 ---
 

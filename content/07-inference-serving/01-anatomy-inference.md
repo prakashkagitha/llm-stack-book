@@ -173,9 +173,9 @@ print(f"{gib:.2f} GiB per 8k-token sequence")   # ~1.0 GiB
 
     A single 8,192-token context therefore needs $8192 \times 128\,\text{KiB} \approx 1.0$ GiB of KV cache.
 
-    Now budget an 80 GB A100. The weights take $8\text{B} \times 2\,\text{bytes} = 16$ GB. Leave ~4 GB for activations, CUDA context, and fragmentation. That leaves roughly $80 - 16 - 4 = 60$ GB for KV cache. At 1 GiB per full 8k context, you can hold about **60 concurrent 8k sequences** — or many more short ones, or fewer long ones.
+    Now budget an 80 GB A100. The weights take $8\text{B} \times 2\,\text{bytes} = 16$ GB. Leave ~4 GB for activations, CUDA context, and fragmentation. That leaves roughly $80 - 16 - 4 = 60$ GB for KV cache. One 8k context is 1 GiB $= 1.07$ GB, so you can hold about **55 concurrent 8k sequences** ($60 / 1.07$) — or many more short ones, or fewer long ones.
 
-    Contrast with a model that used full Multi-Head Attention with 32 KV heads instead of 8: the per-token cost would be $4\times$ larger, ~512 KiB/token, and you would fit only ~15 concurrent sequences. **This single ratio is why every modern serving model uses GQA or MLA.** The KV cache, not the weights, is usually what limits how many users you can serve at once.
+    Contrast with a model that used full Multi-Head Attention with 32 KV heads instead of 8: the per-token cost would be $4\times$ larger, ~512 KiB/token (4 GiB per 8k context), and you would fit only ~14 concurrent sequences. **This single ratio is why every modern serving model uses GQA or MLA.** The KV cache, not the weights, is usually what limits how many users you can serve at once.
 
 {{fig:kv-cache-vs-weights-budget}}
 
@@ -270,7 +270,7 @@ On real hardware you will see the per-token time barely move from $B=1$ to $B=16
 
 ## The Tokens-Per-Second Ceiling
 
-Because single-stream decode is memory-bound, we can compute a remarkably tight upper bound on generation speed using nothing but the model size and the GPU's memory bandwidth. Every decode step must read **every weight** of the model from HBM at least once (each weight participates in some matmul for the new token). For a Mixture-of-Experts model, replace "every weight" with "every *active* weight" — the dense trunk plus only the experts routed to this step's tokens — which is precisely why a sparse model decodes far faster than a dense model of the same total parameter count, and why nearly every 2026 frontier model is an MoE; see [Serving Mixture-of-Experts](../07-inference-serving/13-serving-moe.html). For a dense model the time for one decode step is bounded below by the time to stream all the weights:
+Because single-stream decode is memory-bound, we can compute a remarkably tight upper bound on generation speed using nothing but the model size and the GPU's memory bandwidth. Every decode step must read **every weight** of the model from HBM at least once — precisely, every weight that feeds a matmul, which is all of them except the input embedding table, from which only the current tokens' rows are gathered (the output head *is* a real matmul and is read in full). For a Mixture-of-Experts model, replace "every weight" with "every *active* weight" — the dense trunk plus only the experts routed to this step's tokens — which is precisely why a sparse model decodes far faster than a dense model of the same total parameter count, and why nearly every 2026 frontier model is an MoE; see [Serving Mixture-of-Experts](../07-inference-serving/13-serving-moe.html). For a dense model the time for one decode step is bounded below by the time to stream all the weights:
 
 $$
 t_{\text{step}} \;\ge\; \frac{\text{model bytes}}{\text{memory bandwidth}}
@@ -396,19 +396,19 @@ $$
 This ties the whole chapter together. The numerator $L$ is set by **KV-cache memory** — the formula from earlier directly bounds how many sequences fit. The denominator $W$ is set by **decode speed** — the bandwidth-bound TPOT ceiling. So your serving throughput is fundamentally governed by the two physical facts we derived: how much KV cache fits in HBM, and how fast HBM bandwidth lets you decode.
 
 !!! example "Worked example: sizing a fleet with Little's law"
-    Suppose our 8B model on an 80 GB A100 holds $L \approx 60$ concurrent 8k-token sequences (from the earlier KV-cache budget). Suppose each request generates on average $T = 500$ tokens. Batching amortizes the weight read, but *not* the KV read (previous section): with 60 resident 8k sequences, each decode step must stream 16 GB of weights plus $60 \times 1\,\text{GiB} \approx 64$ GB of cache, so at 2.0 TB/s the step floor is $\approx 40$ ms — take TPOT $\approx 40$ ms. (Exercise 5 runs the identical accounting at $B=32$.) Then the average time-in-system per sequence is:
+    Suppose our 8B model on an 80 GB A100 holds $L \approx 55$ concurrent 8k-token sequences (from the earlier KV-cache budget). Suppose each request generates on average $T = 500$ tokens. Batching amortizes the weight read, but *not* the KV read (previous section): with 55 resident 8k sequences, each decode step must stream 16 GB of weights plus $55 \times 1\,\text{GiB} \approx 59$ GB of cache, so at 2.0 TB/s the step floor is $75\text{e9}/2.0\text{e12} \approx 37.5$ ms — take TPOT $\approx 38$ ms. (Exercise 5 runs the identical accounting at $B=32$.) Then the average time-in-system per sequence is:
 
     $$
-    W \approx 500 \times 0.040\ \text{s} = 20\ \text{s (decode)} \; + \; \text{TTFT} \approx 20\text{–}21\ \text{s}.
+    W \approx 500 \times 0.0375\ \text{s} \approx 19\ \text{s (decode)} \; + \; \text{TTFT} \approx 19\text{–}20\ \text{s}.
     $$
 
     By Little's law the sustainable request throughput is:
 
     $$
-    \lambda = \frac{L}{W} = \frac{60}{20.5} \approx 2.9\ \text{requests/sec}.
+    \lambda = \frac{L}{W} = \frac{55}{19.5} \approx 2.8\ \text{requests/sec}.
     $$
 
-    At 500 output tokens each that is about **1,450 output tokens/sec** of aggregate decode throughput from one GPU. Push arrival rate above $\lambda$ and the queue grows without bound — TTFT climbs, the system becomes unstable, and you must add GPUs or shorten outputs. This back-of-envelope is exactly how capacity planners size inference fleets, and it shows concretely how KV-cache capacity ($L$) and decode bandwidth ($W$) jointly set the ceiling.
+    At 500 output tokens each that is about **1,400 output tokens/sec** of aggregate decode throughput from one GPU. Push arrival rate above $\lambda$ and the queue grows without bound — TTFT climbs, the system becomes unstable, and you must add GPUs or shorten outputs. This back-of-envelope is exactly how capacity planners size inference fleets, and it shows concretely how KV-cache capacity ($L$) and decode bandwidth ($W$) jointly set the ceiling.
 
 The practical consequence: to raise throughput you either **increase $L$** (shrink the KV cache via GQA/MLA, quantize the cache, page it more tightly, share prefixes) or **decrease $W$** (faster decode via quantized weights, speculative decoding, better kernels). Every serving optimization in Part VII is, underneath, an attack on one of these two terms. Continuous batching keeps $L$ as full as possible at all times; PagedAttention lets you pack $L$ tighter without fragmentation; speculative decoding shrinks $W$ by emitting multiple tokens per forward pass.
 

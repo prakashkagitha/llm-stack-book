@@ -444,11 +444,15 @@ import json, os
 class Scratchpad:
     def __init__(self, path="PLAN.md"):
         self.path = path
-        # The .json mirror is the source of truth every read path uses, so
-        # guard on IT -- a hand-written PLAN.md with no mirror must still
-        # initialize, or the first tool call dies with FileNotFoundError.
+        # Two files, two read paths: state() parses the .json mirror and
+        # render() reads the Markdown, so BOTH must exist before the first
+        # tool call or turn dies with FileNotFoundError. Note _write is
+        # destructive -- it regenerates PLAN.md from the mirror, so a
+        # hand-written plan with no mirror is replaced by the empty template.
         if not os.path.exists(self.path + ".json"):
             self._write({"goal": "", "todos": [], "notes": [], "done": []})
+        elif not os.path.exists(self.path):
+            self._write(self.state())      # rebuild the Markdown view
 
     def _write(self, state: dict):
         with open(self.path, "w") as f:
@@ -601,7 +605,7 @@ There is a real tension: **compaction rewrites the prefix, which busts the cache
 ## Further reading
 
 - Liu, Lin, Hewitt, et al., *Lost in the Middle: How Language Models Use Long Contexts* (2023) — the canonical study of position effects in long contexts.
-- *Lin et al. / "Needle in a Haystack"* evaluation methodology (Greg Kamradt's NIAH harness) — the practical recipe for measuring effective context length.
+- *"Needle in a Haystack"* evaluation methodology (Greg Kamradt's NIAH harness) — the practical recipe for measuring effective context length.
 - Anthropic engineering, *Prompt caching* and *Effective context engineering for AI agents* — vendor guidance on cache-friendly structuring and just-in-time context.
 - Packer et al., *MemGPT: Towards LLMs as Operating Systems* (2023) — the RAM-vs-disk framing of context as a managed memory hierarchy.
 - Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (RadixAttention) — automatic prefix sharing as a serving-side complement to context engineering.
@@ -640,7 +644,7 @@ There is a real tension: **compaction rewrites the prefix, which busts the cache
 
     **(b)** With $a = 1{,}000$: $T_{\text{in}} = 30\cdot 3000 + 1000\cdot 465 = 90{,}000 + 465{,}000 = 555{,}000$ tokens $= 0.555$M. Cost $= 0.555 \times 3 = $ **USD 1.665**.
 
-    The bill fell by a factor of $3.06 / 1.665 \approx 1.84$, i.e. a bit less than 2x. This follows directly from the chapter's cost model $T_{\text{in}} = L_0 N + a\,\tfrac{N(N+1)}{2}$, which is *linear* in $a$: the $a$-dependent term halves exactly ($930{,}000 \to 465{,}000$) when you halve $a$, so if the fixed $L_0 N = 90{,}000$ term were negligible the total would halve too — a clean 2x. But $L_0 N$ does not depend on $a$, so it is left unchanged and dilutes the reduction to 1.84x. (Note it is *halving*, not quartering: $a$ scales the dominant $\tfrac{1}{2}aN^2$ term linearly; it is halving $N$ that would quarter the bill.) The pure-quadratic $\tfrac{1}{2}aN^2$ approximation dominates only once $a N \gg L_0$; at $N = 30$ the constant $L_0 N$ still contributes enough to hold the factor below 2. Halving the footprint of a *longer* run (larger $N$, so the $a$-term dwarfs $L_0 N$) would approach the clean 2x more closely.
+    The bill fell by a factor of $3.06 / 1.665 \approx 1.84$, i.e. a bit less than 2x. This follows directly from the chapter's cost model $T_{\text{in}} = L_0 N + a\,\tfrac{N(N+1)}{2}$, which is *linear* in $a$: the $a$-dependent term halves exactly ($930{,}000 \to 465{,}000$) when you halve $a$, so if the fixed $L_0 N = 90{,}000$ term were negligible the total would halve too — a clean 2x. But $L_0 N$ does not depend on $a$, so it is left unchanged and dilutes the reduction to 1.84x. (Note it is *halving*, not quartering: $a$ scales the dominant $\tfrac{1}{2}aN^2$ term linearly. Halving $N$ instead quarters that *quadratic* term, but only halves the linear $L_0N$ term, so it is diluted the same way: $N=15$ gives $45{,}000 + 2000\cdot\tfrac{15\cdot16}{2} = 285{,}000$ tokens, a $3.58\times$ reduction rather than a clean $4\times$.) The pure-quadratic $\tfrac{1}{2}aN^2$ approximation dominates only once $a N \gg L_0$; at $N = 30$ the constant $L_0 N$ still contributes enough to hold the factor below 2. Halving the footprint of a *longer* run (larger $N$, so the $a$-term dwarfs $L_0 N$) would approach the clean 2x more closely.
 
 **3.** An agent carries a stable prefix of $P = 10{,}000$ tokens (system + tools + pinned plan) and adds $\Delta = 1{,}000$ new tokens per turn. Pricing: uncached input USD 3/M; cached *reads* USD 0.30/M; a one-time cache *write* USD 3.75/M for the prefix. Compute (a) the per-turn cost with no caching, (b) the steady-state per-turn cost once the prefix is cached, and (c) the total cost of a 20-turn run with and without caching. What is the overall ratio?
 

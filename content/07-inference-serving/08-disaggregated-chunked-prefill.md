@@ -34,7 +34,7 @@ The key insight: **prefill wants to be compute-bound and loves big batches; deco
 
 Now imagine both phases run on the same GPU pool under a continuous batching scheduler (see [Continuous Batching & Request Scheduling](../07-inference-serving/02-continuous-batching.html)). Every iteration of the inference engine processes a mixed batch: some sequences are in prefill, others are in decode. This mixing has two serious consequences:
 
-1. **Prefill preempts decode.** A long incoming prompt (say 8,192 tokens) takes tens of milliseconds to prefill. During that time, every decode-only request that was already generating is paused. The time-to-next-token for existing users spikes unexpectedly, violating service-level objectives (SLOs) on P99 latency.
+1. **Prefill preempts decode.** A long incoming prompt (say 8,192 tokens) takes *hundreds* of milliseconds to prefill — roughly 800 ms for a 13B model on one H100, as the worked example later in this chapter computes. During that time, every decode-only request that was already generating is paused. The time-to-next-token for existing users spikes unexpectedly, violating service-level objectives (SLOs) on P99 latency.
 
 2. **Decode throughput degrades under mixed batches.** When a decode step includes prefill tokens from new requests, the attention kernel must handle variable-length sequences with very different KV-cache patterns. GPU kernel efficiency drops; memory fragmentation increases; the effective batch size for decode shrinks.
 
@@ -85,6 +85,8 @@ Transferring that at NVLink4 speeds (~900 GB/s between two H100s on the same NVS
 | InfiniBand HDR100 (100 Gb/s) | ~12.5 GB/s | ~80 ms | Long-haul cross-node |
 | InfiniBand NDR (400 Gb/s) | ~50 GB/s | ~20 ms | Common in 2024–2025 clusters |
 | InfiniBand XDR (800 Gb/s) | ~100 GB/s | ~10 ms | 2026 frontier IB / equivalent 800G RoCE |
+
+One convention warning about that table, because it bites people comparing rows: the NVLink figures are NVIDIA's *bidirectional aggregate* per GPU (900 GB/s on NVLink4 means 450 GB/s in each direction simultaneously), whereas the PCIe and InfiniBand figures are the usual *per-direction* rates. A KV push is one-way traffic, so on the NVLink rows the honest one-way time is about twice the number in column three — ~2.2 ms rather than ~1.1 ms for 1 GB on NVLink4, and ~3 ms rather than ~1.5 ms for the 1.34 GB example above. That does not change any conclusion in this chapter (a few milliseconds either way is still negligible against a several-hundred-millisecond prefill, and still two orders of magnitude better than HDR100), which is why the rest of the chapter keeps using the vendor numbers — but when you size a real link, halve the NVLink column first.
 
 For real deployments, the recommendation is: keep prefill and decode workers on the same NVSwitch fabric (same node or adjacent nodes connected via NVSwitch) to keep transfer latency under a few milliseconds. If that is not possible, pipeline the transfer with decode (start decoding even as later layers' KV caches arrive) to overlap transfer and computation.
 
@@ -177,7 +179,7 @@ Disaggregation requires separate hardware pools and a network transfer path — 
 
 ### The Basic Idea
 
-Instead of processing a 16K-token prompt in one monolithic forward pass (which would stall decode for many tens of milliseconds), we split the prompt into chunks of at most $C$ tokens each, say $C = 512$. Each inference iteration processes:
+Instead of processing a 16K-token prompt in one monolithic forward pass (which would stall decode for hundreds of milliseconds or more), we split the prompt into chunks of at most $C$ tokens each, say $C = 512$. Each inference iteration processes:
 
 - One **chunk** of the current prompt (partial prefill), contributing $C$ tokens to the KV cache.
 - All **decode tokens** from in-flight sequences (one new token each).
@@ -286,17 +288,19 @@ def chunked_prefill_attention(
 The optimization problem DistServe solves is (informally):
 
 $$
-\max_{r_P, r_D} \ \text{Throughput}(r_P, r_D) \quad \text{s.t.} \quad P99_\text{TTFT} \leq S_\text{TTFT},\ P99_\text{ITL} \leq S_\text{ITL},\ r_P + r_D = N
+\max_{r_P, r_D} \ \text{Throughput}(r_P, r_D) \quad \text{s.t.} \quad P99_\text{TTFT} \leq S_\text{TTFT},\ P99_\text{ITL} \leq S_\text{ITL},\ r_P \cdot g_P + r_D \cdot g_D \leq N
 $$
 
-where $r_P$ and $r_D$ are the number of replicas (GPU groups) allocated to prefill and decode, and $N$ is the total GPU budget.
+where $r_P$ and $r_D$ are the number of replicas (GPU groups) allocated to prefill and decode, $g_P$ and $g_D$ are the GPUs consumed by one replica of each phase (its tensor-parallel degree times its pipeline-parallel degree), and $N$ is the total GPU budget. Writing the budget in GPUs rather than in replicas matters, because $g_P$ and $g_D$ are themselves decision variables: DistServe's placement search chooses the *per-phase parallelism* alongside the replica counts, and the two phases generally land on different configurations.
 
 ## Splitwise: Heterogeneous Hardware for Each Phase
 
 **Splitwise** (Patel et al., ISCA 2024, Microsoft Research; arXiv preprint 2023) takes disaggregation one step further: it argues that because prefill is compute-bound and decode is memory-bandwidth-bound, you should use *different GPU models* for the two pools. Specifically:
 
-- **Prefill workers:** use high-FLOP/s, moderately-bandwidth GPUs. In an H100/A100 world, this often means fewer GPUs with aggressive compute configurations.
-- **Decode workers:** use high-bandwidth-memory GPUs — or even CPUs with large memory for small batches (CPU offloading). High-HBM parts shine here, from the H100's 3.35 TB/s HBM3 up to the Blackwell B200's ~8 TB/s HBM3e.
+- **Prompt (prefill) workers:** the high-FLOP/s part — in the paper's evaluation, the H100, whose compute roof the compute-bound prompt phase can actually reach.
+- **Token (decode) workers:** the *cheaper* part with adequate memory bandwidth and capacity — in the paper, the older A100 (≈2.0 TB/s HBM2e against the H100's 3.35 TB/s). Decode never comes close to the H100's compute roof, so paying for that roof is waste. This is the paper's heterogeneous configuration, "Splitwise-HA" (prompt phase on H100, token phase on A100). Across its cluster designs the paper reports roughly 1.4× the throughput at ~20% lower cost than the machines it compares against, or 2.35× the throughput at the same cost and power budget.
+
+Note the direction of that argument, which is easy to invert: Splitwise does *not* say "buy the highest-bandwidth GPU you can for decode." It says decode is bandwidth-bound, so buy bandwidth *per dollar* and stop paying for FLOP/s you cannot use — which is why the cost-optimal decode pool is often a hardware generation behind the prefill pool. (The chapter's own extrapolation, not the paper's: on a 2026 fleet the same logic points at pairing Blackwell-class prefill workers with the previous generation's high-HBM parts for decode, rather than putting B200s on both sides.)
 
 Splitwise also introduced the term **"prompt phase"** for prefill and **"token phase"** for decode, now widely adopted in the systems literature. Their key empirical finding: on commercial cloud deployments, the decode phase issues roughly the *same* FLOPs per token as prefill (a dense forward pass is $\approx 2N$ FLOPs per token either way) but achieves a far lower fraction of peak FLOP/s, so it consumes a disproportionate share of total serving cost while sitting idle waiting on memory bandwidth. Disaggregation with heterogeneous hardware can reduce per-token cost by routing each phase to its best-fit hardware.
 
@@ -339,12 +343,20 @@ def adaptive_chunk_size(
         return max_chunk_size
 
     if decode_queue_depth >= decode_pressure_threshold:
-        # Lots of decode sequences in-flight; be gentle on ITL
+        # Lots of decode sequences in-flight; be gentle on ITL.
+        # The ITL SLO wins here regardless of how deep the prefill queue is.
         return min_chunk_size
 
-    # Interpolate linearly between min and base
+    # Interpolate linearly between min and base on decode pressure
     ratio = decode_queue_depth / decode_pressure_threshold
     chunk = int(base_chunk_size - ratio * (base_chunk_size - min_chunk_size))
+
+    # A backed-up prefill queue biases back toward larger chunks to protect
+    # TTFT, but never past base_chunk_size while decode is active.
+    if prefill_queue_depth > 1:
+        backlog_boost = min(2.0, 1.0 + 0.25 * (prefill_queue_depth - 1))
+        chunk = int(chunk * backlog_boost)
+
     return max(min_chunk_size, min(chunk, base_chunk_size))
 ```
 
@@ -566,7 +578,7 @@ Enable chunked prefill whenever:
 - Your system receives occasional long prompts mixed with ongoing conversations.
 - You are using vLLM or SGLang and have not already enabled it — it is low-risk and usually improves P99 latency.
 
-A good starting value: `max_num_batched_tokens = 2048` with `chunk_size = 512`. Profile your P99 ITL and TTFT with a production traffic replay, then tune.
+A good starting value for the per-iteration token budget: `max_num_batched_tokens = 2048` in vLLM, or `--chunked-prefill-size 2048` in SGLang. Note that there is no separate "chunk size" flag in vLLM — the chunk a request receives is whatever is left of the budget after the in-flight decode tokens are seated, so lowering the budget is how you shrink chunks. (If you additionally need a per-request cap, that is `long_prefill_token_threshold`, paired with `max_num_partial_prefills`.) Profile your P99 ITL and TTFT with a production traffic replay, then tune.
 
 ### When to Build a Disaggregated System
 
@@ -614,7 +626,7 @@ METRICS = {
 
 Disaggregated prefill/decode does not exist in isolation. Several adjacent technologies interact with it:
 
-**Prefix Caching** (see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html)): If two requests share a common prefix, the prefill worker can skip recomputing that portion, and the decode worker receives a smaller KV cache. Disaggregation amplifies the value of prefix caching because the KV transfer cost is proportional to the unique (non-cached) portion of the KV cache.
+**Prefix Caching** (see [Prefix Caching & KV-Cache Reuse](../07-inference-serving/07-prefix-caching.html)): If two requests share a common prefix, the prefill worker can skip recomputing that portion, cutting TTFT sharply. Disaggregation amplifies the value of prefix caching — but only under a condition worth stating explicitly. A prefix hit on the *prefill* worker saves prefill compute; it does not by itself shrink the transfer, because the decode worker still has to attend over the full $T_p$-token KV cache. The transfer cost falls to the unique (non-cached) portion only when the decode side is itself prefix-cache-aware (it already holds the shared blocks, so the router pairs the request with that decode worker) or when both pools draw from a shared KV store such as Mooncake or LMCache. In a plain two-pool deployment with no shared store and no KV-aware routing, prefix caching saves compute but moves the same number of bytes over the wire.
 
 **Speculative Decoding** (see [Speculative Decoding: Draft Models, Medusa, EAGLE & Lookahead](../07-inference-serving/06-speculative-decoding.html)): Speculative decoding generates draft tokens on the decode worker and verifies them in a batched forward pass. This verification pass looks like a short prefill — under disaggregation, it stays on the decode worker (it is short enough not to cause interference) rather than being sent to the prefill pool.
 
@@ -677,7 +689,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
 **1.** *(Conceptual.)* A colleague proposes "fixing" prefill-decode interference by simply giving decode requests strict priority: always run every in-flight decode step first, and only run a prefill once no decode is pending. Explain why, in a naive continuous-batching engine, this does **not** solve the interference problem the chapter describes, and name the two mechanisms — one from the disaggregation section and one from the chunked-prefill section — that actually do.
 
 ??? note "Solution"
-    Strict decode priority does not help because interference is caused by the prefill forward pass being **monolithic and non-preemptible within a single GPU iteration**, not by scheduling order. Once a long prompt (say 8,192 tokens) is admitted, its forward pass occupies the GPU for tens of milliseconds as one indivisible kernel sequence. Even with decode "priority," the very next decode step cannot begin until that entire prefill iteration returns, so every in-flight decode sequence still eats the full prefill duration as an ITL spike. Priority only reorders *which* work runs next; it cannot subdivide a prefill that has already started, and it cannot run decode concurrently with prefill on the same GPU pool.
+    Strict decode priority does not help because interference is caused by the prefill forward pass being **monolithic and non-preemptible within a single GPU iteration**, not by scheduling order. Once a long prompt (say 8,192 tokens) is admitted, its forward pass occupies the GPU for hundreds of milliseconds — ~800 ms for a 13B model on one H100, per the chapter's worked example — as one indivisible kernel sequence. Even with decode "priority," the very next decode step cannot begin until that entire prefill iteration returns, so every in-flight decode sequence still eats the full prefill duration as an ITL spike. Priority only reorders *which* work runs next; it cannot subdivide a prefill that has already started, and it cannot run decode concurrently with prefill on the same GPU pool.
 
     The two mechanisms that genuinely remove the stall:
 
@@ -803,7 +815,7 @@ Disaggregated prefill/decode does not exist in isolation. Several adjacent techn
         return batch
     ```
 
-    Observed behavior as the decode pool fills: when `len(self.decoding) == 0`, `adaptive_chunk_size` returns `max_chunk_size` (default 4096), so waiting prompts are drained in big chunks — minimizing TTFT while nobody's ITL is at risk. As decode sequences accumulate and cross `decode_pressure_threshold` (default 16), the policy clamps to `min_chunk_size` (128), so each iteration adds only a small prefill increment and the ITL of the many in-flight decode sequences stays bounded. In between, the chunk size interpolates down smoothly. One caveat to note: because the admission guard is now `budget >= eff_chunk`, a very large `eff_chunk` under an empty decode pool can admit fewer new sequences per round (each grabs a bigger bite of the token budget) — which is exactly the intended TTFT-favoring behavior.
+    Observed behavior as the decode pool fills: when `len(self.decoding) == 0`, `adaptive_chunk_size` returns `max_chunk_size` (default 4096), so waiting prompts are drained in big chunks — minimizing TTFT while nobody's ITL is at risk. As decode sequences accumulate and cross `decode_pressure_threshold` (default 16), the policy clamps to `min_chunk_size` (128), so each iteration adds only a small prefill increment and the ITL of the many in-flight decode sequences stays bounded. In between, the chunk size interpolates down smoothly with decode pressure, nudged back up when `len(self.waiting)` is large (the backlog boost, capped at `base_chunk_size`). One caveat to note: because the admission guard is now `budget >= eff_chunk`, a very large `eff_chunk` under an empty decode pool can admit fewer new sequences per round (each grabs a bigger bite of the token budget) — which is exactly the intended TTFT-favoring behavior.
 
 **5.** *(Implementation — GQA in chunked-prefill attention.)* The chapter's `chunked_prefill_attention` assumes `n_heads == n_kv_heads` and builds its causal mask with a Python `for` loop. Rewrite the function to (a) support GQA where `n_kv_heads < n_heads` by expanding the KV heads, and (b) replace the per-row loop with a vectorized mask. Keep the same signature and output shape `[C, n_heads, d_head]`.
 

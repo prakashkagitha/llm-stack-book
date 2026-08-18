@@ -520,7 +520,7 @@ Crossing InfiniBand HDR (25 GB/s effective per rank in a ring): about **208 µs*
 
 ### PP Communication Profile
 
-PP communication in decode is a single `send`/`recv` of the hidden-state tensor: $B \times d$ elements. For $B = 64$ and $d = 8192$ in BF16: $64 \times 8192 \times 2 = 1$ MB, sent once per layer per stage boundary. With $P - 1$ stage boundaries, this is much smaller than TP all-reduces — but it is *blocking* on the decode critical path, since the next stage cannot begin until the hidden state arrives. Only with multiple micro-batches in flight can the transfer be overlapped with another micro-batch's compute.
+PP communication in decode is a single `send`/`recv` of the hidden-state tensor: $B \times d$ elements. For $B = 64$ and $d = 8192$ in BF16: $64 \times 8192 \times 2 = 1$ MB, sent once per stage boundary per decode step (not once per layer — activations stay resident inside a stage). With $P - 1$ stage boundaries, this is much smaller than TP all-reduces — but it is *blocking* on the decode critical path, since the next stage cannot begin until the hidden state arrives. Only with multiple micro-batches in flight can the transfer be overlapped with another micro-batch's compute.
 
 ### EP (Wide) Communication Profile
 
@@ -594,13 +594,15 @@ where $D$ is the DP replica count, $N_{\text{GPU/replica}} = \text{TP} \times \t
     Per-GPU weight memory: 35 GB.
     Remaining: 45 GB for KV cache.
 
-    KV cache per token (Llama-3 70B, GQA 8 heads, head_dim 128, 80 layers, BF16):
+    KV cache per token (Llama-3 70B, GQA 8 heads, head_dim 128, 80 layers, BF16), summed over all KV heads:
 
     $$2 \times 8 \times 128 \times 80 \times 2 = 327{,}680 \text{ bytes} \approx 320 \text{ KB}$$
 
-    At 45 GB per GPU: $45 \times 10^9 / 327{,}680 \approx 137{,}000$ tokens of KV cache per GPU.
+    TP = 4 shards those 8 KV heads across the four ranks, so each GPU stores 2 of them — $327{,}680 / 4 = 81{,}920$ bytes/token, i.e. 80 KB/token per GPU.
 
-    For 100 concurrent users × 512 token context: $100 \times 512 = 51{,}200$ tokens. Well within budget — one replica (4 GPUs) can hold all concurrent KV caches.
+    At 45 GB per GPU: $45 \times 10^9 / 81{,}920 \approx 549{,}000$ tokens of KV cache per GPU.
+
+    For 100 concurrent users × 512 token context: $100 \times 512 = 51{,}200$ tokens, under 10% of that. Comfortably within budget — one replica (4 GPUs) can hold all concurrent KV caches.
 
     **Step 2: Latency check**
 
@@ -676,11 +678,13 @@ For MoE models like Mixtral 8×22B or DeepSeek-V3 on SGLang, the simplest config
 
 ```bash
 # SGLang launch for a large MoE (DeepSeek-V3-style)
-# 8 GPUs on one node, TP=8; expert parallelism handled internally
+# 8 GPUs on one node, TP=8; expert parallelism handled internally.
+# No --dtype override: DeepSeek-V3 ships as FP8, and only the FP8 checkpoint
+# (~671 GB of weights) fits on one node of 8 x H200 141 GB. Forcing bfloat16
+# would double that to ~1.34 TB and need at least two such nodes.
 python -m sglang.launch_server \
     --model-path deepseek-ai/DeepSeek-V3 \
     --tp 8 \
-    --dtype bfloat16 \
     --enable-ep-moe \
     --ep-size 8 \
     --port 30000 \
@@ -734,14 +738,14 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
 
     **A:** The decode step is memory-bandwidth-bound for small batches. At TP = 8, each GPU already loads only 1/8 of the weight parameters per step, so memory bandwidth is partially amortized. To halve TPOT:
 
-    1. **Increase batch size**: if TPOT of 60 ms corresponds to a batch size of 1, batching 2 requests together roughly halves the per-token time by amortizing weight loads — but doubles user latency if requests arrive serially.
+    1. **Rule out batching as the answer**: batching is the *throughput* lever, not the TPOT lever. A decode step reads the same weight bytes at $B = 1$ and $B = 2$, so the step time — and therefore TPOT — is roughly unchanged; what doubles is tokens emitted per step (throughput $= B / \text{TPOT}$). Saying "batch harder" here is the trap in this question.
     2. **Quantize weights to INT8 or FP8**: halving weight size halves memory traffic, roughly halving TPOT. Tools like GPTQ, AWQ, or TensorRT-LLM's FP8 mode achieve this with minimal quality loss.
     3. **Enable CUDA graphs**: eliminates kernel launch overhead (~1–5 ms per step for 80 layers), especially significant for small-batch decode.
     4. **Use speculative decoding**: draft 3–5 tokens per step with a small draft model, verify in parallel. Effective TPOT drops by the acceptance rate.
     5. **Reduce sequence length / KV cache size**: shorter context means less KV cache memory to load per attention step, slightly improving bandwidth utilization.
     6. **Upgrade to GQA/MQA** if the model variant allows, reducing KV heads loaded per step.
 
-    The first step should be batching + CUDA graphs; quantization is the highest-impact single change if quality allows.
+    CUDA graphs are the cheapest first step; quantization is the highest-impact single change if quality allows. Reach for batching only when the goal turns out to be tokens/s rather than TPOT.
 
 ---
 
@@ -753,7 +757,7 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
     - **Data parallel replicas** are the purest throughput scaling mechanism — identical model copies, independently serving requests, with no communication overhead.
     - **DP attention + EP** is the standard wide-EP layout: attention runs data-parallel so the KV cache is never duplicated (TP cannot shard KV past $n_{\text{kv\_heads}}$, and not at all for MLA), while the same GPUs regroup into one large expert-parallel group for the MoE layers. **Context parallelism** shards the sequence itself and is the axis to reach for when long context, not weight size, is the memory constraint.
     - **Decode is memory-bandwidth-bound**: the all-reduce cost of TP at NVLink speeds is negligible, but TP across InfiniBand can introduce measurable per-token latency.
-    - **Communication volume**: TP all-reduce ≈ 4 × d_model bytes per rank per all-reduce in BF16, with two all-reduces per layer; EP all-to-all ≈ 2 × B × k × d_model bytes per rank per MoE layer in BF16. Both must fit within the per-token time budget.
+    - **Communication volume**: TP all-reduce ≈ 4 × d_model bytes per rank per all-reduce in BF16, with two all-reduces per layer; EP all-to-all ≈ 2 × B × k × d_model bytes per rank per all-to-all in BF16, with two all-to-alls (dispatch and combine) per MoE layer. Both must fit within the per-token time budget.
     - **Sizing rule of thumb**: allocate enough TP to fit model weights with 40–60% GPU memory headroom for KV cache, then add DP replicas until the throughput SLO is met.
     - **Wide-EP (DeepSeek-style)** requires large batch sizes to amortize inter-node all-to-all; it excels for high-throughput API serving of enormous MoE models but adds serving infrastructure complexity.
 
@@ -770,7 +774,7 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
 
     - [Kwon et al., *Efficient Memory Management for Large Language Model Serving with PagedAttention* (2023)](https://arxiv.org/abs/2309.06180) — PagedAttention enables high-throughput multi-GPU serving by eliminating KV-cache fragmentation; foundation of vLLM.
     - [Zheng et al., *SGLang: Efficient Execution of Structured Language Model Programs* (2024)](https://arxiv.org/abs/2312.07104) — RadixAttention and compressed FSM scheduling for multi-GPU structured-output serving; NeurIPS 2024.
-    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — 671B MoE with EP = 64 across 8 nodes, DualPipe compute–communication overlap, and auxiliary-loss-free expert load balancing.
+    - [DeepSeek-AI, *DeepSeek-V3 Technical Report* (2024)](https://arxiv.org/abs/2412.19437) — 671B MoE whose deployment section specifies EP = 32 across 4 nodes for prefill and EP = 320 across 40 nodes for decode, plus DualPipe compute–communication overlap and auxiliary-loss-free expert load balancing.
     - [Kimi Team, *Kimi K2: Open Agentic Intelligence* (2025)](https://arxiv.org/abs/2507.20534) — 1.04T-parameter MoE (32B active, 384 experts, MLA); a current standard-bearer for open trillion-parameter models that serve via wide EP.
 
     **Open-source & tools**

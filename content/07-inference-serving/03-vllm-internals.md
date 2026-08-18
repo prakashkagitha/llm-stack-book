@@ -191,6 +191,7 @@ def schedule_step(self):
         self.waiting.popleft()
         seq.block_table = self.block_mgr.allocate(seq.prompt_len)
         seq.state = RUNNING
+        self.running.append(seq)                 # tail = newest = first preemption victim
         scheduled.append(seq)
 
     return scheduled, blocks_to_copy
@@ -433,7 +434,7 @@ llm = LLM(
     model="meta-llama/Meta-Llama-3-8B-Instruct",
     tensor_parallel_size=2,          # shard across 2 GPUs (TP)
     gpu_memory_utilization=0.90,     # fraction of GPU for weights + KV
-    max_model_len=8192,              # caps KV per request; lower = more concurrency
+    max_model_len=8192,              # worst-case context per request; plan max_num_seqs against it
     enable_prefix_caching=True,      # default in V1; reuse shared prefixes
     dtype="bfloat16",
 )
@@ -552,7 +553,7 @@ llm.collective_rpc("update_weights", args=(handles,))
 | Flag | What it controls | How to think about it |
 |---|---|---|
 | `gpu_memory_utilization` | Fraction of GPU for weights + KV pool | Higher = bigger KV pool = more concurrency, but risks OOM from activation spikes. 0.85–0.92 typical. |
-| `max_model_len` | Max context (prompt + output) per request | Caps per-request KV; set to the largest you truly need, not the model's max — lower frees KV for more concurrency. |
+| `max_model_len` | Max context (prompt + output) per request | Bounds worst-case KV per request — the number you plan `max_num_seqs` against, and the cap on how much of the pool any one request can take. Not a per-request reservation: blocks are still allocated lazily. |
 | `max_num_seqs` | Max concurrent sequences per batch | Too high → preemption thrash; too low → idle GPU. Tune with the preemption counter. |
 | `max_num_batched_tokens` | Token budget per forward step | Bigger favors throughput/prefill; smaller favors inter-token latency. Key chunked-prefill knob. |
 | `tensor_parallel_size` | GPUs to shard one model across | Use when weights+KV don't fit on one GPU, or to cut latency. See [Multi-GPU & Multi-Node Inference](../07-inference-serving/11-multi-gpu-inference.html). |
@@ -563,14 +564,14 @@ llm.collective_rpc("update_weights", args=(handles,))
 
 A practical tuning loop:
 
-1. **Pick `max_model_len` honestly.** This single number sets the worst-case KV per request. Cutting an unnecessary 32k cap down to 8k can multiply concurrency.
+1. **Pick `max_model_len` honestly.** This single number sets the worst-case KV per request — the figure you size `max_num_seqs` against — and vLLM refuses to start if the KV pool cannot hold even one sequence of that length. It is a bound, not a reservation: blocks are still handed out one at a time as tokens arrive, so lowering it does not by itself raise steady-state concurrency for short requests. What it buys is a ceiling on how much of the pool any single long request can take.
 2. **Push `gpu_memory_utilization` up** until you see activation OOMs, then back off a notch.
 3. **Decide your objective.** Throughput-first: large `max_num_batched_tokens`, large `max_num_seqs`. Latency-first (low inter-token latency for chat): smaller `max_num_batched_tokens` with chunked prefill so long prefills don't stall decodes.
 4. **Watch the metrics, and measure with a load generator.** The server's `/metrics` endpoint exports Prometheus counters and histograms: KV-cache utilization, running/waiting counts, `num_preemptions`, prefix-cache hit rate, time-to-first-token and time-per-output-token distributions. If preemptions are nonzero in steady state, you're oversubscribed — lower `max_num_seqs` or `max_model_len`, or quantize to enlarge the pool. Do not tune by eyeballing single requests: drive the server with vLLM's own harness (`vllm bench serve` in recent versions, or `benchmarks/benchmark_serving.py` in the repo) against a real request-rate and length distribution, which reports throughput alongside TTFT/TPOT percentiles so you can see the latency cost of every throughput gain.
 5. **Quantize to buy concurrency.** FP8/INT4 weights and an FP8 KV cache both enlarge the effective KV pool; for many workloads that concurrency gain outweighs the tiny quality cost. Inference economics — the latency/throughput/cost trade-off you are navigating — is the subject of [Inference Economics: Latency, Throughput & Cost](../07-inference-serving/12-inference-economics.html).
 
 !!! warning "Common pitfall: `max_model_len` left at the model maximum"
-    Leaving `max_model_len` at a model's full 128k context when your requests are 2k forces vLLM to *reason* about the KV budget conservatively for admission and (in some paths) over-reserve, throttling concurrency for no benefit. Always set `max_model_len` to the largest context you actually serve. Similarly, setting `gpu_memory_utilization` too high leaves no headroom for transient activation spikes during long prefills and triggers OOM crashes mid-traffic.
+    Leaving `max_model_len` at a model's full 128k context does *not* make vLLM reserve 128k of KV per request — allocation stays lazy — so it will not throttle a fleet of 2k-token requests on its own. The real costs are: the engine may refuse to start at all ("max seq len is larger than the maximum number of tokens that can be stored in KV cache") unless you raise `gpu_memory_utilization`; your capacity planning loses its anchor, because worst-case KV per request is now 64× what you actually serve; and a single client is free to submit a 128k request that swallows the pool and triggers a preemption storm for everyone else. Set `max_model_len` to the largest context you actually serve. Similarly, setting `gpu_memory_utilization` too high leaves no headroom for transient activation spikes during long prefills and triggers OOM crashes mid-traffic.
 
 vLLM is not the only serving engine — [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html) pushes prefix sharing further with a radix tree, and [TensorRT-LLM, TGI & Other Serving Stacks](../07-inference-serving/05-trtllm-tgi-stacks.html) trades flexibility for hand-tuned NVIDIA kernels. But vLLM's combination of a clean paged-memory core, broad model and hardware coverage, an active community, and the OpenAI-compatible surface has made it the default. Understanding its internals — the block manager, the scheduler, the executor, and how prefix caching, speculation, and multi-LoRA bolt onto the paged core — is understanding how modern open LLM serving works.
 

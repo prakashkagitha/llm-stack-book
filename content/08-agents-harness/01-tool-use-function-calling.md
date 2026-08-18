@@ -391,12 +391,17 @@ TOOLS = [
 # ---------------------------------------------------------------------------
 def _get_current_weather(location: str, units: str = "celsius") -> dict:
     """Stub weather API. Replace with a real HTTP call in production."""
-    # Fake data for illustration
+    # Fake data for illustration. Normalise the key before lookup: the schema
+    # only *suggests* the "London, UK" form, so the model will just as often send
+    # "London" or "london". Matching on the raw string would silently fall
+    # through to the default row and return plausible-looking wrong data — a
+    # classic harness bug that looks like a model failure.
     data = {
-        "London, UK": {"temp_c": 14, "conditions": "cloudy"},
-        "Tokyo, Japan": {"temp_c": 28, "conditions": "sunny"},
+        "london": {"temp_c": 14, "conditions": "cloudy"},
+        "tokyo": {"temp_c": 28, "conditions": "sunny"},
     }
-    info = data.get(location, {"temp_c": 20, "conditions": "unknown"})
+    city = location.split(",")[0].strip().lower()
+    info = data.get(city, {"temp_c": 20, "conditions": "unknown"})
     temp = info["temp_c"]
     if units == "fahrenheit":
         temp = temp * 9/5 + 32
@@ -628,7 +633,8 @@ def execute_tool_calls_parallel(tool_calls: list) -> list[dict]:
 Function calling and *structured outputs* solve overlapping but distinct problems:
 
 - **Function calling**: the model decides *whether* to call a tool and *which one*. The output is a tool invocation object, not prose.
-- **Structured outputs / JSON mode**: the model is constrained to always produce valid JSON conforming to a schema, regardless of whether tools are involved. Useful for extraction, classification, and parsing tasks.
+- **Structured outputs** (`response_format={"type": "json_schema", ...}` with `"strict": true`): the model is constrained to always produce valid JSON conforming to a *supplied schema*, regardless of whether tools are involved. Useful for extraction, classification, and parsing tasks.
+- **JSON mode** (`response_format={"type": "json_object"}`) is the older, much weaker sibling and is often confused with the above: it accepts no schema at all and guarantees only that the output *parses* as JSON — no property names, no types, no required fields — and the OpenAI endpoint additionally errors unless the string "JSON" appears somewhere in the messages. Reach for structured outputs whenever you actually care about the shape.
 
 Structured outputs are always backed by constrained decoding; function calling is backed by it only when you ask for it — OpenAI enforces the parameter schema when the function definition sets `"strict": true`, and an open-weight server enforces it when a structured-output backend is engaged. Default function calling is pure fine-tuned generation, which is exactly why the parse-validate-dispatch pipeline above exists (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html) for the full theory). The key insight is that once you have a JSON Schema, a CFG (context-free grammar) can be derived from its *structural* keywords — object shape, property names, types, nesting — and token sampling is then masked so only tokens that could continue a valid prefix are allowed. Value-level keywords such as `minimum`/`maximum`, `multipleOf`, and `uniqueItems` are not expressible in the grammar; real engines compile a superset and leave those to post-validation.
 
@@ -724,14 +730,25 @@ def safe_dispatch(tool_call) -> dict:
     # Step 3: Execute with timeout
     import signal
 
+    # The alarm fires *inside the tool's own frame*, so the exception it raises
+    # must be one the tool cannot accidentally swallow. Tools written in the
+    # usual defensive style — like this chapter's `_calculate` — wrap their body
+    # in `except Exception`, and `TimeoutError` is a subclass of `OSError`, hence
+    # of `Exception`. Raising a plain `TimeoutError` would therefore be caught by
+    # the tool, which would *return normally* with its own error dict and the
+    # `except` below would never fire. Deriving the sentinel from `BaseException`
+    # makes it invisible to every well-behaved `except Exception` catch-all.
+    class ToolTimeout(BaseException):
+        pass
+
     def _timeout_handler(signum, frame):
-        raise TimeoutError("Tool execution exceeded time limit.")
+        raise ToolTimeout("Tool execution exceeded time limit.")
 
     prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
     signal.alarm(10)  # 10 second limit
     try:
         return TOOL_FN_MAP[fn_name](**fn_args)
-    except TimeoutError:
+    except ToolTimeout:
         return {"error": "timeout", "message": "Tool call timed out after 10 seconds."}
     except TypeError as exc:
         # Wrong argument names or types
@@ -1095,4 +1112,4 @@ The Model Context Protocol (MCP), introduced by Anthropic in late 2024, is a sta
     (b) Two harness-level controls from the chapter limit blast radius independent of the sandbox:
 
     - **`max_iterations` / per-tool quotas and the context-budget check** (from "Maximum call limits and infinite loop prevention") cap *how many times* an expensive call can be issued in one turn, so even a costly `calculate` cannot be invoked unboundedly.
-    - The specific control that catches a call **that never returns** is the **execution timeout** in `safe_dispatch` from the error-handling section: it installs a `SIGALRM` handler with `signal.alarm(10)` and, on firing, returns `{"error": "timeout", "message": "Tool call timed out after 10 seconds."}`. A hanging or runaway expression is thus converted into a timeout error that — per the "errors are tool results" pattern — is fed back to the model, which can then try a different expression or give up gracefully, all without the harness ever crashing.
+    - The specific control that catches a call **that never returns** is the **execution timeout** in `safe_dispatch` from the error-handling section: it installs a `SIGALRM` handler with `signal.alarm(10)` and, on firing, returns `{"error": "timeout", "message": "Tool call timed out after 10 seconds."}`. A hanging or runaway expression is thus converted into a timeout error that — per the "errors are tool results" pattern — is fed back to the model, which can then try a different expression or give up gracefully, all without the harness ever crashing. Note the detail that makes this work against *this* tool: the alarm handler raises a `ToolTimeout(BaseException)` sentinel rather than a plain `TimeoutError`. `_calculate` catches `Exception`, and `TimeoutError` is an `OSError` and therefore an `Exception` — a plain `TimeoutError` would be swallowed by `_calculate`'s own handler and returned as an ordinary `{"error": ...}` result, so `safe_dispatch`'s timeout branch would never run. Deriving from `BaseException` is what keeps the timeout out of reach of tool-level catch-alls. (Recall too the caveat from the same section: `signal.alarm` only works on the main thread, so a concurrent harness needs a subprocess or async boundary instead.)

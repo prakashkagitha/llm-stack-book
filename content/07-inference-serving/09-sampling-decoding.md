@@ -125,7 +125,7 @@ def greedy_decode(
     return generated
 ```
 
-Use greedy when: (a) you need exact reproducibility, (b) the task has a single correct answer and the model is well-calibrated (e.g., code completion with high-temperature training), or (c) you are the draft model in speculative decoding and the verifier handles stochasticity.
+Use greedy when: (a) you need exact reproducibility, (b) the task has a single correct answer and the model is well-calibrated (e.g., code completion or extractive QA, where a single continuation is correct and sampling only adds variance), or (c) you are the draft model in speculative decoding and the verifier handles stochasticity.
 
 ## Temperature Scaling
 
@@ -268,13 +268,13 @@ class MinPProcessor:
 
 Meister et al. ("Typical Decoding for Natural Language Generation", 2023) approach diversity from an information-theoretic angle. They observe that human text is *typically* drawn from the centre of the entropy distribution: tokens whose surprisal $-\log P(t)$ is close to the conditional entropy $H = -\sum_t P(t) \log P(t)$.
 
-Define the *typicality* of token $t$:
+Define the *typicality* of token $t$ as the distance between its surprisal and the entropy:
 
 $$
-|\!-\!\log P(t) - H| \leq \delta
+\tau(t) = \big|\!-\!\log P(t) - H\big|
 $$
 
-Typical sampling keeps only tokens satisfying this condition, discarding both the most probable (low surprisal, repetitive) and the least probable (high surprisal, incoherent).
+*Locally typical sampling* sorts the vocabulary by $\tau$ ascending (most typical first) and keeps the smallest prefix whose cumulative probability reaches a target `mass` (0.9 is the usual default, and the name `TypicalLogitsWarper(mass=...)` uses in `transformers`). It is exactly the nucleus construction of top-p, but ordered by typicality instead of by probability — so it discards both the most probable tokens (surprisal far *below* the entropy: repetitive) and the least probable (surprisal far *above* it: incoherent).
 
 ```python
 class TypicalProcessor:
@@ -382,7 +382,15 @@ class FrequencyPenaltyProcessor:
 
 !!! warning "Penalty interaction with temperature"
 
-    Repetition penalties are applied to logits *before* temperature scaling in most implementations (HuggingFace `transformers` applies them in the order: repetition penalty → temperature → top-k → top-p). If you change that order, the effective penalty magnitude changes. Always check the order in your stack.
+    Order matters — but only for the *additive* penalties. The multiplicative repetition penalty **commutes exactly** with temperature scaling: for $z > 0$, $(z/\theta)/T = z/(\theta T) = (z/T)/\theta$, for $z < 0$ likewise, and dividing by $T > 0$ never flips the sign, so the same branch fires either way. Swapping it with temperature changes nothing.
+
+    The frequency and presence penalties are additive and do **not** commute:
+
+    $$
+    \frac{z - \alpha c}{T} = \frac{z}{T} - \frac{\alpha}{T}c \;\neq\; \frac{z}{T} - \alpha c
+    $$
+
+    In the standard order (penalties → temperature → top-k → top-p, used by both HuggingFace `transformers` and vLLM), the effective subtraction in the post-temperature logit space is $\alpha/T$ — so at $T = 0.5$ a `frequency_penalty` of 0.5 bites twice as hard as the same value applied after temperature. Always check the order in your stack before porting a penalty value across engines.
 
 ## Beam Search
 
@@ -437,7 +445,9 @@ def beam_search(
                 logits = model(ids).logits[0, -1, :]   # (vocab,)
             log_probs = F.log_softmax(logits, dim=-1)
 
-            # Expand: consider all tokens in the vocabulary
+            # Expand: only the top beam_size continuations of THIS beam can
+            # survive, since the global top-B over all (beam, token) pairs is
+            # contained in the union of the per-beam top-B.
             topk_logprob, topk_ids = torch.topk(log_probs, beam_size)
             for lp, tid in zip(topk_logprob.tolist(), topk_ids.tolist()):
                 new_tokens = tokens + [tid]
@@ -700,7 +710,7 @@ Both OpenAI-compatible servers (vLLM, SGLang, TGI) accept `temperature`, `top_p`
 Custom processors enable powerful behaviours:
 
 - **Grammar enforcement**: mask all tokens incompatible with a context-free grammar at the current parser state (see [Structured & Constrained Generation](../07-inference-serving/10-structured-generation.html)).
-- **Watermarking**: John Kirchenbauer et al. ("A Watermark for Large Language Models", 2023) add a small positive bias to a randomly chosen half of the vocabulary, seeded by the previous token. This creates a statistically detectable fingerprint in the output.
+- **Watermarking**: John Kirchenbauer et al. ("A Watermark for Large Language Models", 2023) add a positive bias $\delta$ to the logits of a pseudorandomly chosen fraction $\gamma$ of the vocabulary — the "green list" — seeded by a hash of the previous token. The authors' suggested baseline is $\gamma = 0.25$ with $\delta = 2.0$, a bias large enough to reorder the top of the distribution. This creates a statistically detectable fingerprint (a z-test on the green-token count) in the output.
 - **Token healing**: roll the last prompt token back and regenerate it under a string-prefix constraint, so a prompt that ends mid-token (a trailing `"http:` or a partial word) is not forced onto an unnatural tokenisation. It originated in Microsoft's `guidance` and is exposed in HuggingFace as `generate(..., token_healing=True, tokenizer=tok)`; vLLM has no equivalent flag, so with an OpenAI-style server you have to heal the boundary yourself.
 - **Vocabulary bias**: force specific tokens (e.g., "yes"/"no" for classification prompts) by setting all other logits to $-\infty$.
 
@@ -892,7 +902,7 @@ if __name__ == "__main__":
     - Real engines expose the same pipeline under different spellings: vLLM/SGLang `SamplingParams`, HuggingFace `LogitsProcessorList`, llama.cpp's `llama_sampler_chain`. Know the gotchas (top-k's "disabled" sentinel differs; `min_p`/`top_k`/`repetition_penalty` are non-standard extensions on OpenAI-compatible endpoints).
     - **Temperature** is the master dial: dividing logits by $T < 1$ sharpens the distribution (less diverse, higher confidence); $T > 1$ flattens it (more diverse, potentially incoherent). Models are calibrated for $T \approx 1$.
     - **Top-k** cuts the long tail with a fixed count; **top-p** (nucleus) adapts to the distribution shape by cutting by cumulative mass — typically superior. **Min-p** cuts relative to the peak probability.
-    - **Repetition penalty** discounts logits for previously seen tokens; **frequency penalty** discounts proportional to count. Both prevent loops; both interact with temperature (apply penalty before temperature scaling).
+    - **Repetition penalty** discounts logits for previously seen tokens; **frequency penalty** discounts proportional to count. Both prevent loops. The multiplicative repetition penalty commutes exactly with temperature, but the additive frequency/presence penalties do not — mainstream stacks apply penalties *before* temperature, which scales their effective strength by $1/T$.
     - **Beam search** improves quality for structured tasks (translation, summarisation) but produces bland, repetitive text for open-ended generation. Use $B = 4$–$8$ with length normalisation.
     - **Contrastive decoding** and **DoLa** improve factuality by subtracting a less-knowledgeable model's (or layer's) probability distribution, amplifying the expert signal.
     - During **RL fine-tuning**, sampling temperature controls exploration. Compute KL divergences at the *same* temperature as the rollout to keep the objective consistent.

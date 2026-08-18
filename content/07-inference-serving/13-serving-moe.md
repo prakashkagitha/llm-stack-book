@@ -160,7 +160,7 @@ print(f"rank {rank}: sent {sc}, received {rc}")
 dist.destroy_process_group()
 ```
 
-Two things in that listing are the reason production stacks do not just call NCCL. First, the **metadata collective is a second round trip** on the critical path — two barriers per MoE layer instead of one. Second, `send_counts.tolist()` is a **device-to-host synchronization**: the CPU must wait for the router to finish on the GPU before it can even size the receive buffer or launch the next kernel, which drains the pipeline and makes the step impossible to capture in a CUDA graph. Removing both is a central design goal of the kernels in the next section.
+Two things in that listing are the reason production stacks do not just call NCCL. First, the **metadata collective is an extra round trip** on the critical path — three collectives per MoE layer (metadata, dispatch, combine) instead of two. Second, `send_counts.tolist()` is a **device-to-host synchronization**: the CPU must wait for the router to finish on the GPU before it can even size the receive buffer or launch the next kernel, which drains the pipeline and makes the step impossible to capture in a CUDA graph. Removing both is a central design goal of the kernels in the next section.
 
 ### The Two Costs: Bytes Moved and the Barrier
 
@@ -285,7 +285,7 @@ Here is the layout subtlety that separates a 2024-era MoE deployment from a 2025
 - **Attention** has *few* parameters but a *large, per-request* KV cache. You want to shard it in a way that does not replicate the KV cache and keeps it bandwidth-efficient. With Multi-head Latent Attention (MLA), as used by DeepSeek (see [Multi-Head Attention, MQA, GQA & MLA](../02-transformer/04-mha-gqa-mla.html)), the per-token KV is a small compressed latent, so each GPU can cheaply hold the *full* KV for *its own* requests.
 - **Experts** have *most* of the parameters and need to be *spread* (EP) so they fit and so aggregate expert bandwidth is high.
 
-If you naively apply tensor parallelism (TP) to the whole model, you replicate the KV cache across all TP ranks — wasteful — and you split attention heads, which for MLA or low-head-count attention can underutilize each GPU. The modern answer is a **hybrid**:
+If you naively apply tensor parallelism (TP) to the whole model, attention scales badly. Whenever the KV representation is narrower than the TP degree — MLA's single shared latent, MQA's single KV head, or GQA with fewer KV heads than ranks — every rank needs the *same* KV, so the cache ends up **replicated** across TP ranks instead of sharded, which is wasteful. And you still split the query heads, which at low head counts underutilizes each GPU. The modern answer is a **hybrid**:
 
 > **Attention runs data-parallel (attention-DP): each GPU handles a disjoint set of requests and keeps those requests' full KV cache locally. Experts run expert-parallel (EP): the FFN/MoE sublayer is sharded across the same GPUs.**
 
@@ -328,7 +328,7 @@ This asymmetry is the core argument for **disaggregating** prefill and decode on
 
     **EP layout.** Place 256 experts over 16 GPUs $\Rightarrow$ 16 experts/GPU. Attention runs DP (each GPU owns its requests' MLA KV); MoE runs EP=16 with all-to-all.
 
-    **All-to-all per layer (decode).** Per token, BF16 dispatch moves $k\,d_{\text{model}}\cdot 2 = 8\cdot7168\cdot2 \approx 115\text{ KB}$; FP8 dispatch halves that to ~57 KB. Taking the FP8 path, a decode batch of $B=128$ tokens sends $\approx 7.3\text{ MB}$ out per MoE layer; over 58 MoE layers, $\approx 423\text{ MB}$ moved per decode step (dispatch), with combine returning a comparable volume in BF16. At the ~45 GB/s of usable RDMA per GPU that DeepEP measures on this class of fabric (8×400 Gb/s IB per node is 50 GB/s per GPU per direction at line rate), the *exposed* (non-overlapped) fraction is what hits TPOT — the engineering goal is to drive that toward zero with the low-latency hook kernels.
+    **All-to-all per layer (decode).** Per token, BF16 dispatch moves $k\,d_{\text{model}}\cdot 2 = 8\cdot7168\cdot2 \approx 115\text{ KB}$; FP8 dispatch halves that to ~57 KB. Taking the FP8 path, a decode batch of $B=128$ tokens sends $\approx 7.3\text{ MB}$ out per MoE layer; over 58 MoE layers, $\approx 423\text{ MB}$ moved per decode step (dispatch), with combine returning $\approx 2\times$ that volume ($\approx 850\text{ MB}$) because the expert outputs come back in BF16. At the ~45 GB/s of usable RDMA per GPU that DeepEP measures on this class of fabric (8×400 Gb/s IB per node is 50 GB/s per GPU per direction at line rate), the *exposed* (non-overlapped) fraction is what hits TPOT — the engineering goal is to drive that toward zero with the low-latency hook kernels.
 
     **KV budget.** MLA compresses KV to a small latent: DeepSeek-V3 caches $\text{kv\_lora\_rank}+\text{qk\_rope\_head\_dim} = 512+64 = 576$ elements per token per layer, so $576\cdot61 \approx 35\text{K}$ elements/token across all layers — **~70 KB/token in BF16, ~35 KB/token in FP8**, versus megabytes for vanilla MHA at this head count. With ~22 GB/GPU free and an FP8 KV cache, one GPU holds $\sim 22\text{e}9 / 35\text{e}3 \approx 630{,}000$ tokens of KV — e.g. ~19 concurrent 32K-context requests per GPU, ~300 across the 16-GPU pool. KV capacity is comfortable precisely because MLA + attention-DP avoids replication.
 
@@ -358,27 +358,43 @@ class ExpertCache:
         self.cpu = cpu_experts                  # dict: eid -> (w1_cpu, w2_cpu) pinned
         self.capacity = capacity
         self.device = device
-        self.resident = OrderedDict()           # eid -> (w1_gpu, w2_gpu), LRU order
+        self.resident = OrderedDict()           # eid -> (w1_gpu, w2_gpu, evt), LRU order
+        # A DEDICATED copy stream is what actually buys overlap. `non_blocking=True`
+        # on a pinned source only makes the copy async w.r.t. the *host*; the H2D
+        # transfer is still enqueued on the current stream and therefore serializes
+        # behind that stream's compute kernels.
+        self.copy_stream = torch.cuda.Stream(device=device)
+
+    def _start_load(self, eid):
+        """Enqueue the H2D copy on the copy stream and return immediately."""
+        if len(self.resident) >= self.capacity:
+            _, (w1o, w2o, _) = self.resident.popitem(last=False)   # evict LRU
+            del w1o, w2o
+        w1c, w2c = self.cpu[eid]
+        with torch.cuda.stream(self.copy_stream):
+            w1 = w1c.to(self.device, non_blocking=True)   # pinned src -> async H2D
+            w2 = w2c.to(self.device, non_blocking=True)
+            evt = torch.cuda.Event()
+            evt.record(self.copy_stream)        # "copy finished" marker
+        self.resident[eid] = (w1, w2, evt)
 
     def get(self, eid):
-        if eid in self.resident:
-            self.resident.move_to_end(eid)      # mark most-recently-used
-            return self.resident[eid]
-        if len(self.resident) >= self.capacity:
-            old, (w1, w2) = self.resident.popitem(last=False)   # evict LRU
-            del w1, w2
-        w1c, w2c = self.cpu[eid]
-        # non_blocking copy overlaps with compute if src is pinned memory
-        w1 = w1c.to(self.device, non_blocking=True)
-        w2 = w2c.to(self.device, non_blocking=True)
-        self.resident[eid] = (w1, w2)
+        if eid not in self.resident:
+            self._start_load(eid)               # cold miss: pay the transfer now
+        self.resident.move_to_end(eid)          # mark most-recently-used
+        w1, w2, evt = self.resident[eid]
+        cur = torch.cuda.current_stream()
+        cur.wait_event(evt)                     # stream-ordered wait, no host sync
+        w1.record_stream(cur)                   # allocated on copy_stream, used here
+        w2.record_stream(cur)
         return w1, w2
 
     def prefetch(self, eids):
-        """Look-ahead: kick off copies for next step's experts."""
+        """Look-ahead: kick off copies for next step's experts on the copy stream,
+        so they land while the current step's kernels are still running."""
         for e in eids:
             if e not in self.resident:
-                self.get(e)                     # warms the cache before it's needed
+                self._start_load(e)             # warms the cache before it's needed
 ```
 
 The honest caveat: offloading trades latency for capacity. PCIe 5.0 moves ~64 GB/s; an expert FFN in DeepSeek-V3 is on the order of tens of MB, so faulting in a handful per step costs hundreds of microseconds to milliseconds of transfer — easily dominating a decode step if not overlapped, and impossible to fully hide once a large batch touches most experts. Offloading is a *cost-saving for low-QPS or batch workloads*, not a path to low-latency high-throughput serving. For that, you buy the HBM.
@@ -659,7 +675,7 @@ Every line of that loop is a decision this chapter argued for: local attention b
     print("replicated IF:", round(imbalance_factor_replicated(skewed, E, G, range(8), 2), 3))
     ```
 
-    On the skewed batch the fixed round-robin layout yields IF well above 1.5 (it lands near 3.7 here, because the 8 hot experts all sit on rank 0). Simply *greedily* packing experts (no replicas) already recovers most of the balance — IF $\approx 1.04$ — by scattering the hot experts onto separate ranks. Adding 2 replicas each to the top-8 keeps IF $\approx 1.05$ *and* makes the placement robust to the case greedy packing cannot fix: a single expert whose load exceeds one rank's fair share, where no assignment of whole experts can balance and you must split the expert itself. The barrier no longer waits on a single overloaded GPU. The cost is memory: $8\times2$ extra expert copies resident. This is exactly DeepSeek's "redundant experts," and the eviction/placement policy is driven by the router's live load histogram.
+    On the skewed batch the fixed contiguous (block) layout yields IF well above 1.5 (it lands near 3.7 here, because experts 0–7 — exactly the hot ones — all sit on rank 0). Simply *greedily* packing experts (no replicas) already recovers most of the balance — IF $\approx 1.04$ — by scattering the hot experts onto separate ranks. Adding 2 replicas each to the top-8 keeps IF $\approx 1.05$ *and* makes the placement robust to the case greedy packing cannot fix: a single expert whose load exceeds one rank's fair share, where no assignment of whole experts can balance and you must split the expert itself. The barrier no longer waits on a single overloaded GPU. The cost is memory: $8\times2$ extra expert copies resident. This is exactly DeepSeek's "redundant experts," and the eviction/placement policy is driven by the router's live load histogram.
 
     (Small hand-check that the LPT logic is right: experts with counts `[40, 20, 10, 10]` on `G=2` greedily assign 40→rank0, 20→rank1, 10→rank1, 10→rank1 giving loads `[40, 40]`, IF `1.0` — versus a fixed `[40,20]/[10,10]` layout giving `[60, 20]`, IF `1.5`. Greedy packing alone recovers balance when experts happen to fit.)
 

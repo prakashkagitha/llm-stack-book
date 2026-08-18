@@ -153,9 +153,14 @@ def calculator(expression: str) -> str:
     # Restrict to safe arithmetic — no exec() on untrusted input.
     # The allowlist has no letters, so no name (and hence no builtin, no
     # import, no attribute access) can appear in the expression at all.
+    # That blocks *name resolution*, not *resource exhaustion*: `**` is spelled
+    # with allowlisted characters, and `9**9**9` would burn CPU and RAM until
+    # the process dies.  Ban exponentiation and cap the length as well.
     allowed = set("0123456789+-*/()., ")
-    if not all(c in allowed for c in expression):
-        return "Error: only arithmetic expressions allowed."
+    if not all(c in allowed for c in expression) or len(expression) > 100:
+        return "Error: only short arithmetic expressions allowed."
+    if "**" in expression:
+        return "Error: exponentiation is not supported."
     try:
         result = eval(expression, {"__builtins__": {}}, {})
         return str(result)
@@ -252,8 +257,12 @@ Important:
         try:
             result = fn(*args)
             return str(result)
-        except TypeError as e:
-            return f"Error calling {tool_name}: {e}"
+        except Exception as e:
+            # Catch broadly on purpose: a wrong arity raises TypeError, but a
+            # real search tool raises timeouts and connection errors too, and
+            # every one of them must come back as an observation the model can
+            # reason about rather than a traceback that kills the run.
+            return f"Error calling {tool_name}: {type(e).__name__}: {e}"
 
     def run(self, task: str, verbose: bool = True) -> str:
         """
@@ -397,12 +406,22 @@ def run_tool_calling(client, model: str, task: str, max_steps: int = 10) -> str:
             return msg.content or ""      # no tool call => this is the final answer
 
         for call in msg.tool_calls:
-            args = json.loads(call.function.arguments)   # structured: no regex, no
-            fn, _ = TOOLS[call.function.name]            # quoting or paren bugs
-            try:
-                result = str(fn(**args))
-            except Exception as e:        # tool errors are observations, not crashes
-                result = f"Error: {e}"
+            # Every failure path produces an observation, not a crash: a
+            # hallucinated tool name and a truncated/malformed arguments string
+            # are both routine (the latter is what hitting `max_tokens` looks
+            # like).  And every tool_call_id must get exactly one `tool` message
+            # back, or the next request is rejected server-side.
+            name = call.function.name
+            if name not in TOOLS:                 # hallucinated tool name
+                result = f"Error: unknown tool '{name}'. Available: {list(TOOLS)}"
+            else:
+                try:
+                    args = json.loads(call.function.arguments)  # structured: no
+                    result = str(TOOLS[name][0](**args))        # regex, no paren bugs
+                except json.JSONDecodeError as e:  # truncated / malformed arguments
+                    result = f"Error: could not parse arguments as JSON: {e}"
+                except Exception as e:
+                    result = f"Error: {e}"
             messages.append({"role": "tool",
                              "tool_call_id": call.id,
                              "content": result})
@@ -427,9 +446,14 @@ from langgraph.checkpoint.memory import InMemorySaver
 def calculator(expression: str) -> str:
     """Evaluate a simple arithmetic expression."""   # docstring == tool description
     allowed = set("0123456789+-*/()., ")
-    if not all(c in allowed for c in expression):
-        return "Error: only arithmetic expressions allowed."
-    return str(eval(expression, {"__builtins__": {}}, {}))
+    if not all(c in allowed for c in expression) or len(expression) > 100:
+        return "Error: only short arithmetic expressions allowed."
+    if "**" in expression:            # `9**9**9` is all-allowlisted and hangs eval
+        return "Error: exponentiation is not supported."
+    try:
+        return str(eval(expression, {"__builtins__": {}}, {}))
+    except Exception as e:
+        return f"Error: {e}"
 
 agent = create_react_agent(
     ChatOpenAI(model="gpt-4o-mini", temperature=0),
@@ -440,12 +464,15 @@ agent = create_react_agent(
 result = agent.invoke(
     {"messages": [{"role": "user", "content": "What is 37 / 20?"}]},
     config={"configurable": {"thread_id": "demo-1"},
-            "recursion_limit": 25},   # LangGraph's equivalent of MAX_STEPS
+            # LangGraph counts graph *super-steps*, not agent iterations: one
+            # ReAct iteration is agent + ToolNode = 2, plus a final agent turn,
+            # so N tool-calling iterations cost 2N+1 and 25 buys about 12.
+            "recursion_limit": 25},
 )
 print(result["messages"][-1].content)
 ```
 
-Underneath, `create_react_agent` compiles to a two-node `StateGraph`: an `agent` node that calls the model, a `ToolNode` that executes any requested tools, and a *conditional edge* that routes back to `agent` while the last message still carries `tool_calls` and to `END` otherwise. That is literally the `while not done:` loop from the start of this chapter, expressed as a graph — which is what buys you checkpointing (resume after a crash), interrupts (ask a human before a destructive tool), and per-node streaming. The `recursion_limit` is the step ceiling; exceeding it raises rather than silently looping.
+Underneath, `create_react_agent` compiles to a two-node `StateGraph`: an `agent` node that calls the model, a `ToolNode` that executes any requested tools, and a *conditional edge* that routes back to `agent` while the last message still carries `tool_calls` and to `END` otherwise. That is literally the `while not done:` loop from the start of this chapter, expressed as a graph — which is what buys you checkpointing (resume after a crash), interrupts (ask a human before a destructive tool), and per-node streaming. The `recursion_limit` is the step ceiling, and exceeding it raises `GraphRecursionError` rather than silently looping — but it counts *super-steps* of the graph, not agent iterations. In this two-node cycle each iteration costs two super-steps (`agent` then `ToolNode`) and the run ends with one more `agent` turn, so the budget for $N$ tool-calling iterations is $2N + 1$: set `recursion_limit` to twice your intended `MAX_STEPS` plus one, or you will stop at roughly half the steps you expected.
 
 The wider 2026 landscape is worth knowing by name: the **OpenAI Agents SDK** and **Pydantic AI** offer similar typed loops; Hugging Face **`smolagents`** implements the CodeAct variant where the action *is* a Python snippet rather than a JSON call (one code block can express branching and several tool calls at once); **LlamaIndex Workflows** targets event-driven retrieval pipelines; and **SWE-agent** / **OpenHands** are the reference open-source coding harnesses (see [Harness Engineering: Building a Coding Agent](../08-agents-harness/03-harness-coding-agent.html)). All of them increasingly obtain their tools over the Model Context Protocol rather than hard-coding them — see [The Model Context Protocol (MCP)](../08-agents-harness/06-mcp.html).
 
@@ -694,6 +721,7 @@ def beam_react_agent(
         ]
     )
     beam = [root]
+    terminals: list[tuple[float, str]] = []   # (score, answer) for finished branches
 
     for depth in range(max_depth):
         candidates = []
@@ -756,18 +784,22 @@ def beam_react_agent(
                     new_node.score = value_fn(new_node)
                 candidates.append((new_node.score, None, new_node))
 
-        # Separate finished and unfinished candidates
-        finished = [(s, a) for s, a, n in candidates if n is None]
-        if finished:
-            best_score, best_answer = max(finished, key=lambda x: x[0])
-            return best_answer
+        # Bank the finished candidates but do NOT return yet: the first branch
+        # to call finish() is not necessarily the best one, and returning here
+        # would throw away every still-open beam — which is the whole point of
+        # the search.  We compare all terminals once the search is over.
+        terminals.extend((s, a) for s, a, n in candidates if n is None)
 
-        # Keep top beam_width nodes
+        # Keep top beam_width unfinished nodes
         next_nodes = [(s, n) for s, _, n in candidates if n is not None]
+        if not next_nodes:
+            break                      # every branch terminated
         next_nodes.sort(key=lambda x: x[0], reverse=True)
         beam = [n for _, n in next_nodes[:beam_width]]
 
-    # If we exhaust depth, return best partial result
+    if terminals:
+        return max(terminals, key=lambda x: x[0])[1]
+    # Depth exhausted with no branch ever calling finish()
     return "Exhausted search depth without finding answer."
 ```
 
@@ -816,7 +848,7 @@ For verifiable tasks (code execution, math), the harness can check success direc
 
     Second, diagnose *why* the loop occurs. Common causes: (a) the model never received a meaningful observation (tool returned empty or the format was not parsed correctly), (b) the model's instruction-following is weak for the specific tool format, (c) the task is genuinely unsolvable with the available tools and the model doesn't know how to give up gracefully. Fix (a) by improving observation parsing; (b) by adding few-shot examples of recovery; (c) by adding a `give_up(reason)` tool alongside `finish(answer)`.
 
-    Third, implement *action hashing*: maintain a set of `(tool_name, frozenset(args))` tuples seen so far. If a new action is in the set, block it and force the model to explain why it is trying something it already tried.
+    Third, implement *action hashing*: maintain a set of `(tool_name, tuple(args))` signatures seen so far. If a new action is in the set, block it and force the model to explain why it is trying something it already tried. Keep the arguments in a `tuple`, not a `frozenset`: arguments are passed positionally, so `replace("foo", "bar")` and `replace("bar", "foo")` are genuinely different calls that a set would collapse into one — and a `frozenset` also silently equates `f("x", "x")` with `f("x")`.
 
 ## Failure Modes and Defensive Engineering
 
@@ -1056,7 +1088,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
 **5.** Implement action deduplication for `ReActAgent`, combining the chapter's `detect_loop` idea and the Interview Corner's "action hashing." Modify `run` so that when the model proposes an action it has already tried (same tool name + same argument set), the harness does **not** re-execute the tool but instead injects a corrective observation telling the model to try something different. Give the modified loop body.
 
 ??? note "Solution"
-    We maintain a set of canonical `(tool_name, frozenset(args))` signatures. Before executing a parsed action, we check membership; if it is a repeat, we skip execution and inject a nudge. `finish` is exempt (finishing is terminal, not a loop). Only the changed parts of `run` are shown; everything else is unchanged.
+    We maintain a set of canonical `(tool_name, tuple(args))` signatures. Before executing a parsed action, we check membership; if it is a repeat, we skip execution and inject a nudge. `finish` is exempt (finishing is terminal, not a loop). Only the changed parts of `run` are shown; everything else is unchanged.
 
     ```python
     def run(self, task: str, verbose: bool = True) -> str:
@@ -1064,7 +1096,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
             {"role": "system", "content": self.system_prompt},
             {"role": "user",   "content": task},
         ]
-        seen_actions: set[tuple[str, frozenset]] = set()
+        seen_actions: set[tuple[str, tuple[str, ...]]] = set()
 
         for step in range(self.MAX_STEPS):
             response = self.client.chat.completions.create(
@@ -1084,7 +1116,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
             else:
                 tool_name, args = parsed
                 # ---- Action deduplication ----
-                signature = (tool_name, frozenset(args))
+                signature = (tool_name, tuple(args))
                 if tool_name != self.STOP_TOKEN and signature in seen_actions:
                     observation = (
                         "You have already tried this exact action and it did "
@@ -1113,6 +1145,6 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
 
     Key design choices, grounded in the chapter:
 
-    - The signature uses `frozenset(args)` so argument *order* does not matter and the tuple is hashable — exactly the Interview Corner's `(tool_name, frozenset(args))` recommendation.
+    - The signature uses `tuple(args)` — hashable, and *order-preserving*. A `frozenset` would be tempting, but `_execute_action` passes arguments positionally, so order is semantically load-bearing: a `replace(old, new)` tool would see `replace("foo", "bar")` and `replace("bar", "foo")` collapse to the same signature, and the harness would falsely block a legitimate second call.
     - `finish` is excluded from deduplication, since terminating is not a repeated *loop* action.
     - Instead of hard-blocking, we inject a corrective observation ("Do NOT repeat it... choose a different tool"), which keeps the model in the loop with useful feedback rather than silently dropping the step — matching the chapter's advice to nudge the model toward "a different strategy." This still counts against `MAX_STEPS`, so a persistently stuck agent still terminates safely.

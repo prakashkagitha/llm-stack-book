@@ -86,7 +86,8 @@ Two fields carry the whole design:
 ```python
 def _match_prefix_helper(self, node, key):
     # key is the incoming request's token-id sequence (a RadixKey)
-    child_key = key.child_key(self.page_size)   # hash of the first page of `key`
+    child_key = key.child_key(self.page_size)   # dict key for the first page of `key`
+                                                # (a raw token id, or a tuple of the page's ids)
     value = []                                   # collected KV-slot index tensors
 
     while len(key) > 0 and child_key in node.children:
@@ -406,7 +407,7 @@ python -m sglang.launch_server \
 #   --disable-radix-cache
 ```
 
-Internally the runtime mirrors the architecture from [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html): a **tokenizer manager** (HTTP front), a **scheduler** (`srt/managers/scheduler.py`) that batches requests and drives the model, and a **detokenizer manager** that streams text back. The scheduler owns the `RadixCache`, runs continuous batching, applies chunked prefill, and decides — every step — which requests to prefill, which to decode, and which to wait. Its admission/eviction logic lives in `srt/managers/schedule_policy.py`, which is *cache-aware*: it prefers to schedule requests that hit long cached prefixes, because those are cheap to admit.
+Internally the runtime mirrors the architecture from [vLLM: Architecture, PagedAttention & Internals](../07-inference-serving/03-vllm-internals.html): a **tokenizer manager** (HTTP front), a **scheduler** (`srt/managers/scheduler.py`) that batches requests and drives the model, and a **detokenizer manager** that streams text back. The scheduler owns the `RadixCache`, runs continuous batching, applies chunked prefill, and decides — every step — which requests to prefill, which to decode, and which to wait. Its admission logic lives in `srt/managers/schedule_policy.py`, which *can* be cache-aware: launched with `--schedule-policy lpm` (longest prefix match) or `dfs-weight` — the two members of `CacheAwarePolicy` — it reorders the waiting queue to favour requests that hit long cached prefixes, because those are cheap to admit. The default is `fcfs`, which sits in `CacheAgnosticPolicy` alongside `lof`, `random`, and `routing-key`, so out of the box the queue is *not* reordered by cached-prefix length; `schedule_policy.py` only consults the tree cache for budget accounting (`evictable_size()`). Eviction itself lives in `RadixCache.evict` in `srt/mem_cache/radix_cache.py`.
 
 ### Three ways to drive the runtime — and how to prove the cache is working
 
@@ -448,7 +449,7 @@ python -m sglang.bench_serving --backend sglang --host 127.0.0.1 --port 30000 \
 # throughput and TTFT (time-to-first-token) IS the value of RadixAttention on your traffic.
 ```
 
-**One replica is not enough.** The radix tree lives inside a single server process, so behind a round-robin load balancer with $N$ replicas a request has roughly a $1/N$ chance of landing where its prefix is already cached. SGLang ships a separate high-performance router (`pip install sglang-router`; source lives under `sgl-model-gateway/` in the main repo) that keeps an approximate prefix tree of what each worker has recently served and routes on it:
+**One replica is not enough.** The radix tree lives inside a single server process, and behind a round-robin load balancer with $N$ replicas each process builds its own. Be precise about what that costs. A *globally* shared prefix — one system prompt sent by every request — is replicated into all $N$ trees after $N$ cold prefills and then keeps hitting; round-robin costs you $N$ cold prefills and $N$ copies of that KV instead of one, not a factor-$N$ loss in hit rate. What round-robin genuinely destroys is *session-scoped* locality: a multi-turn conversation's growing context, a per-tenant document block, an agent's trajectory — prefixes that live on exactly one worker, so a follow-up request has only a $\approx 1/N$ chance of landing where its prefix is cached. SGLang ships a separate high-performance router (`pip install sglang-router`; source lives under `sgl-model-gateway/` in the main repo) that keeps an approximate prefix tree of what each worker has recently served and routes on it:
 
 ```bash
 # Route across two existing workers, blending prefix locality with load.
@@ -612,7 +613,7 @@ This is not a toy pattern reserved for large deployments. When we build Stack-10
 
     **A:** I'd use a **radix tree (compressed prefix trie) over token IDs**, exactly SGLang's RadixAttention. Each node owns the KV-cache slot indices for the tokens on its incoming edge; a path from root spells a cached token sequence. On a new request I run `match_prefix` to find the longest cached prefix, reuse those KV slots, and only prefill the divergent suffix — so the 1,500-token system prompt is prefilled **once** and shared by all requests, splitting nodes when prompts diverge mid-edge.
 
-    To bound memory I store KV in a **paged pool** and let the tree hold indices, not tensors, so one block can be referenced by many nodes. I **reference-count** nodes (`lock_ref`): a node is pinned while any running request uses its path, and becomes evictable when all finish. Under memory pressure I **evict LRU over evictable leaves** — peeling cold suffixes from the tips inward, never orphaning a live prefix, never reclaiming locked KV. The hot system prompt has a fresh access time and survives. What breaks at scale: with all-unique prompts the tree degenerates to a flat leaf list and reuse vanishes (you pay normal prefill plus tiny overhead); the CPU bookkeeping per step can starve the GPU — which is why SGLang overlaps scheduling with compute; and once I scale past one replica, a round-robin balancer gives each request only a $1/N$ chance of landing on the worker that holds its prefix, so I'd front the fleet with a **cache-aware router** that tracks approximately what each worker has cached. For a final tier I'd offload evicted prefixes to host/CPU memory so a falling-out prefix can be paged back faster than recomputed. Throughout, I'd instrument the *observed* hit rate (SGLang reports `cached_tokens` per request) rather than assume the cache is working — the usual bug is a timestamp or user ID injected into the "shared" system prompt, which makes every prompt unique.
+    To bound memory I store KV in a **paged pool** and let the tree hold indices, not tensors, so one block can be referenced by many nodes. I **reference-count** nodes (`lock_ref`): a node is pinned while any running request uses its path, and becomes evictable when all finish. Under memory pressure I **evict LRU over evictable leaves** — peeling cold suffixes from the tips inward, never orphaning a live prefix, never reclaiming locked KV. The hot system prompt has a fresh access time and survives. What breaks at scale: with all-unique prompts the tree degenerates to a flat leaf list and reuse vanishes (you pay normal prefill plus tiny overhead); the CPU bookkeeping per step can starve the GPU — which is why SGLang overlaps scheduling with compute; and once I scale past one replica, each worker keeps its own tree — the global 1,500-token system prompt survives round-robin (it just gets prefilled and stored $N$ times instead of once), but the *per-conversation* prefixes do not: a follow-up turn has only a $\approx 1/N$ chance of landing on the worker that holds that conversation's KV. So I'd front the fleet with a **cache-aware router** that tracks approximately what each worker has cached and keeps a session sticky to it. For a final tier I'd offload evicted prefixes to host/CPU memory so a falling-out prefix can be paged back faster than recomputed. Throughout, I'd instrument the *observed* hit rate (SGLang reports `cached_tokens` per request) rather than assume the cache is working — the usual bug is a timestamp or user ID injected into the "shared" system prompt, which makes every prompt unique.
 
 !!! key "Key Takeaways"
 
@@ -740,7 +741,18 @@ This is not a toy pattern reserved for large deployments. When we build Stack-10
     # bump that node's hit_count. Concretely, in the chapter's match_prefix, after
     # each `matched_value += child.value` line, add `child.hit_count += 1`.
 
-    # --- 3. New eviction method, keyed on frequency not recency -----------------
+    # --- 3. Carry the count across a SPLIT --------------------------------------
+    # Essential and easy to miss: `_split` creates a fresh `mid` node for the shared
+    # prefix, whose hit_count would start at 0 while all the accumulated frequency
+    # stays on the divergent suffix. A prefix reused 500 times would become an
+    # interior node with hit_count 1, and once its children were evicted and it was
+    # re-promoted onto the heap it would sort near the BOTTOM -- the opposite of LFU.
+    # So in `_split`, next to `mid.lock_ref = child.lock_ref`, add:
+    #     mid.hit_count = child.hit_count
+    # This mirrors SGLang's own `_split_node`, which does
+    # `new_node.hit_count = child.hit_count` for exactly this reason.
+
+    # --- 4. New eviction method, keyed on frequency not recency -----------------
     def evict_lfu(self, n):
         # Least-frequently-used first: a min-heap on (hit_count, tie-breaker id).
         leaves = [c for c in self._leaves() if c.lock_ref == 0]
