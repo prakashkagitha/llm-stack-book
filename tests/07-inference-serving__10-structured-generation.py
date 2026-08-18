@@ -65,19 +65,20 @@ def regex_to_dfa(regex_pattern: str):
 def build_fsm_index(
     regex_pattern: str,
     vocab: Dict[int, str],    # token_id -> decoded string
-) -> Dict[int, Set[int]]:
+) -> Dict[int, Dict[int, int]]:
     """
-    Returns a dict: fsm_state -> set of valid token_ids
-    Pre-computes the full transition table for constrained decoding.
+    Returns a dict: fsm_state -> {valid token_id -> state reached after it}
+    This is the full token-level transition table: the keys of a row give the
+    mask for that state, the values give the state to jump to after sampling.
     """
     # Step 1: compile regex to NFA, convert to DFA (standard automaton ops)
     fsm = regex_to_dfa(regex_pattern)  # returns (states, transitions, start, accepts)
 
-    index: Dict[int, Set[int]] = {}
+    index: Dict[int, Dict[int, int]] = {}
     dead_state = -1
 
     for state in fsm.states:
-        valid_tokens: Set[int] = set()
+        transitions_from_state: Dict[int, int] = {}
         for token_id, token_str in vocab.items():
             # Simulate the DFA over the token string, starting from `state`
             current = state
@@ -90,10 +91,12 @@ def build_fsm_index(
                 current = next_state
 
             if reachable:
-                # Token is valid: consuming it does not kill the FSM
-                valid_tokens.add(token_id)
+                # Token is valid: consuming it does not kill the FSM. Record
+                # *where* it lands so the guide can advance in O(1) instead of
+                # re-simulating the token's characters every step.
+                transitions_from_state[token_id] = current
 
-        index[state] = valid_tokens
+        index[state] = transitions_from_state
 
     return index
 
@@ -113,15 +116,21 @@ def test_build_fsm_index():
     index = build_fsm_index("[0-9]{2}", vocab)
 
     # From the start state, any token beginning with a digit is "reachable"
-    # (does not immediately die), including single digits and "12".
-    assert index[0] == {0, 1, 3, 4}, index[0]
+    # (does not immediately die), including single digits and "12". Each entry
+    # also records the state the token lands in: one digit -> 1, "12" -> 2.
+    assert index[0] == {0: 1, 1: 1, 3: 2, 4: 1}, index[0]
     # After one digit (state 1), only tokens whose *every* char keeps the DFA
     # alive survive: "ab" dies immediately, "12" dies on its 2nd char because
     # the accept state (2) has no outgoing transitions in our toy DFA.
-    assert index[1] == {0, 1, 4}, index[1]
+    assert index[1] == {0: 2, 1: 2, 4: 2}, index[1]
     # The accept state has no outgoing transitions at all in this toy DFA, so
     # every non-empty token dies on its first character.
-    assert index[2] == set(), index[2]
+    assert index[2] == {}, index[2]
+    # The stored destination is what makes the guide's advance O(1):
+    # mask = index[q].keys(); q = index[q][sampled_id].
+    q = 0
+    q = index[q][3]          # sample "12"
+    assert q == 2 and index[q] == {}
 
     print("[block #1] build_fsm_index: index =", index, "-> OK")
 
@@ -142,9 +151,13 @@ def apply_mask_to_logits(
 ) -> torch.Tensor:
     """
     Sets logits of forbidden tokens to -inf. Operates in-place on a clone.
+
+    Use masked_fill_, not boolean indexing: `masked[~mask] = -inf` would index
+    the *leading* dimension, so a [vocab_size] mask against [batch, vocab_size]
+    logits raises IndexError. masked_fill_ broadcasts over the batch correctly.
     """
     masked = logits.clone()
-    masked[~mask] = float('-inf')
+    masked.masked_fill_(~mask, float('-inf'))
     return masked
 
 

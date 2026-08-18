@@ -93,7 +93,7 @@ Disadvantages:
 - One host per server instance: cannot share a single server between multiple hosts.
 - Language constraint: the server must be directly executable on the host machine.
 
-stdio is the default for desktop applications and local development. Claude Desktop, for example, uses stdio almost exclusively.
+stdio is the default for local development and for servers that must touch the user's own filesystem or credentials. Claude Desktop, for example, launches local servers over stdio from its config file — but it also connects to remote (Streamable HTTP / SSE) servers as *connectors*, so stdio is the local-server default rather than the only option.
 
 ### HTTP Transport (SSE and Streamable HTTP)
 
@@ -358,7 +358,10 @@ if __name__ == "__main__":
 To test it manually without a full MCP client, you can send raw JSON-RPC to the process's stdin:
 
 ```bash
-# Start the server in one terminal (it waits on stdin)
+# One-shot probe: the pipe closes stdin, so the server answers the single
+# initialize request and then exits cleanly on EOF.  A real session would keep
+# stdin open and follow up with a notifications/initialized message before
+# issuing tools/list.
 echo '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}' | python csv_server.py
 ```
 
@@ -431,7 +434,7 @@ if __name__ == "__main__":
     mcp.run(transport="stdio")
 ```
 
-Note what the decorators bought you: `max_rows: int = 20` becomes an integer property with a default and *without* being in `required`; the return annotation `dict[str, str]` becomes an `outputSchema`, so hosts receive both a human-readable `content` block and a machine-checkable `structuredContent` object. Drop back to the low-level `Server` only when you need something FastMCP hides — dynamic tool lists that change per session, hand-tuned capability negotiation, or custom lifespan wiring.
+Note what the decorators bought you: `max_rows: int = 20` becomes an integer property with a default and *without* being in `required`; the return annotation `dict[str, str]` becomes an `outputSchema`, so hosts receive both a human-readable `content` block and a machine-checkable `structuredContent` object. Drop back to the low-level `Server` only when you need something FastMCP hides — dynamic tool lists that change per session, or hand-tuned capability negotiation. (Startup/shutdown wiring is *not* a reason: `FastMCP(..., lifespan=...)` takes an async context manager and exposes its value to tools as `ctx.request_context.lifespan_context`.)
 
 !!! example "Worked Example: latency and payload sizing"
     Suppose the CSV contains 100,000 rows of sales data, each row having 10 columns of mixed types, totalling about 8 MB on disk. When the user asks "how many orders came from London last month?", the agent invokes `query_csv` with the expression `'city == "London" and month == "2025-11"'`.

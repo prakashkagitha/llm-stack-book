@@ -25,7 +25,7 @@ This gives us a strong guarantee: **if two requests share the token-level prefix
 The same logic extends to the *sequence of positions*. Most modern models use relative or rotary (RoPE) positional encodings (see [Positional Encodings: Sinusoidal, Learned, RoPE & ALiBi](../02-transformer/05-positional-encoding.html)), which embed position information into the key and query vectors. Because both the token IDs *and* the positions are deterministic from the prefix, the KV cache is still reusable as long as the prefix always occupies positions $1 \dots P$ — which is the common case for system prompts that sit at the start of a context.
 
 !!! warning "RoPE and prefix cache correctness"
-    With absolute positional encodings (the original sinusoidal scheme), the position of a token in the overall sequence is baked into the KV vectors. If a prefix is appended mid-conversation rather than placed at position 0, the cached KVs from a prior run at position 0 would be **incorrect**. Most production systems sidestep this by requiring that cached prefixes always start at position 0 — which is naturally satisfied by system-prompt reuse and few-shot headers. Be cautious with *any* implementation that inserts a cached block at an arbitrary offset: RoPE is not the safe case here, because it rotates each key by an angle proportional to its **absolute** position, so a key cached at position $p$ is just as invalid at $p + \delta$ as a sinusoidal one. RoPE is merely the *recoverable* case — rotations compose, so cached keys can be re-rotated by the offset $\delta$ (this is what prompt-module and KV-blending systems do). With learned-absolute encodings there is no such fix-up.
+    With absolute positional encodings (the original sinusoidal scheme), the position of a token in the overall sequence is baked into the KV vectors. If a prefix is appended mid-conversation rather than placed at position 0, the cached KVs from a prior run at position 0 would be **incorrect**. Most production systems sidestep this by requiring that cached prefixes always start at position 0 — which is naturally satisfied by system-prompt reuse and few-shot headers. Be cautious with *any* implementation that inserts a cached block at an arbitrary offset: RoPE is not the safe case here, because it rotates each key by an angle proportional to its **absolute** position, so a key cached at position $p$ is just as invalid at $p + \delta$ as a sinusoidal one. RoPE is merely the *approximately recoverable* case — rotations compose, so cached keys can be re-rotated by the offset $\delta$ (this is what prompt-module and KV-blending systems do). That re-rotation corrects the positional term exactly, but only at layer 0 is it the whole story: at layer $\ell > 0$ the hidden state $x^{(\ell)}_t$ is itself a function of the attention output over everything that precedes token $t$, and moving the block changes what precedes it. Those systems therefore accept a residual error and report measurable (usually small) quality degradation. With learned-absolute encodings there is not even that partial fix-up.
 
 ---
 
@@ -291,20 +291,24 @@ class APCBlockAllocator:
         for i, block_tokens in enumerate(token_ids_blocks):
             h = self._compute_block_hash(prev_hash, block_tokens)
 
-            if h in self.prefix_cache:
-                # Cache hit: reuse this physical block.
+            if still_contiguous and h in self.prefix_cache:
+                # Cache hit inside the contiguous run from position 0: map the
+                # shared physical block in read-only.
                 phys_id = self.prefix_cache[h]
                 block_ids.append(phys_id)
-                if still_contiguous:
-                    num_cached += 1
+                num_cached += 1
                 self._touch(phys_id)
                 self._acquire(phys_id)
             else:
-                # Cache miss: allocate a fresh physical block.
-                # Evict if necessary. A later block may still hash-hit (its
-                # chained hash is unaffected by *this* block being evicted),
-                # but the caller may only skip prefill for a contiguous run
-                # from position 0, so stop counting here.
+                # Miss — or a hit *after* a miss. Allocate a fresh physical
+                # block, evicting if necessary. A later block may still
+                # hash-hit (its chained hash is unaffected by *this* block
+                # being evicted), but the caller may only skip prefill for a
+                # contiguous run from position 0, so every block from here on
+                # gets prefilled. Handing prefill a shared cached page would
+                # write into memory another request is reading, breaking
+                # Section 7.7.6's read-only invariant — so once contiguity is
+                # lost we always allocate, exactly as vLLM does.
                 still_contiguous = False
                 if not self.free_blocks:
                     self._evict_lru()
@@ -328,6 +332,14 @@ class APCBlockAllocator:
         block enters the prefix cache only once it is complete and written.
         """
         for h, phys_id in self.pending_publish:
+            if h in self.prefix_cache:
+                # Another request raced us to the same content and published
+                # first. Never overwrite: two physical blocks claiming one
+                # hash orphans `block_to_hash`, and evicting the loser would
+                # then delete the *winner's* live cache entry. Leave this
+                # block uncached; it is still owned by its request and returns
+                # to the free list normally once the LRU reclaims it.
+                continue
             self.prefix_cache[h] = phys_id
             self.block_to_hash[phys_id] = h
             self._touch(phys_id)
@@ -368,7 +380,7 @@ class APCBlockAllocator:
                     skipped.append(block_id)
                     continue
                 h = self.block_to_hash.pop(block_id, None)
-                if h is not None:
+                if h is not None and self.prefix_cache.get(h) == block_id:
                     del self.prefix_cache[h]      # O(1): no scan of the cache
                 self.free_blocks.append(block_id)
                 return
@@ -387,7 +399,7 @@ class APCBlockAllocator:
 | Dimension | RadixAttention (SGLang) | Automatic Prefix Caching (vLLM) |
 |-----------|-------------------------|----------------------------------|
 | Data structure | Radix trie | Flat hash table + LRU list |
-| Prefix matching | Trie traversal, $O(P)$ | Block-by-block hash lookup, $O(P/B)$ |
+| Prefix matching | Trie traversal, $O(P)$ | Block-by-block hash chain, $O(P)$ ($P/B$ table probes) |
 | Partial-block sharing | Yes (token granularity: `--page-size` defaults to 1) | No (block granularity, `--block-size` tokens) |
 | Multi-turn chains | First-class (tree paths) | Supported via block reuse |
 | Implementation complexity | Higher | Lower |
@@ -433,7 +445,7 @@ Some deployments add **priority annotations** to cached blocks:
 - **Normal**: evicted LRU.
 - **Ephemeral**: evicted immediately after the owning request completes.
 
-On the vLLM V1 engine, APC runs with normal-priority LRU eviction by default (disable it with `--no-enable-prefix-caching`); the legacy V0 engine instead required opting in with `--enable-prefix-caching`. SGLang exposes finer-grained control through its `CacheEngine` API.
+On the vLLM V1 engine, APC runs with normal-priority LRU eviction by default (disable it with `--no-enable-prefix-caching`); the legacy V0 engine instead required opting in with `--enable-prefix-caching`. SGLang's side is implemented by the `RadixCache` / `HiRadixCache` classes in `sglang.srt.mem_cache`, with user-level control through `--disable-radix-cache`, `--page-size`, and `--mem-fraction-static`; the pinned and ephemeral tiers above are a pattern some deployments build on top, not a flag either engine ships.
 
 ### Cache sizing heuristics
 
@@ -588,8 +600,10 @@ python -m sglang.launch_server \
     --model-path meta-llama/Meta-Llama-3-70B-Instruct \
     --tp 4 \
     --context-length 32768 \
-    --mem-fraction-static 0.85
-# Metrics available at http://localhost:30000/get_server_info
+    --mem-fraction-static 0.85 \
+    --enable-metrics
+# Prometheus metrics at http://localhost:30000/metrics
+# (the /get_server_info endpoint returns launch args, not the metrics scrape)
 ```
 
 ### Prefix reuse without a serving engine
@@ -714,7 +728,7 @@ The engineering challenge is cache invalidation: if the model weights change (e.
 
 All the caching described so far applies to a single model instance. In a serving cluster running multiple replicas of the same model, caching can be extended across replicas: one node holds the "canonical" KV cache for a popular system prompt, and other nodes pull the cache over the network (RDMA or NVLink) rather than recomputing it. This is sometimes called **distributed prefix caching** or **remote KV caching**.
 
-The arithmetic favours transfer more than intuition suggests. Take the 1,024-token, 335 MB prefix from the worked example above: moving it over a 200 Gb/s RDMA link (≈25 GB/s achieved) takes on the order of 13 ms, whereas *recomputing* it costs roughly $2 \times (70 \times 10^9) \times 1024 \approx 1.4 \times 10^{14}$ FLOPs — several hundred milliseconds on one accelerator at realistic prefill efficiency. Fetching wins by an order of magnitude whenever the link is fast, which is why "KV-cache-centric" cluster designs have become mainstream: **LMCache** layers GPU/CPU/disk/S3 tiers under vLLM and SGLang, and Moonshot's **Mooncake** architecture makes a disaggregated, cluster-wide KV store the primary scheduling object (see [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html)). The design question shifts from "should we transfer?" to "is the KV store's hit rate high enough to justify the extra tier of memory," and to cache-aware routing — a load balancer that sends a request to the replica already holding its prefix (SGLang's router and vLLM's production stack both support this) converts a cluster-wide miss into a local hit for free.
+The arithmetic favours transfer more than intuition suggests. Take the 1,024-token, 335 MB prefix from the worked example above: moving it over a 200 Gb/s RDMA link (≈25 GB/s achieved) takes on the order of 13 ms, whereas *recomputing* it costs roughly $2 \times (70 \times 10^9) \times 1024 \approx 1.4 \times 10^{14}$ FLOPs — on the order of 130 ms on that example's 8×A100 node at its ~8,000 prefill tokens/sec (≈1 s of single-GPU-equivalent compute). Fetching wins by an order of magnitude whenever the link is fast, which is why "KV-cache-centric" cluster designs have become mainstream: **LMCache** layers GPU/CPU/disk/S3 tiers under vLLM and SGLang, and Moonshot's **Mooncake** architecture makes a disaggregated, cluster-wide KV store the primary scheduling object (see [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html)). The design question shifts from "should we transfer?" to "is the KV store's hit rate high enough to justify the extra tier of memory," and to cache-aware routing — a load balancer that sends a request to the replica already holding its prefix (SGLang's router and vLLM's production stack both support this) converts a cluster-wide miss into a local hit for free.
 
 ### Quantized KV caches
 

@@ -121,7 +121,7 @@ def read_file(path: str, offset: int = 0, limit: int = 2000) -> ToolResult:
     return ToolResult(numbered + truncated)
 ```
 
-The `search` tool is the one place where a harness should *not* write its own implementation: shelling out to **ripgrep** (`rg`) gives you gitignore-awareness, binary-file skipping, and multi-gigabyte-per-second scanning for free, which is exactly why Claude Code, Aider, and OpenHands all wrap it rather than walking the tree in Python.
+The `search` tool is the one place where a harness should *not* write its own implementation: shelling out to **ripgrep** (`rg`) gives you gitignore-awareness, binary-file skipping, and multi-gigabyte-per-second scanning for free, which is exactly why Claude Code shells out to it rather than walking the tree in Python. (Not every harness exposes search as a tool at all: Aider instead builds a tree-sitter **repo map** of the codebase and works from that plus the files the user adds to the chat.)
 
 ```python
 import subprocess
@@ -413,7 +413,7 @@ Everything else — the edit contract, structural termination, the permission ga
 
     **Turn 4.** Model emits a final assistant message *with no tool calls* — "Fixed the format string in `src/dates.py`; the test passes." The loop terminates structurally.
 
-    Totals: 5 turns, ≈ 30,000 cumulative input tokens (because the transcript is resent each turn — turn 4's input alone is ≈ 6,700 tok), ≈ 250 output tokens. With prefix caching, the static 5,000-token preamble (system prompt + CLAUDE.md + tool schemas — the 40-token task sits *after* the breakpoint, in `messages`) is billed at the cheap cached rate on turns 1–4, cutting input cost by roughly 60% versus no caching (Exercise 3 works the arithmetic out in full). This is why caching and termination discipline are not optional niceties — they are the difference between a session costing cents and costing dollars.
+    Totals: 5 turns, ≈ 30,000 cumulative input tokens (because the transcript is resent each turn — turn 4's input alone is ≈ 6,700 tok), ≈ 730 output tokens. With prefix caching, the static 5,000-token preamble (system prompt + CLAUDE.md + tool schemas — the 40-token task sits *after* the breakpoint, in `messages`) is billed at the cheap cached rate on turns 1–4, cutting input cost by roughly 60% versus no caching (Exercise 3 works the arithmetic out in full). This is why caching and termination discipline are not optional niceties — they are the difference between a session costing cents and costing dollars.
 
 ## Anatomy IV: Permissions and the Execution Sandbox
 
@@ -433,17 +433,29 @@ DENY = [r"\brm\s+-rf\b", r"\bgit\s+push\b", r"\bcurl\b.*\|\s*sh\b",
 ALLOW = [r"^ls\b", r"^cat\b", r"^grep\b", r"^pytest\b", r"^git status\b",
          r"^git diff\b", r"^python -m pytest\b"]
 
-SEPARATORS = re.compile(r"&&|\|\||;|\|")    # order matters: && and || first
+# EVERY way one string can hold more than one command: the boolean and
+# sequencing operators, the pipe, the BACKGROUND `&`, and a bare newline.
+# Order matters: `&&` and `||` must precede the single-char `&` and `|`.
+SEPARATORS = re.compile(r"&&|\|\||;|&|\||\n|\r")
+# Constructs that hide a command (substitution) or turn a "read-only"
+# command into a write (redirection). Never auto-allow a string with one.
+ESCALATE = ("`", "$(", ">", "<")
 
 def classify(cmd: str) -> str:
     if any(re.search(p, cmd) for p in DENY):
         return "deny"                       # hard block, or require confirm
+    if any(tok in cmd for tok in ESCALATE):
+        return "ask"                        # `cat secrets.env > /tmp/leak`
+                                            # is not a read-only command
     # A shell string is not ONE command. Matching ALLOW against the whole
     # string auto-approves `ls && npm publish` on the strength of its first
     # token, so split first and require EVERY segment to be allow-listed.
+    # The separator set has to be EXHAUSTIVE to mean anything: omit `&` or
+    # the newline and `ls & npm publish` is one unsplit segment again, which
+    # `^ls\b` happily matches — the bypass reopens through the gap.
     segments = [s.strip() for s in SEPARATORS.split(cmd) if s.strip()]
-    if not segments or any("`" in s or "$(" in s for s in segments):
-        return "ask"                        # substitution hides a command
+    if not segments:
+        return "ask"
     if all(any(re.match(p, s) for p in ALLOW) for s in segments):
         return "allow"
     return "ask"                            # unknown -> human in the loop
@@ -505,7 +517,13 @@ def run_bash(command: str, timeout: int = 120, cwd: str = ".") -> ToolResult:
     if len(out) > MAX:
         out = out[:MAX // 2] + "\n... [truncated] ...\n" + out[-MAX // 2:]
     status = "" if proc.returncode == 0 else f"\n[exit code {proc.returncode}]"
-    return ToolResult(out + status, is_error=proc.returncode != 0)
+    # A command that succeeds silently (`touch x`, `mkdir -p build`, `git add
+    # -A`) leaves BOTH stdout and stderr empty, so `out + status` is "". Never
+    # hand that back: an empty tool_result is an empty content block, which the
+    # API rejects, and it would tell the model nothing about what happened.
+    body = out + status
+    return ToolResult(body or f"(no output; exit code {proc.returncode})",
+                      is_error=proc.returncode != 0)
 ```
 
 !!! warning "Common pitfall: trusting the model to be safe"

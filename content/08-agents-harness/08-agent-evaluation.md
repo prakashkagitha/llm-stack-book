@@ -87,8 +87,11 @@ def run_swebench_task(repo_path: str, patch: str, test_cmd: str) -> bool:
         return False
     finally:
         os.unlink(patch_file)
-        # Reset the repo for the next task
+        # Reset the repo for the next task. `git checkout -- .` only restores
+        # *tracked* files, and model patches routinely add new files, so the
+        # untracked ones must be removed explicitly or they leak into the next run.
         subprocess.run(["git", "checkout", "--", "."], cwd=repo_path)
+        subprocess.run(["git", "clean", "-fdx"], cwd=repo_path)
 ```
 
 **Use the official harness, not the sketch above.** The toy runner illustrates the mechanism, but it is wrong in one way that matters: it only asks "did the test command exit 0?". The real benchmark checks *two* named test sets per instance — `FAIL_TO_PASS` (tests that must flip from failing to passing) and `PASS_TO_PASS` (tests that must *stay* passing, catching patches that fix the issue by breaking something else). Those test lists, the exact dependency pins, and the per-repo Docker image *are* the benchmark, which is why every credible number comes from `pip install swebench`:
@@ -144,7 +147,7 @@ WebArena (Zhou et al., 2023) measures whether an agent can complete realistic we
 
 **Scoring.** Each task is binary (success/failure). The success criterion is verified by an automated checker that queries application state. Success rate across all tasks is the primary metric.
 
-**Running it.** You self-host the app containers (GitLab, a shopping site, a Reddit clone, a wiki) and point the benchmark at them through `WA_*` base-URL environment variables; the agent drives a real browser through Playwright. In practice most 2026 work does not use the original repo's runner directly but **BrowserGym** (ServiceNow), which wraps WebArena, VisualWebArena, WorkArena, MiniWoB and others behind one Gymnasium interface — `env = gym.make("browsergym/webarena.0")` gives you an `Env` whose `obs, info = env.reset()` yields an observation containing the accessibility tree, DOM, and screenshot, and whose `env.step(action)` accepts Python action strings like `click("a42")`. Its companion **AgentLab** handles parallel rollouts, reproducible experiment records, and trace viewing. Standardizing on one observation/action space is what makes cross-benchmark web-agent comparisons meaningful at all.
+**Running it.** You self-host the app containers (GitLab, a shopping site, a Reddit clone, a wiki) and point the benchmark at them through base-URL environment variables — `SHOPPING`, `SHOPPING_ADMIN`, `REDDIT`, `GITLAB`, `MAP`, `WIKIPEDIA`, `HOMEPAGE` in the original repo, the same values under `WA_`-prefixed names in BrowserGym; the agent drives a real browser through Playwright. In practice most 2026 work does not use the original repo's runner directly but **BrowserGym** (ServiceNow), which wraps WebArena, VisualWebArena, WorkArena, MiniWoB and others behind one Gymnasium interface — `env = gym.make("browsergym/webarena.0")` gives you an `Env` whose `obs, info = env.reset()` yields an observation containing the accessibility tree, DOM, and screenshot, and whose `env.step(action)` accepts Python action strings like `click("a42")`. Its companion **AgentLab** handles parallel rollouts, reproducible experiment records, and trace viewing. Standardizing on one observation/action space is what makes cross-benchmark web-agent comparisons meaningful at all.
 
 WebArena scores for frontier models have grown substantially as agents learned to reason about HTML structure and leverage screenshots. It tests a different capability than SWE-bench: navigation and form-filling under real UI constraints rather than code editing.
 

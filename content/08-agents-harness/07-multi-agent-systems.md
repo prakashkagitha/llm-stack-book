@@ -551,7 +551,9 @@ judge = autogen.ConversableAgent(
     ),
     llm_config=llm_config,
     human_input_mode="NEVER",
-    is_termination_msg=lambda msg: "VERDICT:" in msg.get("content", ""),
+    # `or ""` not `get(..., "")`: tool-call messages carry content=None, and
+    # `"VERDICT:" in None` raises TypeError, killing the chat loop.
+    is_termination_msg=lambda msg: "VERDICT:" in (msg.get("content") or ""),
 )
 
 if __name__ == "__main__":
@@ -669,20 +671,27 @@ client = Swarm()
 # Specialist agents
 # ---------------------------------------------------------------------------
 
+def transfer_to_triage() -> "Agent":
+    """Hand control back to triage. `triage_agent` is defined below; the name is
+    resolved at call time, so the forward reference is fine."""
+    return triage_agent
+
 billing_agent = Agent(
     name="BillingAgent",
     instructions=(
         "You handle billing inquiries: invoices, payment methods, refunds. "
-        "If the question is not billing-related, transfer back to triage."
+        "If the question is not billing-related, call transfer_to_triage()."
     ),
+    functions=[transfer_to_triage],   # without this the agent CANNOT hand back
 )
 
 technical_agent = Agent(
     name="TechnicalAgent",
     instructions=(
         "You handle technical support: bugs, API errors, configuration issues. "
-        "If the question is not technical, transfer back to triage."
+        "If the question is not technical, call transfer_to_triage()."
     ),
+    functions=[transfer_to_triage],
 )
 
 # ---------------------------------------------------------------------------
@@ -717,6 +726,8 @@ if __name__ == "__main__":
     print(response.messages[-1]["content"])
     print(f"Final agent: {response.agent.name}")
 ```
+
+Note that every specialist gets `functions=[transfer_to_triage]`. In Swarm a handoff happens *only* when the model calls a function that returns an `Agent` — there is no textual escape hatch. An agent whose instructions say "transfer back to triage" but whose `functions` list is empty will emit prose announcing a transfer while `response.agent` stays pinned to that specialist, silently trapping the conversation. Every handoff you describe in an instruction string needs a matching callable.
 
 ### Framework Comparison
 
@@ -821,7 +832,7 @@ Multi-agent systems are not only engineered; they can be *trained*. Reinforcemen
 
 This is the regime where [Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html) becomes relevant: the value function must account for multi-step credit assignment across agent boundaries, not just within a single model call.
 
-A simpler approach — and one deployable today — is **self-critique with routing**: the orchestrator scores each worker's output against a rubric and re-dispatches to the same worker (with the critique as additional context) if the score is below a threshold. This is best-of-$N$ rejection sampling with verbal feedback, not RL: the scoring LLM supplies a *reward signal*, but nothing is differentiated and no weights change. It is the inference-time analogue of a policy update — the "policy" improves only inside the prompt.
+A simpler approach — and one deployable today — is **self-critique with routing**: the orchestrator scores each worker's output against a rubric and re-dispatches to the same worker (with the critique as additional context) if the score is below a threshold. This is iterative self-refinement against a verbal reward signal, not RL: the scoring LLM supplies a *reward*, but nothing is differentiated and no weights change. Note it is also *not* best-of-$N$ rejection sampling, which draws $N$ independent samples from a fixed prompt and keeps the highest-scoring one; here each attempt is conditioned on the previous attempt's critique, so the samples are correlated by construction and the loop below returns the *last* attempt rather than the best (Exercise 5 fixes that second point). It is the inference-time analogue of a policy update — the "policy" improves only inside the prompt.
 
 ```python
 def self_critique_loop(
@@ -842,6 +853,8 @@ def self_critique_loop(
         score = scoring_fn(task, output)
         if score >= threshold:
             return output
+        if attempt == max_retries - 1:
+            break   # no attempt left to consume it — don't pay for a dead critique
         # Generate a critique and append it to the task for the next attempt
         critique = call_model(
             "You are a quality assessor. Identify what is wrong or missing.",
@@ -881,7 +894,7 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
     - Shared-state (blackboard) architectures enable concurrent writers and emergent synthesis, but require thread-safe access and explicit conflict resolution.
     - Structured handoffs (Pydantic schemas at every inter-agent boundary) reduce silent error propagation. Validate payloads before forwarding.
     - The multi-agent "tax" is real: a 5-agent pipeline with context forwarding can cost 3–5× more tokens than a single well-prompted call, and the quality side of that trade is oversold — $1-(1-p)^N$ is an upper bound for positively-correlated agents, not a forecast, because $N$ samples from one model share its systematic failures and can never beat the $1-\rho$ ceiling. Pay the premium only when you have deliberately decorrelated the agents and measured the gain.
-    - Self-critique loops (worker → scorer → retry with critique) are reward-guided search at inference time — best-of-$N$ with verbal feedback, not a policy gradient — and need no model fine-tuning.
+    - Self-critique loops (worker → scorer → retry with critique) are reward-guided search at inference time — sequential self-refinement against a verbal reward, not best-of-$N$ (the attempts are correlated) and not a policy gradient — and need no model fine-tuning.
     - Anti-patterns: agent soup (unclear role boundaries), infinite loops (no iteration cap), blind trust (no output validation), and over-parallelism (ignoring rate limits).
 
 !!! sota "State of the Art & Resources (2026)"
@@ -1118,6 +1131,9 @@ The harness layer (addressed further in [Harness Engineering: Building a Coding 
 
             if score >= threshold:
                 return output            # early return on success, unchanged
+
+            if attempt == max_retries - 1:
+                break                    # no retry left — skip the unused critique call
 
             # (b) overwrite the critique instead of appending
             latest_critique = call_model(

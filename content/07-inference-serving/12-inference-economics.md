@@ -20,7 +20,7 @@ $$
 
 Until batch size exceeds ~295, decode is bandwidth-bound, and **adding more arithmetic units does not help** — you are just waiting for weights to stream from HBM.
 
-Prefill, by contrast, is compute-bound at large sequence lengths (the attention FLOPs scale as $O(L^2)$, eventually dominating weight-loading). This asymmetry drives the disaggregated prefill/decode architectures described in [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
+Prefill, by contrast, is compute-bound almost immediately. A prefill step over a prompt of $S$ tokens does roughly $2PS$ FLOPs against the *same* $2P$ bytes of weight traffic, so its arithmetic intensity is $S$ — a prompt of a few hundred tokens already clears $\text{AI}^\ast \approx 295$. (The quadratic attention term $O(S^2)$ piles more compute on top, but it is not what puts prefill over the line: for Llama-3 70B it only rivals the weight-matrix FLOPs past $S \approx 50{,}000$ tokens.) This asymmetry drives the disaggregated prefill/decode architectures described in [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
 
 ### The Three-Way Trade-off Stated Clearly
 
@@ -523,9 +523,11 @@ Quantization (see [Quantization I: Post-Training Quantization (GPTQ, AWQ, Smooth
 
 ### How Quantization Changes the Economics
 
-Going from BF16 to INT8 halves the number of bytes loaded from HBM per decode step — directly halving the bandwidth-bound decode time (for the same batch size) or equivalently, halving the number of GPUs needed to sustain the same throughput.
+Going from BF16 to INT8 halves the *weight* bytes loaded from HBM per decode step — halving the weight-streaming term, and with it the bandwidth-bound decode time (for the same batch size), or equivalently halving the number of GPUs needed to sustain the same throughput.
 
-Going from BF16 to INT4 (e.g., via GPTQ or AWQ) approximately quarters the decode memory bandwidth, but introduces some quality degradation and requires dequantization overhead.
+The caveat is the missing term from earlier in this chapter: weight quantization leaves $B \cdot \text{kv}(S)$ completely untouched, so the full 2× only materialises while weights dominate the traffic. At $S = 8{,}192$ and $B = 64$, a 70B decode step moves $140 + 171 = 311$ GB in BF16 versus $70 + 171 = 241$ GB with INT8 weights — a 1.3× speedup, not 2× — and the hard throughput ceiling $\text{BW}/\text{kv}(S)$ does not move at all, because it is pure KV streaming. At long context the lever is KV-cache quantization (below), not weight precision.
+
+Going from BF16 to INT4 (e.g., via GPTQ or AWQ) approximately quarters the weight bandwidth per decode step, but introduces some quality degradation and requires dequantization overhead.
 
 $$
 \text{speedup}_{\text{BW}} = \frac{\text{bits}_{original}}{\text{bits}_{quantized}}
@@ -533,7 +535,7 @@ $$
 
 For a 70B model:
 
-| Precision | Weights size | Decode BW factor | GPUs for 70B (TP) |
+| Precision | Weights size | Weight-BW factor | GPUs for 70B (TP) |
 |---|---|---|---|
 | BF16 | 140 GB | 1.0× | 2× H100 |
 | FP8 | 70 GB | 2.0× | 1× H100 |
@@ -725,7 +727,9 @@ INFERENCE_METRICS = {
 
     # Efficiency
     "gpu_utilization_pct":        "gauge",    # DCGM exporter (not the engine)
-    "kv_cache_utilization_pct":   "gauge",    # vllm:gpu_cache_usage_perc
+    "kv_cache_utilization_pct":   "gauge",    # vllm:gpu_cache_usage_perc * 100
+                                              #   (despite the name, that series is a
+                                              #    0-1 fraction: 1 means 100% usage)
     "batch_size_mean":            "gauge",    # vllm:num_requests_running
     "batch_size_p99":             "gauge",    # vllm:num_requests_running
 
@@ -762,8 +766,10 @@ The same formula as a single PromQL expression, so the headline number is a live
   / (sum(rate(vllm:generation_tokens_total[5m])) * 3600)
 
 # KV-cache pressure — the leading indicator of preemption and of the
-# KV-bandwidth wall from earlier in this chapter:
-max(vllm:gpu_cache_usage_perc)
+# KV-bandwidth wall from earlier in this chapter. Note the series is a 0-1
+# fraction despite the `_perc` suffix, so scale it before comparing to a
+# percentage threshold (0.9 here is 90% of KV capacity in use):
+max(vllm:gpu_cache_usage_perc) * 100
 
 # Goodput proxy: request rate that met a 500 ms TTFT SLO over the window.
 sum(rate(vllm:time_to_first_token_seconds_bucket{le="0.5"}[5m]))
@@ -771,7 +777,7 @@ sum(rate(vllm:time_to_first_token_seconds_bucket{le="0.5"}[5m]))
 
 Alert thresholds to set:
 - `cost_per_1m_output_tokens` > 2× your baseline → something is wrong (traffic spike, failed GPU, KV cache thrashing).
-- `kv_cache_utilization_pct` > 90% → risk of request preemption/OOM; scale out or reduce max context.
+- `kv_cache_utilization_pct` > 90% (equivalently `vllm:gpu_cache_usage_perc > 0.9`) → risk of request preemption/OOM; scale out or reduce max context.
 - `ttft_p99_ms` > SLO → prefill queue is backing up; consider [Disaggregated Prefill/Decode & Chunked Prefill](../07-inference-serving/08-disaggregated-chunked-prefill.html).
 - `batch_size_mean` consistently < 10% of $B^*$ at peak hours → you are over-provisioned; scale down.
 
@@ -782,7 +788,7 @@ Alert thresholds to set:
     - $T_{\text{sustained}}$ is the only term in the cost formula you must measure. Use an *open-loop* load generator (`vllm bench serve`, `sglang.bench_serving`), sweep the request rate, and take the throughput at the last rate that still meets your TTFT/TPOT SLO — goodput, not saturation throughput.
     - Cost per million output tokens is $\text{\$/1M} = (R \times 10^6) / (T_{\text{sustained}} \times 3600)$. The dominant lever is sustained throughput, which is maximized by keeping GPU utilization near the saturation point.
     - Output tokens are 3–5× more expensive per token than input tokens — but in wall-clock GPU-time and dollars, not FLOPs: per-token compute (~2P) is the same for prefill and decode. The gap is bandwidth: each decode token pays for its own full weight read from HBM (memory-bound, low utilization), whereas parallel prefill amortizes one weight read across the whole prompt. Reasoning models that produce long chains-of-thought carry a significant cost multiplier.
-    - FP8 and INT8 quantization are the single highest-leverage optimization: they halve or quarter decode bandwidth consumption with minimal quality degradation on modern hardware.
+    - FP8 and INT8 quantization are the single highest-leverage optimization: they halve or quarter the *weight*-streaming bandwidth per decode step with minimal quality degradation on modern hardware. They do nothing for the $B \cdot \text{kv}(S)$ term, so at long context you need KV-cache quantization to move the number.
     - Continuous batching near $B^*$ is the core mechanism for cost efficiency; your scheduler should target this operating point subject to your TTFT/TBT SLOs.
     - For mixed workloads, disaggregate latency-sensitive (chat) and throughput-optimized (batch) serving tiers, using spot instances for the latter.
     - KV cache memory is a first-class resource: at long contexts (32k+), a single sequence can occupy 10+ GB of HBM, severely limiting concurrent requests. KV cache quantization (INT8) roughly doubles the number of long-context sequences a node can hold.

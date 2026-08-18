@@ -360,7 +360,11 @@ Each step, vLLM runs the proposer to get $k$ draft tokens, then runs the target 
 ```python
 # Engine-level shape of one speculative step (target distribution preserved).
 draft_tokens, draft_probs = proposer.propose(seq, k)          # cheap; q at each pos
-target_logits = target_model(seq.context + draft_tokens)      # ONE big fwd, k+1 pos
+logits = target_model(seq.context + draft_tokens)             # ONE big fwd
+target_logits = logits[-(k + 1):]        # the k+1 scored positions: the last
+                                         # context token (predicts draft slot 0)
+                                         # plus each draft token; now row i is
+                                         # the target dist at draft slot i
 
 # min(1, p/q) test per position; stops at the first rejection (None if all k pass).
 accepted, reject_pos = rejection_sample(draft_tokens, draft_probs, target_logits)
@@ -746,4 +750,4 @@ def append_slot(self, block_table, cur_len):
 
     (b) Each spec step costs $1.2$ target-passes of time but yields $3.36$ tokens, so tokens per unit target-pass time $= 3.36 / 1.2 = 2.8$. Net speedup $\approx$ **2.8$\times$** over plain decoding.
 
-    (c) With low $\alpha$, most drafted tokens are rejected: the sum $\frac{1-\alpha^{k+1}}{1-\alpha}$ collapses toward 1 (e.g. at $\alpha = 0.2$, $k = 4$ it is $\approx 1.25$ tokens/step), so you gain almost nothing per target pass — yet you still pay the drafter's cost every step (the $+0.20$). When the acceptance-driven gain falls below the draft overhead, tokens per unit time drop *below* 1, i.e. spec decoding is slower than plain decoding. High-entropy/creative text is exactly where the small drafter disagrees most with the target, so $\alpha$ is low and speculation can be a net loss; predictable text (code, structured output) has high $\alpha$ and benefits most.
+    (c) With low $\alpha$, most drafted tokens are rejected: the sum $\frac{1-\alpha^{k+1}}{1-\alpha}$ collapses toward 1 (e.g. at $\alpha = 0.2$, $k = 4$ it is $\approx 1.25$ tokens/step), so you gain almost nothing per target pass — yet you still pay the drafter's cost every step (the $+0.20$). Speculation is only a win while the acceptance-driven gain exceeds the draft overhead factor, $\frac{1-\alpha^{k+1}}{1-\alpha} > 1.2$, which at $k = 4$ means roughly $\alpha > 0.17$; at $\alpha = 0.2$ the margin is already down to $1.25 / 1.2 \approx 1.04$, i.e. 4%. Below break-even the gain falls under the overhead and tokens per unit time drop *below* 1 — at $\alpha = 0.1$ you get $\approx 1.11$ tokens/step and $1.11 / 1.2 \approx 0.93$, i.e. spec decoding is slower than plain decoding. High-entropy/creative text is exactly where the small drafter disagrees most with the target, so $\alpha$ is low and speculation can be a net loss; predictable text (code, structured output) has high $\alpha$ and benefits most.

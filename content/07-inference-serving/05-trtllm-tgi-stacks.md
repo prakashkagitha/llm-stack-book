@@ -46,15 +46,20 @@ python tensorrt_llm/examples/llama/convert_checkpoint.py \
 # max_batch_size and max_input_len are compile-time constants —
 # choose them to match your production workload envelope.
 # (Flag names drift between releases: recent trtllm-build versions fold
-#  --max_input_len/--max_output_len into a single --max_seq_len. Always
+#  --max_input_len/--max_output_len into a single --max_seq_len, and
+#  --paged_kv_cache is deprecated in favour of --kv_cache_type paged. Always
 #  check `trtllm-build --help` for the version you installed.)
+# There is no --use_inflight_batching switch on trtllm-build (that flag lived
+# on the old per-model build.py scripts): in-flight batching falls out of the
+# attention plugin + paged KV cache + packed/unpadded inputs, and is then
+# driven by the runtime Executor.
 trtllm-build \
     --checkpoint_dir ./llama-2-7b-trtllm \
     --output_dir ./llama-2-7b-engine \
     --max_batch_size 32 \
     --max_input_len 2048 \
     --max_output_len 512 \
-    --use_inflight_batching \
+    --remove_input_padding enable \
     --paged_kv_cache enable \
     --gemm_plugin bfloat16 \
     --gpt_attention_plugin bfloat16
@@ -214,7 +219,7 @@ Everything in this subsection is the price of the *AOT engine path*; the PyTorch
 
 Hugging Face's Text Generation Inference is a Rust-based server with a Python model-runner process. The Rust front-end handles HTTP/gRPC routing and request queuing; the Python process runs the model using PyTorch + custom CUDA kernels. Importantly, TGI ships its own custom attention kernels (including a FlashAttention-based implementation) and its own continuous batching scheduler.
 
-As of 2026, Hugging Face has moved TGI into maintenance mode — the repository was archived in March 2026 — and now steers new production work toward vLLM, SGLang, and llama.cpp/MLX, the very engines that adopted TGI's `transformers`-native architecture. TGI still runs well, and its multi-backend support can even front a vLLM or TensorRT-LLM engine behind the same API, but for a greenfield 2026 deployment vLLM is the more common default. The architecture below remains an instructive template for what a production LLM server actually does.
+As of 2026, Hugging Face has moved TGI into maintenance mode — the repository was archived in March 2026 — and now steers new production work toward vLLM, SGLang, and llama.cpp/MLX, the very engines that adopted TGI's `transformers`-native architecture. TGI still runs well, and its multi-backend support can even front a TensorRT-LLM or llama.cpp engine behind the same API, but for a greenfield 2026 deployment vLLM is the more common default. The architecture below remains an instructive template for what a production LLM server actually does.
 
 {{fig:tgi-router-modelserver-architecture}}
 
@@ -226,7 +231,7 @@ docker run --gpus all \
     -p 8080:80 \
     -v $PWD/model_cache:/data \
     ghcr.io/huggingface/text-generation-inference:2.4 \
-    --model-id meta-llama/Llama-3-8B-Instruct \
+    --model-id meta-llama/Meta-Llama-3-8B-Instruct \
     --quantize bitsandbytes-nf4 \
     --max-input-tokens 4096 \
     --max-total-tokens 6144 \
@@ -372,7 +377,7 @@ This same three-command path is exactly how Stack-100M gets from a trained check
 Ollama wraps llama.cpp in a REST server with a model registry, automatic download, and a simple CLI. It is the fastest path from "zero" to running a local LLM. (Since 2025 Ollama has also shipped its own GGML-based engine for newer and multimodal architectures, so it no longer routes every model through llama.cpp — though llama.cpp still powers much of the local-inference ecosystem, including tools like LM Studio.)
 
 ```bash
-# Install and run Llama-3-8B locally
+# Install and run Llama-3.1-8B locally
 ollama pull llama3.1:8b
 ollama run llama3.1:8b "Explain transformer attention in two sentences."
 
@@ -559,12 +564,13 @@ For paged KV caches, standard FlashAttention (which assumes contiguous key/value
 // Simplified pseudocode for paged attention kernel (CUDA C++)
 // Each thread block handles one query head for one sequence in the batch.
 
+template <int HEAD_DIM>          // compile-time so acc[] can be a register array
 __global__ void paged_attention_kernel(
-    float* output,           // [num_seqs, num_heads, head_dim]
-    const float* queries,    // [num_seqs, num_heads, head_dim]
+    float* output,           // [num_seqs, num_heads, HEAD_DIM]
+    const float* queries,    // [num_seqs, num_heads, HEAD_DIM]
     const float** kv_blocks, // array of pointers to KV blocks
     const int* block_table,  // [num_seqs, max_blocks_per_seq]
-    int head_dim,
+    int max_blocks_per_seq,  // row stride of block_table
     int block_size,          // tokens per KV block (e.g., 16)
     int seq_len
 ) {
@@ -578,7 +584,7 @@ __global__ void paged_attention_kernel(
 
     // Iterate over KV blocks for this sequence
     for (int block_idx = 0; block_idx * block_size < seq_len; ++block_idx) {
-        int physical_block = block_table[seq_id * MAX_BLOCKS + block_idx];
+        int physical_block = block_table[seq_id * max_blocks_per_seq + block_idx];
         // Load K from this block, compute QK^T, update online softmax...
         // (full implementation follows standard online softmax pattern)
     }
@@ -598,7 +604,7 @@ TensorRT-LLM uses a profiling pass during engine build to time dozens of cuBLAS/
 
 ### KV Cache Quantization
 
-Beyond paging, modern runtimes also quantize the KV cache itself. INT8 KV cache is now standard in TensorRT-LLM and supported in TGI and LMDeploy. The quantization is applied per-head-per-token with a float scale factor:
+Beyond paging, modern runtimes also quantize the KV cache itself. INT8 KV cache is now standard in TensorRT-LLM and supported in TGI and LMDeploy. The scale *granularity* differs by runtime: TensorRT-LLM bakes a per-tensor `kv_cache_scaling_factor` into the engine at calibration time (that is what the `--kv_cache_dtype fp8 --calib_size 512` step above produces), while LMDeploy/TurboMind computes per-head, per-token scales dynamically — finer-grained and calibration-free, at the cost of storing those scales alongside the KV entries. Either way the element-wise map is the same:
 
 $$
 \text{KV}_{\text{int8}} = \operatorname{clip}\!\left(\operatorname{round}\!\left(\frac{\text{KV}_{\text{fp16}}}{\text{scale}}\right), -128, 127\right)

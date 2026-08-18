@@ -161,7 +161,7 @@ The function-calling capability generalizes across tools never seen during train
 
 ### RL on top of SFT
 
-OpenAI's original GPT-4 function calling and subsequent work augmented SFT data with RL signals: if a tool call resulted in a successful downstream task completion, the call was rewarded. This teaches the model to be more conservative about calling tools unnecessarily and more aggressive about calling them when needed. See [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html) for the general pipeline.
+The publicly documented mechanism behind OpenAI's original (June 2023) GPT-4 function calling is supervised fine-tuning — the models were described as fine-tuned to detect when a function should be called and to emit JSON conforming to the signature; no outcome-reward stage for tool calls was published. Later work, open and closed, layers RL on top of that SFT: if a tool call results in a successful downstream task completion, the call is rewarded. This teaches the model to be more conservative about calling tools unnecessarily and more aggressive about calling them when needed. See [The RLHF Pipeline & Reward Modeling](../05-posttraining-alignment/05-rlhf-reward-modeling.html) for the general pipeline.
 
 ---
 
@@ -539,7 +539,7 @@ if __name__ == "__main__":
     **Turn 3 — model produces final answer:**
     > "The weather in London is 14°C (cloudy). That is **57.2°F**."
 
-    Total tokens for this 3-turn exchange on the order of 400–600 prompt tokens plus ~50 completion tokens — on the order of USD 0.001 with a small model. Context window growth is $O(n)$ in the number of tool calls because every call + result is appended to the message history.
+    Total tokens for this 3-turn exchange: on the order of 400–600 prompt tokens *per round-trip* (~1,500 cumulative, because the whole history is re-sent each iteration) plus ~50 completion tokens — on the order of USD 0.0003 at `gpt-4o-mini` pricing (~USD 0.15/M input, ~USD 0.60/M output). Context window growth is $O(n)$ in the number of tool calls because every call + result is appended to the message history.
 
 ### Running the identical loop against an open-source model
 
@@ -868,7 +868,11 @@ for msg in example:
 ```python
 enc = tok.apply_chat_template(
     example,                       # the 5-message conversation built above
-    tools=tools,
+    # Deliberately no `tools=` here: `build_tool_call_example` already
+    # serialized the schemas into the system message. Passing them again would
+    # make the template render a second copy, training a prompt shape that
+    # never occurs at inference. Pick one source of truth — the system message
+    # (as here) or the template's `tools=` path — and use it on both sides.
     tokenize=True,
     return_dict=True,
     return_assistant_tokens_mask=True,   # requires {% generation %} in the template
@@ -899,7 +903,7 @@ A rough rule of thumb: the order of thousands of tool-use examples is sufficient
 
 ### Streaming with tool calls
 
-When using streaming mode (`stream=True`), tool call arguments arrive token by token. The complete argument JSON is not available until the stream for that tool call ends. Most SDKs accumulate the delta and surface a complete `ToolCall` object at the end of the stream. For the harness, the simplest approach is to collect the full stream, then parse tool calls from the accumulated message rather than trying to parse partial JSON mid-stream.
+When using streaming mode (`stream=True`), tool call arguments arrive token by token. The complete argument JSON is not available until the stream for that tool call ends. The raw `stream=True` iterator does *not* accumulate for you: `delta.tool_calls` arrives as fragments carrying an `index`, with the call `id` and function `name` present only on the first fragment for that index and the `arguments` string split across the rest — you merge them by `index` yourself. Higher-level helpers (openai-python's `client.chat.completions.stream()`, Anthropic's `client.messages.stream()`, or a framework wrapper) do that merging and hand you a complete tool-call object at the end. For the harness, the simplest approach is to collect the full stream, then parse tool calls from the accumulated message rather than trying to parse partial JSON mid-stream.
 
 ### Tool call IDs and multi-turn history
 

@@ -208,7 +208,9 @@ $$
 
 **The intensity scales with $N$, the number of tokens processed together.** That is the entire argument. Read it twice.
 
-- **Prefill** processes the whole prompt at once: $N = S$, often hundreds or thousands of tokens. Even modest $S$ pushes $I = 2N/P$ well above the ridge point, so prefill is **compute-bound** — it saturates the tensor cores. Doubling your FLOPs roughly doubles prefill throughput; the weights are read once and amortized over many tokens.
+Keep the approximation honest about its range of validity: it assumes the weight read dominates, which holds while $N \ll d$. Once $N$ becomes comparable to $d$, the activation traffic ($\sim N d P$ bytes in and out) takes over and the exact intensity $2Nd^2 / \big((d^2 + 2Nd)P\big)$ *saturates* at order $d/P$ instead of growing without bound — roughly 2,000 FLOP/byte for $d = 4096$ in bf16. That ceiling is still an order of magnitude above the ridge point, so the conclusion below is unaffected; only the unbounded growth is an artifact of the approximation.
+
+- **Prefill** processes the whole prompt at once: $N = S$, often hundreds or thousands of tokens. Even modest $S$ pushes $I$ well above the ridge point — and at large $S$ it settles near its $\approx d/P$ ceiling, still far above it — so prefill is **compute-bound**: it saturates the tensor cores. Doubling your FLOPs roughly doubles prefill throughput; the weights are read once and amortized over many tokens.
 
 - **Decode** processes exactly one token per sequence: $N = 1$ (for a single request). Then $I \approx 2/P = 1$ FLOP/byte for fp16 — *two orders of magnitude* below the ridge point. Decode is therefore deeply **memory-bound**. The GPU spends its time streaming the entire weight matrix (and the entire KV cache) from HBM to perform a tiny amount of arithmetic, and the tensor cores sit mostly idle.
 
@@ -236,7 +238,7 @@ Batch-1 long-context decode has a further problem: a single query row against on
 
 ### A measurement you can run
 
-You can *feel* the memory-bound nature of decode directly. The following microbenchmark shows that decode latency per token is nearly flat as batch size grows (because you are bandwidth-limited, not compute-limited), until the batch gets large enough to finally start saturating compute.
+You can *feel* the memory-bound nature of decode directly. The following microbenchmark shows that decode latency *per step* is nearly flat as batch size grows (because you are bandwidth-limited, not compute-limited), until the batch gets large enough to finally start saturating compute.
 
 ```python
 import torch, time
@@ -266,7 +268,7 @@ def bench_decode(model, batch_sizes, d_model, n_steps=50, device="cuda"):
               f"{B/dt:8.0f} tok/s  {dt*1e3/B:6.3f} ms/tok")
 ```
 
-On real hardware you will see the per-token time barely move from $B=1$ to $B=16$ or $B=32$ — you are getting those extra tokens "for free" off the same weight reads — and only at large batch do you finally cross into the compute-bound regime where latency climbs. That flat region is the memory-bound signature, and exploiting it is the single biggest lever in throughput-oriented serving.
+On real hardware you will see the `ms/step` column barely move from $B=1$ to $B=16$ or $B=32$, so the `ms/tok` column falls almost in proportion to the batch — you are getting those extra tokens "for free" off the same weight reads — and only at large batch do you finally cross into the compute-bound regime where step latency climbs. That flat region is the memory-bound signature, and exploiting it is the single biggest lever in throughput-oriented serving.
 
 ## The Tokens-Per-Second Ceiling
 
@@ -292,7 +294,7 @@ This "weights divided by bandwidth" estimate is one of the most useful back-of-e
     t_{\text{step}} \ge \frac{140 \times 10^9}{2.0 \times 10^{12}} = 0.070\ \text{s} = 70\ \text{ms}.
     $$
 
-    That caps single-stream decode at about $1/0.070 \approx 14$ tokens/sec — and that is the *optimistic* ceiling assuming perfect bandwidth utilization (real kernels hit perhaps 60–80% of peak). This is exactly why a 70B model "feels slow" token-by-token and why people quantize weights to int4: dropping $P$ from 2 to 0.5 bytes shrinks the weight read 4×, lifting the decode ceiling to ~55 tokens/sec on the same GPU. Quantization buys *decode speed* primarily by shrinking memory traffic, not by adding FLOPs — see [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html).
+    That caps single-stream decode at about $1/0.070 \approx 14$ tokens/sec — and that is the *optimistic* ceiling assuming perfect bandwidth utilization (real kernels hit perhaps 60–80% of peak). This is exactly why a 70B model "feels slow" token-by-token and why people quantize weights to int4: dropping $P$ from 2 to 0.5 bytes shrinks the weight read 4× (35 GB at 2.0 TB/s is 17.5 ms), lifting the decode ceiling to ~57 tokens/sec on the same GPU. Quantization buys *decode speed* primarily by shrinking memory traffic, not by adding FLOPs — see [Quantization II](../04-kernels-efficiency/08-quantization-formats-qat.html).
 
     Compare an 8B model: $16$ GB of weights at 2.0 TB/s gives $t_{\text{step}} \ge 8$ ms, a ceiling near 125 tokens/sec. Smaller models are not just cheaper to train — they decode proportionally faster because there is less to stream.
 
@@ -385,7 +387,7 @@ $$
 L = \lambda \cdot W
 $$
 
-where $L$ is the average number of concurrent requests resident in the system, $\lambda$ is the throughput (requests completed per second, which in steady state equals the arrival rate), and $W$ is the average latency (time in system). It is astonishingly general — it assumes nothing about the arrival distribution or service discipline, only stability.
+where $L$ is the average number of concurrent requests resident in the system, $\lambda$ is the throughput (requests completed per second, which in steady state equals the arrival rate), and $W$ is the average latency (time in system). A notation warning: $L$ here is Little's law's standard symbol for *concurrency*, and for the rest of this section it means concurrent sequences — not the layer count $L$ from the KV-cache formula. It is astonishingly general — it assumes nothing about the arrival distribution or service discipline, only stability.
 
 For LLM serving we apply it at the *token* level, which makes the bandwidth story precise. Let $L$ be the number of sequences we can hold concurrently (capped by KV-cache memory), let $W$ be the average time a sequence stays resident (roughly its total generation time, $\approx T \cdot \text{TPOT}$), and let $\lambda$ be the sequence completion rate. Rearranged:
 
@@ -569,7 +571,7 @@ print(past.get_seq_length())   # tokens currently cached, per layer
 
     - **Decode starts memory-bound.** For a single stream, $N = 1$, so $I \approx 2/P = 1$ FLOP/byte in fp16 ($P = 2$) - roughly two orders of magnitude *below* the ridge point. The step time is set by streaming the weights from HBM, and the tensor cores sit idle. Batching $B = 32$ sequences into one decode step reads those *same weights once* and reuses them across all 32 tokens, lifting $N$ from 1 to 32 and $I$ to $\approx 2\cdot32/P = 32$ FLOP/byte. You are still (until much larger batches) memory-bound, so the step time barely changes while you now produce 32 tokens instead of 1 - hence nearly 32x aggregate throughput. The extra FLOPs ride for free on memory traffic you were already paying for.
 
-    - **Prefill starts compute-bound.** A prompt of $S$ tokens already has $N = S$ (hundreds or thousands), so $I = 2S/P$ is already well above the ridge point and the tensor cores are already saturated. Batching more prompts together raises $N$ further, but you are past the ridge - you cannot go faster than peak FLOP/s, which one prompt already reaches. So per-token throughput barely improves (and per-request latency can worsen).
+    - **Prefill starts compute-bound.** A prompt of $S$ tokens already has $N = S$ (hundreds or thousands), so $I$ is already well above the ridge point — at large $S$ it stops tracking $2S/P$ and settles near its $\approx d/P$ ceiling, which is still far past the ridge — and the tensor cores are already saturated. Batching more prompts together raises $N$ further, but you are past the ridge - you cannot go faster than peak FLOP/s, which one prompt already reaches. So per-token throughput barely improves (and per-request latency can worsen).
 
     The single distinguishing quantity is $N$, the tokens-per-forward-pass: it collapses from $S$ (prefill) to $1$ (single-stream decode). Batching is a lever that raises $N$; it only helps when you start below the ridge point, which is exactly the decode regime. This is the entire reason continuous batching targets decode.
 
@@ -619,7 +621,7 @@ print(past.get_seq_length())   # tokens currently cached, per layer
 
     Quantization raises the ceiling by exactly the ratio of $P$ values, $2 / 0.5 = 4\times$. It buys speed *not* by adding arithmetic - single-stream decode is memory-bound and the tensor cores are already idle - but by shrinking the number of bytes that must be streamed from HBM per step. Fewer weight bytes to move = faster step. (These are optimistic ceilings; real kernels hit perhaps 60-80% of peak bandwidth.)
 
-**4.** (Quantitative) Reuse the fleet from Exercise 2: $L \approx 40$ concurrent sequences fit in KV memory. Suppose each request generates on average $T = 1000$ tokens, and batched decode achieves a per-stream TPOT of 25 ms. Ignoring TTFT, use Little's law to estimate (a) the sustainable request throughput $\lambda$ and (b) the aggregate output-token throughput. (c) What happens if the arrival rate exceeds $\lambda$?
+**4.** (Quantitative) Reuse the fleet from Exercise 2: $L \approx 40$ concurrent sequences fit in KV memory (here $L$ is Little's-law concurrency — the answer to Exercise 2(c) — not that exercise's 80-layer count). Suppose each request generates on average $T = 1000$ tokens, and batched decode achieves a per-stream TPOT of 25 ms. Ignoring TTFT, use Little's law to estimate (a) the sustainable request throughput $\lambda$ and (b) the aggregate output-token throughput. (c) What happens if the arrival rate exceeds $\lambda$?
 
 ??? note "Solution"
     Little's law: $\lambda = L / W$, where $W$ is the average time a sequence stays resident.

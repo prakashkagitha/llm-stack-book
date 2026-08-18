@@ -144,7 +144,7 @@ def main():
 
     err = (out - ref).abs().max().item()
     if rank == 0:
-        print(f"world={world}  max abs error vs unsharded = {err:.2e}")  # ~1e-5 in fp32
+        print(f"world={world}  max abs error vs unsharded = {err:.2e}")  # ~1e-6 in fp32
     dist.destroy_process_group()
 
 
@@ -516,7 +516,15 @@ $$
 
 On NVLink (900 GB/s bidirectional), this costs roughly **5.8 µs** — negligible. Crossing PCIe (32 GB/s): about **163 µs** per step, or 6 ms per second of generation at 37 tokens/s — still small but not negligible.
 
-Crossing InfiniBand HDR (25 GB/s effective per rank in a ring): about **208 µs** per step. At 30 tokens/s, that is 6.2 ms/s just in TP communication. This motivates the hard rule: **TP within NVLink islands only**.
+Crossing InfiniBand HDR (25 GB/s effective per rank in a ring): about **208 µs** per step, or 6.2 ms per second of generation at 30 tokens/s.
+
+Those figures are a *floor*, and on their own they are not yet an argument: 208 µs out of a 33 ms step budget is well under 1%. The real cost appears once you count collectives rather than bytes. As the practitioner tip above noted, decode all-reduce buffers are only tens of kilobytes — far below the size at which bandwidth is the binding constraint — so the honest model is
+
+$$
+\text{TP comm per step} \approx A \times L \times \left(t_{\text{latency}} + \frac{\text{bytes per collective}}{\text{BW}}\right)
+$$
+
+with $A \times L = 160$ blocking collectives on the critical path of *every* decode step. A small-message NCCL all-reduce costs single-digit microseconds inside an NVLink domain but tens of microseconds once it has to cross a NIC, so the latency term alone is under a millisecond per step intra-node (less still with vLLM's one-shot kernel) and on the order of a few milliseconds per step inter-node — a high-single-digit-percent or worse share of the token budget, rather than the sub-1% the bandwidth-only model suggests. That per-collective term, multiplied by 160, is what motivates the hard rule: **TP within NVLink islands only**.
 
 ### PP Communication Profile
 
@@ -811,7 +819,7 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
 
     The difference is entirely about the communication that sits on the critical path of a decode step.
 
-    - **TP** requires two all-reduces *per transformer layer* per forward pass (one after attention, one after the MLP). An all-reduce is a blocking collective: the layer cannot proceed until every rank has contributed and received the summed partial. Its volume is roughly $4 \times d_{\text{model}}$ bytes per rank per all-reduce in BF16 (two all-reduces per layer) and, crucially, **does not shrink with batch size** — you pay it on every single decode step. On NVLink (about 900 GB/s) the total per-step cost for Llama-3 70B is around 5.8 microseconds and is negligible; over InfiniBand HDR the same traffic costs on the order of 208 microseconds per step, large enough to eat a measurable fraction of a 33 ms token budget. Because the cost is fixed per step and blocking, it only stays cheap on the fast intra-node fabric — hence "TP within NVLink islands only."
+    - **TP** requires two all-reduces *per transformer layer* per forward pass (one after attention, one after the MLP). An all-reduce is a blocking collective: the layer cannot proceed until every rank has contributed and received the summed partial. Its volume is roughly $4 \times d_{\text{model}}$ bytes per rank per all-reduce in BF16 (two all-reduces per layer) and, crucially, **does not shrink with batch size** — you pay it on every single decode step. On NVLink (about 900 GB/s) the total per-step cost for Llama-3 70B is around 5.8 microseconds and is negligible; over InfiniBand HDR the same traffic costs on the order of 208 microseconds per step in pure transfer time — and, more importantly, the 160 blocking collectives per step each pay a fixed inter-node latency of tens of microseconds, pushing the true cost into the milliseconds and so into a real fraction of a 33 ms token budget. Because the cost is fixed per step and blocking, it only stays cheap on the fast intra-node fabric — hence "TP within NVLink islands only."
 
     - **DP** replicas are fully independent copies of the model. Different requests go to different replicas, and no tensor is ever exchanged *between* replicas during inference. There is no collective on the decode critical path at all, so the interconnect between replicas is irrelevant — they can be in different datacenters. DP buys linear throughput with zero communication cost; the flip side is that it does nothing for the latency of a single request (each replica is still a full model).
 
@@ -833,7 +841,7 @@ Notice how the pieces fit: attention is data-parallel because MLA's latent KV ca
 
     $$\frac{1.638 \times 10^6}{32 \times 10^9} \approx 51 \times 10^{-6}\ \text{s} = 51\ \text{microseconds}$$
 
-    **(d)** The volume is identical; only the fabric changes, yet PCIe is about 28x slower per step. 1.8 microseconds is lost in kernel-launch noise, but 51 microseconds per step accumulates: at 30 tokens/s that is about 1.5 ms of pure communication per second of generation, and it grows with $L$ and TP degree. The lesson is that TP placement, not TP volume, is what makes or breaks decode latency — keep the TP group on NVLink.
+    **(d)** The volume is identical; only the fabric changes, yet PCIe is about 28x slower per step. 1.8 microseconds is lost in kernel-launch noise, but 51 microseconds per step accumulates: at 30 tokens/s that is about 1.5 ms of pure communication per second of generation, and it grows with $L$. Note that it does *not* keep growing with TP degree: a ring all-reduce moves $2(T-1)/T$ of the buffer per rank, which is already essentially at its $2\times$ asymptote. What does grow with $T$ is the number of ring hops — $2(T-1)$ of them — and therefore the per-collective *latency* term, which this bandwidth-only estimate omits. The lesson is that TP placement, not TP volume, is what makes or breaks decode latency — keep the TP group on NVLink.
 
 **3.** You serve Llama-3 70B with **TP = 8** on eight H100 80 GB GPUs. The model has 8 GQA KV heads, head dimension 128, 80 layers, BF16. Recall from the chapter that the total KV cache is $2 \times 8 \times 128 \times 80 \times 2 = 327{,}680$ bytes per token, and that under TP the KV cache is sharded across ranks by attention head. (a) What is the per-GPU KV footprint per token at TP = 8? (b) After weights, suppose 45 GB per GPU remains for KV cache. How many concurrent requests of 8192-token context does one GPU support? (c) Compare with the chapter's TP = 4 example that fit only about 17 such requests, and explain the difference.
 

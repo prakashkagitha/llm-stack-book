@@ -134,7 +134,7 @@ When a request arrives for adapter $a$, the scheduler checks whether $a$ is GPU-
 
 ### Hot-swapping and the prefetch pipeline
 
-The art is **overlapping** adapter transfer with ongoing compute so swaps are invisible. A good server runs a copy engine (DMA over a separate CUDA stream) that streams the next batch's needed adapters into GPU pages while the current batch is still executing on the compute stream. Get a feel for the magnitude: a rank-16 adapter on $q,k,v,o$ of a 40-layer, $d{=}5120$ model holds $40 \times 4 \times 2 \times 16 \times 5120 \approx 26$M parameters $\approx 52$ MB in bf16; over a PCIe Gen4 x16 link at an effective ~20 GB/s that is roughly **2–3 ms** — a few decode steps' worth of time. That is small enough to hide completely *if you prefetch*, and far too large to pay on the critical path of a single request (and a rank-64 adapter, or one that also adapts the MLP, is 4–8× worse). By 2026 this overlap has become a first-class, opt-in engine feature rather than a hand-rolled stream (see §7.14.6 for SGLang's and vLLM's flags).
+The art is **overlapping** adapter transfer with ongoing compute so swaps are invisible. A good server runs a copy engine (DMA over a separate CUDA stream) that streams the next batch's needed adapters into GPU pages while the current batch is still executing on the compute stream. Get a feel for the magnitude: a rank-16 adapter on $q,k,v,o$ of a 40-layer, $d{=}5120$ model holds $40 \times 4 \times 2 \times 16 \times 5120 \approx 26$M parameters $\approx 52$ MB in bf16; over a PCIe Gen4 x16 link at an effective ~20 GB/s that is roughly **2–3 ms** — a *fraction of a single* 13B decode step, which is itself ~8–13 ms just to stream the 26 GB of base weights on one H100/A100. That is small enough to hide completely *if you prefetch*, and it is only the last hop: on a GPU miss you also pay the CPU/SSD/object-store fetch behind it, and *that* is what must never land on a request's critical path (a rank-64 adapter is 4× larger again, and also adapting the MLP multiplies the bundle by a further ~2.4× on a 13B shape — $d{=}5120$, $d_\text{ffn}{=}13824$ — so the two together are nearly 10×). By 2026 this overlap has become a first-class, opt-in engine feature rather than a hand-rolled stream (see §7.14.6 for SGLang's and vLLM's flags).
 
 ```python
 # Sketch: overlap adapter prefetch with the current forward pass.
@@ -863,31 +863,23 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
 **6.** The chapter's `AdapterRegistry.ensure_resident` evicts by **LRU** and refuses to touch any adapter still in use. Section 7.14.4 notes that **LFU** (evict the least-*frequently*-used) can be better when a few adapters dominate traffic. Modify the registry to (a) track a per-adapter `hit_count`, and (b) evict, when the GPU pool is full, the resident adapter with the **smallest `hit_count`** among those with `ref_count == 0`. If every resident adapter is in use, raise an error. Give the code and explain when LFU beats LRU here.
 
 ??? note "Solution"
-    Add a `hit_count` field to `AdapterMeta` and rewrite the eviction branch to scan resident adapters for the evictable one (`ref_count == 0`) with the minimum hit count.
+    Add a `hit_count` field to `AdapterMeta` and rewrite the eviction branch to scan resident adapters for the evictable one (`ref_count == 0`) with the minimum hit count. Only the *policy* changes, so subclass rather than rewrite: `build_index` and `release` are what actually maintain `ref_count` (and enforce the adapters-per-step cap of §7.14.7), and a standalone class that dropped them would leave `ref_count` permanently 0 — making the "never evict an in-use adapter" guard below vacuous.
 
     ```python
     from dataclasses import dataclass
-    from collections import OrderedDict
     import torch
 
     @dataclass
-    class AdapterMeta:
+    class AdapterMeta:              # replaces the §7.14.7 definition in the module
         A: torch.Tensor
         B: torch.Tensor
         alpha: float
         ref_count: int = 0
         hit_count: int = 0          # NEW: LFU frequency signal
 
-    class LFUAdapterRegistry:
-        def __init__(self, layer, n_gpu_slots: int):
-            self.layer = layer
-            self.n_gpu_slots = n_gpu_slots
-            self.cpu_pool: dict[str, AdapterMeta] = {}
-            self.gpu: "OrderedDict[str,int]" = OrderedDict()   # name -> slot
-            self.free_slots = list(range(1, n_gpu_slots + 1))  # slot 0 reserved
-
-        def register(self, name, A, B, alpha):
-            self.cpu_pool[name] = AdapterMeta(A=A, B=B, alpha=alpha)
+    class LFUAdapterRegistry(AdapterRegistry):
+        """LRU -> LFU. Inherits __init__, register, build_index and release
+        unchanged; overrides only the residency/eviction policy."""
 
         def ensure_resident(self, name) -> int:
             meta = self.cpu_pool[name]
@@ -914,7 +906,7 @@ For the broader economics of latency vs. throughput vs. cost that frame these de
     Key points, all grounded in Section 7.14.4:
 
     - `hit_count` is incremented on **every** `ensure_resident` call (hit or miss), giving the frequency signal.
-    - Eviction only ever considers adapters with `ref_count == 0`; an in-use adapter is never evicted (the invariant the chapter stresses). If none is evictable, we raise rather than corrupt an in-flight request.
+    - Eviction only ever considers adapters with `ref_count == 0`; an in-use adapter is never evicted (the invariant the chapter stresses). If none is evictable, we raise rather than corrupt an in-flight request. This guard is only meaningful because the inherited `build_index`/`release` pin and unpin the batch's adapters — and because the inherited `build_index` still refuses a batch needing more distinct adapters than there are GPU slots, so no slot already baked into the in-flight `lora_idx` can be recycled.
     - `min(candidates)` picks the least-frequently-used evictable adapter. (Ties break lexicographically by adapter name, since the tuple comparison falls through to the `n` field; a production system would instead add an explicit age/recency tiebreak.)
 
     **When LFU beats LRU:** when traffic is **skewed** — a handful of popular adapters serve most requests, interspersed with a long tail of one-off cold adapters. Under pure LRU, a burst of rare adapters can push a popular-but-momentarily-idle adapter out of the pool (scan/thrash), forcing an expensive reload right after. LFU keeps the high-frequency adapters pinned because their hit counts stay large, absorbing the cold tail in the remaining slots. When traffic has strong *temporal locality* but flatter frequencies, LRU can still win; the chapter notes a cost-aware policy weighting recency by adapter size and fetch cost as the more robust production choice.

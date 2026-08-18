@@ -293,7 +293,8 @@ class EpisodicLog:
         ]
         if session_id:
             entries = [e for e in entries if e["session_id"] == session_id]
-        return entries[-n:]
+        # Guard n <= 0: `entries[-0:]` is `entries[0:]`, i.e. the whole log.
+        return entries[-n:] if n > 0 else []
 
     def load_session(self, session_id: str) -> list[dict]:
         """Return all entries for a given session, in order."""
@@ -731,9 +732,17 @@ JSON output:"""
     facts = _json.loads(match.group())
     updated = []
     for fact in facts:
-        key   = fact.get("key", "").strip()
-        value = fact.get("value", "").strip()
-        conf  = float(fact.get("confidence", 0.8))
+        # Models sometimes emit a bare list of strings, or a non-string
+        # value ({"key": "api.rate_limit", "value": 1000}). Coerce rather
+        # than let one malformed element kill the whole batch.
+        if not isinstance(fact, dict):
+            continue
+        key   = str(fact.get("key", "")).strip()
+        value = str(fact.get("value", "")).strip()
+        try:
+            conf = float(fact.get("confidence", 0.8))
+        except (TypeError, ValueError):
+            conf = 0.8
         if key and value:
             mem.remember(key, value, confidence=conf)
             updated.append((key, value))

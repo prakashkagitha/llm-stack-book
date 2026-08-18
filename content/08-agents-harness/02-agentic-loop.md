@@ -32,7 +32,7 @@ The rest of this chapter examines the principal architectures that address these
 
 ## ReAct: Interleaving Reasoning and Acting
 
-ReAct (Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models*, 2023) is the foundational paper for modern agentic loops. The key insight is that purely acting (calling tools without explanation) and purely reasoning (chain-of-thought without any real execution) are both weaker than interleaving them.
+ReAct (Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models*, 2023) is the foundational paper for modern agentic loops. The key insight is that interleaving beats purely acting (calling tools without explanation) across the board, and beats purely reasoning (chain-of-thought without any real execution) on tasks that need external state — on the decision-making benchmarks (ALFWorld, WebShop) the margin over both is large. The honest caveat is that this is not uniform: on HotpotQA plain ReAct actually *trails* chain-of-thought (27.4 vs 29.4 EM with PaLM-540B), because its reasoning is pinned to whatever retrieval happens to return, and the win there comes from combining the two (ReAct → CoT-SC).
 
 ### The ReAct Format
 
@@ -304,8 +304,13 @@ Important:
 
             # ---- Check for finish ----
             if observation == "__FINISH__":
-                # Extract the argument to finish() as the final answer.
-                match = re.search(r"finish\(([^)]*)\)", assistant_text)
+                # Extract the argument to finish() as the final answer.  Match
+                # greedily to the *last* ")": final answers routinely contain
+                # parentheses ("Tokyo (37M) is ~1.85x New York (20M)"), and a
+                # `[^)]*` class would stop at the first one and silently return
+                # a truncated answer — a corrupted result with no error anywhere
+                # in the log.  (The same class in `_parse_action` is Exercise 4.)
+                match = re.search(r"finish\((.*)\)", assistant_text, re.DOTALL)
                 final_answer = match.group(1).strip('"\'') if match else assistant_text
                 if verbose:
                     print(f"\n[Final Answer] {final_answer}")
@@ -360,7 +365,7 @@ The key implementation details to notice:
 
 ### The Native Tool-Calling Variant
 
-The raw-text loop above makes the mechanism visible, but every production harness in 2026 uses the provider's *native tool-calling* API instead: you pass JSON schemas for the tools, the chat template renders them, and the model emits structured tool calls that the SDK parses for you. The Thought/Action/Observation convention then lives in the chat template (see [Tool Use & Function Calling](../08-agents-harness/01-tool-use-function-calling.html)) rather than in your regex.
+The raw-text loop above makes the mechanism visible, but most production harnesses in 2026 use the provider's *native tool-calling* API instead: you pass JSON schemas for the tools, the chat template renders them, and the model emits structured tool calls that the SDK parses for you. The Thought/Action/Observation convention then lives in the chat template (see [Tool Use & Function Calling](../08-agents-harness/01-tool-use-function-calling.html)) rather than in your regex.
 
 ```python
 def tool_schemas() -> list[dict]:
@@ -739,7 +744,9 @@ def beam_react_agent(
 
                 # Check for finish
                 if "finish(" in text:
-                    match = re.search(r"finish\(([^)]*)\)", text)
+                    # Greedy to the last ")" for the same reason as above: a
+                    # `[^)]*` class truncates any answer containing parentheses.
+                    match = re.search(r"finish\((.*)\)", text, re.DOTALL)
                     answer = match.group(1).strip('"\'') if match else text
                     # Score this leaf.  Note that the terminal node must be
                     # built first: scoring the *parent* would give every
@@ -899,7 +906,7 @@ Always terminate generation at `"Observation:"` and inject the real result from 
 
 The architectures above treat the LLM as a frozen policy and engineer around it. A richer approach trains the model to be a better agentic policy using reinforcement learning. This connects deeply to [Agentic & Multi-Turn RL](../06-rl-infra/10-agentic-multiturn-rl.html) and [RL with Verifiable Rewards (RLVR) & The Reasoning Recipe](../05-posttraining-alignment/09-rlvr-reasoning.html).
 
-The key insight is that the reward signal for an agent can be *sparse and delayed*: `+1` if the task is completed successfully, `0` otherwise. This is harder than token-level reward but more directly aligned with task success. The KL penalty $\beta \cdot \text{KL}(\pi \| \pi_{\text{ref}})$ is essential for preventing the policy from collapsing into degenerate tool-call patterns.
+The key insight is that the reward signal for an agent can be *sparse and delayed*: `+1` if the task is completed successfully, `0` otherwise. This is harder than token-level reward but more directly aligned with task success. A KL penalty $\beta \cdot \text{KL}(\pi \| \pi_{\text{ref}})$ is one common regulariser against the policy collapsing into degenerate tool-call patterns — but it is not the only one, and not universal: several verifiable-reward recipes (DAPO, Dr. GRPO, R1-Zero-style reproductions) drop the KL term entirely on the argument that the policy is *supposed* to move far from the reference, and control degeneracy with format/validity rewards, clipping and entropy controls, and episode-level penalties instead. See [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html) for when to keep the leash and when to cut it.
 
 For the purposes of this chapter: agentic RL is the mechanism by which a model learns *internally* to do what ReAct does with *external* prompting. A model trained with agentic RL writes better Thought traces, chooses better tools, and stops more reliably — without needing the hand-crafted system prompt.
 
@@ -929,7 +936,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
 
     **Foundational work**
 
-    - [Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models* (2023)](https://arxiv.org/abs/2210.03629) — the paper that established the Thought/Action/Observation loop and showed it beats pure chain-of-thought or pure acting on QA and decision-making benchmarks.
+    - [Yao et al., *ReAct: Synergizing Reasoning and Acting in Language Models* (2023)](https://arxiv.org/abs/2210.03629) — the paper that established the Thought/Action/Observation loop; it beats pure acting on QA and beats imitation/RL baselines by wide margins on decision-making benchmarks (ALFWorld, WebShop). Note that on HotpotQA plain ReAct trails chain-of-thought (27.4 vs 29.4 EM), and the QA gain comes from combining the two (ReAct → CoT-SC).
     - [Shinn et al., *Reflexion: Language Agents with Verbal Reinforcement Learning* (2023)](https://arxiv.org/abs/2303.11366) — introduces the outer reflection loop: verbal self-critique stored as episodic memory guides subsequent trial attempts without weight updates.
     - [Yao et al., *Tree of Thoughts: Deliberate Problem Solving with LLMs* (2023)](https://arxiv.org/abs/2305.10601) — extends the linear loop into a beam-search tree, sampling multiple candidate thoughts and pruning with a value function; lifts GPT-4 success on Game of 24 from 4% to 74%.
 
@@ -1129,7 +1136,7 @@ For the purposes of this chapter: agentic RL is the mechanism by which a model l
                     observation = self._execute_action(tool_name, args)
 
             if observation == "__FINISH__":
-                match = re.search(r"finish\(([^)]*)\)", assistant_text)
+                match = re.search(r"finish\((.*)\)", assistant_text, re.DOTALL)
                 final_answer = match.group(1).strip('"\'') if match else assistant_text
                 if verbose:
                     print(f"\n[Final Answer] {final_answer}")

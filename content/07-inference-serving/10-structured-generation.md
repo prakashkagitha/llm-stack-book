@@ -140,7 +140,7 @@ The critical engineering challenge is Step 2: lifting a character-level grammar 
 
 ## Outlines: The Foundational Library
 
-Outlines (Willard & Louf, 2023, *Efficient Guided Generation for Large Language Models*) was the first widely-adopted library to formalize regex and CFG-constrained LLM generation. Its core contribution is converting a regex or EBNF grammar into an **index**: a mapping from FSM state to the set of vocabulary tokens valid in that state, pre-computed once.
+Outlines (Willard & Louf, 2023, *Efficient Guided Generation for Large Language Models*) was the first widely-adopted library to formalize regex and CFG-constrained LLM generation. Its core contribution is converting a regex or EBNF grammar into an **index**: a mapping from each FSM state to the vocabulary tokens valid in that state *and* the state each of those tokens leads to, pre-computed once.
 
 The Outlines index construction algorithm:
 
@@ -149,25 +149,26 @@ The Outlines index construction algorithm:
 # The actual library uses interegular and the tokenizers package
 
 import re
-from typing import Dict, Set, List, Tuple
+from typing import Dict, List, Tuple
 
 def build_fsm_index(
     regex_pattern: str,
     vocab: Dict[int, str],    # token_id -> decoded string
-) -> Dict[int, Set[int]]:
+) -> Dict[int, Dict[int, int]]:
     """
-    Returns a dict: fsm_state -> set of valid token_ids
-    Pre-computes the full transition table for constrained decoding.
+    Returns a dict: fsm_state -> {valid token_id -> state reached after it}
+    This is the full token-level transition table: the keys of a row give the
+    mask for that state, the values give the state to jump to after sampling.
     """
     # Step 1: compile regex to NFA, convert to DFA (standard automaton ops)
     # Returns an object exposing .states, .transitions, .start, .accepts
     fsm = regex_to_dfa(regex_pattern)
     
-    index: Dict[int, Set[int]] = {}
+    index: Dict[int, Dict[int, int]] = {}
     dead_state = -1
     
     for state in fsm.states:
-        valid_tokens: Set[int] = set()
+        transitions_from_state: Dict[int, int] = {}
         for token_id, token_str in vocab.items():
             # Simulate the DFA over the token string, starting from `state`
             current = state
@@ -180,15 +181,17 @@ def build_fsm_index(
                 current = next_state
             
             if reachable:
-                # Token is valid: consuming it does not kill the FSM
-                valid_tokens.add(token_id)
+                # Token is valid: consuming it does not kill the FSM. Record
+                # *where* it lands so the guide can advance in O(1) instead of
+                # re-simulating the token's characters every step.
+                transitions_from_state[token_id] = current
         
-        index[state] = valid_tokens
+        index[state] = transitions_from_state
     
     return index
 ```
 
-At generation time, the guide maintains the current FSM state and calls `index[current_state]` to get the allowed token set, applies it as a logit mask, and advances the state.
+At generation time the guide keeps the current FSM state `q`: `index[q].keys()` is the allowed token set, which it applies as a logit mask, and after sampling token `v` it advances with a single lookup, `q = index[q][v]`. Storing the destination state — rather than only the set of legal ids — is what makes the advance $O(1)$ and keeps the $O(V \cdot L_{\max})$ simulation entirely in the precompute.
 
 A critical subtlety is handling *partial tokens* — a token like `"wh"` might be valid mid-pattern even if `"what"` is the only completing sequence. Outlines handles this by also allowing tokens that lead to a non-dead state even if that state isn't an accepting state, because generation will continue. Only at EOS must the state be accepting.
 
@@ -293,7 +296,10 @@ for _ in range(64):
     xgr.apply_token_bitmask_inplace(logits, bitmask.to(logits.device))
 
     next_id = int(torch.argmax(logits, dim=-1).item())   # greedy for determinism
-    assert matcher.accept_token(next_id)                 # advances the PDA
+    ok = matcher.accept_token(next_id)                   # advances the PDA
+    # Never put the accept_token() call itself inside an assert: `python -O`
+    # strips assert statements, and the PDA would then never advance.
+    assert ok, f"illegal token {next_id} — mask/vocab misalignment"
     generated.append(next_id)
     if matcher.is_terminated():                          # grammar reached accept + EOS
         break
@@ -303,7 +309,7 @@ print(tokenizer.decode(generated))
 # matcher.reset() lets you reuse the matcher for the next request on this slot.
 ```
 
-Three details generalize to every engine integration. First, `accept_token` returns `False` if the token is illegal — a sampler bug or a mask/vocab misalignment — so assert on it during development. Second, the bitmask is *packed* (32 tokens per int32), which is why the mask transfer is ~16 KB rather than 512 KB for a 128k vocabulary. Third, `matcher` objects are cheap and independent — one per sequence, a few hundred bytes each — which is exactly what makes the heterogeneous batches discussed below straightforward.
+Three details generalize to every engine integration. First, `accept_token` returns `False` if the token is illegal — a sampler bug or a mask/vocab misalignment — so check its return value (bind it first, then assert; an `assert matcher.accept_token(...)` one-liner vanishes under `python -O` and takes the state advance with it). Second, the bitmask is *packed* (32 tokens per int32), which is why the mask transfer is ~16 KB rather than 512 KB for a 128k vocabulary. Third, `matcher` objects are cheap and independent — one per sequence, a small CPU-side structure that is orders of magnitude smaller than that sequence's KV cache — which is exactly what makes the heterogeneous batches discussed below straightforward.
 
 ## llguidance: Microsoft's Production Engine
 
@@ -633,7 +639,12 @@ Movie: Inception (2010)
 Review text: Mind-bending thriller, visually stunning. 9/10.
 Return only JSON:"""
 
-# This call guarantees that `result` is a valid `MovieReview` instance.
+# The *structure* — keys, types, the `sentiment` enum, `max_length` on strings —
+# is guaranteed by the grammar. Numeric range bounds (`ge`/`le`) are generally
+# NOT compiled into the FSM by schema-to-regex converters; they are enforced only
+# by Pydantic when the decoded text is validated, so this call can still raise
+# `ValidationError` on an out-of-range `year` or `score`. Constrain what the
+# grammar can express, and validate the rest.
 result: MovieReview = generator(prompt)
 print(result.model_dump_json(indent=2))
 
@@ -742,7 +753,7 @@ This is more complex than pure JSON generation because the grammar is *partially
 {{fig:structgen-toolcall-constrained-flow}}
 
 
-SGLang (covered in [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) exposes constraints directly in its frontend DSL — `sgl.gen("call", json_schema=...)` or `sgl.gen("id", regex=...)` inside a `@sgl.function` — with the engine-wide backend selected at launch via `--grammar-backend {xgrammar,llguidance,outlines}`. Because each `gen` call is its own constrained region, a program can alternate free text and grammar-locked spans without any extra machinery. The vLLM serving stack exposes several selectable backends — as of 2026 XGrammar is the default (with `auto` backend selection), and guidance/llguidance, Outlines, and lm-format-enforcer remain available — activated per-request when structured-output parameters such as `guided_json` or `guided_regex` are set.
+SGLang (covered in [SGLang: RadixAttention & Structured Programs](../07-inference-serving/04-sglang-radixattention.html)) exposes constraints directly in its frontend DSL — `sgl.gen("call", json_schema=...)` or `sgl.gen("id", regex=...)` inside a `@sgl.function` — with the engine-wide backend selected at launch via `--grammar-backend {xgrammar,llguidance,outlines}`. Because each `gen` call is its own constrained region, a program can alternate free text and grammar-locked spans without any extra machinery. The vLLM serving stack exposes several selectable backends — as of 2026 XGrammar is the default (with `auto` backend selection), and guidance/llguidance and Outlines remain selectable (lm-format-enforcer was a V0-only backend and disappeared with the V0 engine) — activated per-request when structured-output parameters such as `guided_json` or `guided_regex` are set.
 
 !!! note "Tool name as a vocabulary restriction"
 
@@ -795,7 +806,7 @@ For large models where $T_{\text{model\_fwd}}$ dominates ($\gg T_{\text{mask\_co
 
 ### Batch Heterogeneity
 
-In a batched serving scenario, different requests may have different grammar constraints. XGrammar handles this by maintaining a separate automaton state per sequence. Since mask application is per-sequence (each sequence has its own logit vector), there's no cross-sequence contention. The automaton state objects are lightweight CPU structures — a few hundred bytes each for typical JSON schemas.
+In a batched serving scenario, different requests may have different grammar constraints. XGrammar handles this by maintaining a separate automaton state per sequence. Since mask application is per-sequence (each sequence has its own logit vector), there's no cross-sequence contention. The automaton state objects are lightweight CPU structures — for typical JSON schemas their footprint is negligible next to the per-sequence KV cache, so keeping one per in-flight request costs nothing worth budgeting for.
 
 One complication: when a batch contains a mix of constrained and unconstrained requests, the serving engine must apply masks only to the constrained ones. vLLM builds a bitmask containing *only* the rows for the structured-output requests and applies it to just those logit rows — XGrammar's `apply_token_bitmask_inplace` takes an explicit set of row indices for exactly this purpose — so unconstrained sequences are skipped entirely rather than being handed an all-ones mask.
 

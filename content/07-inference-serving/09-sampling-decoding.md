@@ -494,7 +494,7 @@ $$
 \text{CD}(t) = \log P_{\text{expert}}(t) - \log P_{\text{amateur}}(t)
 $$
 
-Tokens that the expert prefers over the amateur are amplified; tokens both models agree on (fluency) but the expert is unsure about are suppressed. In practice, the amateur is often the same model at a smaller context window or with its early layers.
+Tokens that the expert prefers over the amateur are amplified; tokens both models agree on (fluency) but the expert is unsure about are suppressed. In practice the amateur is a separate, much smaller model from the same family (Li et al. pair, for example, a 125M-parameter amateur with a multi-billion-parameter expert), so the two share a tokenizer and can be run in lockstep on the same prefix.
 
 ### DoLa (Decoding by Contrasting Layers)
 
@@ -725,7 +725,7 @@ During PPO (see [Policy Gradients & PPO for Language Models](../05-posttraining-
 - Low $T$: the policy stays close to the current mode, producing similar completions. Good for exploiting known-good strategies.
 - High $T$: the policy explores more, which may discover high-reward completions but also floods the reward model with low-quality samples.
 
-The KL penalty term in PPO ($\beta \cdot D_{\text{KL}}(\pi \| \pi_{\text{ref}})$) is computed between the policy logits and reference model logits at $T = 1$. If you sample rollouts at $T \ne 1$ but compute the KL at $T = 1$, you are optimising a different objective than the one you are generating samples from. Most correct implementations compute both log-probabilities at $T = 1$ (or consistently at the same $T$). See [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html) for details.
+The KL penalty term in PPO ($\beta \cdot D_{\text{KL}}(\pi \| \pi_{\text{ref}})$) is computed between the policy's and the reference model's log-probabilities. If you sample rollouts at $T \ne 1$ but score them at $T = 1$, the distribution the tokens actually came from is not the distribution you are differentiating, so the importance ratios $\pi_{\text{new}}/\pi_{\text{old}}$ — and the KL — are systematically wrong. Correct implementations therefore score at the *rollout* temperature: divide the logits by the same $T$ the samples were drawn at before `log_softmax`, and apply that same $T$ to $\pi$ and $\pi_{\text{ref}}$ alike so both sides of the KL describe the same tempered distribution. See [Advantage Estimation, KL Control & Stability Tricks](../06-rl-infra/09-advantage-kl-tricks.html) for details.
 
 ### Knowledge Distillation and Soft Targets
 
@@ -872,8 +872,11 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     vocab_size = 32_000
 
-    # Simulate a logit vector with a clear peak at token 7
-    logits = torch.randn(vocab_size) * 2.0
+    # Simulate a logit vector with a clear peak at token 7. Keep the noise small:
+    # the max of 32k i.i.d. N(0, s^2) draws is about s*sqrt(2 ln V) ~ 4.6s, so at
+    # s = 2 the "peak" would sit only ~1.5 nats above the best noise token and the
+    # penalty's effect would be lost in the tail.
+    logits = torch.randn(vocab_size) * 0.5
     logits[7] = 10.0
 
     sampler = ProductionSampler(temperature=0.8, top_p=0.9, repetition_penalty=1.1)

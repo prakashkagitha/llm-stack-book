@@ -224,8 +224,9 @@ You need an accurate token count, not a character heuristic, because over-counti
 
 ```python
 # A budget manager that assembles a prompt under a hard token ceiling.
-# It counts with the REAL tokenizer and enforces per-segment caps,
-# evicting from the middle of history (oldest-but-not-first) on overflow.
+# It counts with the REAL tokenizer and enforces per-segment caps, evicting
+# the oldest UNPINNED item from a segment on overflow (pin the system prompt
+# and the current task to protect them -- nothing else is protected).
 from dataclasses import dataclass, field
 
 try:
@@ -549,7 +550,7 @@ There are two dialects of the same idea. Provider APIs ask you to mark explicit 
 
 ### The interaction with compaction
 
-There is a real tension: **compaction rewrites the prefix, which busts the cache.** Right after a compaction, the next request is a full cache miss because the conversation head changed. This is fine — you compact precisely because the old context was too expensive to keep re-sending — but it means you should not compact *too eagerly*. Each compaction trades a one-time cache-miss prefill (and a summarization call) for cheaper subsequent turns. Compact when the projected savings over the next several turns exceed that one-time cost, not on every turn.
+There is a real tension: **compaction rewrites the conversation head, which busts the cache from that point onward.** Be precise about how much it costs: the system prompt and tool schemas sit *ahead* of `messages` in the request, so they are untouched and still hit — in the caching example below, the whole $P = 12{,}000$-token stable block keeps billing at the cached-read price. What you lose is everything from the rewritten span to the end of the history, which must be re-prefilled at full price. This is fine — you compact precisely because the old context was too expensive to keep re-sending — but it means you should not compact *too eagerly*. Each compaction trades a one-time re-prefill of the rewritten history (and a summarization call) for cheaper subsequent turns. Compact when the projected savings over the next several turns exceed that one-time cost, not on every turn.
 
 !!! example "Worked example: caching math for an agent turn"
 
@@ -682,7 +683,7 @@ There is a real tension: **compaction rewrites the prefix, which busts the cache
 
     **(a)** Prefix caching matches the **longest common prefix** of the new request against a cached entry, and "the cache hit ends at the *first byte that differs*." A timestamp like `"It is 14:32:07. "` changes every call. If it sits at the *top*, the very first bytes of the request differ from the cached entry, so the longest common prefix is essentially zero — everything after it (system prompt, tools, history) must be re-prefilled at full price, every turn. If instead the volatile timestamp goes at the *end*, inside the current user turn, then the entire stable block before it (system + tools + retrieved + history) is a byte-identical prefix that matches the cache; only the short trailing turn — which was going to be new anyway — is prefilled. The chapter's directive: "Move all volatile content to the *end*, just before the model's turn."
 
-    **(b)** Compaction *rewrites the conversation head*: it replaces a long span of old turns with a freshly generated summary, changing the bytes near the front of the messages. Since the cache match ends at the first differing byte, that rewrite invalidates the cached prefix downstream of it, so the turn immediately after a compaction is a full cache miss (plus the cost of the summarization model call itself).
+    **(b)** Compaction *rewrites the conversation head*: it replaces a long span of old turns with a freshly generated summary, changing the bytes near the front of the messages. Since the cache match ends at the first differing byte, that rewrite invalidates the cached prefix downstream of it: on the turn immediately after a compaction, everything from the rewritten span to the end of the history is re-prefilled at full price (plus the cost of the summarization model call itself). Note it is *not* a total miss — the system prompt and tool schemas sit ahead of `messages` and are untouched, so that block still bills at the cached-read discount. What gets re-prefilled is the new snapshot plus the retained recent turns — short by construction, since shrinking the history is the whole point of compacting — which is why the one-time hit is modest next to the savings it unlocks.
 
     The rule: **compact deliberately, not eagerly.** Each compaction trades a one-time cost (a cache-miss prefill of the new, shorter prefix + one summarization call) for cheaper subsequent turns (a smaller prefix re-sent at the cache discount). It is worth doing only when "the projected savings over the next several turns exceed that one-time cost" — i.e. when you expect enough remaining turns to amortize the busted cache, not on every turn.
 
